@@ -4872,40 +4872,20 @@ void register_front_end_fallback_bindings(LuaState& state) {
         lua_rawset(L, LUA_GLOBALSINDEX);
     };
 
+    // Only names no binding the boot registers first defines (App::init_ui_state
+    // runs this after them): a fallback of a bound name would be dead.
     set_str("__language", "us");
-    for (const auto& [name, fn] : {std::pair{"AudioSetLanguage", &l_AudioSetLanguage},
-                                   std::pair{"HasLocalizedVO", &l_HasLocalizedVO}}) {
-        if (global_is_defined(L, name)) continue;
-        lua_pushstring(L, name);
-        lua_pushcfunction(L, fn);
-        lua_rawset(L, LUA_GLOBALSINDEX);
-    }
-    set_stub("ConExecute");
-    set_stub("ConExecuteSave");
-    set_stub("AddInputCapture");
-    set_stub("RemoveInputCapture");
-    set_bool_fn("AnyInputCapture", false);
     set_bool_fn("DebugFacilitiesEnabled", false);
-    set_stub("ExitApplication");
-    set_stub("PrefetchSession");
-    set_stub("SetFocusArmy");
-    set_nil_fn("GetFocusArmy");
-    set_stub("ClearFrame");
-    set_bool_fn("HasCommandLineArg2", false);
-    set_bool_fn("SessionIsActive", false);
-    set_bool_fn("SessionIsMultiplayer", false);
-    set_nil_fn("SessionGetCommandSourceNames");
-    set_nil_fn("SessionGetLocalCommandSource");
+    set_stub("PrefetchSession");              // loading optimization
+    set_stub("ClearFrame");                   // UI cleanup
+    set_bool_fn("HasCommandLineArg2", false); // command line
+    // System info
     set_nil_fn("GetMouseScreenPos");
-    set_stub("SetOverlayFilter");
-    set_stub("SetOverlayFilters");
-    set_nil_fn("GetActiveBuildTemplate");
-    set_nil_fn("GetHighlightCommand");
-    set_nil_fn("GetInputCapture");
     set_nil_fn("GetAntiAliasingOptions");
     set_nil_fn("GetResolution");
     set_stub("SetResolution");
 
+    // __installedlanguages: the language codes there are
     if (!global_is_defined(L, "__installedlanguages")) {
         lua_pushstring(L, "__installedlanguages");
         lua_newtable(L);

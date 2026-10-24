@@ -62,6 +62,8 @@ void load_key_mappings(lua_State* L, ui::KeyMapRegistry& key_map);
 
 /// Register front-end bootstrap fallback globals that the FA UI import chain
 /// expects, without replacing globals already installed by real bindings.
+/// The one list: App::init_ui_state registers it after the UI state's real
+/// bindings, and the unit tests check it.
 void register_front_end_fallback_bindings(LuaState& state);
 
 /// Push an array of UI-side unit objects for the given entity ids (dead or

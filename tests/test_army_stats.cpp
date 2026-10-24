@@ -670,6 +670,8 @@ TEST_CASE("ReturnToLobby is available from UI bindings", "[score][lua]") {
 }
 
 TEST_CASE("Front-end fallback bindings preserve real UI globals", "[frontend][lua]") {
+    // The list App::init_ui_state runs: a fallback never replaces a global
+    // already there, whether a binding or a script defined it.
     osc::lua::LuaState lua;
     osc::sim::SimState sim(lua.raw(), nullptr);
     osc::ui::UIControlRegistry ui_registry;
@@ -682,16 +684,34 @@ TEST_CASE("Front-end fallback bindings preserve real UI globals", "[frontend][lu
     lua_pushnumber(L, 1);
     lua_rawset(L, LUA_REGISTRYINDEX);
 
+    auto result = lua.do_string(R"(
+        real_focus = GetFocusArmy
+        function DebugFacilitiesEnabled() return 'real' end
+        function PrefetchSession() return 'real' end
+        __language = 'fr'
+        __installedlanguages = 'real'
+    )");
+    REQUIRE(result.ok());
+
     osc::lua::register_front_end_fallback_bindings(lua);
 
-    auto result = lua.do_string("focus_army = GetFocusArmy()");
+    result = lua.do_string(R"(
+        focus_army = GetFocusArmy()
+        kept = GetFocusArmy == real_focus and DebugFacilitiesEnabled() == 'real' and
+               PrefetchSession() == 'real' and __language == 'fr' and
+               __installedlanguages == 'real'
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
     REQUIRE(result.ok());
 
     lua_getglobal(L, "focus_army");
     double focus_army = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 0.0;
     lua_pop(L, 1);
+    CHECK(focus_army == 2.0);
 
-    REQUIRE(focus_army == 2.0);
+    lua_getglobal(L, "kept");
+    CHECK(lua_toboolean(L, -1) != 0);
+    lua_pop(L, 1);
 }
 
 TEST_CASE("UI unit handles stop resolving once the unit is unregistered", "[ui][lua]") {

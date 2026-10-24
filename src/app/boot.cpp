@@ -413,79 +413,8 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
     // bootstrap expect must exist first.
     osc::lua::register_prefetch_bindings(ui_lua_state);
     osc::lua::register_category_bindings(ui_lua_state);
-    {
-        lua_State* uL = ui_lua_state.raw();
-        auto global_is_defined = [&](const char* name) {
-            lua_pushstring(uL, name);
-            lua_rawget(uL, LUA_GLOBALSINDEX);
-            const bool defined = !lua_isnil(uL, -1);
-            lua_pop(uL, 1);
-            return defined;
-        };
-        auto set_stub = [&](const char* name) {
-            if (global_is_defined(name)) return;
-            lua_pushstring(uL, name);
-            lua_pushcfunction(uL, [](lua_State*) -> int { return 0; });
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-        };
-        auto set_str = [&](const char* name, const char* val) {
-            if (global_is_defined(name)) return;
-            lua_pushstring(uL, name);
-            lua_pushstring(uL, val);
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-        };
-        auto set_bool_fn = [&](const char* name, bool val) {
-            if (global_is_defined(name)) return;
-            lua_pushstring(uL, name);
-            lua_pushcfunction(uL, val ?
-                +[](lua_State* L) -> int { lua_pushboolean(L, 1); return 1; } :
-                +[](lua_State* L) -> int { lua_pushboolean(L, 0); return 1; });
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-        };
-        set_stub("AudioSetLanguage");
-        set_str("__language", "us");
-        set_bool_fn("HasLocalizedVO", false);
-        // Engine globals needed by FA's UI bootstrap chain
-        // (GetOptions, GetVolume, SetVolume, etc.)
-        auto set_nil_fn = [&](const char* name) {
-            if (global_is_defined(name)) return;
-            lua_pushstring(uL, name);
-            lua_pushcfunction(uL, [](lua_State* L) -> int {
-                lua_pushnil(L);
-                return 1;
-            });
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-        };
-        set_bool_fn("DebugFacilitiesEnabled", false);
-        set_stub("ExitApplication");              // exit
-        set_stub("PrefetchSession");              // loading optimization
-        set_stub("SetFocusArmy");                 // army focus
-        set_nil_fn("GetFocusArmy");               // army focus
-        set_stub("ClearFrame");                   // UI cleanup
-        set_bool_fn("HasCommandLineArg2", false); // command line
-        // Session functions
-        set_bool_fn("SessionIsActive", false);
-        set_bool_fn("SessionIsMultiplayer", false);
-        set_nil_fn("SessionGetCommandSourceNames");
-        set_nil_fn("SessionGetLocalCommandSource");
-        // System info
-        set_nil_fn("GetMouseScreenPos");
-        set_stub("SetOverlayFilter");
-        set_stub("SetOverlayFilters");
-        set_nil_fn("GetActiveBuildTemplate");
-        set_nil_fn("GetHighlightCommand");
-        set_nil_fn("GetAntiAliasingOptions");
-        set_nil_fn("GetResolution");
-        set_stub("SetResolution");
-        // __installedlanguages — table of available language codes
-        if (!global_is_defined("__installedlanguages")) {
-            lua_pushstring(uL, "__installedlanguages");
-            lua_newtable(uL);
-            lua_pushstring(uL, "us");
-            lua_rawseti(uL, -2, 1);
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-        }
-    }
+    // The globals FA's UI bootstrap expects that no binding above defines
+    osc::lua::register_front_end_fallback_bindings(ui_lua_state);
     {
         // A game's state runs SessionInit.lua, as Moho's session loader does:
         // userInit.lua, then the player's UI-only mods join __active_mods,
