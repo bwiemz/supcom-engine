@@ -18,6 +18,7 @@
 #include "lua/sim_loader.hpp"
 #include "lua/smoke_test.hpp"
 #include "lua/user_bindings.hpp"
+#include "lua/user_stand_ins.hpp"
 #include "map/terrain.hpp"
 #include "platform/browser.hpp"
 #include "platform/paths.hpp"
@@ -413,8 +414,9 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
     // bootstrap expect must exist first.
     osc::lua::register_prefetch_bindings(ui_lua_state);
     osc::lua::register_category_bindings(ui_lua_state);
-    // The globals FA's UI bootstrap expects that no binding above defines
-    osc::lua::register_front_end_fallback_bindings(ui_lua_state);
+    // The Moho globals FA's UI bootstrap expects that no binding above
+    // defines yet: each once, from one typed table
+    osc::lua::register_user_stand_ins(ui_lua_state);
     {
         // A game's state runs SessionInit.lua, as Moho's session loader does:
         // userInit.lua, then the player's UI-only mods join __active_mods,

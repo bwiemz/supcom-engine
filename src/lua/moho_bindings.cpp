@@ -3905,8 +3905,10 @@ static int l_ui_SessionGetScenarioInfo(lua_State* L) {
     if (!sim) { lua_newtable(L); return 1; }
 
     lua_newtable(L);
-    auto set_str = [&](const char* k, const char* v) {
-        lua_pushstring(L, k); lua_pushstring(L, v); lua_rawset(L, -3);
+    auto set_text = [&](const char* k, const char* v) {
+        lua_pushstring(L, k);
+        lua_pushstring(L, v);
+        lua_rawset(L, -3);
     };
     auto set_num = [&](const char* k, f64 v) {
         lua_pushstring(L, k); lua_pushnumber(L, v); lua_rawset(L, -3);
@@ -3918,8 +3920,8 @@ static int l_ui_SessionGetScenarioInfo(lua_State* L) {
     const char* path = lua_isnil(L, -1) ? "" : lua_tostring(L, -1);
     lua_pop(L, 1);
 
-    set_str("name", path);
-    set_str("file", path);
+    set_text("name", path);
+    set_text("file", path);
 
     // Map size from terrain
     auto* terrain = sim->terrain();
@@ -4829,55 +4831,6 @@ static int l_SessionIsMultiplayer(lua_State* L) {
                                lua_gettop(L));
     lua_pushboolean(L, session_is_multiplayer() ? 1 : 0);
     return 1;
-}
-
-static bool global_is_defined(lua_State* L, const char* name) {
-    lua_pushstring(L, name);
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    const bool defined = !lua_isnil(L, -1);
-    lua_pop(L, 1);
-    return defined;
-}
-
-void register_front_end_fallback_bindings(LuaState& state) {
-    lua_State* L = state.raw();
-
-    auto set_stub = [&](const char* name) {
-        if (global_is_defined(L, name)) return;
-        lua_pushstring(L, name);
-        lua_pushcfunction(L, [](lua_State*) -> int { return 0; });
-        lua_rawset(L, LUA_GLOBALSINDEX);
-    };
-    auto set_str = [&](const char* name, const char* val) {
-        if (global_is_defined(L, name)) return;
-        lua_pushstring(L, name);
-        lua_pushstring(L, val);
-        lua_rawset(L, LUA_GLOBALSINDEX);
-    };
-    auto set_bool_fn = [&](const char* name, bool val) {
-        if (global_is_defined(L, name)) return;
-        lua_pushstring(L, name);
-        lua_pushcfunction(L, val ?
-            +[](lua_State* call_L) -> int { lua_pushboolean(call_L, 1); return 1; } :
-            +[](lua_State* call_L) -> int { lua_pushboolean(call_L, 0); return 1; });
-        lua_rawset(L, LUA_GLOBALSINDEX);
-    };
-
-    // Only names no binding the boot registers first defines (App::init_ui_state
-    // runs this after them): a fallback of a bound name would be dead.
-    set_str("__language", "us");
-    set_bool_fn("DebugFacilitiesEnabled", false);
-    set_stub("PrefetchSession"); // loading optimization
-    set_stub("ClearFrame");      // UI cleanup
-
-    // __installedlanguages: the language codes there are
-    if (!global_is_defined(L, "__installedlanguages")) {
-        lua_pushstring(L, "__installedlanguages");
-        lua_newtable(L);
-        lua_pushstring(L, "us");
-        lua_rawseti(L, -2, 1);
-        lua_rawset(L, LUA_GLOBALSINDEX);
-    }
 }
 
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {

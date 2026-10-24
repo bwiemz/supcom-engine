@@ -103,6 +103,7 @@ add_executable(osc_tests
     test_ui_layout.cpp
     test_user_decals.cpp
     test_world_view.cpp
+    test_user_stand_ins.cpp
     test_resource_icons.cpp
     test_ui_controls.cpp
     test_texture_alpha.cpp

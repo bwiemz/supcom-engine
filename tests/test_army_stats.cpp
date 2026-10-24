@@ -669,9 +669,7 @@ TEST_CASE("ReturnToLobby is available from UI bindings", "[score][lua]") {
     REQUIRE(return_requested);
 }
 
-TEST_CASE("Front-end fallback bindings preserve real UI globals", "[frontend][lua]") {
-    // The list App::init_ui_state runs: a fallback never replaces a global
-    // already there, whether a binding or a script defined it.
+TEST_CASE("UI GetFocusArmy answers the focus army, 1-based", "[frontend][lua]") {
     osc::lua::LuaState lua;
     osc::sim::SimState sim(lua.raw(), nullptr);
     osc::ui::UIControlRegistry ui_registry;
@@ -684,60 +682,13 @@ TEST_CASE("Front-end fallback bindings preserve real UI globals", "[frontend][lu
     lua_pushnumber(L, 1);
     lua_rawset(L, LUA_REGISTRYINDEX);
 
-    auto result = lua.do_string(R"(
-        real_focus = GetFocusArmy
-        function DebugFacilitiesEnabled() return 'real' end
-        function PrefetchSession() return 'real' end
-        __language = 'fr'
-        __installedlanguages = 'real'
-    )");
-    REQUIRE(result.ok());
-
-    osc::lua::register_front_end_fallback_bindings(lua);
-
-    result = lua.do_string(R"(
-        focus_army = GetFocusArmy()
-        kept = GetFocusArmy == real_focus and DebugFacilitiesEnabled() == 'real' and
-               PrefetchSession() == 'real' and __language == 'fr' and
-               __installedlanguages == 'real'
-    )");
-    INFO((result.ok() ? std::string() : result.error().message));
+    auto result = lua.do_string("focus_army = GetFocusArmy()");
     REQUIRE(result.ok());
 
     lua_getglobal(L, "focus_army");
     double focus_army = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 0.0;
     lua_pop(L, 1);
     CHECK(focus_army == 2.0);
-
-    lua_getglobal(L, "kept");
-    CHECK(lua_toboolean(L, -1) != 0);
-    lua_pop(L, 1);
-}
-
-TEST_CASE("Front-end fallback bindings define no global Moho lacks", "[frontend][lua]") {
-    // Moho's user state has no GetResolution, SetResolution or
-    // HasCommandLineArg2 (neither its executable nor faf-re names them; it
-    // has HasCommandLineArg), so a script's `if GetResolution then` must
-    // find nil, as under Moho.
-    osc::lua::LuaState lua;
-    osc::sim::SimState sim(lua.raw(), nullptr);
-    osc::ui::UIControlRegistry ui_registry;
-    osc::lua::register_moho_bindings(lua, sim);
-    osc::lua::register_ui_bindings(lua, ui_registry);
-    osc::lua::register_front_end_fallback_bindings(lua);
-
-    lua_State* L = lua.raw();
-    for (const char* name : {"GetResolution", "SetResolution", "HasCommandLineArg2"}) {
-        INFO(name);
-        lua_pushstring(L, name);
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        CHECK(lua_isnil(L, -1));
-        lua_pop(L, 1);
-    }
-    lua_pushstring(L, "HasCommandLineArg");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    CHECK(lua_isfunction(L, -1));
-    lua_pop(L, 1);
 }
 
 TEST_CASE("UI unit handles stop resolving once the unit is unregistered", "[ui][lua]") {
@@ -790,7 +741,6 @@ TEST_CASE("UI SetFocusArmy updates focus army registry state", "[frontend][lua]"
 
     osc::lua::register_moho_bindings(lua, sim);
     osc::lua::register_ui_bindings(lua, ui_registry);
-    osc::lua::register_front_end_fallback_bindings(lua);
     // A game loading: a session (with none, Moho's SetFocusArmy raises), but
     // no game interface yet, so the focus changes at once.
     osc::GameStateManager game_state;
