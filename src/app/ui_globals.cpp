@@ -2,6 +2,7 @@
 // (M192 step 2, moved from app.cpp).
 
 #include "app/app_internal.hpp"
+#include "lua/arg_count.hpp"
 #include "lua/lobby_wire.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/mp_net_state.hpp"
@@ -24,8 +25,12 @@ static int l_FlushEvents(lua_State*) { return 0; }
 /// SessionIsReplay() for the UI: whether the game is a replay being played
 /// (retail's UI then hides orders and shows the replay controls). The sim
 /// answers the same (sim_bindings.cpp). A saved game catching up plays back
-/// too, but it is the player's game.
+/// too, but it is the player's game. Moho counts its arguments (faf-re
+/// cfunc_SessionIsReplayUserL).
 static int l_SessionIsReplay(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return osc::lua::arg_count_error(
+            L, "Return true iff the active session is a replay session.", 0, lua_gettop(L));
     lua_pushstring(L, "osc_sim_state");
     lua_rawget(L, LUA_REGISTRYINDEX);
     const auto* sim = static_cast<const osc::sim::SimState*>(lua_touserdata(L, -1));

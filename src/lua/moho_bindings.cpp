@@ -2121,7 +2121,11 @@ sim::SimCallbackQueue* get_callback_queue(lua_State* L) {
     return q;
 }
 
+/// GetFocusArmy() -> the army the player watches, 1-based, or -1 for an
+/// observer. Moho counts its arguments (faf-re cfunc_GetFocusArmyUserL), as
+/// it does the session's other queries below.
 static int l_GetFocusArmy(lua_State* L) {
+    if (lua_gettop(L) != 0) return arg_count_error(L, "GetFocusArmy()", 0, lua_gettop(L));
     lua_pushstring(L, "__osc_focus_army");
     lua_rawget(L, LUA_REGISTRYINDEX);
     if (lua_isnumber(L, -1)) {
@@ -2461,6 +2465,11 @@ static int l_ClearSessionExtraSelectList(lua_State* L) {
 /// SessionGetLocalCommandSource() -> this client's command source (1-based).
 /// Command sources are the players' clients; single player has one.
 static int l_SessionGetLocalCommandSource(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L,
+                               "Return the local command source.  Returns 0 if the local client "
+                               "can't issue commands.",
+                               0, lua_gettop(L));
     const auto& mp = mp_net_state();
     lua_pushnumber(L, mp.active() ? static_cast<lua_Number>(mp.local_source + 1) : 1);
     return 1;
@@ -2469,6 +2478,9 @@ static int l_SessionGetLocalCommandSource(lua_State* L) {
 /// SessionGetCommandSourceNames() -> player name per command source: the
 /// human armies' nicknames in army order (AIs have no command source).
 static int l_SessionGetCommandSourceNames(lua_State* L) {
+    // (Moho's usage has the two spaces; faf-re SessionStartup.cpp)
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "Return a table of  command sources.", 0, lua_gettop(L));
     // A network game's: its clients', by source (M218d)
     if (push_network_source_names(L)) return 1;
     lua_newtable(L);
@@ -3466,6 +3478,11 @@ static int l_RemoveBeatFunction(lua_State* L) {
 
 /// GetCurrentUIState() → "front-end" | "game" | "score" etc.
 static int l_GetCurrentUIState(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L,
+                               "state GetCurrentUIState() - returns 'splash', 'frontend' or "
+                               "'game' depending on the current state of the ui",
+                               0, lua_gettop(L));
     auto* mgr = get_game_state_mgr(L);
     if (mgr) {
         lua_pushstring(L, osc::game_state_to_string(mgr->current()));
@@ -3487,6 +3504,9 @@ static int l_WorldIsLoading(lua_State* L) {
 /// session). The front end has none. (Retail's UI gates Quick Save, the
 /// camera zoom and more on it; a fallback had answered false in game too.)
 static int l_ui_SessionIsActive(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "Return true iff there is a session currently running", 0,
+                               lua_gettop(L));
     auto* mgr = get_game_state_mgr(L);
     const auto state = mgr ? mgr->current() : osc::GameState::INIT;
     const bool in_session = state == osc::GameState::LOADING || state == osc::GameState::GAME ||
@@ -3661,13 +3681,22 @@ static int l_StartFrontEndUI(lua_State* L) {
 
 /// GetGameTimeSeconds() → number (seconds since game start)
 static int l_ui_GetGameTimeSeconds(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "float GetGameTimeSeconds() - returns game time in seconds", 0,
+                               lua_gettop(L));
     auto* sim = get_sim(L);
     lua_pushnumber(L, sim ? sim->game_time() : 0.0);
     return 1;
 }
 
-/// GameTick() → integer (current sim tick)
+/// GameTick() → integer (current sim tick). Called with an argument, Moho's
+/// count error (faf-re cfunc_GameTickL), as the other time queries here.
 static int l_ui_GameTick(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L,
+                               "Get the current game time in ticks. The game time is the "
+                               "simulation time, that stops when the game is paused.",
+                               0, lua_gettop(L));
     auto* sim = get_sim(L);
     lua_pushnumber(L, sim ? sim->tick_count() : 0);
     return 1;
@@ -3687,6 +3716,7 @@ static int l_GetGameTime(lua_State* L) {
 
 /// GetSimRate() → number (sim ticks per second, typically 10)
 static int l_GetSimRate(lua_State* L) {
+    if (lua_gettop(L) != 0) return arg_count_error(L, "number GetSimRate()", 0, lua_gettop(L));
     lua_pushnumber(L, 10.0);
     return 1;
 }
@@ -3836,6 +3866,8 @@ static int l_SetGameSpeed(lua_State* L) {
 
 /// GetGameSpeed() -> the sim rate.
 static int l_GetGameSpeed(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "Return the current game speed", 0, lua_gettop(L));
     lua_pushnumber(L, game_speed(L));
     return 1;
 }
@@ -4035,6 +4067,7 @@ static int l_SessionResume(lua_State* L) {
 
 /// IsObserver() → boolean (true if focus army is -1)
 static int l_IsObserver(lua_State* L) {
+    if (lua_gettop(L) != 0) return arg_count_error(L, "IsObserver()", 0, lua_gettop(L));
     lua_pushstring(L, "__osc_focus_army");
     lua_rawget(L, LUA_REGISTRYINDEX);
     int army = lua_isnil(L, -1) ? 0 : static_cast<int>(lua_tonumber(L, -1));
@@ -4663,6 +4696,9 @@ static int l_EjectSessionClient(lua_State* L) {
 
 /// SessionIsMultiplayer() → a network game (a lobby's "UDP"/"TCP").
 static int l_SessionIsMultiplayer(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "Return true iff the active session is a multiplayer session.", 0,
+                               lua_gettop(L));
     lua_pushboolean(L, session_is_multiplayer() ? 1 : 0);
     return 1;
 }

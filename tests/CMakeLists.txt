@@ -176,6 +176,7 @@ add_executable(osc_tests
     test_command_handles.cpp
     test_url_bindings.cpp
     test_arg_count.cpp
+    test_session_functions.cpp
     test_script_object.cpp
     test_veterancy_kills.cpp
     test_unit_weapons.cpp
