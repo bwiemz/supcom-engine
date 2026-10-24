@@ -1434,19 +1434,22 @@ std::map<u32, SimState::QueueWithPending> SimState::queues_with_pending() const 
     return queues;
 }
 
-void SimState::route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
-                                    bool clear_existing) {
+bool SimState::joins_rally_orders(const Unit& unit, CommandType type) {
     // Moho's UI splits these three by the RALLYPOINT category
     // (SplitSelectionByRallyPointCategory in its move, patrol and
     // call-transport arms); any other order goes to the selection as it is.
-    const bool rally_kind = command.type == CommandType::Move ||
-                            command.type == CommandType::Patrol ||
-                            command.type == CommandType::TransportLoad;
+    const bool rally_kind = type == CommandType::Move || type == CommandType::Patrol ||
+                            type == CommandType::TransportLoad;
+    return rally_kind && unit.has_category("RALLYPOINT");
+}
+
+void SimState::route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+                                    bool clear_existing) {
     std::vector<u32> rally, others;
     for (const u32 id : unit_ids) {
         const Entity* e = entity_registry_.find(id);
-        const bool rally_point = rally_kind && e && e->is_unit() &&
-                                 static_cast<const Unit*>(e)->has_category("RALLYPOINT");
+        const bool rally_point =
+            e && e->is_unit() && joins_rally_orders(*static_cast<const Unit*>(e), command.type);
         (rally_point ? rally : others).push_back(id);
     }
     if (!others.empty()) route_command(others, command, clear_existing);

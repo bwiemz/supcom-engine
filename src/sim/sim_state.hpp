@@ -567,6 +567,11 @@ public:
     /// orders -- and to the rest as an order. Routed like route_command.
     void route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
                               bool clear_existing);
+    /// Whether a player's order of `type` joins `unit`'s rally orders, as a
+    /// factory command, rather than its own queue: a move, patrol or
+    /// transport call to a RALLYPOINT unit. The rule route_player_command
+    /// routes by, and so the queue an order's anchor is read from.
+    static bool joins_rally_orders(const Unit& unit, CommandType type);
     /// What each unit of a group order gets: a formation order is laid out in
     /// its slots, the group held to its slowest member's speed (M204); any
     /// other order goes to every unit as it is. Done where the sim applies

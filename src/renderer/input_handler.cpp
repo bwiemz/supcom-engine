@@ -1438,7 +1438,9 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     // Player-issued order: routed so a networked match broadcasts it.
     sim.set_human_input_active(true);
     // Moho's patrol starts where the group stands, or where the last unit's queue ends with the
-    // orders not yet run, unless one is patrolling (ResolveGroupMoveAnchorOrDetectPatrol)
+    // orders not yet run, unless one is patrolling (ResolveGroupMoveAnchorOrDetectPatrol). The
+    // queue is the one the patrol joins: a factory's rally orders (its factory command queue),
+    // else its own.
     bool patrolling = false;
     const sim::UnitCommand* queue_end = nullptr;
     f32 ax = 0;
@@ -1452,16 +1454,26 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         if (!shift) {
             continue;
         }
-        const auto& queue = u.command_queue();
-        const sim::UnitCommand* last = queue.empty() ? nullptr : &queue.back();
+        const bool rally = sim::SimState::joins_rally_orders(u, cmd.type);
+        const sim::UnitCommand* last = nullptr;
+        if (rally && !u.rally_orders().empty()) {
+            last = &u.rally_orders().back();
+        } else if (!rally && !u.command_queue().empty()) {
+            last = &u.command_queue().back();
+        }
         for (const auto& scheduled : pending) {
             const sim::UnitCommand& order = scheduled.command;
-            if (scheduled.callback || order.factory ||
+            if (scheduled.callback || order.factory != rally ||
                 std::find(scheduled.unit_ids.begin(), scheduled.unit_ids.end(), id) ==
                     scheduled.unit_ids.end()) {
                 continue;
             }
-            if (order.type == sim::CommandType::Stop) {
+            if (rally) {
+                // apply_factory_command appends each to the rally orders
+                if (u.keeps_rally_orders()) {
+                    last = &order;
+                }
+            } else if (order.type == sim::CommandType::Stop) {
                 last = nullptr;
             } else if (order.type != sim::CommandType::SiloBuildNuke &&
                        order.type != sim::CommandType::SiloBuildTactical &&
@@ -1475,7 +1487,12 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         }
     }
     if (cmd.type == sim::CommandType::Patrol && !patrolling) {
-        if (queue_end) {
+        // An order with no place (a factory's build) leaves the group's mean,
+        // as Moho keeps it for a zero anchor
+        const auto placed = [](const sim::Vector3& p) {
+            return p.x != 0.0f || p.y != 0.0f || p.z != 0.0f;
+        };
+        if (queue_end && placed(queue_end->target_pos)) {
             ax = queue_end->target_pos.x;
             az = queue_end->target_pos.z;
         } else {
