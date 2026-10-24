@@ -3,18 +3,25 @@
 
 A binding whose body only reads its arguments, logs and returns 0 passes the
 coverage ratchet (data.binding_coverage checks that a name exists), and a
-script calling it just loses what it asked for. tools/lua_stub_baseline.txt
-lists the stubs there are, each as "<Lua name> <C++ function>"; this check
-fails on a do-nothing binding missing from it, and on a listed one that now
-does something or is gone.
+script calling it just loses what it asked for. So does one that answers a
+constant, nil included, where Moho's answers what is so. tools/
+lua_stub_baseline.txt lists the stubs there are, each as "<Lua name> <C++
+function>"; this check fails on a stand-in missing from it, and on a listed
+one that now does something or is gone.
 
-tools/lua_stub_accepted.txt lists the do-nothing bindings that are right as
-they are, each with its reason after a '#': Moho's own method does nothing,
-or the binding is a fallback for a function retail's Lua defines itself.
+tools/lua_stub_accepted.txt lists the stand-ins that are right as they are,
+each with its reason after a '#': Moho's own does nothing or answers the
+same constant, or the binding is a fallback for a function retail's Lua
+defines itself.
 
 A body does nothing when it makes no call but reading arguments, pushing
 nothing and logging, assigns nothing, and returns 0 on every path; a
-lua_stubs:: helper counts too.
+lua_stubs:: helper counts too. It answers a constant when it does that but
+for pushing literals (nil, a literal boolean, number or string, an empty
+table) and returning their count. A binding is found registered by
+register_function, register_table_function, a {"name", fn} entry, a raw
+lua_pushstring("name") + lua_pushcfunction, or as an entry of the user
+state's stand-in table (src/lua/user_stand_ins.cpp: "<name> <kind>").
 
 Usage: check_lua_stubs.py <repo root>   (exit 1 on a problem)
        check_lua_stubs.py --list <repo root>
@@ -42,6 +49,22 @@ STUB_ALIAS = re.compile(
 REGISTER = re.compile(r'register_function\(\s*"(\w+)"\s*,\s*')
 REGISTER_TABLE = re.compile(r'register_table_function\(\s*"(\w+)"\s*,\s*"(\w+)"\s*,\s*')
 REG_ENTRY = re.compile(r'\{\s*"([A-Za-z_]\w*)"\s*,\s*')
+# lua_pushstring(L, "Name"); lua_pushcfunction(L, fn) -- then a raw set
+RAW_REGISTER = re.compile(
+    r'lua_pushstring\(\s*\w+\s*,\s*"([A-Za-z_]\w*)"\s*\)\s*;\s*'
+    + r"lua_push(?:cfunction|cclosure)\(\s*\w+\s*,\s*"
+)
+# An entry of the user state's stand-in table: every one is a stand-in
+STAND_IN = re.compile(
+    r'\{\s*"([A-Za-z_]\w*)"\s*,\s*(Command|ReturnsBool|GlobalString|GlobalStrings)\s*\{'
+)
+# A push of a literal: what a constant answer pushes
+CONST_PUSH = re.compile(
+    r"lua_(?:pushnil|newtable)\(\s*\w+\s*\)"
+    + r"|lua_pushboolean\(\s*\w+\s*,\s*(?:0|1|true|false)\s*\)"
+    + r"|lua_pushnumber\(\s*\w+\s*,\s*-?[\d.]+[fF]?\s*\)"
+    + r'|lua_pushstring\(\s*\w+\s*,\s*"(?:[^"\\]|\\.)*"\s*\)'
+)
 
 
 def match_brace(text: str, i: int) -> int:
@@ -81,6 +104,19 @@ def does_nothing(body: str) -> bool:
     return all(r.strip() == "0" for r in returns)
 
 
+def answers_constant(body: str) -> bool:
+    """Whether the body's only answers are literals it pushes."""
+    b = re.sub(r"//[^\n]*", "", body)
+    b = re.sub(r"/\*.*?\*/", "", b, flags=re.DOTALL)
+    pushed = CONST_PUSH.sub("", b)
+    if pushed == b:
+        return False
+    returns: list[str] = re.findall(r"return\s+([^;]+);", pushed)
+    if not returns or not all(re.fullmatch(r"\d+", r.strip()) for r in returns):
+        return False
+    return does_nothing(re.sub(r"return\s+\d+\s*;", "return 0;", pushed))
+
+
 def registrations(sources: dict[str, str]) -> list[tuple[str, str, str, str]]:
     """(file, Lua name, C++ function, body or '@stub') for each registration."""
     defs: dict[str, list[tuple[str, str]]] = {}
@@ -90,14 +126,16 @@ def registrations(sources: dict[str, str]) -> list[tuple[str, str, str, str]]:
             defs.setdefault(m.group(1).split("::")[-1], []).append((f, t[b + 1:match_brace(t, b)]))
         for m in STUB_ALIAS.finditer(t):
             defs.setdefault(m.group(1), []).append((f, "@stub"))
-    out = []
+    out: list[tuple[str, str, str, str]] = []
     for f, t in sources.items():
         found = [(m, m.group(1)) for m in REGISTER.finditer(t)]
         found += [(m, f"{m.group(1)}.{m.group(2)}") for m in REGISTER_TABLE.finditer(t)]
         found += [(m, m.group(1)) for m in REG_ENTRY.finditer(t)
                   if re.match(r"(\[|[A-Za-z_][\w:]*\s*\}|lua_stubs::)", t[m.end():m.end() + 80])]
+        found += [(m, m.group(1)) for m in RAW_REGISTER.finditer(t)]
+        out += [(f, m.group(1), m.group(2), "@stub") for m in STAND_IN.finditer(t)]
         for m, name in found:
-            rest = t[m.end():m.end() + 2000].lstrip()
+            rest = t[m.end():m.end() + 2000].lstrip().lstrip("+")
             if rest.startswith("lua_stubs::"):
                 out.append((f, name, re.match(r"lua_stubs::(\w+)", rest).group(1), "@stub"))
             elif rest.startswith("["):
@@ -116,7 +154,7 @@ def registrations(sources: dict[str, str]) -> list[tuple[str, str, str, str]]:
 
 def stubs_of(sources: dict[str, str]) -> set[str]:
     return {f"{name} {fn}" for _, name, fn, body in registrations(sources)
-            if body == "@stub" or does_nothing(body)}
+            if body == "@stub" or does_nothing(body) or answers_constant(body)}
 
 
 def sources_of(root: Path) -> dict[str, str]:
@@ -169,6 +207,14 @@ def self_test() -> int:
                "if (lua_gettop(L) < 1) { return 0; } return 0;"]
     something = ["lua_pushnil(L); return 1;", "unit->x = 1; return 0;", "do_it(L); return 0;",
                  "count++; return 0;"]
+    constant = ["lua_pushnil(L); return 1;", "lua_pushboolean(L, 0); return 1;",
+                "lua_newtable(L); return 1;", "(void)L; lua_pushnumber(L, 0.5); return 1;",
+                'lua_pushstring(L, "us"); return 1;',
+                "if (lua_gettop(L) > 0) { lua_pushnil(L); return 1; } lua_pushnil(L); return 1;"]
+    varying = ["return 0;", "lua_pushboolean(L, on ? 1 : 0); return 1;",
+               "lua_pushnumber(L, sim->tick()); return 1;", "lua_pushvalue(L, 1); return 1;",
+               "lua_newtable(L); lua_pushnumber(L, 0); lua_rawseti(L, -2, 1); return 1;",
+               "lua_pushnil(L); return n;"]
     for b in nothing:
         if not does_nothing(b):
             print(f"self-test: '{b}' should do nothing")
@@ -177,13 +223,33 @@ def self_test() -> int:
         if does_nothing(b):
             print(f"self-test: '{b}' does something")
             return 1
+    for b in constant:
+        if not answers_constant(b):
+            print(f"self-test: '{b}' answers a constant")
+            return 1
+    for b in varying:
+        if answers_constant(b):
+            print(f"self-test: '{b}' answers no constant")
+            return 1
     src = {"a.cpp": 'static int l_A(lua_State*) { return 0; }\n'
                     'static int l_B(lua_State* L) { lua_pushnil(L); return 1; }\n'
+                    'static int l_F(lua_State* L) { lua_pushnumber(L, x); return 1; }\n'
                     'void reg(S& s) { s.register_function("A", l_A); s.register_function("B", l_B);\n'
                     '  s.register_function("C", [](lua_State*) { return 0; }); }\n'
-                    'static const luaL_Reg m[] = {{"D", lua_stubs::noop}, {"E", l_B}};\n'}
+                    'static const luaL_Reg m[] = {{"D", lua_stubs::noop}, {"E", l_F}};\n'
+                    'void raw(lua_State* L) {\n'
+                    '  lua_pushstring(L, "R"); lua_pushcfunction(L, l_A);\n'
+                    '  lua_rawset(L, LUA_GLOBALSINDEX);\n'
+                    '  lua_pushstring(L, "N");\n'
+                    '  lua_pushcfunction(L, +[](lua_State* c) { lua_pushnil(c); return 1; });\n'
+                    '  lua_rawset(L, LUA_GLOBALSINDEX);\n'
+                    '  lua_pushstring(L, "G"); lua_pushcfunction(L, l_F);\n'
+                    '  lua_rawset(L, LUA_GLOBALSINDEX); }\n'
+                    'constexpr UserStandIn k[] = {{"P", Command{}}, {"Q", ReturnsBool{false}},\n'
+                    '                             {"__w", GlobalString{"us"}}};\n'}
     got = stubs_of(src)
-    want = {"A l_A", "C <lambda>", "D noop"}
+    want = {"A l_A", "B l_B", "C <lambda>", "D noop", "R l_A", "N <lambda>", "P Command",
+            "Q ReturnsBool", "__w GlobalString"}
     if got != want:
         print(f"self-test: stubs_of gave {sorted(got)}, want {sorted(want)}")
         return 1

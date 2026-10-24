@@ -1,7 +1,7 @@
-# Lua bindings that do nothing and are right to (tools/check_lua_stubs.py),
-# "<Lua name> <C++ function>  # why"
+# Lua bindings that do nothing, or answer a constant, and are right to
+# (tools/check_lua_stubs.py), "<Lua name> <C++ function>  # why"
 #
-# Moho's own does nothing, or there is nothing here for it to do.
+# Moho's own does nothing or answers the same, or there is nothing here for it to do.
 AudioSetLanguage stub_noop  # the sim state's: the sim plays no sound (the UI state's is real)
 KillThread l_KillThread  # the stand-in for states without threads; the sim's is real
 AddCommandFeedbackBlip l_AddCommandFeedbackBlip  # the stand-in for a UI state without a renderer; user_bindings.cpp's draws it
@@ -22,3 +22,28 @@ SetupBuildBones stub_noop  # Unit.lua defines it
 TurnOffPoolAI <lambda>  # platoon.lua defines it
 ResetSyncTable stub_noop  # SimSync.lua defines it
 SetIgnoreArmyCap l_SetIgnoreArmyCap  # not Moho's: retail's AIBrain.IgnoreArmyUnitCap calls it
+GetSimTicksPerSecond l_GetSimTicksPerSecond  # Moho's answers 10 too (faf-re cfunc_GetSimTicksPerSecondL)
+SecondsPerTick l_SecondsPerTick  # the blueprint phase's and the UI's; a tick is a tenth of a second, as Moho's answers
+GetNumRootFrames l_GetNumRootFrames  # the engine draws one head, so one root frame
+GetTargetHead frame_GetTargetHead  # one head: every frame's is 0
+IsSignedInToSteam l_IsSignedInToSteam  # there is no Steam here
+Hide <lambda>  # the stand-in cursor before one is set: nothing to hide
+Show <lambda>  # the stand-in cursor before one is set: nothing to show
+SetProcessPriority l_SetProcessPriority  # not Moho's: FAF's executable's, init_faf.lua asks for it; the OS keeps the process's priority
+GetProcessAffinityMask l_GetProcessAffinityMask  # not Moho's: as SetProcessPriority
+SetProcessAffinityMask l_SetProcessAffinityMask  # not Moho's: as SetProcessPriority
+#
+# The blueprint phase's stand-ins: the sim's and the UI's real bindings
+# replace them before a script of theirs runs.
+ForkThread l_ForkThread  # the stand-in for states without threads; the sim's and the UI's are real
+GetFocusArmy l_GetFocusArmy  # the sim's and the UI's are real
+GetGameTimeSeconds l_GetGameTimeSeconds  # the sim's and the UI's are real
+SessionIsReplay l_SessionIsReplay  # the sim's and the UI's are real
+IsDestroyed l_IsDestroyed  # the sim's and the UI's are real
+EntityCategoryContains l_EntityCategoryContains  # the sim's and the UI's are real
+EntityCategoryFilterDown l_EntityCategoryFilterDown  # the sim's and the UI's are real
+EntityCategoryGetUnitList l_EntityCategoryGetUnitList  # the sim's and the UI's are real
+#
+# The user state's globals its init script sets before any script reads them.
+__language GlobalString  # userInit.lua sets it from the player's options
+__installedlanguages GlobalStrings  # FAF's userInit.lua sets it from /loc; retail's reads none

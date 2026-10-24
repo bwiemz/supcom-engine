@@ -3,12 +3,18 @@
 #include "lua/binding_coverage.hpp"
 #include "lua/engine_bindings.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/lua_stubs.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/user_stand_ins.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
 
 #include <set>
 #include <string>
+
+extern "C" {
+#include <lua.h>
+}
 
 using namespace osc::lua::coverage;
 
@@ -198,4 +204,56 @@ TEST_CASE("coverage reports a Moho user function the user state lacks", "[covera
     add_moho_user_gaps(bound, moho_user, globals);
     CHECK(bound.missing_globals.empty());
     CHECK(diff_against_baseline(bound, parse_baseline("")).new_gaps.empty());
+}
+
+TEST_CASE("coverage reports stand-ins apart from bindings", "[coverage]") {
+    // A global bound only to a stand-in answering a constant is neither a
+    // binding (it raises no covered count) nor a gap: it is listed apart.
+    auto r = scan(R"lua(
+        Real()
+        RestartSession()
+        Missing()
+    )lua");
+    const std::set<std::string> globals{"Real"};
+    const std::set<std::string> stand_ins{"RestartSession"};
+    auto report = compute_coverage(r, globals, {}, stand_ins);
+    CHECK(report.globals_covered == 1);
+    REQUIRE(report.stand_in_globals.size() == 1);
+    CHECK(report.stand_in_globals[0].first == "RestartSession");
+    REQUIRE(report.missing_globals.size() == 1);
+    CHECK(report.missing_globals[0].first == "Missing");
+    // Not ratcheted: a baseline with the gap alone passes, its S lines aside
+    const auto delta = diff_against_baseline(report, parse_baseline("G Missing\nS Old\n"));
+    CHECK(delta.new_gaps.empty());
+    CHECK(delta.closed_gaps.empty());
+
+    // Moho's user state has a name the UI state binds to a stand-in: apart too
+    CoverageReport moho;
+    add_moho_user_gaps(moho, {"RestartSession", "GetArmyScore"}, {}, {"RestartSession"});
+    CHECK(format_baseline(moho) == "G GetArmyScore\n");
+    REQUIRE(moho.stand_in_globals.size() == 1);
+    CHECK(moho.stand_in_globals[0].first == "RestartSession");
+}
+
+TEST_CASE("The user state's stand-ins and lua_stubs helpers are constant stand-ins", "[coverage]") {
+    osc::lua::LuaState state;
+    osc::lua::register_user_stand_ins(state);
+    lua_State* L = state.raw();
+    lua_pushstring(L, "Nil");
+    lua_pushcfunction(L, lua_stubs::return_nil);
+    lua_rawset(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, "Real");
+    lua_pushcfunction(L, [](lua_State* s) -> int {
+        lua_pushnumber(s, lua_gettop(s));
+        return 1;
+    });
+    lua_rawset(L, LUA_GLOBALSINDEX);
+    std::set<std::string> constant;
+    collect_constant_stand_ins(L, constant);
+    for (const char* name : {"ClearFrame", "DebugFacilitiesEnabled", "Nil"}) {
+        INFO(name);
+        CHECK(constant.count(name) == 1);
+    }
+    CHECK(constant.count("Real") == 0);
+    CHECK(constant.count("__language") == 0); // a value, not a function
 }

@@ -16,6 +16,7 @@
 #include <vector>
 
 struct lua_State;
+using lua_CFunction = int (*)(lua_State*);
 
 namespace osc::vfs {
 class VirtualFileSystem;
@@ -43,15 +44,23 @@ struct CoverageReport {
     /// (name, first location), sorted by name.
     std::vector<std::pair<std::string, std::string>> missing_globals;
     std::vector<std::pair<std::string, std::string>> missing_methods;
+    /// Globals bound only to a stand-in answering a constant (or nothing):
+    /// neither missing nor covered, reported apart.
+    std::vector<std::pair<std::string, std::string>> stand_in_globals;
     size_t globals_referenced = 0;
     size_t methods_referenced = 0;
+    /// Referenced globals a real binding provides.
+    size_t globals_covered = 0;
 };
 
 /// Referenced names that are neither defined in Lua nor registered.
-/// Methods are matched by name only (no class attribution).
+/// Methods are matched by name only (no class attribution). A global that
+/// is not registered but in `stand_in_globals` goes to the report's
+/// stand-ins, not its gaps.
 CoverageReport compute_coverage(const LuaReferences& refs,
                                 const std::set<std::string>& registered_globals,
-                                const std::set<std::string>& registered_methods);
+                                const std::set<std::string>& registered_methods,
+                                const std::set<std::string>& stand_in_globals = {});
 
 /// Add every global name and every engine-provided method name visible in L.
 void collect_registered(lua_State* L, std::set<std::string>& globals,
@@ -60,6 +69,14 @@ void collect_registered(lua_State* L, std::set<std::string>& globals,
 /// Add the globals of L still bound to a blueprint-phase stand-in: they are
 /// missing there, whatever another state binds
 void collect_stand_ins(lua_State* L, std::set<std::string>& globals);
+
+/// Whether `f` answers a constant, or nothing, whatever it is asked: a
+/// lua_stubs:: helper (noop, return_nil, return_false, ...) or one of the
+/// user state's stand-ins (is_user_stand_in).
+bool is_constant_stand_in(lua_CFunction f);
+
+/// Add the globals of L bound to a constant stand-in.
+void collect_constant_stand_ins(lua_State* L, std::set<std::string>& globals);
 
 /// Baseline entries are "G Name" / "M Name" lines; '#' starts a comment.
 /// (A names-only list, one name a line, reads the same way.)
@@ -72,8 +89,11 @@ inline constexpr const char* kMohoUserState = "Moho's user state";
 /// functions Moho's user state defines) that `ui_globals` lacks: the engine
 /// is to define them whether or not a game script calls one. A name the
 /// scripts call and the engine lacks is already there, at its call site.
+/// One the UI state binds to a stand-in (`ui_stand_ins`) goes to the
+/// report's stand-ins instead.
 void add_moho_user_gaps(CoverageReport& report, const std::set<std::string>& moho_user,
-                        const std::set<std::string>& ui_globals);
+                        const std::set<std::string>& ui_globals,
+                        const std::set<std::string>& ui_stand_ins = {});
 
 /// Render a report as baseline lines (sorted "G ..." then "M ...").
 std::string format_baseline(const CoverageReport& report);

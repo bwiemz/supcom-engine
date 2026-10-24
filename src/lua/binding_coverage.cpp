@@ -1,5 +1,7 @@
 #include "lua/binding_coverage.hpp"
 #include "lua/engine_bindings.hpp"
+#include "lua/lua_stubs.hpp"
+#include "lua/user_stand_ins.hpp"
 
 #include "vfs/virtual_file_system.hpp"
 
@@ -258,14 +260,16 @@ void scan_lua_source(std::string_view source, std::string_view file,
 
 CoverageReport compute_coverage(const LuaReferences& refs,
                                 const std::set<std::string>& registered_globals,
-                                const std::set<std::string>& registered_methods) {
+                                const std::set<std::string>& registered_methods,
+                                const std::set<std::string>& stand_in_globals) {
     CoverageReport report;
     report.globals_referenced = refs.global_calls.size();
     report.methods_referenced = refs.method_calls.size();
     for (const auto& [name, where] : refs.global_calls) {
-        if (!refs.defined.count(name) && !registered_globals.count(name)) {
-            report.missing_globals.emplace_back(name, where);
-        }
+        if (refs.defined.count(name)) continue;
+        if (registered_globals.count(name)) ++report.globals_covered;
+        else if (stand_in_globals.count(name)) report.stand_in_globals.emplace_back(name, where);
+        else report.missing_globals.emplace_back(name, where);
     }
     for (const auto& [name, where] : refs.method_calls) {
         if (!refs.defined.count(name) && !registered_methods.count(name)) {
@@ -280,6 +284,27 @@ void collect_stand_ins(lua_State* L, std::set<std::string>& globals) {
     while (lua_next(L, LUA_GLOBALSINDEX) != 0) {
         if (lua_type(L, -2) == LUA_TSTRING && lua_iscfunction(L, -1) &&
             is_thread_stand_in(lua_tocfunction(L, -1))) {
+            globals.insert(lua_tostring(L, -2));
+        }
+        lua_pop(L, 1);
+    }
+}
+
+bool is_constant_stand_in(lua_CFunction f) {
+    using namespace lua_stubs;
+    for (const lua_CFunction stub :
+         {&noop, &return_nil, &return_false, &return_true, &return_zero, &return_one,
+          &return_empty_table, &return_empty_string, &return_1000}) {
+        if (f == stub) return true;
+    }
+    return is_user_stand_in(f);
+}
+
+void collect_constant_stand_ins(lua_State* L, std::set<std::string>& globals) {
+    lua_pushnil(L);
+    while (lua_next(L, LUA_GLOBALSINDEX) != 0) {
+        if (lua_type(L, -2) == LUA_TSTRING && lua_iscfunction(L, -1) &&
+            is_constant_stand_in(lua_tocfunction(L, -1))) {
             globals.insert(lua_tostring(L, -2));
         }
         lua_pop(L, 1);
@@ -349,14 +374,18 @@ std::set<std::string> parse_baseline(std::string_view text) {
 }
 
 void add_moho_user_gaps(CoverageReport& report, const std::set<std::string>& moho_user,
-                        const std::set<std::string>& ui_globals) {
+                        const std::set<std::string>& ui_globals,
+                        const std::set<std::string>& ui_stand_ins) {
     std::set<std::string> listed;
     for (const auto& [name, where] : report.missing_globals) listed.insert(name);
+    for (const auto& [name, where] : report.stand_in_globals) listed.insert(name);
     for (const auto& name : moho_user) {
-        if (!ui_globals.count(name) && !listed.count(name))
-            report.missing_globals.emplace_back(name, kMohoUserState);
+        if (ui_globals.count(name) || listed.count(name)) continue;
+        auto& into = ui_stand_ins.count(name) ? report.stand_in_globals : report.missing_globals;
+        into.emplace_back(name, kMohoUserState);
     }
     std::sort(report.missing_globals.begin(), report.missing_globals.end());
+    std::sort(report.stand_in_globals.begin(), report.stand_in_globals.end());
 }
 
 std::string format_baseline(const CoverageReport& report) {
@@ -368,13 +397,18 @@ std::string format_baseline(const CoverageReport& report) {
 
 BaselineDelta diff_against_baseline(const CoverageReport& report,
                                     const std::set<std::string>& baseline) {
+    // The gaps alone: a report's "S" lines (its stand-ins) are not ratcheted
+    std::set<std::string> gaps;
+    for (const auto& line : baseline) {
+        if (line.rfind("G ", 0) == 0 || line.rfind("M ", 0) == 0) gaps.insert(line);
+    }
     std::set<std::string> now;
     for (const auto& [name, where] : report.missing_globals) now.insert("G " + name);
     for (const auto& [name, where] : report.missing_methods) now.insert("M " + name);
     BaselineDelta delta;
-    std::set_difference(now.begin(), now.end(), baseline.begin(), baseline.end(),
+    std::set_difference(now.begin(), now.end(), gaps.begin(), gaps.end(),
                         std::back_inserter(delta.new_gaps));
-    std::set_difference(baseline.begin(), baseline.end(), now.begin(), now.end(),
+    std::set_difference(gaps.begin(), gaps.end(), now.begin(), now.end(),
                         std::back_inserter(delta.closed_gaps));
     return delta;
 }
@@ -412,18 +446,36 @@ int run_coverage_report(lua_State* sim_L, lua_State* ui_L, const vfs::VirtualFil
         lua_settop(sim_L, top);
     }
 
-    std::set<std::string> globals;
+    // A global is covered where a state binds it for real; one bound only to
+    // a constant stand-in (in every state that has it) is reported apart.
     std::set<std::string> methods;
-    if (sim_L) collect_registered(sim_L, globals, methods);
-    if (ui_L) collect_registered(ui_L, globals, methods);
+    std::set<std::string> sim_globals;
+    std::set<std::string> ui_globals;
+    if (sim_L) collect_registered(sim_L, sim_globals, methods);
+    if (ui_L) collect_registered(ui_L, ui_globals, methods);
+    std::set<std::string> sim_constant;
+    std::set<std::string> ui_constant;
+    if (sim_L) collect_constant_stand_ins(sim_L, sim_constant);
+    if (ui_L) collect_constant_stand_ins(ui_L, ui_constant);
+    for (const auto& name : sim_constant) sim_globals.erase(name);
+    for (const auto& name : ui_constant) ui_globals.erase(name);
+    std::set<std::string> globals = sim_globals;
+    globals.insert(ui_globals.begin(), ui_globals.end());
     std::set<std::string> stand_ins;
     if (sim_L) collect_stand_ins(sim_L, stand_ins);
     if (ui_L) collect_stand_ins(ui_L, stand_ins);
     for (const auto& name : stand_ins) {
         globals.erase(name);
+        ui_globals.erase(name);
+    }
+    std::set<std::string> constant;
+    for (const auto* state_constant : {&sim_constant, &ui_constant}) {
+        for (const auto& name : *state_constant) {
+            if (!globals.count(name)) constant.insert(name);
+        }
     }
 
-    CoverageReport report = compute_coverage(refs, globals, methods);
+    CoverageReport report = compute_coverage(refs, globals, methods, constant);
     // Moho's user-state functions, called by a game script or not: the UI
     // state is to define each (its own globals, stand-ins aside).
     if (!moho_user_path.empty() && ui_L) {
@@ -434,21 +486,16 @@ int run_coverage_report(lua_State* sim_L, lua_State* ui_L, const vfs::VirtualFil
         }
         std::ostringstream names;
         names << in.rdbuf();
-        std::set<std::string> ui_globals;
-        std::set<std::string> ui_methods;
-        collect_registered(ui_L, ui_globals, ui_methods);
-        std::set<std::string> ui_stand_ins;
-        collect_stand_ins(ui_L, ui_stand_ins);
-        for (const auto& name : ui_stand_ins) ui_globals.erase(name);
         const std::set<std::string> moho_user = parse_baseline(names.str());
-        add_moho_user_gaps(report, moho_user, ui_globals);
+        add_moho_user_gaps(report, moho_user, ui_globals, ui_constant);
         spdlog::info("Binding coverage: the UI state measured against Moho's {} user-state "
                      "functions",
                      moho_user.size());
     }
     spdlog::info("Binding coverage: {} script files; {} global and {} method names "
-                 "called; {} globals and {} methods missing",
+                 "called; {} globals bound, {} to stand-ins; {} globals and {} methods missing",
                  files, report.globals_referenced, report.methods_referenced,
+                 report.globals_covered, report.stand_in_globals.size(),
                  report.missing_globals.size(), report.missing_methods.size());
 
     std::ofstream out(report_path);
@@ -457,13 +504,16 @@ int run_coverage_report(lua_State* sim_L, lua_State* ui_L, const vfs::VirtualFil
         return 1;
     }
     out << "# Engine bindings called by the game's scripts, or Moho's user state\n"
-           "# has, but not provided. Format: <G|M> <name>   # first call site.\n"
+           "# has, but not provided. Format: <G|M|S> <name>   # first call site.\n"
            "# Generated by opensupcom --binding-coverage; G = global function,\n"
-           "# M = method.\n";
+           "# M = method, S = a global bound only to a stand-in answering a\n"
+           "# constant (not a gap the baseline lists).\n";
     for (const auto& [name, where] : report.missing_globals)
         out << "G " << name << "   # " << where << "\n";
     for (const auto& [name, where] : report.missing_methods)
         out << "M " << name << "   # " << where << "\n";
+    for (const auto& [name, where] : report.stand_in_globals)
+        out << "S " << name << "   # " << where << "\n";
 
     if (baseline_path.empty()) return 0;
     std::ifstream bin(baseline_path);
