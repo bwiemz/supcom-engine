@@ -271,6 +271,42 @@ void test_resource_icon_render(TestContext& ctx) {
             "Test 8: at ui_DepositIconScale 2 the icon is twice as wide about its centre, and "
             "back at 1");
 
+    // While the view spins (Space held across two motions, nearer than zoom
+    // 125, where Space spins) it draws none, as CUIWorldView::Render gates
+    // them; let go, the icon is back
+    {
+        renderer::Camera& cam = r.camera();
+        (void)shots.shoot(terrain, hx, hz, 90.0f);
+        const bool at_rest = icon_quad(r, *hydro, terrain, size) != nullptr;
+        const f32 heading = cam.heading();
+        const f32 pitch = cam.pitch();
+        // (the harness's frames take no input: the camera's off between)
+        const auto drive = [&](const renderer::CameraInput& in) {
+            cam.set_input_enabled(true);
+            cam.apply(in, 0.0);
+            cam.set_input_enabled(false);
+        };
+        renderer::CameraInput spin;
+        spin.space = true;
+        spin.mouse_x = 100.0f;
+        drive(spin); // the first motion arms it
+        spin.mouse_x = 104.0f;
+        drive(spin);
+        shots.redraw();
+        const bool spinning = cam.spinning();
+        const size_t spun = r.resource_icons().quads().size();
+        drive(renderer::CameraInput{}); // let go
+        cam.set_heading(heading);
+        cam.set_pitch(pitch);
+        // A fresh shot of the view: the release's turn back is under way, which
+        // moves the drawn view by a hair, and the icon's pixel is matched exactly
+        (void)shots.shoot(terrain, hx, hz, 90.0f);
+        t.check(at_rest && spinning && spun == 0 && icon_quad(r, *hydro, terrain, size) != nullptr,
+                fmt::format("Test 8b: at zoom {:.0f} the hydrocarbon deposit's icon shows ({}), "
+                            "while the view spins ({}) none ({} quads), let go it is back",
+                            cam.zoom(), at_rest, spinning, spun));
+    }
+
     OffscreenShots retina(ctx, 2.0f);
     bool device_sized = false;
     if (retina.ok()) {

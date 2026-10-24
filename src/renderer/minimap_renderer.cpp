@@ -354,7 +354,12 @@ void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
         emit_quad(ax, ay, aw, ah, 1.0f, 1.0f, 1.0f, 1.0f, bg_ds);
     }
 
-    if (resources && view.cur()) {
+    // The icon pass, the deposits' and units' icons (not the projectiles'):
+    // none with cam_Free, as CUIWorldView::Render gates the minimap's too
+    // (`camera` is the world's, whose cam_Free is everyone's; the minimap's
+    // own view takes no spin)
+    const bool icon_pass = !camera.free();
+    if (icon_pass && resources && view.cur()) {
         for (const ResourceIcon& icon :
              minimap_resource_icons(view.cur()->deposits, area_, map_w_, map_h_, *resources)) {
             const GPUTexture* tex =
@@ -371,7 +376,8 @@ void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
     }
 
     if (icons_) {
-        icons_->paint_map(view, area_, map_w_, map_h_, selected_ids, tex_cache, L, quads_);
+        icons_->paint_map(view, area_, map_w_, map_h_, selected_ids, tex_cache, L, quads_,
+                          icon_pass);
     }
 
     // --- Camera frustum box ---

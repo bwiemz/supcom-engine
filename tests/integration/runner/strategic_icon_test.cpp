@@ -119,6 +119,9 @@ void test_strategic_icons(TestContext& ctx) {
     renderer::Renderer& r = shots.renderer();
     r.set_fog_enabled(true);
     r.set_player_army(0);
+    // Moho draws no strategic icons with cam_Free on (CUIWorldView::Render),
+    // which the harness's views have
+    r.camera().set_free(false);
 
     const std::unordered_set<u32> selection = {picked};
     std::vector<Spot> scry;
@@ -376,6 +379,61 @@ void test_strategic_icons(TestContext& ctx) {
             "Test 14: never-seen blips' minimap icons are generic, unidentified");
     t.check(minimap_icons_at(unbuilt).empty(),
             "Test 15: the power generator being built has no minimap icon");
+
+    // Test 15b: with cam_Free on neither the view nor the minimap draws a
+    // unit's icon, nor a blip's (CUIWorldView::Render's gate, the minimap's
+    // too); off, they are back
+    {
+        r.camera().set_free(true);
+        f = next();
+        const size_t free_icons = r.strategic_icons().quads().size();
+        const bool free_map = minimap_icons_at(tank).empty() && minimap_icons_at(scout).empty() &&
+                              minimap_icons_at(e_eng).empty() && minimap_icons_at(e_gen).empty();
+        r.camera().set_free(false);
+        f = next();
+        t.check(free_icons == 0 && free_map && !icons_at(f, e_eng).empty() &&
+                    !minimap_icons_at(tank).empty(),
+                fmt::format("Test 15b: with cam_Free on the view draws no strategic icons ({}) "
+                            "and the minimap {}; off, they are back",
+                            free_icons, free_map ? "none" : "some"));
+    }
+
+    // Test 15c: while the view spins (Space held across two motions, near
+    // enough that Space spins) it draws none, and let go, they are back
+    {
+        renderer::Camera& cam = r.camera();
+        cam.set_target(sx, sz + 84); // the blips, whose icons show at any zoom
+        cam.set_eye_distance(90.0f);
+        f = next();
+        const size_t at_rest = r.strategic_icons().quads().size();
+        const f32 heading = cam.heading();
+        const f32 pitch = cam.pitch();
+        // (the harness's frames take no input: the camera's off between)
+        const auto drive = [&](const renderer::CameraInput& in) {
+            cam.set_input_enabled(true);
+            cam.apply(in, 0.0);
+            cam.set_input_enabled(false);
+        };
+        renderer::CameraInput spin;
+        spin.space = true;
+        spin.mouse_x = 100.0f;
+        drive(spin); // the first motion arms it
+        spin.mouse_x = 104.0f;
+        drive(spin);
+        f = next();
+        const bool spinning = cam.spinning();
+        const size_t spun = r.strategic_icons().quads().size();
+        drive(renderer::CameraInput{}); // let go
+        cam.set_heading(heading);
+        cam.set_pitch(pitch);
+        f = next();
+        const size_t after = r.strategic_icons().quads().size();
+        t.check(at_rest > 0 && spinning && spun == 0 && after > 0 && !cam.spinning(),
+                fmt::format("Test 15c: at zoom {:.0f}, {} icons at rest, {} while the view spins "
+                            "({}), {} let go",
+                            cam.zoom(), at_rest, spun, spinning ? "spinning" : "not spinning",
+                            after));
+    }
 
     run_lua(ctx, "__osc_ic_bolt = __osc_ic_tank:CreateProjectile("
                  "'/projectiles/TDFHiroLaser01/TDFHiroLaser01_proj.bp', 0, 3, 0, 0, 0, 1)\n"
@@ -737,6 +795,7 @@ void test_strategic_icons(TestContext& ctx) {
     }
     renderer::Renderer& big = retina.renderer();
     big.set_player_army(0);
+    big.camera().set_free(false); // (as above: cam_Free draws no icons)
     const auto tank_blocks = [&](i32 k) {
         std::array<int, 2> n{};
         const std::string rest = icon_texture(ctx, "uel0201", "rest");

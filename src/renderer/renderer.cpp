@@ -3638,7 +3638,7 @@ void Renderer::update_view_effects(u32 fi, const std::array<f32, 16>& vp, const 
     projectile_icon_renderer_.update(strategic_icon_renderer_.projectile_icons(), fi);
 
     {
-        bool resources = !view_camera_->free() && view_resources_;
+        bool resources = view_camera_->icons_visible() && view_resources_;
         if (!split_ && L) {
             lua_pushstring(L, "__osc_world_view");
             lua_rawget(L, LUA_REGISTRYINDEX);

@@ -647,6 +647,10 @@ void test_cartographic_minimap(TestContext& ctx) {
             }
             return n;
         };
+        // (with cam_Free on, which the harness's views have, Moho's world
+        // views draw no deposit icons, the minimap's neither)
+        r.camera().set_free(false);
+        (void)shots.grab();
         const int plain = deposit_icons(1.0f);
         r.set_deposit_icon_scale(2.0f);
         (void)shots.grab();
@@ -655,6 +659,13 @@ void test_cartographic_minimap(TestContext& ctx) {
         t.check(plain > 0 && scaled == plain,
                 fmt::format("ui_DepositIconScale 2 doubles the map's {} deposit icons ({} so)",
                             plain, scaled));
+        r.camera().set_free(true);
+        (void)shots.grab();
+        const int free_view = deposit_icons(1.0f);
+        t.check(plain > 0 && free_view == 0,
+                fmt::format("with cam_Free on the map draws no deposit icons ({}; {} off), as "
+                            "CUIWorldView::Render gates the minimap's",
+                            free_view, plain));
     }
 
     // In a game, the minimap's frame takes the range rings and the fog as

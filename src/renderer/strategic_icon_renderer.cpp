@@ -722,7 +722,9 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
         return world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh, sx, sy) && sx >= -32.0f &&
                sx <= sw + 32.0f && sy >= -32.0f && sy <= sh + 32.0f;
     };
-    if (nis_icons_) {
+    // None while the view spins or is free (CUIWorldView::Render's gate);
+    // the projectile icons below draw regardless
+    if (nis_icons_ && camera.icons_visible()) {
         // An icon fades in with the camera out past its mesh's IconFadeInZoom
         // (no further than 0.89 of the farthest zoom, as Moho caps it).
         const f32 fade_cap = camera.max_zoom() * 0.89f;
@@ -776,7 +778,7 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
 void StrategicIconRenderer::paint_map(const sim::FrameView& view, const MapArea& area, f32 map_w,
                                       f32 map_h, const std::unordered_set<u32>* selected_ids,
                                       TextureCache& tex_cache, lua_State* L,
-                                      std::vector<UIQuad>& out) {
+                                      std::vector<UIQuad>& out, bool icon_pass) {
     load_generic_icons(L);
     if (map_w <= 0.0f || map_h <= 0.0f) {
         return;
@@ -788,7 +790,7 @@ void StrategicIconRenderer::paint_map(const sim::FrameView& view, const MapArea&
         sy = area.y + nz * area.h;
         return nx >= 0.0f && nx <= 1.0f && nz >= 0.0f && nz <= 1.0f;
     };
-    if (nis_icons_) {
+    if (nis_icons_ && icon_pass) {
         const Runs runs = collect(view, selected_ids, tex_cache, L, false, 0.0f, 0.0f, place);
         emit_runs(
             runs, tex_cache,

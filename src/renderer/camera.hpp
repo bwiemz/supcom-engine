@@ -154,6 +154,14 @@ public:
     /// and a spin isn't reverted when let go.
     void set_free(bool free) { free_ = free; }
     bool free() const { return free_; }
+    /// The Space spin is on (Moho's mCameraRotationActive): from its first
+    /// motion until it ends.
+    bool spinning() const { return spinning_; }
+    /// Whether its view draws the icon pass, its deposit icons, strategic
+    /// icons and unit bars: neither spinning nor free, the one gate of
+    /// CUIWorldView::Render (the projectile icons, command splats and
+    /// command graph draw regardless).
+    bool icons_visible() const { return !spinning_ && !free_; }
     void set_max_zoom_mult(f32 mult);
 
     // --- Moves (M217g) ---

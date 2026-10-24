@@ -84,10 +84,12 @@ public:
                 f32 frame_seconds = 0.0f);
 
     /// A minimap's icons, the map drawn at `area`: its own world view through
-    /// the same pass (faf-re CUIWorldView::Render), fully zoomed out.
+    /// the same pass (faf-re CUIWorldView::Render), fully zoomed out. The
+    /// units' only with `icon_pass`, that view's gate; the projectiles'
+    /// regardless.
     void paint_map(const sim::FrameView& view, const MapArea& area, f32 map_w, f32 map_h,
                    const std::unordered_set<u32>* selected_ids, TextureCache& tex_cache,
-                   lua_State* L, std::vector<UIQuad>& out);
+                   lua_State* L, std::vector<UIQuad>& out, bool icon_pass = true);
 
     /// Forget what the last game's blueprints and strategicIcons.lua said:
     /// the next game's may differ (a scene rebuilt for it).

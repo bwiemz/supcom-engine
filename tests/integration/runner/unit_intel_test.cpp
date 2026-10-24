@@ -116,6 +116,9 @@ void test_unit_intel(TestContext& ctx) {
     renderer::Renderer& r = shots.renderer();
     r.set_fog_enabled(true);
     r.set_player_army(0);
+    // Moho draws no strategic icons or lifebars with cam_Free on
+    // (CUIWorldView::Render), which the harness's views have
+    r.camera().set_free(false);
     // The cursor over the near engineer: Moho draws another army's lifebar
     // only for the unit hovered, and only while its health is seen.
     r.set_selection_marks(near_id, std::nullopt);

@@ -169,6 +169,9 @@ void test_options(TestContext& ui, TestContext& sim, const std::function<void(in
         u32 on = 0;
         u32 off = 0;
         if (e) {
+            // (with cam_Free on, which the harness's views have, Moho draws
+            // no icons at all)
+            r.camera().set_free(false);
             console->execute(L, "ui_AlwaysRenderStrategicIcons on");
             (void)shots.shoot(*terrain, e->position().x, e->position().z, 40.0f);
             shots.redraw();
@@ -176,6 +179,7 @@ void test_options(TestContext& ui, TestContext& sim, const std::function<void(in
             console->execute(L, "ui_AlwaysRenderStrategicIcons off");
             shots.redraw();
             off = r.strategic_icons().quad_count();
+            r.camera().set_free(true);
         }
         t.check(e && on > 0 && off == 0,
                 fmt::format("Test 4: near the ACU, {} icons drawn with the icons always on, {} "

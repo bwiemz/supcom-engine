@@ -478,6 +478,28 @@ TEST_CASE("Space spins the view by the pointer's relative motion, not its positi
     CHECK_THAT(free_pointer.heading(), WithinAbs(Camera::kPi - Camera::kPi / 4.0f, 1e-4));
 }
 
+TEST_CASE("A view draws its icon pass only while it neither spins nor is free", "[camera]") {
+    // CUIWorldView::Render: !mCameraRotationActive && !cam_Free, the
+    // rotation from the spin's first motion until Space is let go
+    const map::Heightmap ground = flat();
+    Camera cam = camera_over(ground);
+    cam.set_zoom(60.0f);
+    CHECK(cam.icons_visible());
+    CameraInput in;
+    in.space = true;
+    cam.apply(in, 0.0); // Space alone, no motion: nothing yet
+    CHECK(cam.icons_visible());
+    in.mouse_x = 100.0f;
+    cam.apply(in, 0.0); // the first motion
+    CHECK(cam.spinning());
+    CHECK_FALSE(cam.icons_visible());
+    in.space = false;
+    cam.apply(in, 0.0);
+    CHECK(cam.icons_visible());
+    cam.set_free(true);
+    CHECK_FALSE(cam.icons_visible());
+}
+
 TEST_CASE("The middle button drags the ground by the pointer's relative motion", "[camera]") {
     // CameraDragger pins the pointer from the press and pans by the scrub
     // (CameraDragger::DragMove), as far as the drag of as many pixels did

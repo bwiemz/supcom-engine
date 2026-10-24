@@ -167,6 +167,11 @@ Frame order: `UpdateBasis`, then `UpdateCoords`.
     once. It is used by `MoveTo`, `SnapTo`, `SetZoom` and `RestoreSettings`
     (which then reverts).
   - `set_free` is `cam_Free`.
+  - `icons_visible()` is `CUIWorldView::Render`'s one gate over a view's
+    icon pass (its deposit icons, strategic icons and unit bars): neither
+    `spinning()` (`mCameraRotationActive`, from the Space spin's first
+    motion until it ends) nor free. The minimap's gate is `cam_Free`
+    alone, as its view takes no spin (amended for #810).
   - `set_eye_distance(d)` solves for the zoom that puts the eye `d` from the
     focus. The render tests' views use it.
   - `update(window)` gathers a `CameraInput` from GLFW, and `apply(input)`

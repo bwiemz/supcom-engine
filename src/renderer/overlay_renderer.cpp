@@ -370,7 +370,10 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     // showed as a square.
     events.deaths.clear();
 
-    add_unit_overlays(view, snap, camera, vp_matrix, selected_ids, frustum, sw, sh, cam_dist);
+    // The unit bars are the icon pass's (RenderStrategicIcons): none while
+    // the view spins or is free (CUIWorldView::Render)
+    if (camera.icons_visible())
+        add_unit_overlays(view, snap, camera, vp_matrix, selected_ids, frustum, sw, sh, cam_dist);
     if (selected_ids && !selected_ids->empty() && cam_dist < 600.0f)
         add_intel_rings(view, snap, vp_matrix, selected_ids, sw, sh);
     if (cam_dist < 600.0f) add_beams(view, vp_matrix, sw, sh, eye_x, eye_z);
