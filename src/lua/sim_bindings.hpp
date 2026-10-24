@@ -32,7 +32,8 @@ void register_prefetch_bindings(LuaState& state);
 /// + - * set operators) and ParseEntityCategory on a state without sim
 /// bindings. Moho gives the UI
 /// state one too: the game UI's range overlays, selection helpers and
-/// construction tabs build category expressions.
+/// construction tabs build category expressions. Its ParseEntityCategory is
+/// the user state's, which raises with no session (session_active).
 void register_category_bindings(LuaState& state);
 
 /// Push the sim state's shared Vector metatable (x/y/z alias [1]/[2]/[3]),

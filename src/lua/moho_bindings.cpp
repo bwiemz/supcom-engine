@@ -2579,12 +2579,16 @@ void request_focus_army(lua_State* L, int army) {
 
 } // namespace
 
-/// SetFocusArmy(army) -- 1-based, -1 = observer. During a world session it
-/// is a request the next sim beat applies (SyncQueue), as Moho's session
-/// does, so the sim and the UI's OnSync see the change together -- if the
-/// player may watch that army (request_focus_army); with no session there
-/// is nothing to wait for, so it applies at once.
+/// SetFocusArmy(army) -- 1-based, -1 = observer. While FA's game interface
+/// runs it is a request the next sim beat applies (SyncQueue), as Moho's
+/// session does, so the sim and the UI's OnSync see the change together --
+/// if the player may watch that army (request_focus_army); before it (a
+/// game loading) there is nothing to wait for, so it applies at once. With
+/// no session at all, Moho's error (faf-re cfunc_SetFocusArmyUserL).
 static int l_SetFocusArmy(lua_State* L) {
+    if (lua_gettop(L) != 1)
+        return arg_count_error(L, "SetFocusArmy(armyIndex or -1)", 1, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
     int army = static_cast<int>(luaL_checknumber(L, 1));
     lua_pushstring(L, core::kWorldUiActiveKey);
     lua_rawget(L, LUA_REGISTRYINDEX);
@@ -3254,8 +3258,13 @@ static int ui_category_filter(lua_State* L, bool keep_matches) {
     return 1;
 }
 
-/// EntityCategoryContains(category, unit) — check if a single unit matches (ui_L)
+/// EntityCategoryContains(category, unit) — check if a single unit matches (ui_L).
+/// It and the two filters take two arguments and a session, as Moho's user
+/// versions do (faf-re cfunc_EntityCategoryContainsUserL and the filters').
 static int l_ui_EntityCategoryContains(lua_State* L) {
+    if (lua_gettop(L) != 2)
+        return arg_count_error(L, "See if a unit category contains this unit", 2, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, "EntityCategoryContains: no session loaded");
     std::unordered_set<std::string> cats;
     const bool matches = lua_istable(L, 1) && ui_item_categories(L, 2, cats) &&
                          osc::lua::categories_match(L, 1, cats);
@@ -3265,11 +3274,19 @@ static int l_ui_EntityCategoryContains(lua_State* L) {
 
 /// EntityCategoryFilterDown(category, unitList) — keep matching units (ui_L)
 static int l_ui_EntityCategoryFilterDown(lua_State* L) {
+    if (lua_gettop(L) != 2)
+        return arg_count_error(L, "Filter a list of units to only those found in the category", 2,
+                               lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, "EntityCategoryFilterDown: no session loaded");
     return ui_category_filter(L, true);
 }
 
 /// EntityCategoryFilterOut(category, unitList) — keep non-matching units (ui_L)
 static int l_ui_EntityCategoryFilterOut(lua_State* L) {
+    if (lua_gettop(L) != 2)
+        return arg_count_error(L, "Filter a list of units to exclude those found in the category",
+                               2, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, "EntityCategoryFilterOut: no session loaded");
     return ui_category_filter(L, false);
 }
 
@@ -3361,13 +3378,21 @@ static int push_build_count_request(lua_State* L, const char* func_name) {
 }
 
 /// DecreaseBuildCountInQueue(index, count): the queue display's
-/// right-click (fewer of one of the factory's queued units).
+/// right-click (fewer of one of the factory's queued units). Both take two
+/// arguments and a session (faf-re cfunc_DecreaseBuildCountInQueueL), and
+/// both give the Decrease usage, as Moho's binary does.
 static int l_DecreaseBuildCountInQueue(lua_State* L) {
+    if (lua_gettop(L) != 2)
+        return arg_count_error(L, "DecreaseBuildCountInQueue(queueIndex, count)", 2, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, "No active session!");
     return push_build_count_request(L, sim::kDecreaseBuildCountCallback);
 }
 
 /// IncreaseBuildCountInQueue(index, count): its left-click (more of one).
 static int l_IncreaseBuildCountInQueue(lua_State* L) {
+    if (lua_gettop(L) != 2)
+        return arg_count_error(L, "DecreaseBuildCountInQueue(queueIndex, count)", 2, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, "No active session!");
     return push_build_count_request(L, sim::kIncreaseBuildCountCallback);
 }
 
@@ -3499,14 +3524,7 @@ static int l_WorldIsLoading(lua_State* L) {
     return 1;
 }
 
-/// SessionIsActive() -> boolean: a game session exists -- loading, playing or
-/// at its score screen -- and hasn't been ended (Moho: an active world
-/// session). The front end has none. (Retail's UI gates Quick Save, the
-/// camera zoom and more on it; a fallback had answered false in game too.)
-static int l_ui_SessionIsActive(lua_State* L) {
-    if (lua_gettop(L) != 0)
-        return arg_count_error(L, "Return true iff there is a session currently running", 0,
-                               lua_gettop(L));
+bool session_active(lua_State* L) {
     auto* mgr = get_game_state_mgr(L);
     const auto state = mgr ? mgr->current() : osc::GameState::INIT;
     const bool in_session = state == osc::GameState::LOADING || state == osc::GameState::GAME ||
@@ -3515,7 +3533,19 @@ static int l_ui_SessionIsActive(lua_State* L) {
     // sim (and the scenario its UI reads, SessionGetScenarioInfo) exists,
     // and as the front end comes back, after the sim is gone. Either way
     // FAF's world border looked for a map that wasn't there (OE-145).
-    lua_pushboolean(L, in_session && get_sim(L) != nullptr && !mgr->sim_stopped() ? 1 : 0);
+    return in_session && get_sim(L) != nullptr;
+}
+
+/// SessionIsActive() -> boolean: a game session exists -- loading, playing or
+/// at its score screen -- and hasn't been ended (Moho: an active world
+/// session). The front end has none. (Retail's UI gates Quick Save, the
+/// camera zoom and more on it; a fallback had answered false in game too.)
+static int l_ui_SessionIsActive(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "Return true iff there is a session currently running", 0,
+                               lua_gettop(L));
+    const auto* mgr = get_game_state_mgr(L);
+    lua_pushboolean(L, session_active(L) && mgr && !mgr->sim_stopped() ? 1 : 0);
     return 1;
 }
 
@@ -3528,8 +3558,15 @@ static int l_WorldIsPlaying(lua_State* L) {
 }
 
 /// GameTime() -> seconds of game time. Moho adds the time since the last
-/// tick; this is the tick's.
+/// tick; this is the tick's. With no session, Moho's error (faf-re
+/// cfunc_GameTimeL), as the time queries below.
 static int l_GameTime(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L,
+                               "Get the current game time in seconds. The game time is the "
+                               "simulation time, that stops when the game is paused.",
+                               0, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoActiveSession);
     auto* sim = get_sim(L);
     lua_pushnumber(L, sim ? sim->game_time() : 0.0);
     return 1;
@@ -3684,19 +3721,22 @@ static int l_ui_GetGameTimeSeconds(lua_State* L) {
     if (lua_gettop(L) != 0)
         return arg_count_error(L, "float GetGameTimeSeconds() - returns game time in seconds", 0,
                                lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoActiveSession);
     auto* sim = get_sim(L);
     lua_pushnumber(L, sim ? sim->game_time() : 0.0);
     return 1;
 }
 
 /// GameTick() → integer (current sim tick). Called with an argument, Moho's
-/// count error (faf-re cfunc_GameTickL), as the other time queries here.
+/// count error (faf-re cfunc_GameTickL), as the other time queries here;
+/// then, with no session (the front end), its "No active session".
 static int l_ui_GameTick(lua_State* L) {
     if (lua_gettop(L) != 0)
         return arg_count_error(L,
                                "Get the current game time in ticks. The game time is the "
                                "simulation time, that stops when the game is paused.",
                                0, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoActiveSession);
     auto* sim = get_sim(L);
     lua_pushnumber(L, sim ? sim->tick_count() : 0);
     return 1;
@@ -3704,6 +3744,12 @@ static int l_ui_GameTick(lua_State* L) {
 
 /// GetGameTime() → formatted string "MM:SS"
 static int l_GetGameTime(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L,
+                               "string GetGameTime() - returns a formatted string displaying the "
+                               "time the game has been played",
+                               0, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
     auto* sim = get_sim(L);
     f64 t = sim ? sim->game_time() : 0.0;
     int minutes = static_cast<int>(t) / 60;
@@ -3717,6 +3763,7 @@ static int l_GetGameTime(lua_State* L) {
 /// GetSimRate() → number (sim ticks per second, typically 10)
 static int l_GetSimRate(lua_State* L) {
     if (lua_gettop(L) != 0) return arg_count_error(L, "number GetSimRate()", 0, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
     lua_pushnumber(L, 10.0);
     return 1;
 }
@@ -3772,8 +3819,15 @@ static void push_clock_text(lua_State* L, double seconds) {
     lua_pushstring(L, text);
 }
 
-/// FormatTime(seconds) → "HH:MM:SS" (FAF's logger and replay UI).
+/// FormatTime(seconds) → "HH:MM:SS" (FAF's logger and replay UI). Moho's
+/// asks for a session too (faf-re cfunc_FormatTimeL).
 static int l_FormatTime(lua_State* L) {
+    if (lua_gettop(L) != 1)
+        return arg_count_error(L,
+                               "string FormatTime(seconds) - format a string displaying the time "
+                               "specified in seconds",
+                               1, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
     push_clock_text(L, luaL_checknumber(L, 1));
     return 1;
 }
@@ -4068,6 +4122,7 @@ static int l_SessionResume(lua_State* L) {
 /// IsObserver() → boolean (true if focus army is -1)
 static int l_IsObserver(lua_State* L) {
     if (lua_gettop(L) != 0) return arg_count_error(L, "IsObserver()", 0, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
     lua_pushstring(L, "__osc_focus_army");
     lua_rawget(L, LUA_REGISTRYINDEX);
     int army = lua_isnil(L, -1) ? 0 : static_cast<int>(lua_tonumber(L, -1));

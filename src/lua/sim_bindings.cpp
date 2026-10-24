@@ -1,5 +1,6 @@
 #include "lua/sim_bindings.hpp"
 #include "lua/arg_count.hpp"
+#include "lua/moho_bindings.hpp"
 #include "lua/unit_blueprint.hpp"
 #include "lua/engine_bindings.hpp"
 #include "core/dmath.hpp"
@@ -1994,9 +1995,20 @@ void register_prefetch_bindings(LuaState& state) {
 
 static int l_ParseEntityCategory(lua_State* L); // defined with the category helpers
 
+/// The user state's ParseEntityCategory: the sim's, but one argument and a
+/// session first, as Moho's user version parses with the session's rules
+/// (faf-re cfunc_ParseEntityCategoryUserL).
+static int l_ui_ParseEntityCategory(lua_State* L) {
+    if (lua_gettop(L) != 1)
+        return arg_count_error(L, "parse a string to generate a new entity category", 1,
+                               lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, "ParseEntityCategory: no session loaded");
+    return l_ParseEntityCategory(L);
+}
+
 void register_category_bindings(LuaState& state) {
     setup_categories(state.raw());
-    state.register_function("ParseEntityCategory", l_ParseEntityCategory);
+    state.register_function("ParseEntityCategory", l_ui_ParseEntityCategory);
 }
 
 // ====================================================================

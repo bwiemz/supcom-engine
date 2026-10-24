@@ -3,6 +3,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include "app/support.hpp"
 #include "core/front_end_data.hpp"
+#include "core/game_state.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
@@ -744,6 +745,13 @@ TEST_CASE("UI SetFocusArmy updates focus army registry state", "[frontend][lua]"
     osc::lua::register_moho_bindings(lua, sim);
     osc::lua::register_ui_bindings(lua, ui_registry);
     osc::lua::register_front_end_fallback_bindings(lua);
+    // A game loading: a session (with none, Moho's SetFocusArmy raises), but
+    // no game interface yet, so the focus changes at once.
+    osc::GameStateManager game_state;
+    game_state.transition_to(osc::GameState::LOADING, nullptr);
+    lua_pushstring(lua.raw(), "__osc_game_state_mgr");
+    lua_pushlightuserdata(lua.raw(), &game_state);
+    lua_rawset(lua.raw(), LUA_REGISTRYINDEX);
 
     auto result = lua.do_string(R"(
         SetFocusArmy(2)
@@ -766,6 +774,11 @@ TEST_CASE("UI focus army preserves observer mode", "[frontend][lua]") {
 
     osc::lua::register_moho_bindings(lua, sim);
     osc::lua::register_ui_bindings(lua, ui_registry);
+    osc::GameStateManager game_state; // a game loading, as above
+    game_state.transition_to(osc::GameState::LOADING, nullptr);
+    lua_pushstring(lua.raw(), "__osc_game_state_mgr");
+    lua_pushlightuserdata(lua.raw(), &game_state);
+    lua_rawset(lua.raw(), LUA_REGISTRYINDEX);
 
     auto result = lua.do_string(R"(
         SetFocusArmy(-1)

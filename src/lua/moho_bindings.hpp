@@ -34,6 +34,17 @@ void register_moho_bindings(LuaState& state, sim::SimState& sim);
 /// the camera's move, M217g) to `hook`, which parks the thread or returns.
 void set_ui_wait_hook(lua_State* L, int (*hook)(lua_State*));
 
+/// Whether the UI state `L` has a world session, as Moho's user functions
+/// ask WLD_GetActiveSession(): a game loading with its sim made, playing, or
+/// at its score screen -- after SessionEndGame too, since Moho's session
+/// stays active until the game is left. The front end has none.
+bool session_active(lua_State* L);
+
+/// The errors Moho's user functions raise with no session (faf-re Sim.cpp's
+/// kNoSessionStartedText and kNoActiveSessionText): each raises its own.
+inline constexpr const char* kNoSessionStarted = "No session started.";
+inline constexpr const char* kNoActiveSession = "No active session";
+
 /// Register UI global functions (InternalCreateGroup, InternalCreateFrame, etc.)
 /// and store the UIControlRegistry pointer in Lua registry.
 /// Must be called after register_moho_bindings.

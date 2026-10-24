@@ -398,12 +398,17 @@ TEST_CASE("A player may watch only an army it commands, as Moho's session allows
     // CWldSession::ValidateFocusArmyRequest, in single-player (source 0)
     SourcesWorld w;
     w.number_players();
-    // The UI's state, in a world session
+    // The UI's state, in a world session, its game interface up
     osc::lua::LuaState ui;
     osc::ui::UIControlRegistry registry;
     osc::lua::register_moho_bindings(ui, w.sim);
     osc::lua::register_ui_bindings(ui, registry);
     lua_State* L = ui.raw();
+    osc::GameStateManager game_state;
+    game_state.transition_to(osc::GameState::GAME, nullptr);
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_pushlightuserdata(L, &game_state);
+    lua_rawset(L, LUA_REGISTRYINDEX);
     lua_pushstring(L, osc::core::kWorldUiActiveKey);
     lua_pushboolean(L, 1);
     lua_rawset(L, LUA_REGISTRYINDEX);

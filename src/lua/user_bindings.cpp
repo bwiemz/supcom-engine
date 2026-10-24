@@ -933,8 +933,12 @@ static int l_UnProject(lua_State* L) {
 }
 
 // --- GetMouseWorldPos global (M136a) ---
-// FA calls this as a standalone function: GetMouseWorldPos()
+// FA calls this as a standalone function: GetMouseWorldPos(), in a session
+// (faf-re cfunc_GetMouseWorldPosL reads the session's cursor).
 static int l_GetMouseWorldPos(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "vector GetMouseWorldPos()", 0, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
     // Get WorldView from registry
     lua_pushstring(L, "__osc_world_view");
     lua_rawget(L, LUA_REGISTRYINDEX);

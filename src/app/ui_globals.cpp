@@ -5,10 +5,12 @@
 #include "lua/arg_count.hpp"
 #include "lua/lobby_wire.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
 #include "map/terrain.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
@@ -25,12 +27,13 @@ static int l_FlushEvents(lua_State*) { return 0; }
 /// SessionIsReplay() for the UI: whether the game is a replay being played
 /// (retail's UI then hides orders and shows the replay controls). The sim
 /// answers the same (sim_bindings.cpp). A saved game catching up plays back
-/// too, but it is the player's game. Moho counts its arguments (faf-re
-/// cfunc_SessionIsReplayUserL).
+/// too, but it is the player's game. Moho counts its arguments, then asks
+/// for a session (faf-re cfunc_SessionIsReplayUserL), as the others here.
 static int l_SessionIsReplay(lua_State* L) {
     if (lua_gettop(L) != 0)
         return osc::lua::arg_count_error(
             L, "Return true iff the active session is a replay session.", 0, lua_gettop(L));
+    if (!osc::lua::session_active(L)) return luaL_error(L, "no active session.");
     lua_pushstring(L, "osc_sim_state");
     lua_rawget(L, LUA_REGISTRYINDEX);
     const auto* sim = static_cast<const osc::sim::SimState*>(lua_touserdata(L, -1));
@@ -69,6 +72,12 @@ constexpr const char* kScenarioInfoGenKey = "__osc_session_scenario_info_gen";
 /// table for the game as Moho's is -- FAF's UserSync writes the playable
 /// area into it, which its score board reads from the table it took at load.
 static int l_SessionGetScenarioInfo(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return osc::lua::arg_count_error(L,
+                                         "Return the table of scenario info that was originally "
+                                         "passed to the sim on launch.",
+                                         0, lua_gettop(L));
+    if (!osc::lua::session_active(L)) return luaL_error(L, "no active session.");
     lua_pushstring(L, "osc_sim_state");
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
@@ -216,7 +225,12 @@ static int l_ui_IsAlly(lua_State* L) {
     return 1;
 }
 
+/// GetArmiesTable() -> {armiesTable, focusArmy, numArmies}, in a session
+/// (faf-re cfunc_GetArmiesTableL).
 static int l_GetArmiesTable(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return osc::lua::arg_count_error(L, "armyInfo GetArmiesTable()", 0, lua_gettop(L));
+    if (!osc::lua::session_active(L)) return luaL_error(L, osc::lua::kNoSessionStarted);
     lua_pushstring(L, "osc_sim_state");
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
