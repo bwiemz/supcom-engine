@@ -485,6 +485,64 @@ TEST_CASE("LaunchGame starts the game over the lobby's connections (M218c)", "[l
     CHECK(at_bob == std::vector<std::vector<osc::u8>>{{1, 2, 3}});
 }
 
+TEST_CASE("A network lobby answers its local player's id inside GameLaunched, as Moho's CLobby "
+          "does",
+          "[lobby][lua]") {
+    MpGuard guard;
+    World w;
+    REQUIRE(w.run(kScenarios));
+    REQUIRE(w.run(R"(
+        -- As FAF's lobby.lua: GameLaunched finds this player by its id (the
+        -- loading screen's faction), then the lobby goes
+        TestComm.GameLaunched = function(self)
+            self.at_launch = {
+                id = self:GetLocalPlayerID(), host = self:IsHost(),
+                name = self:GetLocalPlayerName(), port = self:GetLocalPort(),
+                peer = self:GetPeer('0'), peers = table.getn(self:GetPeers()),
+                own = self:MakeValidPlayerName(self:GetLocalPlayerID(), 'HOST1'),
+                mine = self:MakeValidPlayerName('7', 'HOST1'),
+                theirs = self:MakeValidPlayerName('7', 'Host'),
+            }
+            self:Destroy()
+        end
+        host = NewLobby('Host') host:HostGame()
+    )"));
+    REQUIRE(w.until("host.hosted"));
+    // The host's name, case aside: the host's welcome renames the joiner
+    REQUIRE(
+        w.run("a = NewLobby('host') a:JoinGame('127.0.0.1:' .. host:GetLocalPort(), 'Host', nil)"));
+    REQUIRE(w.until("a.me == '1'"));
+    REQUIRE(w.run(R"(
+        assert(a.myname == 'host1', a.myname)
+        function GameInfo()
+            return Config('/maps/two/two_scenario.lua', {
+                {Human = true, OwnerID = '0', PlayerName = 'Host'},
+                {Human = true, OwnerID = '1', PlayerName = 'host1'},
+            })
+        end
+        a:LaunchGame(GameInfo())
+    )"));
+    auto joiner = take_launched();
+    REQUIRE(w.run("host:LaunchGame(GameInfo())"));
+    auto hosted = take_launched();
+    // Each its uid and name from before the launch, and a joiner still no
+    // host (Moho's CLobby keeps its host connection). No port and no peers:
+    // Moho's LaunchGame gave its connector to the game and deleted its
+    // peers, so only the local player's own name is taken
+    CHECK(w.run(R"(
+        local h, j = host.at_launch, a.at_launch
+        assert(h and j, 'GameLaunched ran')
+        assert(h.id == '0' and j.id == '1', h.id .. ', ' .. j.id)
+        assert(h.host == true and j.host == false)
+        assert(h.name == 'Host' and j.name == 'host1', j.name)
+        assert(h.port == nil and j.port == nil and h.peer == nil and j.peer == nil)
+        assert(h.peers == 0 and j.peers == 0)
+        assert(j.own == 'HOST1' and j.mine == 'HOST11' and j.theirs == 'Host',
+               j.own .. ', ' .. j.mine .. ', ' .. j.theirs)
+        assert(h.mine == 'HOST1' and h.theirs == 'Host1', h.mine .. ', ' .. h.theirs)
+    )"));
+}
+
 namespace {
 
 /// gamemain.lua's ReceiveChat, as the game's interface has it loaded:

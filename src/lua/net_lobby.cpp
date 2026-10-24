@@ -44,6 +44,15 @@ struct NetLobby {
     std::optional<u32> player_uid;
     u8 protocol = 2; ///< Moho's: 1 TCP, 2 UDP (what discovery tells)
     std::unique_ptr<sim::LobbyNet> net;
+    /// Who this player was in the lobby, once LaunchGame has handed `net` to
+    /// the game (and `player_name` its name): Moho's CLobby keeps its
+    /// localUid, playerName and host connection for its whole life, and the
+    /// scripts' GameLaunched asks for them
+    struct Launched {
+        u32 uid = 0;
+        bool host = true;
+    };
+    std::optional<Launched> launched;
     /// A host's: answers the LAN's discovery (M218b)
     std::unique_ptr<sim::DiscoveryResponder> responder;
     bool hosting_pending = false; ///< Hosting() at the next pump
@@ -486,8 +495,10 @@ int net_lobby_GetPeer(lua_State* L, NetLobby& lobby) {
 }
 
 int net_lobby_GetLocalPlayerID(lua_State* L, NetLobby& lobby) {
-    const bool known = lobby.net && (lobby.net->hosting() || lobby.net->joined());
-    lua_pushstring(L, known ? uid_string(lobby.net->local_uid()).c_str() : "-1");
+    std::optional<u32> uid;
+    if (lobby.net && (lobby.net->hosting() || lobby.net->joined())) uid = lobby.net->local_uid();
+    else if (lobby.launched) uid = lobby.launched->uid;
+    lua_pushstring(L, uid ? uid_string(*uid).c_str() : "-1");
     return 1;
 }
 
@@ -503,8 +514,8 @@ int net_lobby_GetLocalPort(lua_State* L, NetLobby& lobby) {
 }
 
 int net_lobby_IsHost(lua_State* L, NetLobby& lobby) {
-    // Moho's: no connection to a host
-    lua_pushboolean(L, !lobby.net || lobby.net->hosting());
+    // Moho's: no connection to a host (a joiner's stays once launched)
+    lua_pushboolean(L, lobby.net ? lobby.net->hosting() : !lobby.launched || lobby.launched->host);
     return 1;
 }
 
@@ -533,6 +544,11 @@ int net_lobby_MakeValidPlayerName(lua_State* L, NetLobby& lobby) {
     if (lobby.net)
         lua_pushstring(
             L, lobby.net->valid_player_name(has_uid ? uid : lobby.net->local_uid(), name).c_str());
+    else if (lobby.launched)
+        // Its peers gone (Moho's LaunchGame deletes them): only its own name is taken
+        lua_pushstring(L, sim::valid_player_name(has_uid ? uid : lobby.launched->uid, name,
+                                                 lobby.launched->uid, lobby.player_name, {})
+                              .c_str());
     else
         lua_pushstring(
             L, (name.empty() ? std::string("Player") : name.substr(0, kMaxPlayerName)).c_str());
@@ -803,6 +819,11 @@ int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby) {
                                                          : sources.names[s];
         clients.push_back({uid, name.empty() ? "Player" : name});
     }
+    // The lobby keeps who this player is (Moho's LaunchGame leaves its
+    // CLobby's localUid and playerName): the scripts' GameLaunched finds
+    // their own player by GetLocalPlayerID
+    lobby.player_name = lobby.net->local_name();
+    lobby.launched = NetLobby::Launched{lobby.net->local_uid(), lobby.net->hosting()};
     mp_begin_lobby_game(
         std::make_unique<sim::LobbyGameTransport>(std::move(lobby.net), net_lobby_clock_ms), local,
         sources.armies, std::move(clients), seed, sources.army_sources);

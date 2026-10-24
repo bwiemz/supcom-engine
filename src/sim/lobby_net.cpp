@@ -857,9 +857,14 @@ std::vector<LobbyEvent> LobbyGameTransport::take_data() {
 }
 
 std::string LobbyNet::valid_player_name(u32 uid, const std::string& name) const {
+    return sim::valid_player_name(uid, name, impl_->local_uid, impl_->local_name, impl_->peers);
+}
+
+std::string valid_player_name(u32 uid, const std::string& name, u32 local_uid,
+                              const std::string& local_name, const std::vector<LobbyPeer>& peers) {
     return unique_name(name, [&](const std::string& n) {
-        if (uid != impl_->local_uid && same_no_case(n, impl_->local_name)) return true;
-        return std::any_of(impl_->peers.begin(), impl_->peers.end(), [&](const LobbyPeer& p) {
+        if (uid != local_uid && same_no_case(n, local_name)) return true;
+        return std::any_of(peers.begin(), peers.end(), [&](const LobbyPeer& p) {
             return p.uid != uid && same_no_case(p.name, n);
         });
     });
