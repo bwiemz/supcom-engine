@@ -305,7 +305,7 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
 
     // 18. Reset game state
     game_state_mgr.set_game_over(false);
-    game_state_mgr.set_paused(false, uiL);
+    game_state_mgr.set_paused(false);
     sim_accumulator = 0.0;
 
     // 19. Transition to GAME (skip if caller already handles transitions)

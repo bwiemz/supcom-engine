@@ -279,16 +279,10 @@ void pump_disconnect_dialog(lua_State* L) {
     lua_settop(L, top);
 }
 
-namespace {
-
-/// gamemain.OnUserPause(pause): this player asked (Moho calls it at once,
-/// on the asker's machine alone).
-void on_user_pause(lua_State* L, bool pause) {
+void call_on_user_pause(lua_State* L, bool pause) {
     lua_pushboolean(L, pause ? 1 : 0);
     core::call_ui_callback(L, core::kGameMainModule, "OnUserPause", 1);
 }
-
-} // namespace
 
 namespace {
 
@@ -339,7 +333,7 @@ bool ask_pause(lua_State* L, bool pause) {
         return false;
     }
     pause_request() = {sim::SimState::sim_generation(), *beat, pause};
-    on_user_pause(L, pause);
+    call_on_user_pause(L, pause);
     return true;
 }
 

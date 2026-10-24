@@ -1744,7 +1744,7 @@ static int l_sim_RequestPause(lua_State* L) {
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* mgr = static_cast<osc::GameStateManager*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-    if (mgr) mgr->set_paused(true, nullptr);
+    if (mgr) mgr->set_paused(true);
     return 0;
 }
 
@@ -1753,7 +1753,7 @@ static int l_sim_ResumeSim(lua_State* L) {
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* mgr = static_cast<osc::GameStateManager*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-    if (mgr) mgr->set_paused(false, nullptr);
+    if (mgr) mgr->set_paused(false);
     return 0;
 }
 

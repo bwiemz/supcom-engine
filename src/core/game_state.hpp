@@ -50,8 +50,13 @@ class GameStateManager {
 public:
     GameState current() const { return state_; }
     bool transition_to(GameState new_state, lua_State* ui_L);
+    /// The client's pause: a replay's playback held, as Moho's session
+    /// holds it (mReplayIsPaused), with no command to the sim. The UI hears
+    /// the request that set it (gamemain.OnUserPause, from
+    /// SessionRequestPause and SessionResume), not this: gamemain's OnPause
+    /// and OnResume are a change of the sim's pause state.
     bool paused() const { return paused_; }
-    void set_paused(bool p, lua_State* ui_L);
+    void set_paused(bool p) { paused_ = p; }
     /// Moho's sim rate: the game speed as an integer, -10 to +50 (0 is
     /// normal). The sim runs at 10^(rate / 10) times normal.
     i32 sim_rate() const { return sim_rate_; }

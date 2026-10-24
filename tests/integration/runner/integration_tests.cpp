@@ -8,6 +8,7 @@
 #include "core/profiler.hpp"
 #include "core/types.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/session_clients.hpp"
 #include "lua/session_manager.hpp"
 #include "sim/build_placement.hpp"
 #include "map/pathfinding_grid.hpp"
@@ -18687,14 +18688,17 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         else osc::test_status::fail("[FAIL] Test 6d: the UI's factions are off:{}", wrong);
     }
 
-    // 7. Pausing reaches gamemain.OnPause(pausedBy, timeouts) / OnResume,
+    // 7. A player's pause request reaches gamemain.OnUserPause at once, as
+    //    Moho's PauseListener calls it; the sim's pause, once its command
+    //    runs, reaches gamemain.OnPause(pausedBy, timeouts) / OnResume,
     //    running retail's own handlers (pause banner, tabs). A local pause
     //    is by this client's command source.
     lua_ok("Test 7a: observe gamemain pause callbacks", R"(
         local gm = import('/lua/ui/game/gamemain.lua')
-        local onPause, onResume = gm.OnPause, gm.OnResume
+        local onPause, onResume, onUserPause = gm.OnPause, gm.OnResume, gm.OnUserPause
         __osc_test_paused_by = false
         __osc_test_resumed = false
+        __osc_test_user_pauses = {}
         gm.OnPause = function(pausedBy, timeouts)
             __osc_test_paused_by = pausedBy
             return onPause(pausedBy, timeouts)
@@ -18703,27 +18707,31 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             __osc_test_resumed = true
             return onResume()
         end
+        gm.OnUserPause = function(pause)
+            table.insert(__osc_test_user_pauses, pause)
+            return onUserPause(pause)
+        end
     )");
-    {
-        lua_pushstring(L, "__osc_game_state_mgr");
-        lua_rawget(L, LUA_REGISTRYINDEX);
-        auto* mgr = static_cast<osc::GameStateManager*>(lua_touserdata(L, -1));
-        lua_pop(L, 1);
-        if (!mgr) {
-            osc::test_status::fail("[FAIL] Test 7: no GameStateManager in the UI state");
-        } else {
-            mgr->set_paused(true, L);
-            pump_frames(2);
-            mgr->set_paused(false, L);
-            pump_frames(2);
-            lua_ok("Test 7b: OnPause(local command source) then OnResume ran", R"(
-                if __osc_test_paused_by ~= SessionGetLocalCommandSource() then
-                    error('OnPause pausedBy = ' .. tostring(__osc_test_paused_by))
-                end
-                if not __osc_test_resumed then error('OnResume never ran') end
-            )");
-        }
-    }
+    lua_ok("Test 7b: SessionRequestPause calls OnUserPause(true) at once, not OnPause", R"(
+        SessionRequestPause()
+        if __osc_test_user_pauses[1] ~= true then error('OnUserPause(true) never ran') end
+        if __osc_test_paused_by then error('OnPause ran before the sim paused') end
+    )");
+    play(1); // the pause command runs
+    osc::lua::pump_pause_state(L);
+    lua_ok("Test 7c: the sim's pause calls OnPause(local command source)", R"(
+        if __osc_test_paused_by ~= SessionGetLocalCommandSource() then
+            error('OnPause pausedBy = ' .. tostring(__osc_test_paused_by))
+        end
+        SessionResume()
+        if __osc_test_user_pauses[2] ~= false then error('OnUserPause(false) never ran') end
+        if table.getn(__osc_test_user_pauses) ~= 2 then error('OnUserPause ran too often') end
+    )");
+    play(1); // the resume command runs
+    osc::lua::pump_pause_state(L);
+    lua_ok("Test 7d: the sim's resume calls OnResume", R"(
+        if not __osc_test_resumed then error('OnResume never ran') end
+    )");
 
     // 8. Play 30 game-seconds with the game UI live: the sync channel,
     //    economy, score, avatars and unit view update every beat. Any script

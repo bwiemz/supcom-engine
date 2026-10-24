@@ -63,32 +63,6 @@ bool GameStateManager::transition_to(GameState new_state, lua_State* ui_L) {
     return true;
 }
 
-void GameStateManager::set_paused(bool p, lua_State* ui_L) {
-    if (paused_ == p) return;
-    paused_ = p;
-    if (ui_L) {
-        // gamemain.OnPause(pausedBy, timeoutsRemaining) / OnResume().
-        // pausedBy is a command source; only local pauses exist so far, so
-        // it is this client's (SessionGetLocalCommandSource), with no pause
-        // timeouts.
-        if (p) {
-            lua_Number source = 1;
-            lua_pushstring(ui_L, "SessionGetLocalCommandSource");
-            lua_rawget(ui_L, LUA_GLOBALSINDEX);
-            if (lua_isfunction(ui_L, -1) && lua_pcall(ui_L, 0, 1, 0) == 0 &&
-                lua_isnumber(ui_L, -1)) {
-                source = lua_tonumber(ui_L, -1);
-            }
-            lua_pop(ui_L, 1);
-            lua_pushnumber(ui_L, source);
-            lua_pushnumber(ui_L, -1);
-            core::call_ui_callback(ui_L, core::kGameMainModule, "OnPause", 2);
-        } else {
-            core::call_ui_callback(ui_L, core::kGameMainModule, "OnResume", 0);
-        }
-    }
-}
-
 void GameStateManager::set_sim_rate(i32 rate) {
     sim_rate_ = std::clamp(rate, kMinSimRate, kMaxSimRate);
     speed_ = std::pow(10.0, sim_rate_ * 0.1);

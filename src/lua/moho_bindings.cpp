@@ -4134,21 +4134,27 @@ void load_key_mappings(lua_State* L, ui::KeyMapRegistry& key_map) {
     spdlog::info("Key map: {} bindings", key_map.size());
 }
 
-/// SessionRequestPause() — request the sim to pause
+/// SessionRequestPause(): this player asks to pause. A game's request is a
+/// command to its sim (session_request_pause). A replay's holds its
+/// playback here and sends the sim nothing, as Moho's CWldSession's does
+/// (mReplayIsPaused). Either way the player hears it as Moho's
+/// PauseListener tells them, gamemain.OnUserPause(true), and not OnPause,
+/// which the sim's pause state calls (pump_pause_state).
 static int l_SessionRequestPause(lua_State* L) {
     // A network game's pause goes through the lockstep (M218f): pausing
     // alone would stop this player's frames and drop them from the game
     if (session_request_pause(L)) return 0;
-    auto* mgr = get_game_state_mgr(L);
-    if (mgr) mgr->set_paused(true, L);
+    if (auto* mgr = get_game_state_mgr(L)) mgr->set_paused(true);
+    call_on_user_pause(L, true);
     return 0;
 }
 
-/// SessionResume() — resume the sim
+/// SessionResume(): this player asks to resume, as SessionRequestPause
+/// asks to pause: OnUserPause(false), not OnResume.
 static int l_SessionResume(lua_State* L) {
     if (session_resume(L)) return 0;
-    auto* mgr = get_game_state_mgr(L);
-    if (mgr) mgr->set_paused(false, L);
+    if (auto* mgr = get_game_state_mgr(L)) mgr->set_paused(false);
+    call_on_user_pause(L, false);
     return 0;
 }
 

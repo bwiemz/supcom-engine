@@ -65,9 +65,14 @@ void pump_disconnect_dialog(lua_State* L);
 /// SessionRequestPause / SessionResume (M218f): a command to the sim
 /// (SimState::request_pause), through the lockstep in a network game, and
 /// gamemain.OnUserPause(bool) at once for this player, as Moho's. False for a
-/// replay or no game (the caller pauses the client).
+/// replay or no game (the caller pauses the client, and calls
+/// call_on_user_pause itself).
 bool session_request_pause(lua_State* L);
 bool session_resume(lua_State* L);
+/// gamemain.OnUserPause(pause): this player asked to pause or resume. Moho's
+/// PauseListener calls it at once, on the asker's machine alone, for every
+/// request, whatever pauses (the sim, or a replay's playback).
+void call_on_user_pause(lua_State* L, bool pause);
 /// WLD_SingleStep: paused, one beat runs its tick.
 bool session_single_step(lua_State* L);
 

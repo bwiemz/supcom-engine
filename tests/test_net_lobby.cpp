@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "core/game_state.hpp"
 #include "lua/lobby_wire.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -564,6 +565,40 @@ TEST_CASE("A player's pause and resume answer SessionIsPaused at once, and both 
     w.sim.tick();
     CHECK(w.sim.paused());
     CHECK(w.sim.pause_serial() == serial + 1);
+}
+
+TEST_CASE("A replay's pause and resume reach gamemain.OnUserPause", "[lobby][lua]") {
+    // Moho's CWldSession::RequestPause and Resume in a replay hold its
+    // playback (mReplayIsPaused) and send the sim nothing; every request
+    // then reaches gamemain.OnUserPause (PauseListener). OnPause and
+    // OnResume are the sim's pause state's, which a replay's request leaves.
+    MpGuard guard;
+    World w;
+    osc::GameStateManager mgr;
+    lua_State* L = w.state.raw();
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_pushlightuserdata(L, &mgr);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    w.sim.set_victory_condition("sandbox");
+    w.sim.set_playback(true);
+    REQUIRE(w.run(R"(
+        heard = {}
+        function OnUserPause(pause) table.insert(heard, 'OnUserPause ' .. tostring(pause)) end
+        function OnPause(by, timeouts) table.insert(heard, 'OnPause') end
+        function OnResume() table.insert(heard, 'OnResume') end
+        SessionRequestPause()
+    )"));
+    CHECK(mgr.paused()); // the playback holds
+    w.sim.tick();
+    CHECK_FALSE(w.sim.paused()); // the sim was sent nothing
+    osc::lua::pump_pause_state(L);
+    REQUIRE(w.run("SessionResume()"));
+    CHECK_FALSE(mgr.paused());
+    CHECK(w.run(R"(
+        assert(table.getn(heard) == 2, table.getn(heard))
+        assert(heard[1] == 'OnUserPause true', heard[1])
+        assert(heard[2] == 'OnUserPause false', heard[2])
+    )"));
 }
 
 TEST_CASE("A lobby's game has its clients, and chat crosses to them (M218d)", "[lobby][lua]") {

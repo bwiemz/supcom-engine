@@ -267,7 +267,7 @@ void App::Window::handle_return_to_lobby() {
 
             // Reset game state
             game_state_mgr.set_game_over(false);
-            game_state_mgr.set_paused(false, uiL);
+            game_state_mgr.set_paused(false);
             sim_accumulator = 0.0;
             input_handler.set_selected({});
             prev_selection.clear();
