@@ -344,3 +344,15 @@ TEST_CASE("Every option the help gives a value takes one", "[app][cli]") {
     }
     CHECK(found >= 40);
 }
+
+TEST_CASE("A load that must restore refuses --load-by-replay", "[app][cli]") {
+    // A network game resumes only from each player's own restored copy
+    // (OE-128), never caught up alone; the game's other loads honour it
+    const auto parses = [](std::vector<std::string> args) {
+        CommandLine line(std::move(args));
+        return osc::app::parse_options(line.argc(), line.argv.data(), {}).has_value();
+    };
+    CHECK_FALSE(parses({"--lan-game-host", "--lan-game-resume", "saved", "--load-by-replay"}));
+    CHECK(parses({"--lan-game-host", "--lan-game-resume", "saved"}));
+    CHECK(parses({"--load-by-replay"}));
+}

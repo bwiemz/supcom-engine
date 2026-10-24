@@ -748,8 +748,8 @@ std::optional<int> App::start() {
         bool restore = false;
         if (opt.save_to_load) {
             const auto& save = *opt.save_to_load;
-            std::string why = "--load-by-replay";
-            const Restore result = opt.load_by_replay ? Restore::Skipped : restore_save(save, why);
+            std::string why;
+            const Restore result = restore_save(save, why);
             if (result == Restore::Failed) {
                 spdlog::error("Saved game '{}': not restored: {}", save.name, why);
                 std::printf("LOAD failed tick=%u\n", save.beat);

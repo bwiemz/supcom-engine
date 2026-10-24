@@ -429,6 +429,13 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         o.lan_game_port = static_cast<u16>(std::clamp(std::stoi(port), 1, 65535));
     o.lan_game_save = parse_string_arg(argc, argv, "--lan-game-save", "");
     o.lan_game_resume = parse_string_arg(argc, argv, "--lan-game-resume", "");
+    if (o.load_by_replay && !o.lan_game_resume.empty()) {
+        // A network game resumes only from each player's own restored copy
+        // (OE-128), never caught up alone: its load can't honour the flag
+        spdlog::error("--load-by-replay: --lan-game-resume's network game resumes only from "
+                      "each player's restored copy");
+        return std::nullopt;
+    }
     o.sim_thread = !parse_flag(argc, argv, "--no-sim-thread");
     o.workers = !parse_flag(argc, argv, "--no-workers");
     o.play_for = std::strtod(parse_string_arg(argc, argv, "--play-for", "0").c_str(), nullptr);

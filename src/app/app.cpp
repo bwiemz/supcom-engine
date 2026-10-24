@@ -160,6 +160,12 @@ int App::run() {
 }
 
 App::Restore App::restore_save(const sim::SavedGame& save, std::string& why) {
+    // Asked to catch up from the save's history, the oracle a restore is
+    // checked against: every load, headless or the game's own
+    if (opt.load_by_replay) {
+        why = "--load-by-replay";
+        return Restore::Skipped;
+    }
     if (!special_files) {
         why = "there are no special files";
         return Restore::Skipped;

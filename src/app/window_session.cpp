@@ -153,7 +153,8 @@ void App::Window::handle_launch() {
                     // finish_world_ui_after_post_load).
                     world_ui_after_post_load = kPostLoadUnscheduled;
                     // The player's game, restored from its snapshot
-                    // (M208c). Without one, or if the restore fails
+                    // (M208c). Without one, with --load-by-replay (which
+                    // restore_save answers), or if the restore fails
                     // (the sim it spoiled booted again), caught up
                     // from its history instead; recorded from its
                     // start (once its orders and command delay are

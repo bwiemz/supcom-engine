@@ -379,10 +379,11 @@ private:
     /// A saved game restored from its snapshot into the sim just booted for
     /// it (M208c): its history becomes the recording, and its checksum must
     /// be the one the history holds for the saved tick. Only a snapshot this
-    /// installation signed is restored. `why` says why not.
+    /// installation signed is restored, and none with --load-by-replay (each
+    /// load then catches up). `why` says why not.
     enum class Restore {
         Done,
-        Skipped, ///< no snapshot, or not this installation's: the sim is untouched
+        Skipped, ///< no snapshot, not this installation's, or --load-by-replay: sim untouched
         Failed,  ///< the sim is spoiled: boot it again to catch up
     };
     Restore restore_save(const sim::SavedGame& save, std::string& why);

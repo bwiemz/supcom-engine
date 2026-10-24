@@ -465,6 +465,18 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
+    # The same loads given --load-by-replay: the flow's, and a --load the
+    # game opens, each catch up from the save's history, as a headless
+    # load does, and never restore its snapshot.
+    add_test(NAME data.load_flow_by_replay
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/load_flow.py --by-replay
+                     $<TARGET_FILE:opensupcom>
+                     -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 2 --ticks 250
+                     --seed 9 --scripted-orders)
+    set_tests_properties(data.load_flow_by_replay PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
 
     # The campaign through retail's own screens (M209b): the main menu, the
     # timeline movie skipped, operation select, the briefing, X1CA_001 to its
