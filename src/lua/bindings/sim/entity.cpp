@@ -455,11 +455,9 @@ int entity_Kill(lua_State* L) {
         if (blocked) return 0;
     }
     lua_settop(L, 4); // self, instigator, damageType, excessDamageRatio
-    // Moho reads these into typed values before calling the script, so a
-    // bare Kill() reaches OnKilled as (nil, 'Normal', 0): a whole wreck,
-    // where a nil ratio would leave CreateWreckageProp a worthless one.
+    // Moho's cfunc_EntityKillL: a bare Kill() is (nil, '', 0)
     if (lua_type(L, 3) != LUA_TSTRING) {
-        lua_pushstring(L, "Normal");
+        lua_pushstring(L, "");
         lua_replace(L, 3);
     }
     if (!lua_isnumber(L, 4)) {
@@ -467,10 +465,24 @@ int entity_Kill(lua_State* L) {
         lua_replace(L, 4);
     }
     const u32 credit = e->is_unit() ? kill_credit_for(L, static_cast<sim::Unit*>(e)) : 0;
+    const sim::Entity* by = check_entity(L, 2);
+    const i32 killer_army = by ? by->army() : -1;
     auto* sim = get_sim(L);
     auto* unit = e->is_unit() ? static_cast<sim::Unit*>(e) : nullptr;
     // Moho's Unit::Kill (faf-re unit/core/Unit.cpp:16072).
     if (unit) {
+        sim::Entity* carrier = sim && unit->transport_id() != 0
+                                   ? sim->entity_registry().find(unit->transport_id())
+                                   : nullptr;
+        if (carrier && carrier->is_unit()) {
+            static_cast<sim::Unit*>(carrier)->detach_cargo({unit->entity_id()},
+                                                           sim->entity_registry(), L);
+        }
+        if (carrier || (unit->is_being_built() && unit->fraction_complete() < 0.5f)) {
+            lua_pushnumber(L, 10);
+            lua_replace(L, 4);
+        }
+        unit->call_lua_method(L, "SetDead");
         unit->begin_dying();
         if (sim) {
             sim->drop_adjacency(*unit);
@@ -506,7 +518,7 @@ int entity_Kill(lua_State* L) {
         }
     }
     if (unit && sim) {
-        sim->record_unit_death(*unit);
+        sim->record_unit_death(*unit, killer_army);
     }
     credit_kill(L, credit);
     return 0;

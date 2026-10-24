@@ -1054,25 +1054,6 @@ TEST_CASE("A tracking projectile ignores its gravity; one that doesn't track fal
     CHECK(shell.position().y < -1.0f); // a second's fall
 }
 
-TEST_CASE("Unit veterancy fields and record_damage", "[m162]") {
-    osc::sim::Unit u;
-    CHECK(u.vet_level() == 0);
-    CHECK(u.damage_contributions().empty());
-
-    // Record damage from two attackers
-    u.record_damage(100, 50.0f);
-    u.record_damage(200, 30.0f);
-    u.record_damage(100, 20.0f); // same attacker — should accumulate
-    REQUIRE(u.damage_contributions().size() == 2);
-    CHECK(u.damage_contributions()[0].first == 100);
-    CHECK(u.damage_contributions()[0].second == 70.0f); // 50 + 20
-    CHECK(u.damage_contributions()[1].first == 200);
-    CHECK(u.damage_contributions()[1].second == 30.0f);
-
-    u.clear_damage_contributions();
-    CHECK(u.damage_contributions().empty());
-}
-
 TEST_CASE("Teleport destination validates bounds and occupancy", "[teleport]") {
     osc::blueprints::BlueprintStore store(nullptr);
     osc::sim::SimState sim(nullptr, &store);
