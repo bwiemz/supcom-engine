@@ -2581,6 +2581,21 @@ void request_focus_army(lua_State* L, int army) {
 
 } // namespace
 
+/// SessionIsObservingAllowed() -> whether the session lets a player with no
+/// army left in the game watch as an observer (Moho's
+/// cfunc_SessionIsObservingAllowedL 0x008980C0: the active session's
+/// IsObservingAllowed, observing_allowed here). Retail's DoGameResult turns
+/// a finished player into an observer only when it is. As Moho's, it takes
+/// no argument, and raises with no world session.
+static int l_SessionIsObservingAllowed(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "Return true iff observing is allowed in the active session.", 0,
+                               lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, "no active session.");
+    lua_pushboolean(L, observing_allowed(*get_sim(L)) ? 1 : 0);
+    return 1;
+}
+
 /// SetFocusArmy(army) -- 1-based, -1 = observer. While FA's game interface
 /// runs it is a request the next sim beat applies (SyncQueue), as Moho's
 /// session does, so the sim and the UI's OnSync see the change together --
@@ -4827,7 +4842,6 @@ void register_front_end_fallback_bindings(LuaState& state) {
     set_bool_fn("HasCommandLineArg2", false);
     set_bool_fn("SessionIsActive", false);
     set_bool_fn("SessionIsMultiplayer", false);
-    set_bool_fn("SessionIsObservingAllowed", false);
     set_bool_fn("SessionIsBeingRecorded", false);
     set_bool_fn("SessionCanRestart", false);
     set_nil_fn("SessionGetCommandSourceNames");
@@ -5130,6 +5144,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetChatHistory", l_GetChatHistory);
     state.register_function("GetSessionClients", l_GetSessionClients);
     state.register_function("SessionIsMultiplayer", l_SessionIsMultiplayer);
+    state.register_function("SessionIsObservingAllowed", l_SessionIsObservingAllowed);
     state.register_function("EjectSessionClient", l_EjectSessionClient);
 
     // Engine state queries (M144c)

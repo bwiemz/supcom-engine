@@ -237,6 +237,13 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
             const auto* acu = sim->entity_registry().find(self_destructed_);
             if (acu && !acu->destroyed() && !static_cast<const sim::Unit*>(acu)->is_dying())
                 fail("the joiner's commander never died");
+            // Defeated, it observes (retail's DoGameResult; the game allows
+            // observers)
+            if (auto r = ui.do_string("__osc_lan_focus = GetFocusArmy()"); !r)
+                fail("GetFocusArmy: " + r.error().message);
+            else if (number_global(ui.raw(), "__osc_lan_focus") != -1)
+                fail(fmt::format("the defeated joiner's focus army is {}, not -1 (observing)",
+                                 number_global(ui.raw(), "__osc_lan_focus")));
         }
         // No one dropped; or, the joiner having left, it alone: its army
         // defeated, and retail's disconnect dialog shown and closed
@@ -541,6 +548,15 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
     lua_pushstring(L, "__osc_lan_resuming");
     lua_pushboolean(L, resume_.empty() ? 0 : 1);
     lua_rawset(L, LUA_GLOBALSINDEX);
+    // A joiner whose commander self-destructed is defeated about now, and
+    // retail's DoGameResult makes a defeated player an observer where the game
+    // allows observers (SessionIsObservingAllowed): the lobby's game does. Its
+    // focus is its own army's until the UI's sync has the result, then none;
+    // the end's check asks for none
+    const bool observing = !host_ && self_destructed_ != 0;
+    lua_pushstring(L, "__osc_lan_observing");
+    lua_pushboolean(L, observing ? 1 : 0);
+    lua_rawset(L, LUA_GLOBALSINDEX);
     auto session = ui.do_string(R"(
         assert(SessionIsMultiplayer(), 'not a network game')
         local clients = GetSessionClients()
@@ -563,7 +579,10 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
         local armies = GetArmiesTable().armiesTable
         local a, b = armies[1].authorizedCommandSources[1], armies[2].authorizedCommandSources[1]
         assert(a and b and a ~= b and a >= 1 and a <= 2 and b >= 1 and b <= 2, 'the armies\' sources')
-        assert(armies[GetFocusArmy()].authorizedCommandSources[1] == mine, 'this player\'s army')
+        local focus = armies[GetFocusArmy()]
+        assert(focus and focus.authorizedCommandSources[1] == mine or
+                   __osc_lan_observing and GetFocusArmy() == -1,
+               'this player\'s army, focus ' .. GetFocusArmy())
         if __osc_lan_me == 'LanHost' and not __osc_lan_resuming then
             SessionRequestPause()
             SessionSendChatMessage({LanGameTest = true, text = 'glhf'})
@@ -571,12 +590,12 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
     )");
     if (!session) fail("the session: " + session.error().message);
 
-    // The UI watches its own army (1-based)
+    // The UI watches its own army (1-based), or none once observing
     if (auto r = ui.do_string("__osc_lan_focus = GetFocusArmy()"); !r)
         fail("GetFocusArmy: " + r.error().message);
-    else if (number_global(ui.raw(), "__osc_lan_focus") != want + 1)
-        fail(fmt::format("the UI's focus army is {}, not {}",
-                         number_global(ui.raw(), "__osc_lan_focus"), want + 1));
+    else if (const double focus = number_global(ui.raw(), "__osc_lan_focus");
+             focus != want + 1 && !(observing && focus == -1))
+        fail(fmt::format("the UI's focus army is {}, not {}", focus, want + 1));
     spdlog::info("[lan-game] tick {}: frame {} of the lockstep, army {}", sim.tick_count(),
                  mp.session->current_frame(), mp.local_army());
 }
