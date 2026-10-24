@@ -4862,15 +4862,6 @@ void register_front_end_fallback_bindings(LuaState& state) {
             +[](lua_State* call_L) -> int { lua_pushboolean(call_L, 0); return 1; });
         lua_rawset(L, LUA_GLOBALSINDEX);
     };
-    auto set_nil_fn = [&](const char* name) {
-        if (global_is_defined(L, name)) return;
-        lua_pushstring(L, name);
-        lua_pushcfunction(L, [](lua_State* call_L) -> int {
-            lua_pushnil(call_L);
-            return 1;
-        });
-        lua_rawset(L, LUA_GLOBALSINDEX);
-    };
 
     // Only names no binding the boot registers first defines (App::init_ui_state
     // runs this after them): a fallback of a bound name would be dead.
@@ -4878,9 +4869,6 @@ void register_front_end_fallback_bindings(LuaState& state) {
     set_bool_fn("DebugFacilitiesEnabled", false);
     set_stub("PrefetchSession"); // loading optimization
     set_stub("ClearFrame");      // UI cleanup
-    // System info
-    set_nil_fn("GetMouseScreenPos");
-    set_nil_fn("GetAntiAliasingOptions");
 
     // __installedlanguages: the language codes there are
     if (!global_is_defined(L, "__installedlanguages")) {

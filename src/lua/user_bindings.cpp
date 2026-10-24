@@ -932,6 +932,35 @@ static int l_UnProject(lua_State* L) {
     return 1;
 }
 
+/// GetMouseScreenPos() -> Vector2: the cursor's position on the screen, in
+/// the UI's pixels, as Moho's (faf-re cfunc_GetMouseScreenPosL: the
+/// session's CursorScreenPos; "No session started." without one). FAF's
+/// reticles, area attack and painting follow the cursor by it.
+static int l_GetMouseScreenPos(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "vector GetMouseScreenPos()", 0, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
+    f64 x = 0, y = 0;
+    if (auto* r = get_renderer(L)) r->ui_mouse_position(x, y);
+    push_vector2(L, static_cast<f32>(x), static_cast<f32>(y));
+    return 1;
+}
+
+/// GetAntiAliasingOptions() -> the antialiasing option keys the display
+/// offers: Moho's lists 0 (off), then a packed key for each multisample
+/// mode of the device (faf-re cfunc_GetAntiAliasingOptionsL). The engine
+/// draws without multisampling, so off alone, as the options screen's
+/// antialiasing states list (publish_fidelity_options); retail's and
+/// FAF's fidelity presets pick their antialiasing from it.
+static int l_GetAntiAliasingOptions(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "obj GetAntiAliasingOptions()", 0, lua_gettop(L));
+    lua_newtable(L);
+    lua_pushnumber(L, 0);
+    lua_rawseti(L, -2, 1);
+    return 1;
+}
+
 // --- GetMouseWorldPos global (M136a) ---
 // FA calls this as a standalone function: GetMouseWorldPos(), in a session
 // (faf-re cfunc_GetMouseWorldPosL reads the session's cursor).
@@ -2029,6 +2058,8 @@ void register_user_bindings(LuaState& state) {
     lua_rawset(L, LUA_GLOBALSINDEX);
     state.register_function("InternalCreateWldUIProvider", l_InternalCreateWldUIProvider);
     state.register_function("GetMouseWorldPos", l_GetMouseWorldPos);
+    state.register_function("GetMouseScreenPos", l_GetMouseScreenPos);
+    state.register_function("GetAntiAliasingOptions", l_GetAntiAliasingOptions);
     state.register_function("GetHighlightCommand", l_GetHighlightCommand);
     state.register_function("GetDepositsAroundPoint", l_UiGetDepositsAroundPoint);
     state.register_function("CopyToClipboard", l_CopyToClipboard);
