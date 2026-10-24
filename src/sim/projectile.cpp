@@ -390,10 +390,9 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
             if (std::find(passed.begin(), passed.end(), id) != passed.end()) continue;
             const Entity* e = registry.find(id);
             if (!e || e->destroyed()) continue;
-            if (e->is_unit()) {
-                // Dying, or carried in a transport's hold: not in the way.
-                const auto* u = static_cast<const Unit*>(e);
-                if (u->is_dying() || u->transport_id() != 0) continue;
+            // A corpse is in the way (Moho's CheckCollision); a unit in a hold isn't.
+            if (e->is_unit() && static_cast<const Unit*>(e)->transport_id() != 0) {
+                continue;
             }
             // A shield stops what comes in, not what goes out.
             const auto t = segment_enters(e->collision_shape(), e->position(), e->orientation(),

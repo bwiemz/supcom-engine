@@ -1353,6 +1353,10 @@ static int l_Damage(lua_State* L) {
                          ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
                          : nullptr;
     lua_pop(L, 1);
+    // Moho's SIM_Damage deals single-target damage only to the living.
+    if (target_e && target_e->is_unit() && static_cast<sim::Unit*>(target_e)->is_dying()) {
+        return 0;
+    }
     if (target_e && target_e->is_unit() && sim) {
         auto* target_unit = static_cast<sim::Unit*>(target_e);
         // can_take_damage guard
