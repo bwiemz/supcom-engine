@@ -228,8 +228,9 @@ public:
     void drop_adjacency(Unit& unit);
     /// Moho's CAiTransportImpl::TransportDetachAllUnits (ai/CAiTransportImpl.cpp:1533).
     void detach_all_units(Unit& transport, bool destroy_some);
-    /// A unit's loss for its army and the kill for the army that did the most damage to it.
-    void record_unit_death(Unit& unit);
+    /// A killed unit: its army's loss, and the kill for the killer's army if
+    /// it is an enemy (Moho's Unit::Kill)
+    void record_unit_death(Unit& unit, i32 killer_army);
 
     /// Whether this entity currently blocks the grid (tests / diagnostics).
     bool occupies_footprint(u32 entity_id) const {

@@ -139,6 +139,24 @@ TEST_CASE("A unit being built doesn't regenerate", "[sim]") {
     CHECK(u->health() > 50.0f);
 }
 
+TEST_CASE("A living unit regenerates from any health and a dying one does not", "[sim]") {
+    const osc::f32 health = GENERATE(0.0f, 50.0f);
+    const bool dying = GENERATE(false, true);
+    CAPTURE(health, dying);
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    Unit* u = walker(sim, 10.0f, 10.0f);
+    u->set_health(health);
+    u->set_regen_rate(10.0f);
+    if (dying) {
+        u->begin_dying();
+    }
+    sim.tick();
+    CHECK(u->health() == (dying ? health : health + 1.0f));
+}
+
 TEST_CASE("An unfinished unit no one builds decays from its second tick to OnDecayed",
           "[sim][build]") {
     LuaGuard g;

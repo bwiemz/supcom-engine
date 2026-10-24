@@ -1392,7 +1392,6 @@ static int l_Damage(lua_State* L) {
             target_unit->armor_type(), dtype);
         if (amount <= 0) return 0;
         // Track attacker
-        u32 instigator_id = 0;
         if (lua_istable(L, 1)) {
             lua_pushstring(L, "_c_object");
             lua_rawget(L, 1);
@@ -1401,13 +1400,8 @@ static int l_Damage(lua_State* L) {
             lua_pop(L, 1);
             if (instigator) {
                 target_unit->set_last_attacker_id(instigator->entity_id());
-                instigator_id = instigator->entity_id();
                 by = instigator;
             }
-        }
-        // Record damage contribution for the army credited with the kill
-        if (instigator_id > 0) {
-            target_unit->record_damage(instigator_id, amount);
         }
     }
 
@@ -1497,11 +1491,9 @@ static bool call_ondamage(lua_State* L, int target_ref, int instigator_idx, f32 
             amount *= sim->armor_definition().get_multiplier(
                 u->armor_type(), dtype);
         }
-        // Credit the instigator, as Damage does: its share of the kill.
         by = instigator_idx > 0 ? extract_entity(L, instigator_idx) : nullptr;
         if (by && amount > 0) {
             u->set_last_attacker_id(by->entity_id());
-            u->record_damage(by->entity_id(), amount);
         }
     }
     if (amount <= 0) { lua_pop(L, 1); return true; }
