@@ -725,12 +725,15 @@ set_tests_properties(data.right-click-mark PROPERTIES
 
 # ── Engine API coverage ratchet (roadmap M184) ─────────────────────────────
 # Fails if the game's scripts call an engine function/method that is neither
-# bound nor listed in the baseline. Baseline is for retail FA 3599; a machine
-# whose discovered install is FAForever will report FAF's own set instead.
+# bound nor listed in the baseline, or the UI state lacks one of Moho's
+# user-state functions (moho_user_globals.txt) the baseline doesn't list.
+# Baseline is for retail FA 3599; a machine whose discovered install is
+# FAForever will report FAF's own set instead.
 add_test(NAME data.binding_coverage
          COMMAND opensupcom --map ${OSC_TEST_MAP}
                  --binding-coverage ${CMAKE_CURRENT_BINARY_DIR}/binding_coverage.txt
-                 --binding-baseline ${CMAKE_CURRENT_SOURCE_DIR}/binding_baseline_retail.txt)
+                 --binding-baseline ${CMAKE_CURRENT_SOURCE_DIR}/binding_baseline_retail.txt
+                 --binding-moho-user ${CMAKE_CURRENT_SOURCE_DIR}/moho_user_globals.txt)
 set_tests_properties(data.binding_coverage PROPERTIES
     LABELS "data;gate"
     SKIP_RETURN_CODE 77

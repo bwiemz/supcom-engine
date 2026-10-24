@@ -57,10 +57,11 @@ constexpr std::string_view kValueOptions[] = {
     "--click", "--click-at", "--mouse", "--fast-match", "--match-telemetry", "--play-for",
     "--play-rate", "--play-until-tick", "--bench", "--bench-scenario", "--render-bench",
     "--render-scene", "--render-frames", "--render-warmup", "--binding-coverage",
-    "--binding-baseline", "--checksum-trace", "--entity-trace", "--entity-trace-ticks",
-    "--rng-trace", "--rng-trace-ticks", "--gpgnet", "--lan-game-join", "--mp-port",
-    "--lan-game-save", "--lan-game-resume", "--lan-game-quit-at", "--lan-game-self-destruct-at",
-    "--render-dump", "--count-marks", "--mp-join", "--mp-frames", "--mp-drop-at", "--mp-slow"
+    "--binding-baseline", "--binding-moho-user", "--checksum-trace", "--entity-trace",
+    "--entity-trace-ticks", "--rng-trace", "--rng-trace-ticks", "--gpgnet", "--lan-game-join",
+    "--mp-port", "--lan-game-save", "--lan-game-resume", "--lan-game-quit-at",
+    "--lan-game-self-destruct-at", "--render-dump", "--count-marks", "--mp-join", "--mp-frames",
+    "--mp-drop-at", "--mp-slow"
 };
 // clang-format on
 
@@ -125,6 +126,8 @@ void print_usage() {
               << "                     the engine lacks (needs --map)\n"
               << "  --binding-baseline <file>  With --binding-coverage: fail on gaps\n"
               << "                     not listed in this baseline\n"
+              << "  --binding-moho-user <file>  With --binding-coverage: Moho's user-state\n"
+              << "                     functions, each a gap where the UI state lacks it\n"
               << "  --dump-threads     At exit, list where each sim script thread waits\n"
               << "  --ai-armies <n>    With --ai-skirmish: number of AI armies (default 2)\n"
               << "  --map <vfs-path>   VFS path to *_scenario.lua (a campaign operation's\n"

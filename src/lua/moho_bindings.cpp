@@ -3459,6 +3459,28 @@ static int l_IncreaseBuildCountInQueue(lua_State* L) {
     return push_build_count_request(L, sim::kIncreaseBuildCountCallback);
 }
 
+/// DeleteCommand(id): order `id` one fewer, as Moho's sends
+/// DecreaseCommandCount(id, 1) to the sim (faf-re cfunc_DeleteCommandL):
+/// through the command stream, so every peer and a replay apply it in the
+/// same beat. "No active session!" without a session. (Moho sends nothing
+/// for an id its UI never saw issued; here the sim finds no such order.)
+static int l_DeleteCommand(lua_State* L) {
+    if (lua_gettop(L) != 1) return arg_count_error(L, "DeleteCommand(id)", 1, lua_gettop(L));
+    if (lua_type(L, 1) != LUA_TNUMBER) return luaL_typerror(L, 1, "integer");
+    // (a NaN, or a number out of a command id's range, names no order: 0)
+    const lua_Number id_arg = lua_tonumber(L, 1);
+    const auto id = id_arg >= 0 && id_arg < 4294967296.0 ? static_cast<u32>(id_arg) : 0u;
+    if (!session_active(L)) return luaL_error(L, "No active session!");
+    if (auto* queue = get_callback_queue(L)) {
+        sim::SimCallbackEntry entry;
+        entry.func_name = sim::kDecreaseCommandCountCallback;
+        entry.args["Command"] = static_cast<f64>(id);
+        entry.args["Count"] = 1.0;
+        queue->push(std::move(entry));
+    }
+    return 0;
+}
+
 /// GetOrderBitmapNames(bitmapId) → 8 return values
 static int l_GetOrderBitmapNames(lua_State* L) {
     const char* id = luaL_checkstring(L, 1);
@@ -4192,6 +4214,16 @@ static int l_SessionResume(lua_State* L) {
 
 // ── Score screen data (M146b) ────────────────────────────────────────────────
 
+
+/// GetArmyScore(armyIndex): as Moho's, it checks its one argument and the
+/// session and answers nothing (faf-re cfunc_GetArmyScoreL); the score
+/// screen reads the armies' stats instead.
+static int l_GetArmyScore(lua_State* L) {
+    if (lua_gettop(L) != 1)
+        return arg_count_error(L, "int GetArmyScore(armyIndex)", 1, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
+    return 0;
+}
 
 /// IsObserver() → boolean (true if focus army is -1)
 static int l_IsObserver(lua_State* L) {
@@ -4963,6 +4995,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("ClearCurrentFactoryForQueueDisplay", l_ClearCurrentFactoryForQueueDisplay);
     state.register_function("DecreaseBuildCountInQueue",          l_DecreaseBuildCountInQueue);
     state.register_function("IncreaseBuildCountInQueue", l_IncreaseBuildCountInQueue);
+    state.register_function("DeleteCommand", l_DeleteCommand);
 
     // Order bitmap helpers (M141a)
     state.register_function("GetOrderBitmapNames", l_GetOrderBitmapNames);
@@ -5010,6 +5043,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // Score screen data (M146b)
     state.register_function("IsObserver", l_IsObserver);
+    state.register_function("GetArmyScore", l_GetArmyScore);
 
     // Escape handler / HideGameUI (M146c)
     state.register_function("EscapeHandler", l_EscapeHandler);

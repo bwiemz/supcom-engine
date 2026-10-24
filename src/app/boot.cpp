@@ -713,7 +713,8 @@ std::optional<int> App::start() {
         }
         return osc::lua::coverage::run_coverage_report(
             sim_lua_state->raw(), ui_lua_state.raw(), vfs, coverage_out,
-            parse_string_arg(argc, argv, "--binding-baseline", ""));
+            parse_string_arg(argc, argv, "--binding-baseline", ""),
+            parse_string_arg(argc, argv, "--binding-moho-user", ""));
     }
 
     osc::WorkerPool::instance().set_enabled(opt.workers);

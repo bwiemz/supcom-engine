@@ -62,7 +62,18 @@ void collect_registered(lua_State* L, std::set<std::string>& globals,
 void collect_stand_ins(lua_State* L, std::set<std::string>& globals);
 
 /// Baseline entries are "G Name" / "M Name" lines; '#' starts a comment.
+/// (A names-only list, one name a line, reads the same way.)
 std::set<std::string> parse_baseline(std::string_view text);
+
+/// Where a gap no script calls is reported: Moho's user state has the name.
+inline constexpr const char* kMohoUserState = "Moho's user state";
+
+/// Add to `report`, as missing globals, the names of `moho_user` (the
+/// functions Moho's user state defines) that `ui_globals` lacks: the engine
+/// is to define them whether or not a game script calls one. A name the
+/// scripts call and the engine lacks is already there, at its call site.
+void add_moho_user_gaps(CoverageReport& report, const std::set<std::string>& moho_user,
+                        const std::set<std::string>& ui_globals);
 
 /// Render a report as baseline lines (sorted "G ..." then "M ...").
 std::string format_baseline(const CoverageReport& report);
@@ -74,14 +85,15 @@ struct BaselineDelta {
 BaselineDelta diff_against_baseline(const CoverageReport& report,
                                     const std::set<std::string>& baseline);
 
-/// `opensupcom --map <scenario> --binding-coverage <report> [--binding-baseline <file>]`:
-/// scan the game's scripts in the VFS, compare against the sim and UI states'
-/// registered bindings, write the report (baseline format plus a first
-/// location per name), and -- with a baseline -- fail (return 1) on any gap
-/// not listed there. Returns the process exit code.
-int run_coverage_report(lua_State* sim_L, lua_State* ui_L,
-                        const vfs::VirtualFileSystem& vfs,
-                        const std::string& report_path,
-                        const std::string& baseline_path);
+/// `opensupcom --map <scenario> --binding-coverage <report> [--binding-baseline <file>]
+/// [--binding-moho-user <file>]`: scan the game's scripts in the VFS, compare
+/// against the sim and UI states' registered bindings -- and, given Moho's
+/// user-state functions, the UI state's globals against them -- write the
+/// report (baseline format plus a first location per name), and -- with a
+/// baseline -- fail (return 1) on any gap not listed there. Returns the
+/// process exit code.
+int run_coverage_report(lua_State* sim_L, lua_State* ui_L, const vfs::VirtualFileSystem& vfs,
+                        const std::string& report_path, const std::string& baseline_path,
+                        const std::string& moho_user_path = {});
 
 } // namespace osc::lua::coverage

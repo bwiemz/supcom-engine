@@ -4,6 +4,7 @@
 #include "lua/engine_bindings.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
+#include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
 
 #include <set>
@@ -168,4 +169,33 @@ TEST_CASE("A global left bound to a blueprint-phase stand-in counts as missing",
     std::set<std::string> all;
     osc::lua::coverage::collect_stand_ins(bare.raw(), all);
     CHECK(all == std::set<std::string>{"ForkThread", "KillThread"});
+}
+
+TEST_CASE("coverage reports a Moho user function the user state lacks", "[coverage]") {
+    // Moho's user state defines GetArmyScore, which no game script calls: a
+    // state without it has a gap all the same, and a state that binds it none.
+    const std::set<std::string> moho_user{"GetArmyScore", "IsObserver"};
+    osc::lua::LuaState bare;
+    std::set<std::string> globals;
+    std::set<std::string> methods;
+    collect_registered(bare.raw(), globals, methods);
+    CoverageReport report;
+    report.missing_globals = {{"ZCalled", "/lua/x.lua:3"}, {"IsObserver", "/lua/y.lua:1"}};
+    add_moho_user_gaps(report, moho_user, globals);
+    CHECK(format_baseline(report) == "G GetArmyScore\nG IsObserver\nG ZCalled\n");
+    REQUIRE(report.missing_globals.size() == 3);
+    CHECK(report.missing_globals[0].second == kMohoUserState);
+    CHECK(report.missing_globals[1].second == "/lua/y.lua:1"); // its call site kept
+
+    osc::lua::LuaState ui;
+    osc::sim::SimState sim(ui.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(ui, sim);
+    osc::lua::register_ui_bindings(ui, registry);
+    globals.clear();
+    collect_registered(ui.raw(), globals, methods);
+    CoverageReport bound;
+    add_moho_user_gaps(bound, moho_user, globals);
+    CHECK(bound.missing_globals.empty());
+    CHECK(diff_against_baseline(bound, parse_baseline("")).new_gaps.empty());
 }

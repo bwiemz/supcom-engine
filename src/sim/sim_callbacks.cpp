@@ -2,7 +2,9 @@
 // them as commands, in a beat; here too (SimState::dispatch_due_commands),
 // so in multiplayer every peer runs each one in the same beat.
 
+#include "blueprints/blueprint_store.hpp"
 #include "map/terrain.hpp"
+#include "sim/army_brain.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/lua_bytes.hpp"
 #include "sim/sim_state.hpp"
@@ -18,8 +20,10 @@ extern "C" {
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -286,6 +290,106 @@ void set_command_type(SimState& sim, const SimCallbackEntry& cb) {
     });
 }
 
+/// Whether the blueprint `id` makes a unit that moves (Moho's IsMobile: a
+/// Physics.MotionType other than RULEUMT_None).
+bool blueprint_is_mobile(lua_State* L, const std::string& id) {
+    const int top = lua_gettop(L);
+    bool mobile = false;
+    if (blueprints::push_blueprint(L, id)) {
+        lua_pushstring(L, "Physics");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "MotionType");
+            lua_rawget(L, -2);
+            mobile = lua_type(L, -1) == LUA_TSTRING &&
+                     std::string_view(lua_tostring(L, -1)) != "RULEUMT_None";
+        }
+    }
+    lua_settop(L, top);
+    return mobile;
+}
+
+/// Moho's Sim::CreateUnit for CMDST_CreateUnit (faf-re Sim.cpp 0x00748AA0):
+/// a cheat, so nothing unless cheats are on; nothing for an army out of the
+/// game or a blueprint that is no unit's. Otherwise a complete unit, its
+/// scripts told as CreateUnitHPR's are, at X, Z on the ground, facing
+/// Heading. A structure stands on its footprint's cells, as
+/// CreateUnitAtMouse places one (its anchor the cell its corner is in).
+void create_unit(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
+    if (!sim.cheats_enabled()) return;
+    const auto* bp = arg<std::string>(cb, "Blueprint");
+    const auto* army = number_in(cb, "Army", 0, static_cast<f64>(sim.army_count()) - 1);
+    const auto* x = number_in(cb, "X", -1e6, 1e6);
+    const auto* z = number_in(cb, "Z", -1e6, 1e6);
+    const auto* heading = number_in(cb, "Heading", -1e6, 1e6);
+    if (!bp || !army || !x || !z || !heading) return;
+    const ArmyBrain* brain = sim.get_army(static_cast<i32>(*army));
+    if (!brain || brain->is_defeated()) return;
+    const auto* entry = sim.blueprint_store() ? sim.blueprint_store()->find(*bp) : nullptr;
+    if (!entry || entry->type != blueprints::BlueprintType::Unit) {
+        spdlog::info("CreateUnit: unresolved blueprint '{}' requested by source {}.", *bp,
+                     sim.current_command_source());
+        return;
+    }
+    auto at_x = static_cast<f32>(*x);
+    auto at_z = static_cast<f32>(*z);
+    if (!blueprint_is_mobile(L, entry->id)) {
+        const auto [size_x, size_z] = blueprint_footprint_cells(L, entry->id);
+        at_x = std::trunc(at_x - size_x * 0.5f) + size_x * 0.5f;
+        at_z = std::trunc(at_z - size_z * 0.5f) + size_z * 0.5f;
+    }
+    const f32 at_y = sim.terrain() ? sim.terrain()->get_surface_height(at_x, at_z) : 0.0f;
+    lua_pushstring(L, "CreateUnitHPR");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_isfunction(L, -1)) return;
+    lua_pushstring(L, entry->id.c_str());
+    lua_pushnumber(L, *army + 1);
+    lua_pushnumber(L, at_x);
+    lua_pushnumber(L, at_y);
+    lua_pushnumber(L, at_z);
+    lua_pushnumber(L, 0);
+    lua_pushnumber(L, *heading); // about the Y axis
+    lua_pushnumber(L, 0);
+    if (lua_pcall(L, 8, 0, 0) != 0) {
+        const char* err = lua_tostring(L, -1);
+        spdlog::warn("CreateUnit '{}': {}", *bp, err ? err : "(unknown)");
+    }
+}
+
+/// Moho's Sim::DecreaseCommandCount (faf-re Sim.cpp 0x007496E0): order
+/// `Command`, if its army is one the command's source may command, made
+/// `Count` fewer (CUnitCommand::DecreaseCount). A factory build of more
+/// loses that many; any other order, or one left at none, leaves every
+/// queue that holds it.
+void decrease_command_count(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
+    const auto* command = number_in(cb, "Command", 1, 4294967295.0);
+    const auto* count = number_in(cb, "Count", 1, 1e6);
+    if (!command || !count) return;
+    const auto id = static_cast<u32>(*command);
+    const auto fewer = static_cast<i32>(*count);
+    std::vector<u32> holders;
+    sim.entity_registry().for_each_unit([&](Entity& e) {
+        auto& u = static_cast<Unit&>(e);
+        if (!u.destroyed() && !u.commands_with_id(id).empty()) holders.push_back(u.entity_id());
+    });
+    if (holders.empty()) return;
+    const Entity* first = sim.entity_registry().find(holders.front());
+    if (!first || !sim.okay_to_mess_with(first->army())) return;
+    SimContext ctx = sim.sim_context();
+    ctx.L = L;
+    for (const u32 holder : holders) {
+        auto* e = sim.entity_registry().find(holder);
+        if (!e || !e->is_unit() || e->destroyed()) continue;
+        auto& u = *static_cast<Unit*>(e);
+        bool gone = false;
+        for (UnitCommand* c : u.commands_with_id(id)) {
+            if (c->type == CommandType::BuildFactory && c->count > fewer) c->count -= fewer;
+            else gone = true;
+        }
+        if (gone) u.remove_command(id, ctx);
+    }
+}
+
 void push_arg(lua_State* L, const SimCallbackArg& arg) {
     std::visit(
         [&](const auto& v) {
@@ -469,6 +573,8 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     } else if (cb.func_name == kSetCommandTargetCallback) set_command_target(*this, L, cb);
     else if (cb.func_name == kRemoveCommandCallback) remove_command(*this, L, cb);
     else if (cb.func_name == kSetCommandTypeCallback) set_command_type(*this, cb);
+    else if (cb.func_name == kCreateUnitCallback) create_unit(*this, L, cb);
+    else if (cb.func_name == kDecreaseCommandCountCallback) decrease_command_count(*this, L, cb);
     else do_callback(*this, L, cb);
     lua_settop(L, top);
 }

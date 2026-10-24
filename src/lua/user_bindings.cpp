@@ -3,6 +3,7 @@
 // and the UI's own orders (M191). They live apart from the Lua library, which
 // the sim uses, so that library needs no renderer: osc_lua_user links both.
 
+#include "blueprints/blueprint_store.hpp"
 #include "core/color.hpp"
 #include "core/localization.hpp"
 #include "platform/executable.hpp"
@@ -961,6 +962,65 @@ static int l_GetAntiAliasingOptions(lua_State* L) {
     return 1;
 }
 
+/// Where the cursor points on the ground (the session's CursorWorldPos):
+/// 0, 0, 0 without a world view.
+static sim::Vector3 cursor_world_pos(lua_State* L) {
+    lua_pushstring(L, "__osc_world_view");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* wv = static_cast<ui::WorldView*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    sim::Vector3 at{};
+    if (!wv || !wv->camera()) return at;
+    if (auto* r = get_renderer(L)) {
+        f64 dx = 0, dy = 0;
+        r->ui_mouse_position(dx, dy);
+        renderer::pick_ground_in(r->ui_views(), static_cast<f32>(dx), static_cast<f32>(dy),
+                                 wv->terrain(), at.x, at.y, at.z);
+    }
+    return at;
+}
+
+/// CreateUnitAtMouse(blueprintId, armyIndex, offsetX, offsetZ, rotation): a
+/// cheat, as Moho's (faf-re cfunc_CreateUnitAtMouseL): a unit of the
+/// blueprint for the 0-based army, at the cursor's place on the ground
+/// moved by the offsets, facing `rotation`. It errors as Moho's does: five
+/// arguments, "No active session.", "Unknown unit kind: <id>", the army in
+/// range. The sim makes the unit (kCreateUnitCallback) through the command
+/// stream, and only with cheats on.
+static int l_CreateUnitAtMouse(lua_State* L) {
+    if (lua_gettop(L) != 5) return arg_count_error(L, "CreateUnitAtMouse", 5, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, "No active session.");
+    auto* sim = get_sim(L);
+    if (lua_type(L, 1) != LUA_TSTRING) return luaL_typerror(L, 1, "string");
+    const std::string id = lua_tostring(L, 1);
+    const auto* store = LuaState::get_blueprint_store(L);
+    const auto* entry = store ? store->find(id) : nullptr;
+    if (!entry || entry->type != blueprints::BlueprintType::Unit)
+        return luaL_error(L, "Unknown unit kind: %s", id.c_str());
+    if (lua_type(L, 2) != LUA_TNUMBER) return luaL_typerror(L, 2, "integer");
+    // (a NaN or a number past an int is no army: cast only one within range)
+    const lua_Number army_arg = lua_tonumber(L, 2);
+    const int army = army_arg > -1e9 && army_arg < 1e9 ? static_cast<int>(army_arg) : -1;
+    const auto armies = static_cast<int>(sim->army_count());
+    if (army < 0 || army >= armies)
+        return luaL_error(L, "Invalid army index, must be >= 0 and < %d but got %d.", armies, army);
+    for (const int arg : {4, 3, 5}) { // (Moho's order)
+        if (lua_type(L, arg) != LUA_TNUMBER) return luaL_typerror(L, arg, "number");
+    }
+    const sim::Vector3 at = cursor_world_pos(L);
+    if (auto* queue = get_callback_queue(L)) {
+        sim::SimCallbackEntry entry_cb;
+        entry_cb.func_name = sim::kCreateUnitCallback;
+        entry_cb.args["Blueprint"] = entry->id;
+        entry_cb.args["Army"] = static_cast<f64>(army);
+        entry_cb.args["X"] = static_cast<f64>(at.x + static_cast<f32>(lua_tonumber(L, 3)));
+        entry_cb.args["Z"] = static_cast<f64>(at.z + static_cast<f32>(lua_tonumber(L, 4)));
+        entry_cb.args["Heading"] = static_cast<f64>(static_cast<f32>(lua_tonumber(L, 5)));
+        queue->push(std::move(entry_cb));
+    }
+    return 0;
+}
+
 // --- GetMouseWorldPos global (M136a) ---
 // FA calls this as a standalone function: GetMouseWorldPos(), in a session
 // (faf-re cfunc_GetMouseWorldPosL reads the session's cursor).
@@ -968,34 +1028,10 @@ static int l_GetMouseWorldPos(lua_State* L) {
     if (lua_gettop(L) != 0)
         return arg_count_error(L, "vector GetMouseWorldPos()", 0, lua_gettop(L));
     if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
-    // Get WorldView from registry
-    lua_pushstring(L, "__osc_world_view");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* wv = static_cast<ui::WorldView*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-
-    if (!wv || !wv->camera()) {
-        // Return zero vector
-        lua_newtable(L);
-        lua_pushstring(L, "x");
-        lua_pushnumber(L, 0);
-        lua_rawset(L, -3);
-        lua_pushstring(L, "y");
-        lua_pushnumber(L, 0);
-        lua_rawset(L, -3);
-        lua_pushstring(L, "z");
-        lua_pushnumber(L, 0);
-        lua_rawset(L, -3);
-        return 1;
-    }
-
-    f32 wx = 0, wy = 0, wz = 0;
-    if (auto* r = get_renderer(L)) {
-        f64 dx = 0, dy = 0;
-        r->ui_mouse_position(dx, dy);
-        renderer::pick_ground_in(r->ui_views(), static_cast<f32>(dx), static_cast<f32>(dy),
-                                 wv->terrain(), wx, wy, wz);
-    }
+    const sim::Vector3 at = cursor_world_pos(L);
+    const f32 wx = at.x;
+    const f32 wy = at.y;
+    const f32 wz = at.z;
 
     lua_newtable(L);
     lua_pushstring(L, "x");
@@ -2059,6 +2095,7 @@ void register_user_bindings(LuaState& state) {
     state.register_function("InternalCreateWldUIProvider", l_InternalCreateWldUIProvider);
     state.register_function("GetMouseWorldPos", l_GetMouseWorldPos);
     state.register_function("GetMouseScreenPos", l_GetMouseScreenPos);
+    state.register_function("CreateUnitAtMouse", l_CreateUnitAtMouse);
     state.register_function("GetAntiAliasingOptions", l_GetAntiAliasingOptions);
     state.register_function("GetHighlightCommand", l_GetHighlightCommand);
     state.register_function("GetDepositsAroundPoint", l_UiGetDepositsAroundPoint);
