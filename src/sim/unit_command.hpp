@@ -204,8 +204,10 @@ struct UnitCommand {
     bool site_cleared = false;
     /// A mobile build's task has prepared: checked its site and sent its
     /// builder there. It aims from the next tick, as Moho's
-    /// CUnitMobileBuildTask leaves TASKSTATE_Preparing returning 1. Runtime
-    /// state.
+    /// CUnitMobileBuildTask leaves TASKSTATE_Preparing returning 1. A guard's
+    /// helper is walking to a structure factory's build place: set when the
+    /// walk is sent, cleared when it ends, so a later move is not taken for
+    /// it. Runtime state.
     bool prepared = false;
     u32 rebuild_wreck_id = 0;
     f32 rebuild_bonus = 0;
