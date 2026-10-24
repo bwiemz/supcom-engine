@@ -7,10 +7,12 @@
 #include "lua/lua_state.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
+#include "sim/collision_beam.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
 #include "sim/sim_random.hpp"
+#include "sim/sim_state.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit.hpp"
 #include "sim/weapon.hpp"
@@ -214,6 +216,45 @@ TEST_CASE("a shot stops at the first thing in its way", "[collision]") {
     fly(reg, *shot);
     CHECK(shot->destroyed());
     CHECK(shot->position().z == Approx(103.0f));
+}
+
+TEST_CASE("a shot stops at a dying unit as at a living one", "[collision]") {
+    for (const bool dying : {false, true}) {
+        CAPTURE(dying);
+        EntityRegistry reg;
+        reg.init_spatial_grid(512, 512);
+        const u32 in_way = add_unit(reg, {100, 0, 104}, box(1, 1, 1, 1));
+        if (dying) {
+            static_cast<Unit*>(reg.find(in_way))->begin_dying();
+        }
+        Projectile* shot = add_shot(reg, {100, 1, 100}, {0, 0, 60});
+        fly(reg, *shot);
+        CHECK(shot->position().z == Approx(103.0f));
+        fly(reg, *shot);
+        CHECK(shot->destroyed());
+    }
+}
+
+TEST_CASE("a beam stops at a dying unit as at a living one", "[collision]") {
+    for (const bool dying : {false, true}) {
+        CAPTURE(dying);
+        osc::lua::LuaState state;
+        osc::sim::SimState sim{state.raw(), nullptr};
+        EntityRegistry& reg = sim.entity_registry();
+        reg.init_spatial_grid(512, 512);
+        const u32 shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
+        const u32 in_way = add_unit(reg, {100, 0, 105}, box(1, 1, 1, 1));
+        if (dying) {
+            static_cast<Unit*>(reg.find(in_way))->begin_dying();
+        }
+        auto beam = std::make_unique<osc::sim::Entity>();
+        beam->set_collision_beam(true);
+        beam->set_beam_launcher_id(shooter);
+        beam->beam_setup().length = 20;
+        const u32 beam_id = reg.register_entity(std::move(beam));
+        osc::sim::check_collision_beam(sim, nullptr, beam_id, false);
+        CHECK(reg.find(beam_id)->beam_endpoint().z == Approx(104.0f));
+    }
 }
 
 TEST_CASE("a shot with entity collision off flies through", "[collision]") {
