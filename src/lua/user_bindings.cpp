@@ -7,6 +7,7 @@
 #include "core/localization.hpp"
 #include "platform/executable.hpp"
 #include "lua/user_bindings.hpp"
+#include "lua/arg_count.hpp"
 
 #include "lua/engine_bindings.hpp"
 #include "lua/lua_state.hpp"
@@ -1093,9 +1094,7 @@ static int userdecal_Destroy(lua_State* L) {
 /// sim's is, the camera keeps to it, and the meshes outside it now hide
 /// until the next.
 static int l_SyncPlayableRect(lua_State* L) {
-    if (lua_gettop(L) != 1)
-        return luaL_error(L, "SyncPlayableRect(rect)\n  expected 1 args, but got %d",
-                          lua_gettop(L));
+    if (lua_gettop(L) != 1) return arg_count_error(L, "SyncPlayableRect(rect)", 1, lua_gettop(L));
     luaL_checktype(L, 1, LUA_TTABLE);
     // A Rect's fields, its y the map's z
     const auto field = [L](const char* name) {
@@ -1126,8 +1125,7 @@ static int l_SyncPlayableRect(lua_State* L) {
 /// DisplayEconomyOverlay), which the MFD's toggle sets and a NIS clears.
 static int l_RenderOverlayEconomy(lua_State* L) {
     if (lua_gettop(L) != 1)
-        return luaL_error(L, "RenderOverlayEconomy(bool)\n  expected 1 args, but got %d",
-                          lua_gettop(L));
+        return arg_count_error(L, "RenderOverlayEconomy(bool)", 1, lua_gettop(L));
     if (auto* r = get_renderer(L)) r->set_economy_overlay(lua_toboolean(L, 1) != 0);
     return 0;
 }
@@ -1136,7 +1134,7 @@ static int l_RenderOverlayEconomy(lua_State* L) {
 /// (FA-Binary-Patches section/TeamColorMode.cpp).
 static int l_TeamColorMode(lua_State* L) {
     if (lua_gettop(L) != 1) {
-        return luaL_error(L, "TeamColorMode(bool)\n  expected 1 args, but got %d", lua_gettop(L));
+        return arg_count_error(L, "TeamColorMode(bool)", 1, lua_gettop(L));
     }
     auto* r = get_renderer(L);
     if (!r) {
@@ -1179,8 +1177,7 @@ static renderer::RangeOverlays* get_range_overlays(lua_State* L) {
 /// AARRGGBB, the alpha their glow; each pair is a line's thickness zoomed in
 /// and zoomed out.
 static int l_SetOverlayFilter(lua_State* L) {
-    if (lua_gettop(L) != 9)
-        return luaL_error(L, "SetOverlayFilter()\n  expected 9 args, but got %d", lua_gettop(L));
+    if (lua_gettop(L) != 9) return arg_count_error(L, "SetOverlayFilter()", 9, lua_gettop(L));
     auto* overlays = get_range_overlays(L);
     if (!overlays) return 0;
     renderer::RangeProfile profile;
@@ -1322,9 +1319,7 @@ static int l_UiGetDepositsAroundPoint(lua_State* L) {
 /// CopyToClipboard(text): puts the text on the desktop's clipboard (FAF's
 /// patch); whether it did.
 static int l_CopyToClipboard(lua_State* L) {
-    if (lua_gettop(L) != 1)
-        return luaL_error(L, "%s\n  expected %d args, but got %d", "CopyToClipboard", 1,
-                          lua_gettop(L));
+    if (lua_gettop(L) != 1) return arg_count_error(L, "CopyToClipboard", 1, lua_gettop(L));
     auto* r = get_renderer(L);
     const char* text = lua_tostring(L, 1);
     lua_pushboolean(L, r && text && r->copy_to_clipboard(text) ? 1 : 0);
@@ -1424,8 +1419,7 @@ static int l_GetActiveBuildTemplate(lua_State* L) {
 /// and left out.
 static int l_SetActiveBuildTemplate(lua_State* L) {
     if (lua_gettop(L) != 1)
-        return luaL_error(L, "set this as an active build template.\n  expected 1 args, but got %d",
-                          lua_gettop(L));
+        return arg_count_error(L, "set this as an active build template.", 1, lua_gettop(L));
     auto* ih = get_input_handler(L);
     if (!ih) return 0;
     if (!lua_istable(L, 1) || luaL_getn(L, 1) < 3) {

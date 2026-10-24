@@ -175,6 +175,7 @@ add_executable(osc_tests
     test_moho_reflected_fields.cpp
     test_command_handles.cpp
     test_url_bindings.cpp
+    test_arg_count.cpp
     test_script_object.cpp
     test_veterancy_kills.cpp
     test_unit_weapons.cpp

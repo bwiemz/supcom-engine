@@ -1,4 +1,5 @@
 #include "lua/url_bindings.hpp"
+#include "lua/arg_count.hpp"
 #include "lua/lua_state.hpp"
 
 #include <algorithm>
@@ -26,7 +27,7 @@ bool same_letters(std::string_view a, std::string_view b) {
 
 int l_OpenURL(lua_State* L) {
     const int n = lua_gettop(L);
-    if (n != 1) return luaL_error(L, "%s\n  expected %d args, but got %d", kOpenURLHelp, 1, n);
+    if (n != 1) return arg_count_error(L, kOpenURLHelp, 1, n);
     const char* url = lua_tostring(L, 1);
     if (!url) return luaL_typerror(L, 1, "string");
 

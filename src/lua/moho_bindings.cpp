@@ -1,5 +1,6 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
+#include "lua/arg_count.hpp"
 
 #include "core/color.hpp"
 #include "core/dmath.hpp"
@@ -476,10 +477,10 @@ static const MethodEntry collision_manipulator_methods[] = {
 static int thrust_SetThrustingParam(lua_State* L) {
     const int n = lua_gettop(L);
     if (n != 9) {
-        return luaL_error(L, "%s\n  expected %d args, but got %d",
-                          "ThrustManipulator:SetThrustingParam(xCapMin, xCapMax, yCapMin, "
-                          "yCapMax, zCapMin, zCapMax, turnForceMult, turnSpeed)",
-                          9, n);
+        return arg_count_error(L,
+                               "ThrustManipulator:SetThrustingParam(xCapMin, xCapMax, yCapMin, "
+                               "yCapMax, zCapMin, zCapMax, turnForceMult, turnSpeed)",
+                               9, n);
     }
     auto* m = check_manip_base(L);
     if (!m) {
@@ -497,8 +498,7 @@ static int thrust_SetThrustingParam(lua_State* L) {
 static int slaver_SetMaxRate(lua_State* L) {
     const int n = lua_gettop(L);
     if (n != 2) {
-        return luaL_error(L, "%s\n  expected %d args, but got %d",
-                          "SlaveManipulator:SetMaxRate(self, degrees_per_second)", 2, n);
+        return arg_count_error(L, "SlaveManipulator:SetMaxRate(self, degrees_per_second)", 2, n);
     }
     auto* m = check_manip_base(L);
     if (!m) {

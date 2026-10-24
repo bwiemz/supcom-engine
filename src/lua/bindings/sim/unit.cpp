@@ -5,6 +5,7 @@
 
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
+#include "lua/arg_count.hpp"
 #include "lua/lua_stubs.hpp"
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
@@ -806,8 +807,7 @@ static int unit_GetBlip(lua_State* L) {
 /// marks targets 'icon_objective_primary'/'_secondary'; "" clears it).
 static int unit_SetStrategicUnderlay(lua_State* L) {
     if (lua_gettop(L) != 2)
-        return luaL_error(L, "SetStrategicUnderlay(icon)\n  expected 2 args, but got %d",
-                          lua_gettop(L));
+        return arg_count_error(L, "SetStrategicUnderlay(icon)", 2, lua_gettop(L));
     auto* unit = check_unit(L);
     std::string icon = luaL_checkstring(L, 2);
     std::transform(icon.begin(), icon.end(), icon.begin(),

@@ -4,6 +4,7 @@
 
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
+#include "lua/arg_count.hpp"
 #include "lua/lua_stubs.hpp"
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
@@ -795,9 +796,7 @@ static std::vector<u32> squad_units_for_order(const sim::SimState& sim, const si
 // assaults wait on it with IsCommandsActive. Nil when there is none to go.
 static int platoon_UnloadAllAtLocation(lua_State* L) {
     const int n = lua_gettop(L);
-    if (n != 2)
-        return luaL_error(L, "%s\n  expected %d args, but got %d",
-                          "CPlatoon:UnloadAllAtLocation(location)", 2, n);
+    if (n != 2) return arg_count_error(L, "CPlatoon:UnloadAllAtLocation(location)", 2, n);
     auto* platoon = check_platoon(L);
     auto* sim = get_sim(L);
     sim::Vector3 pos{};
@@ -832,9 +831,7 @@ static int platoon_UnloadAllAtLocation(lua_State* L) {
 // is none to go.
 static int platoon_UseFerryBeacon(lua_State* L) {
     const int n = lua_gettop(L);
-    if (n != 3)
-        return luaL_error(L, "%s\n  expected %d args, but got %d",
-                          "CPlatoon:UseFerryBeacon(category, beacon)", 3, n);
+    if (n != 3) return arg_count_error(L, "CPlatoon:UseFerryBeacon(category, beacon)", 3, n);
     auto* platoon = check_platoon(L);
     auto* sim = get_sim(L);
     auto* beacon = check_entity(L, 3);
