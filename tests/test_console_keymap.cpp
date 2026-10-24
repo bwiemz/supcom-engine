@@ -194,6 +194,27 @@ TEST_CASE("The sim rate: an integer game speed, 10^(rate/10) times normal", "[ui
     CHECK(rate_after("ConExecuteSave('UI_Lua SetGameSpeed(6) ; WLD_DecreaseSimRate')") == 5);
 }
 
+TEST_CASE("GetSimRate answers the game speed the sim runs at", "[ui][console]") {
+    // Moho's client manager's GetSimRate: the game speed GetGameSpeed
+    // answers, lowered to a slower client's (none is here). Not the ticks
+    // per second: it had answered 10 at every speed.
+    osc::GameStateManager mgr;
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+    lua_State* L = lua.raw();
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_pushlightuserdata(L, &mgr);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    mgr.transition_to(osc::GameState::GAME, nullptr); // GetSimRate answers in a session only
+    CHECK(lua.do_string("assert(GetSimRate() == 0, GetSimRate())").ok());
+    mgr.set_sim_rate(4);
+    CHECK(lua.do_string("assert(GetSimRate() == 4 and GetGameSpeed() == 4, GetSimRate())").ok());
+    CHECK(lua.do_string("SetGameSpeed(-3) assert(GetSimRate() == -3, GetSimRate())").ok());
+}
+
 TEST_CASE("ConTextMatches lists the console's names starting with the text", "[ui][console]") {
     osc::lua::LuaState lua;
     osc::sim::SimState sim(lua.raw(), nullptr);

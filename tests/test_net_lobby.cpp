@@ -734,6 +734,7 @@ TEST_CASE("Ejecting a client: Moho's refusals, and the lockstep drops it (M218e)
 TEST_CASE("A lobby's game has the speed its lobby set; players change it, observers can't (M218i)",
           "[lobby][lua]") {
     MpGuard guard;
+    osc::GameStateManager game_state; // the game's, once it plays
     World w;
     REQUIRE(w.run(kScenarios));
     REQUIRE(w.run("host = NewLobby('Host') host:HostGame()"));
@@ -765,8 +766,14 @@ TEST_CASE("A lobby's game has the speed its lobby set; players change it, observ
 
     // 'fast': fixed at +4
     REQUIRE(osc::lua::mp_attach_session(w.sim));
+    // In the game, where GetSimRate answers
+    game_state.transition_to(osc::GameState::GAME, nullptr);
+    lua_pushstring(w.state.raw(), "__osc_game_state_mgr");
+    lua_pushlightuserdata(w.state.raw(), &game_state);
+    lua_rawset(w.state.raw(), LUA_REGISTRYINDEX);
     REQUIRE(w.run(R"(
         assert(GetGameSpeed() == 4, GetGameSpeed())
+        assert(GetSimRate() == 4, 'the sim runs at the lockstep\'s speed')
         SetGameSpeed(7)
         assert(GetGameSpeed() == 4, 'fixed')
     )"));
@@ -781,6 +788,7 @@ TEST_CASE("A lobby's game has the speed its lobby set; players change it, observ
         assert(GetGameSpeed() == 0, GetGameSpeed())
         SetGameSpeed(3)
         assert(GetGameSpeed() == 3, GetGameSpeed())
+        assert(GetSimRate() == 3, GetSimRate())
     )"));
     osc::lua::pump_speed_changes(w.state.raw());
     REQUIRE(w.run("assert(table.getn(__heard) == 1 and __heard[1] == '1:3', __heard[1])"));

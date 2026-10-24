@@ -3760,14 +3760,6 @@ static int l_GetGameTime(lua_State* L) {
     return 1;
 }
 
-/// GetSimRate() → number (sim ticks per second, typically 10)
-static int l_GetSimRate(lua_State* L) {
-    if (lua_gettop(L) != 0) return arg_count_error(L, "number GetSimRate()", 0, lua_gettop(L));
-    if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
-    lua_pushnumber(L, 10.0);
-    return 1;
-}
-
 /// CurrentTime() → number (wall-clock seconds for UI animations)
 // The UI clock: seconds of UI frame time, advanced once per UI frame by
 // advance_ui_clock(). CurrentTime() reads it, so UI scripts' timing (retail
@@ -3922,6 +3914,18 @@ static int l_SetGameSpeed(lua_State* L) {
 static int l_GetGameSpeed(lua_State* L) {
     if (lua_gettop(L) != 0)
         return arg_count_error(L, "Return the current game speed", 0, lua_gettop(L));
+    lua_pushnumber(L, game_speed(L));
+    return 1;
+}
+
+/// GetSimRate() -> the game speed the sim runs at (Moho's client manager's
+/// GetSimRate): GetGameSpeed's, lowered to any slower client's rate. The
+/// engine's clients each run at Moho's default, 50 (GetSessionClients'
+/// maxSP), the speed's ceiling, so it is the game speed. (Not the sim's
+/// ticks per second: GetSimTicksPerSecond answers those.)
+static int l_GetSimRate(lua_State* L) {
+    if (lua_gettop(L) != 0) return arg_count_error(L, "number GetSimRate()", 0, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
     lua_pushnumber(L, game_speed(L));
     return 1;
 }

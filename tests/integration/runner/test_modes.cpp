@@ -1701,7 +1701,8 @@ void IntegrationModes::headless(Engine& e) {
                 assert(type(t) == 'number', 'GetGameTimeSeconds failed')
                 assert(type(tick) == 'number', 'GameTick failed')
                 assert(type(gt) == 'string', 'GetGameTime should return string')
-                assert(rate == 10, 'GetSimRate should be 10')
+                assert(rate == GetGameSpeed(), 'GetSimRate should be the game speed, got ' ..
+                       tostring(rate))
                 print('M145: Time queries OK (t=' .. t .. ' tick=' .. tick .. ' gt=' .. gt .. ')')
             )");
             if (r.ok()) {
@@ -1719,6 +1720,7 @@ void IntegrationModes::headless(Engine& e) {
                 SetGameSpeed(2.0)
                 local spd = GetGameSpeed()
                 assert(spd == 2.0, 'SetGameSpeed failed: got ' .. tostring(spd))
+                assert(GetSimRate() == 2, 'GetSimRate: got ' .. tostring(GetSimRate()))
                 SetGameSpeed(1.0)
                 print('M145: Speed control OK')
             )");
