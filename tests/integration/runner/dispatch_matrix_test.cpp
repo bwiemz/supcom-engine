@@ -56,7 +56,7 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     ctx.vfs.mount(root, std::make_unique<vfs::DirectoryMount>(dir));
     map::Terrain ground(map::Heightmap(512, 512, 1.0f, std::vector<u16>(513 * 513, 0)), 0.0f, true);
     ground.set_lighting(white_fill(), {});
-    constexpr u32 techniques = static_cast<u32>(MeshTechnique::NukeUEF) + 1;
+    constexpr u32 techniques = static_cast<u32>(MeshTechnique::NukeQuantum) + 1;
     bool shared = true;
     for (u32 id = 0; id <= techniques; ++id) {
         if (id == static_cast<u32>(MeshTechnique::UnitPlace)) continue;
@@ -191,7 +191,7 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     std::sort(matrix.begin(), matrix.end());
     std::string all;
     for (const auto& line : matrix) all += line + '\n';
-    for (u32 id = 0; id <= static_cast<u32>(MeshTechnique::NukeUEF); ++id) {
+    for (u32 id = 0; id <= static_cast<u32>(MeshTechnique::NukeQuantum); ++id) {
         const std::string name = renderer::mesh_technique_name(static_cast<MeshTechnique>(id));
         for (int lane = 0; lane < 3; ++lane)
             for (const char* view : {"world", "cartographic-main", "cartographic-minimap"}) {
@@ -255,7 +255,8 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
                              "RallyPoint",
                              "MapImager",
                              "OuterCloud",
-                             "NukeUEF"}) {
+                             "NukeUEF",
+                             "NukeEMP"}) {
         fact(2, fmt::format("technique={} stage=reflection ", name));
         fact(0, fmt::format("technique={} stage=reflection ", name), false);
         fact(1, fmt::format("technique={} stage=reflection ", name), false);
@@ -289,11 +290,13 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
                     return true;
         return false;
     };
-    for (const char* role : {"mesh", "fade", "overlay", "cube", "outer_cloud", "feedback", "glow",
-                             "shield:Blend", "shield:BlendUnculled", "shield:AddRGB",
-                             "shield:AddRGBA", "shield:Fill", "shield:BlendDepthWrite"})
+    for (const char* role :
+         {"mesh", "fade", "overlay", "cube", "outer_cloud", "nuke_emp", "nuke_quantum", "feedback",
+          "glow", "shield:Blend", "shield:BlendUnculled", "shield:AddRGB", "shield:AddRGBA",
+          "shield:Fill", "shield:BlendDepthWrite"}) {
         t.check(role_in(role, {"reflection", "pre-water", "post-water", "post-effect"}),
                 std::string("dispatch world role coverage: ") + role);
+    }
     t.check(role_in("shadow", {"shadow"}), "dispatch role coverage: shadow");
     for (const char* role :
          {"cartographic:UnitColour", "cartographic:UnitGlow", "cartographic:Opaque",
