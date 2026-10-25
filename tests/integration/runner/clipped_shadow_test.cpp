@@ -168,19 +168,17 @@ void test_clipped_shadows(TestContext& ctx) {
     };
 
     // Test 1: half-clear hovering plates. Drawn by Unit (FA's Depth), the
-    // whole plate casts; by NormalMappedAlpha, VertexNormal and
-    // UndulatingNormalMappedAlpha (DepthClip, UndulatingDepthClip), and as a
-    // prop of a technique the engine hasn't ported, half.
+    // whole plate casts; by NormalMappedAlpha, VertexNormal,
+    // UndulatingNormalMappedAlpha and Flat (DepthClip, UndulatingDepthClip),
+    // and as a prop of a technique the engine hasn't ported, half.
     {
         struct Hover {
             const char* shader;
             bool prop;
         };
-        const Hover hovers[] = {{"Unit", false},
-                                {"NormalMappedAlpha", false},
-                                {"VertexNormal", false},
-                                {"UndulatingNormalMappedAlpha", false},
-                                {"Clutter", true}};
+        const Hover hovers[] = {{"Unit", false},         {"NormalMappedAlpha", false},
+                                {"VertexNormal", false}, {"UndulatingNormalMappedAlpha", false},
+                                {"Flat", false},         {"Clutter", true}};
         f32 x = 100.0f;
         for (const Hover& h : hovers) {
             stand("Unit", "albedo_white.dds", "plate_wide.scm", x, 100.0f, 0.0f);
