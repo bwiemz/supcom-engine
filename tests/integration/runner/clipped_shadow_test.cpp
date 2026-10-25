@@ -226,6 +226,11 @@ void test_clipped_shadows(TestContext& ctx) {
         };
         const auto swaying = hang("UndulatingNormalMappedAlpha", 300.0f);
         const auto rigid = hang("NormalMappedAlpha", 340.0f);
+        // Nine of the wind's periods along x on: the same phase. A factory's plate: the view
+        // keeps a unit by its footprint, and the wall hangs out of the view.
+        next_unit = 22;
+        const auto bloating =
+            hang("BloatingNormalMappedAlpha", 300.0f + 9.0f * 6.2831853f / 0.707f);
         for (int i = 0; i < 30; ++i) ctx.sim.tick();
         const auto phase = [&] {
             const f32 time = static_cast<f32>(ctx.sim.tick_count()) + 1.0f;
@@ -242,9 +247,11 @@ void test_clipped_shadows(TestContext& ctx) {
         };
         const auto calm = mask(swaying);
         const auto still_calm = mask(rigid);
+        const auto bloating_calm = mask(bloating);
         for (int i = 0; i < 31; ++i) ctx.sim.tick();
         const auto gust = mask(swaying);
         const auto still_gust = mask(rigid);
+        const auto bloating_gust = mask(bloating);
         const auto moved = [](const std::vector<bool>& a, const std::vector<bool>& b) {
             int n = 0;
             for (size_t k = 0; k < a.size() && k < b.size(); ++k) n += a[k] != b[k] ? 1 : 0;
@@ -254,10 +261,38 @@ void test_clipped_shadows(TestContext& ctx) {
         for (const bool d : calm) shadowed += d ? 1 : 0;
         const int swayed = moved(calm, gust);
         const int stayed = moved(still_calm, still_gust);
-        t.check(shadowed > 300 && swayed > 30 && stayed == 0,
+        const int bloating_swayed = moved(bloating_calm, bloating_gust);
+        t.check(shadowed > 300 && swayed > 30 && stayed == 0 && bloating_swayed > 30,
                 fmt::format("Test 2: an Undulating wall's shadow ({} pixels) changes {} pixels "
-                            "over half a sway, a NormalMappedAlpha wall's {}",
-                            shadowed, swayed, stayed));
+                            "over half a sway, a NormalMappedAlpha wall's {}, a Bloating "
+                            "wall's (UndulatingDepthClip) {}",
+                            shadowed, swayed, stayed, bloating_swayed));
+    }
+
+    // Test 3: NormalMappedAlphaNoShadow (no STAGE_DEPTH). The third plate has none over it.
+    {
+        std::array<int, 3> dark_under{};
+        const std::array<const char*, 2> shaders = {"NormalMappedAlpha",
+                                                    "NormalMappedAlphaNoShadow"};
+        for (size_t i = 0; i < dark_under.size(); ++i) {
+            const f32 x = 100.0f + 20.0f * static_cast<f32>(i);
+            stand("Unit", "albedo_white.dds", "plate_wide.scm", x, 300.0f, 0.0f);
+            if (i < shaders.size()) {
+                stand(shaders[i], "albedo_white.dds", "plate_hover.scm", x, 300.0f, kLift);
+            }
+        }
+        for (int i = 0; i < 30; ++i) {
+            ctx.sim.tick();
+        }
+        for (size_t i = 0; i < dark_under.size(); ++i) {
+            const auto at = shadow_at(100.0f + 20.0f * static_cast<f32>(i), 300.0f, kLift, sun);
+            dark_under[i] = dark(at[0], at[1]);
+        }
+        t.check(dark_under[0] > dark_under[2] + 1500 &&
+                    std::abs(dark_under[1] - dark_under[2]) < 100,
+                fmt::format("Test 3: {} pixels are dark under a hovering NormalMappedAlpha plate, "
+                            "{} under a NormalMappedAlphaNoShadow one, {} with none",
+                            dark_under[0], dark_under[1], dark_under[2]));
     }
 
     spdlog::info("Clipped shadow test: {}/{} passed", t.pass, t.pass + t.fail);
