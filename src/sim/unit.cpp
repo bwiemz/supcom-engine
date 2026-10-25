@@ -1308,7 +1308,7 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx) {
     auto* L = ctx.L;
 
     // Per-tick health regeneration (base rate + veterancy buffs via SetRegenRate)
-    if (!is_being_built() && regen_rate() > 0 && health() > 0 && health() < max_health()) {
+    if (!is_being_built() && regen_rate() > 0 && !dying_ && health() < max_health()) {
         f32 new_hp = std::min(max_health(), health() + regen_rate() * static_cast<f32>(dt));
         set_health(new_hp);
     } else if (is_being_built() && !dying_ && L && ctx.sim &&
@@ -4907,13 +4907,6 @@ void Unit::init_animated_bones() {
     for (auto& m : animated_bone_matrices_) {
         m = IDENTITY;
     }
-}
-
-void Unit::record_damage(u32 attacker_id, f32 amount) {
-    for (auto& [id, dmg] : damage_contributions_) {
-        if (id == attacker_id) { dmg += amount; return; }
-    }
-    damage_contributions_.emplace_back(attacker_id, amount);
 }
 
 } // namespace osc::sim

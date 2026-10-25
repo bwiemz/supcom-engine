@@ -1395,6 +1395,10 @@ void main() {
         worldPos.z += sin(20.5 * r * nvert.y + phi) * s;
     }
     gl_Position = pc.viewProj * worldPos;
+    if (pc.technique == 41u) {
+        // CommandFeedback4's DepthBias = -0.0001
+        gl_Position.z -= 0.0001 * gl_Position.w;
+    }
     fragWorldPos = worldPos.xyz;
     // Transform TBN vectors through blended bone then model
     mat3 normalMat = mat3(inModel) * mat3(bone);
@@ -1432,7 +1436,9 @@ layout(push_constant) uniform PushConstants {
     // 9 NormalMappedAlpha, 10 NormalMappedGlow, 11 AlphaFade, 12 UEFBuildCube,
     // 13 AeonBuildPuddle, 14 BlackenedNormalMappedAlpha (M211g); 15 VertexNormal,
     // 16 NormalMappedTerrain, 17 UndulatingNormalMappedAlpha (M211i); ...;
-    // 32 Effect, 33 Cloud, 34 OuterCloud, 35 NukeUEF
+    // 32 Effect, 33 Cloud, 34 OuterCloud, 35 NukeUEF, 36 NukeEMP, 37 NukeQuantum,
+    // 38 PhalanxEffect, 39 UEFQuantumGate, 40 CommandFeedback3, 41 CommandFeedback4,
+    // 42 AeonCZAR (High; below it, Aeon)
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
@@ -1779,12 +1785,28 @@ vec4 explosionColor() {
         return vec4(clamp(lit, 0.0, 1.0),
                     albedo.a * fragParameter * fadeAfter(age, 180.0, 0.025));
     }
-    if (pc.technique == 34u) {
-        // AlphaFadeTexShiftScalePS(1, -0.008, 180, 0.025): the albedo
+    if (pc.technique == 34u || pc.technique == 36u || pc.technique == 37u) {
+        // AlphaFadeTexShiftScalePS: OuterCloud's and NukeEMP's (1, -0.008,
+        // 180, 0.025), NukeQuantum's (0.5, -0.006, 150, 0.025). The albedo
         // scrolling up, masked by the normals' green.
-        vec4 albedo = texture(texAlbedo, fragUV + vec2(0.0, age * -0.008));
+        bool quantum = pc.technique == 37u;
+        vec2 uv = fragUV * (quantum ? 0.5 : 1.0) + vec2(0.0, age * (quantum ? -0.006 : -0.008));
+        vec4 albedo = texture(texAlbedo, uv);
         float mask = texture(texNormal, fragUV).g;
-        return vec4(albedo.rgb, albedo.a * mask * fadeAfter(age, 180.0, 0.025));
+        return vec4(albedo.rgb, albedo.a * mask * fadeAfter(age, quantum ? 150.0 : 180.0, 0.025));
+    }
+    if (pc.technique == 38u) {
+        // TwoTexShiftScalePS(0.2, 0.2) by EffectVertexNormalLoFiVS(1, 1, -0.05, 0, -0.05, -0.025)
+        vec4 albedo = texture(texAlbedo, fragUV + age * vec2(-0.05, 0.0));
+        vec4 second = texture(texNormal, fragUV + age * vec2(-0.05, -0.025));
+        return vec4(clamp((albedo.rgb + second.rgb) * 0.2 * albedo.a, 0.0, 1.0), 0.2);
+    }
+    if (pc.technique == 39u) {
+        // TexSubAlphaMaskStaticLoFiPS(1, 0.4) by ThreeUVTexShiftScaleLoFiVS(1, 4, 1, 0, 0.025,
+        // 0.025, 0.025, 0, 0)
+        vec4 albedo = texture(texAlbedo, fragUV + vec2(0.0, age * 0.025));
+        vec4 second = texture(texNormal, fragUV * 4.0 + vec2(age * 0.025));
+        return vec4(clamp(albedo.rgb - second.rgb, 0.0, 1.0), 0.4 * texture(texAlbedo, fragUV).a);
     }
     // NukeHeadPS(1, 0.018, 50, 0.015): the normals are noise, read thrice
     // at three scales scrolling up; a grey from them, halfway to the albedo,
@@ -1807,7 +1829,11 @@ vec4 explosionColor() {
                         R"glsl(
 
 void main() {
-    if (pc.technique >= 32u) {
+    if (pc.technique == 40u || pc.technique == 41u) {
+        outColor = texture(texAlbedo, fragUV);
+        return;
+    }
+    if (pc.technique >= 32u && pc.technique <= 39u) {
         outColor = explosionColor();
         return;
     }
@@ -1987,6 +2013,19 @@ void main() {
             lit = albedo * (emissive + computeLight(NdotL, shadow, 1.0, 0.6) +
                             specTeam.r * environment) +
                   phongAdditive;
+        } else if (pc.technique == 42u) {
+            // AeonCZARPS: no "environment" named, so the "<default>" cube
+            float age = pc.time - fragShaderTime;
+            if (age < 0.0) {
+                age += 36000.0;
+            }
+            float energy = (texture(texSecondary, fragUV * 60.0 - age * vec2(0.16, 0.01)).b +
+                            texture(texSecondary, fragUV * 30.0 + age * vec2(0.08, -0.005)).g) *
+                           (1.0 - texColor.a);
+            lit = albedo * (emissive + computeLight(NdotL, shadow, 1.0, 0.6) +
+                            specTeam.r * texture(environmentMap, R).rgb) +
+                  pow(phongAmount, 8.0) * specTeam.g + vec3(0.2, 0.7, 1.0) * energy;
+            alpha += energy;
         } else if (pc.technique == 2u || pc.technique == 3u) {
             // NormalMappedInsectPS (Cybran) and NormalMappedMetalPS: an
             // anisotropic highlight from a lookup, half the environment.

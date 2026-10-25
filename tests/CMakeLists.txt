@@ -69,6 +69,7 @@ add_executable(osc_tests
     test_ordered_iteration.cpp
     test_collision.cpp
     test_collision_cells.cpp
+    test_damage.cpp
     test_coords_tilt.cpp
     test_flight.cpp
     test_dmath.cpp
@@ -78,6 +79,7 @@ add_executable(osc_tests
     test_user_unit.cpp
     test_faf_bindings.cpp
     test_external_factory.cpp
+    test_damage_callbacks.cpp
     test_profiler_self_time.cpp
     test_game_state_setup_ui.cpp
     test_transport_unload.cpp
@@ -162,6 +164,7 @@ add_executable(osc_tests
     test_smoke_harness.cpp
     test_army_stats.cpp
     test_unit_stats.cpp
+    test_kill_stats.cpp
     test_match_telemetry.cpp
     test_unfinished_units.cpp
     test_air_combat.cpp

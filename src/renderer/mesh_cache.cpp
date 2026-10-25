@@ -58,6 +58,13 @@ const char* mesh_technique_name(MeshTechnique technique) {
     case MeshTechnique::Cloud: return "Cloud";
     case MeshTechnique::OuterCloud: return "OuterCloud";
     case MeshTechnique::NukeUEF: return "NukeUEF";
+    case MeshTechnique::NukeEMP: return "NukeEMP";
+    case MeshTechnique::NukeQuantum: return "NukeQuantum";
+    case MeshTechnique::PhalanxEffect: return "PhalanxEffect";
+    case MeshTechnique::UEFQuantumGate: return "UEFQuantumGate";
+    case MeshTechnique::CommandFeedback3: return "CommandFeedback3";
+    case MeshTechnique::CommandFeedback4: return "CommandFeedback4";
+    case MeshTechnique::AeonCZAR: return "AeonCZAR";
     }
     return "Unknown";
 }
@@ -292,6 +299,27 @@ MeshTechnique mesh_technique(const std::string& shader) {
     if (shader_name == "Cloud") return MeshTechnique::Cloud;
     if (shader_name == "OuterCloud") return MeshTechnique::OuterCloud;
     if (shader_name == "NukeUEF") return MeshTechnique::NukeUEF;
+    if (shader_name == "NukeEMP") {
+        return MeshTechnique::NukeEMP;
+    }
+    if (shader_name == "NukeQuantum") {
+        return MeshTechnique::NukeQuantum;
+    }
+    if (shader_name == "PhalanxEffect") {
+        return MeshTechnique::PhalanxEffect;
+    }
+    if (shader_name == "UEFQuantumGate") {
+        return MeshTechnique::UEFQuantumGate;
+    }
+    if (shader_name == "CommandFeedback3") {
+        return MeshTechnique::CommandFeedback3;
+    }
+    if (shader_name == "CommandFeedback4") {
+        return MeshTechnique::CommandFeedback4;
+    }
+    if (shader_name == "AeonCZAR") {
+        return MeshTechnique::AeonCZAR;
+    }
     if (shader_name != "Unit" && !is_wreckage_shader(shader_name)) {
         static std::mutex mutex;
         static std::unordered_set<std::string> warned;

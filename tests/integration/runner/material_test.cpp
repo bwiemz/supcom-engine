@@ -261,6 +261,12 @@ void test_material(TestContext& ctx) {
     write_plate_scm(dir / "plate_small.scm", 2.0f);
     write_dds(dir / "plate_albedo_blue.dds", 1,
               [](int, u32, u32) { return std::array<u8, 4>{0, 0, 255, 255}; });
+    write_dds(dir / "plate_albedo_black_clear.dds", 1,
+              [](int, u32, u32) { return std::array<u8, 4>{0, 0, 0, 0}; });
+    write_dds(dir / "spec_none.dds", 1,
+              [](int, u32, u32) { return std::array<u8, 4>{0, 0, 0, 0}; });
+    write_dds(dir / "czar_secondary.dds", 1,
+              [](int, u32, u32) { return std::array<u8, 4>{0, 128, 128, 0}; });
     // A falloff lookup, 16 wide and 20 tall: red counts the column, green the
     // row; alpha is set on the right half (the rim's), which weighs the
     // environment.
@@ -1035,6 +1041,82 @@ void test_material(TestContext& ctx) {
                                 "at Low, {} under a hovering wreck ({} at High)",
                                 unit_low, wreck_low, wreck_high));
         }
+    }
+
+    // Test 22: AeonCZAR: AeonCZARPS at High, AeonPS (Aeon_Med's) at Medium.
+    {
+        Plate czar;
+        czar.shader = "AeonCZAR";
+        czar.albedo = "plate_albedo_black_clear.dds";
+        czar.specteam = "spec_none.dds";
+        czar.secondary = "czar_secondary.dds";
+        Plate aeon = czar;
+        aeon.shader = "Aeon";
+        Plate opaque = czar;
+        opaque.albedo = "plate_albedo_black.dds";
+        Plate mirror = czar;
+        mirror.albedo = "plate_albedo.dds";
+        mirror.specteam = "plate_specteam.dds";
+        make_plate("uab1201", czar, 100.0f, 300.0f);
+        make_plate("uab1202", aeon, 130.0f, 300.0f);
+        make_plate("uab1302", opaque, 160.0f, 300.0f);
+        make_plate("uab5101", mirror, 190.0f, 300.0f);
+        const std::string white = face_cube("white");
+        const auto at = [&](f32 x, const std::string& default_cube, const std::string& aeon_cube) {
+            map::ScmapEnvironment env;
+            env.terrain_shader = "TTerrain";
+            env.cubemaps.emplace_back("<default>", default_cube);
+            env.cubemaps.emplace_back("<aeon>", aeon_cube);
+            ground.set_lighting(dark, std::move(env));
+            shots.recapture();
+            return osc::test::middle(shots.shoot_frame(ground, x, 300.0f, 30.0f));
+        };
+        const Rgb energy = at(100.0f, kBlack, kBlack);
+        const Rgb as_aeon = at(130.0f, kBlack, kBlack);
+        const Rgb masked = at(160.0f, kBlack, kBlack);
+        const Rgb by_default = at(190.0f, white, kBlack);
+        const Rgb by_aeon = at(190.0f, kBlack, white);
+        video.graphics_fidelity = 1;
+        const Rgb medium = at(100.0f, kBlack, kBlack);
+        video = as_was;
+        const f32 e = 2.0f * 128.0f / 255.0f;
+        const Rgb expected = {std::min(0.2f * e, 1.0f), std::min(0.7f * e, 1.0f), 1.0f};
+        const Rgb black = {0.0f, 0.0f, 0.0f};
+        const Rgb full = {1.0f, 1.0f, 1.0f};
+        t.check(near(energy, expected) && near(as_aeon, black) && near(masked, black) &&
+                    near(by_default, full) && near(by_aeon, black) && near(medium, black),
+                fmt::format("Test 22: in the dark an AeonCZAR plate with its albedo's alpha clear "
+                            "shows {} ({} expected), an Aeon one {}, an opaque one {}; a mirror "
+                            "shows {} under \"<default>\" and {} under \"<aeon>\"; at Medium, {}",
+                            show(energy), show(expected), show(as_aeon), show(masked),
+                            show(by_default), show(by_aeon), show(medium)));
+    }
+
+    // Test 23: the CZAR's first LOD.
+    {
+        const auto made =
+            ctx.lua_state.do_string("CreateUnitHPR('uaa0310', 'ARMY_1', 300, 0, 300, 0, 0, 0)\n");
+        if (!made) {
+            spdlog::warn("the CZAR: {}", made.error().message);
+        }
+        for (int i = 0; i < 10; ++i) {
+            ctx.sim.tick();
+        }
+        renderer::Renderer& r = shots.renderer();
+        f32 x = 300.0f;
+        f32 z = 300.0f;
+        ctx.sim.entity_registry().for_each([&](const sim::Entity& e) {
+            if (e.is_unit() && !e.destroyed() && e.blueprint_id() == "uaa0310") {
+                x = e.position().x;
+                z = e.position().z;
+            }
+        });
+        shots.recapture();
+        (void)shots.shoot_frame(ground, x, z, 120.0f);
+        const u32 draws = r.mesh_draws(renderer::MeshTechnique::AeonCZAR);
+        t.check(r.mesh_technique("uaa0310", ctx.L) == renderer::MeshTechnique::AeonCZAR &&
+                    draws > 0,
+                fmt::format("Test 23: the CZAR's first LOD draws by AeonCZAR ({} draws)", draws));
     }
 
     spdlog::info("Material test: {}/{} passed", t.pass, t.pass + t.fail);

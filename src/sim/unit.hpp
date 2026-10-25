@@ -751,9 +751,6 @@ public:
     // Veterancy level (0-5, set from Lua VeterancyComponent)
     u8 vet_level() const { return vet_level_; }
     void set_vet_level(u8 level) { vet_level_ = level; }
-    const std::vector<std::pair<u32, f32>>& damage_contributions() const { return damage_contributions_; }
-    void record_damage(u32 attacker_id, f32 amount);
-    void clear_damage_contributions() { damage_contributions_.clear(); }
 
     // Stats/telemetry system
     void set_stat(const std::string& key, f64 value);
@@ -2021,7 +2018,6 @@ private:
     void release_stale_slots(const EntityRegistry& registry);
     // Veterancy
     u8 vet_level_ = 0;
-    std::vector<std::pair<u32, f32>> damage_contributions_; // (attacker_id, cumulative_damage)
     // Stats/telemetry
     std::unordered_map<std::string, f64> stats_;
     // Silo ammo counters

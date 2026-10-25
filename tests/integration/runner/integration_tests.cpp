@@ -7919,8 +7919,7 @@ void test_death(TestContext& ctx) {
         if not __osc_tank:IsDead() then error('not dead after Kill') end
         local rec = __osc_deaths.tank
         if not rec.killed then error('OnKilled not called') end
-        -- A bare Kill reaches OnKilled as Moho passes it: a type and a ratio.
-        if rec.type ~= 'Normal' or rec.overkill ~= 0 then
+        if rec.type ~= '' or rec.overkill ~= 0 then
             error('OnKilled got ' .. tostring(rec.type) .. ', ' .. tostring(rec.overkill))
         end
         if table.getn(__osc_tank:GetCommandQueue()) ~= 0 then error('orders kept') end
@@ -14974,10 +14973,8 @@ void test_air_staging(TestContext& ctx) {
     for (int i = 0; i < 1500 && d && d->transport_id() == 0; ++i) ctx.sim.tick();
     const bool docked = d && d->transport_id() == pad->entity_id();
     lua("__osc_pad:Kill()");
-    for (int i = 0; i < 3; ++i) ctx.sim.tick();
-    check(docked && d->transport_id() == 0 && !d->destroyed() &&
-              d->position().y > ground(*d) + 0.5f,
-          "a dying pad lets its plane go, still in the air");
+    check(docked && d->transport_id() == 0 && d->is_dying(),
+          "a dying pad takes the plane docked on it with it");
 
     spdlog::info("Air staging test: {}/{} passed", pass, pass + fail);
 }

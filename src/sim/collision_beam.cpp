@@ -157,9 +157,8 @@ void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_
         const Entity* e = registry.find(id);
         if (!e || e->destroyed() || e->is_collision_beam()) continue;
         if (!e->is_unit() && !e->is_prop() && !e->is_shield() && !e->is_projectile()) continue;
-        if (e->is_unit()) {
-            const auto* u = static_cast<const Unit*>(e);
-            if (u->is_dying() || u->transport_id() != 0) continue;
+        if (e->is_unit() && static_cast<const Unit*>(e)->transport_id() != 0) {
+            continue;
         }
         if (e->is_projectile() && static_cast<const Projectile*>(e)->impacted) continue;
         // A shield stops what comes in, not what goes out.

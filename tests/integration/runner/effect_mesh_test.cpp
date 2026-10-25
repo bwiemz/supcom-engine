@@ -4,7 +4,8 @@
 // Retail's build effects are projectiles with meshes of their own: UEF's
 // cube (UEFBuildCube) and slices (AlphaFade), Aeon's pool (AeonBuildPuddle).
 // So are the UEF nuke's dome (NukeUEF), the EMP warhead's cloud
-// (OuterCloud), the teleport's shockwave (Effect) and a plume (Cloud).
+// (OuterCloud) and sphere (NukeEMP), the Aeon nuke's head (NukeQuantum), the
+// teleport's shockwave (Effect) and a plume (Cloud).
 // Moho resolves legacy ShaderNames (TMeshGlow is NormalMappedGlow) and gives
 // every mesh but a unit's a white instance colour. Test 1 builds real units;
 // the rest stand plates of the test's own off its ground, over the sky's
@@ -39,8 +40,11 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -101,6 +105,30 @@ void test_effect_meshes(TestContext& ctx) {
     const TempDir scratch("osc_effect_mesh_test");
     const auto& dir = scratch.path();
     write_plate_scm(dir / "plate.scm", 4.0f);
+    {
+        std::ifstream in(dir / "plate.scm", std::ios::binary);
+        const std::vector<char> both((std::istreambuf_iterator<char>(in)),
+                                     std::istreambuf_iterator<char>());
+        u32 index_offset = 0;
+        u32 index_count = 0;
+        std::memcpy(&index_offset, both.data() + 28, 4);
+        std::memcpy(&index_count, both.data() + 32, 4);
+        for (const u32 side : {0u, 1u}) {
+            std::vector<char> one(both.begin(), both.begin() + index_offset);
+            for (u32 i = 0; i < index_count; ++i) {
+                if ((i / 6) % 2 == side) {
+                    const auto at = both.begin() + index_offset + 2 * i;
+                    one.insert(one.end(), at, at + 2);
+                }
+            }
+            one.insert(one.end(), both.begin() + index_offset + 2 * index_count, both.end());
+            const u32 count = index_count / 2;
+            std::memcpy(one.data() + 32, &count, 4);
+            std::ofstream(dir / (side == 0 ? "plate_side0.scm" : "plate_side1.scm"),
+                          std::ios::binary)
+                .write(one.data(), static_cast<std::streamsize>(one.size()));
+        }
+    }
     const auto flat = [](u8 r_, u8 g_, u8 b_, u8 a_) {
         return [=](int, u32, u32) { return std::array<u8, 4>{r_, g_, b_, a_}; };
     };
@@ -121,6 +149,15 @@ void test_effect_meshes(TestContext& ctx) {
         16, 4);
     write_dds(dir / "spec_none.dds", 1, flat(0, 0, 0, 0));
     write_dds(dir / "sec_black.dds", 1, flat(0, 0, 0, 0));
+    write_dds(dir / "mask_full.dds", 1, flat(0, 255, 0, 255));
+    write_dds(dir / "albedo_dim.dds", 1, flat(200, 100, 50, 30));
+    write_dds(
+        dir / "albedo_bands.dds", 1,
+        [](int, u32, u32 row) {
+            const u8 v = (row / 4) % 2 == 0 ? 255 : 0;
+            return std::array<u8, 4>{v, v, v, 255};
+        },
+        4, 16);
     ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
 
     // Prop blueprints the map has none of (so none are drawn but the
@@ -141,6 +178,7 @@ void test_effect_meshes(TestContext& ctx) {
         const char* albedo = "albedo_white.dds";
         const char* secondary = "sec_black.dds";
         const char* normals = "plate_normals.dds";
+        const char* mesh = "plate.scm";
     };
     // A plate at (x, z), `f` built, `lift` higher: a unit's, or a prop's.
     const auto stand = [&](const Look& look, f32 f, f32 x, f32 z, bool prop = false,
@@ -155,6 +193,7 @@ void test_effect_meshes(TestContext& ctx) {
         p.specteam = "spec_none.dds";
         p.secondary = look.secondary;
         p.normals = look.normals;
+        p.mesh = look.mesh;
         if (prop) {
             if (next_prop >= prop_bps.size()) {
                 spdlog::warn("out of prop blueprints");
@@ -760,6 +799,438 @@ void test_effect_meshes(TestContext& ctx) {
             side_draws > 0,
             fmt::format("Test 12: seen from close by its side, the dome draws ({} NukeUEF draws)",
                         side_draws));
+    }
+
+    // Test 13: NukeEMP (Depth_Enable_Less_Write_None, POSTWATER + PREEFFECT).
+    {
+        Look emp;
+        emp.shader = "NukeEMP";
+        emp.albedo = "albedo_slice.dds";
+        Look unit;
+        unit.albedo = "albedo_green.dds";
+        stand(emp, 1.0f, 100.0f, 250.0f);
+        stand(effect, 1.0f, 130.0f, 250.0f);
+        stand(emp, 1.0f, 130.0f, 250.0f, false, 2.0f);
+        stand(unit, 1.0f, 160.0f, 250.0f);
+        stand(emp, 1.0f, 160.0f, 250.0f);
+        const Rgb alone = at_lit(100.0f, 250.0f);
+        const Rgb above = at_lit(130.0f, 250.0f);
+        const Rgb level = at_lit(160.0f, 250.0f);
+        dispatch("technique=NukeEMP stage=post-water pass=0 pipeline=nuke_emp "
+                 "drawn=NukeEMP lane=2");
+        const Rgb expected = over(sky_lit, slice, 128.0f / 255.0f);
+        const Rgb lit_unit = scaled(green, 0.72f);
+        t.check(near(alone, expected) && near(above, green) && near(level, lit_unit),
+                fmt::format("Test 13: a NukeEMP plate shows {} ({} expected); over an Effect "
+                            "plate, {} (the Effect plate, {}); level with a Unit plate, {} (the "
+                            "Unit plate, {})",
+                            show(alone), show(expected), show(above), show(green), show(level),
+                            show(lit_unit)));
+    }
+
+    // Test 14: NukeQuantum (ColorWriteEnable 0x0D, POSTWATER + POSTEFFECT).
+    {
+        Look quantum;
+        quantum.shader = "NukeQuantum";
+        Look unit;
+        unit.albedo = "albedo_green.dds";
+        stand(unit, 1.0f, 190.0f, 250.0f);
+        stand(quantum, 1.0f, 190.0f, 250.0f, false, 2.0f);
+        stand(quantum, 1.0f, 220.0f, 250.0f);
+        const u32 born = ctx.sim.tick_count();
+        const Rgb above = at_lit(190.0f, 250.0f);
+        dispatch("technique=NukeQuantum stage=post-effect pass=0 pipeline=nuke_quantum "
+                 "drawn=NukeQuantum lane=2");
+        const f32 a = 128.0f / 255.0f;
+        const Rgb lit_unit = scaled(green, 0.72f);
+        const auto red_blue = [](const Rgb& below, f32 alpha) {
+            return Rgb{below[0] + (1.0f - below[0]) * alpha, below[1],
+                       below[2] + (1.0f - below[2]) * alpha};
+        };
+        while (ctx.sim.tick_count() < born + 169) {
+            ctx.sim.tick();
+        }
+        const Rgb faded = at_lit(220.0f, 250.0f);
+        t.check(near(above, red_blue(lit_unit, a)) && near(faded, red_blue(sky_lit, 0.5f * a)),
+                fmt::format("Test 14: a NukeQuantum plate over a Unit plate shows {} ({} "
+                            "expected: the Unit plate's green); 170 ticks old, {} ({})",
+                            show(above), show(red_blue(lit_unit, a)), show(faded),
+                            show(red_blue(sky_lit, 0.5f * a))));
+    }
+
+    const auto red_crossings = [&](f32 x, f32 z, int cut) {
+        const ImageRGBA8 image = frame(x, z, lit);
+        const u32 y = image.height / 2;
+        const auto at = [&](u32 x0, u32 c) {
+            return static_cast<int>(
+                image.pixels[(static_cast<size_t>(y) * image.width + x0) * 4 + c]);
+        };
+        const auto off_sky = [&](u32 x0) {
+            for (u32 c = 0; c < 3; ++c) {
+                if (std::abs(at(x0, c) - static_cast<int>(std::lround(sky_lit[c] * 255.0f))) > 12) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        u32 left = 0;
+        while (left < image.width && !off_sky(left)) {
+            ++left;
+        }
+        u32 right = image.width;
+        while (right > left && !off_sky(right - 1)) {
+            --right;
+        }
+        const f32 width = static_cast<f32>(right - left);
+        std::vector<f32> found;
+        for (u32 x0 = left; x0 + 1 < right; ++x0) {
+            const f32 e = static_cast<f32>(x0 + 1 - left) / width;
+            if (e > 0.05f && e < 0.95f && (at(x0, 0) > cut) != (at(x0 + 1, 0) > cut)) {
+                found.push_back(e);
+            }
+        }
+        return found;
+    };
+    const auto nearest_middle = [](const std::vector<f32>& found) {
+        f32 best = 1.0f;
+        for (const f32 e : found) {
+            if (std::abs(e - 0.5f) < std::abs(best - 0.5f)) {
+                best = e;
+            }
+        }
+        return best;
+    };
+
+    // Test 15: AlphaFadeTexShiftScalePS's scroll and scale, on plates turned so
+    // that their v runs across the frame.
+    {
+        const auto band = [](const std::vector<f32>& found) {
+            if (found.size() < 2) {
+                return 0.0f;
+            }
+            return (found.back() - found.front()) / static_cast<f32>(found.size() - 1);
+        };
+        for (const char* shader : {"NukeEMP", "NukeQuantum"}) {
+            Look banded;
+            banded.shader = shader;
+            banded.albedo = "albedo_bands.dds";
+            stand(banded, 1.0f, std::string(shader) == "NukeEMP" ? 250.0f : 280.0f, 280.0f);
+            const auto turned =
+                ctx.lua_state.do_string("__osc_last_plate:SetOrientation({0, 0.70710678, 0, "
+                                        "0.70710678}, true)\n");
+            if (!turned) {
+                spdlog::warn("turning the plate: {}", turned.error().message);
+            }
+        }
+        ctx.sim.tick();
+        const std::vector<f32> emp_before = red_crossings(250.0f, 280.0f, 128);
+        const std::vector<f32> quantum_before = red_crossings(280.0f, 280.0f, 128);
+        for (int i = 0; i < 10; ++i) {
+            ctx.sim.tick();
+        }
+        const std::vector<f32> emp_after = red_crossings(250.0f, 280.0f, 128);
+        const std::vector<f32> quantum_after = red_crossings(280.0f, 280.0f, 128);
+        const f32 emp_moved = std::abs(nearest_middle(emp_after) - nearest_middle(emp_before));
+        const f32 quantum_moved =
+            std::abs(nearest_middle(quantum_after) - nearest_middle(quantum_before));
+        const f32 emp_band = band(emp_after);
+        const f32 quantum_band = band(quantum_after);
+        t.check(emp_moved > 0.06f && emp_moved < 0.10f && quantum_moved > 0.10f &&
+                    quantum_moved < 0.14f && std::abs(emp_band - 0.25f) < 0.04f &&
+                    std::abs(quantum_band - 0.5f) < 0.06f,
+                fmt::format("Test 15: over 10 ticks a NukeEMP plate's bands move {:.3f} of the "
+                            "plate (0.08 expected), {:.3f} wide (0.25); a NukeQuantum plate's "
+                            "{:.3f} (0.12), {:.3f} wide (0.5)",
+                            emp_moved, emp_band, quantum_moved, quantum_band));
+    }
+
+    // Test 16: the nukes write their alpha, the frame's glow; OuterCloud doesn't.
+    {
+        map::ScmapLighting no_map_bloom = lit;
+        no_map_bloom.bloom = 0.0f;
+        const auto halo = [&](f32 x) {
+            const ImageRGBA8 off = frame(x, 310.0f, no_map_bloom);
+            r.set_bloom_enabled(true);
+            const ImageRGBA8 on = frame(x, 310.0f, no_map_bloom);
+            r.set_bloom_enabled(false);
+            size_t n = 0;
+            for (size_t i = 0; i + 2 < off.pixels.size() && i + 2 < on.pixels.size(); i += 4) {
+                bool sky_pixel = true;
+                for (int c = 0; c < 3; ++c) {
+                    sky_pixel = sky_pixel && std::abs(off.pixels[i + static_cast<size_t>(c)] -
+                                                      std::lround(sky_lit[c] * 255.0f)) <= 3;
+                }
+                if (sky_pixel && on.pixels[i] > off.pixels[i] + 8) {
+                    ++n;
+                }
+            }
+            return n;
+        };
+        std::array<size_t, 3> haloes{};
+        const std::array<const char*, 3> shaders = {"NukeEMP", "NukeQuantum", "OuterCloud"};
+        for (size_t i = 0; i < shaders.size(); ++i) {
+            Look glowing;
+            glowing.shader = shaders[i];
+            glowing.normals = "mask_full.dds";
+            stand(glowing, 1.0f, 100.0f + 60.0f * static_cast<f32>(i), 310.0f);
+        }
+        for (size_t i = 0; i < shaders.size(); ++i) {
+            haloes[i] = halo(100.0f + 60.0f * static_cast<f32>(i));
+        }
+        t.check(haloes[0] > 1000 && haloes[1] > 1000 && haloes[2] < 20,
+                fmt::format("Test 16: with the bloom on, {} pixels of sky brighten about a "
+                            "NukeEMP plate, {} about a NukeQuantum one, {} about an OuterCloud "
+                            "one",
+                            haloes[0], haloes[1], haloes[2]));
+    }
+
+    // Test 17: an Aeon and a Cybran commander's DeathWeapons.
+    {
+        struct Death {
+            const char* commander;
+            const char* effect;
+            MeshTechnique technique;
+            f32 x;
+            f32 z;
+        };
+        const std::array<Death, 2> deaths = {
+            Death{"ual0001", "quantumwarheadeffect01", MeshTechnique::NukeQuantum, 200.0f, 400.0f},
+            Death{"url0001", "empfluxwarheadeffect03", MeshTechnique::NukeEMP, 320.0f, 400.0f}};
+        const char* dump = std::getenv("OSC_EFFECT_MESH_TEST_PNG");
+        for (const Death& death : deaths) {
+            const auto killed = ctx.lua_state.do_string(
+                fmt::format("local acu = CreateUnitHPR('{}', 'ARMY_1', {}, 0, {}, 0, 0, 0)\n"
+                            "Damage(nil, acu, 99999, nil, 'Normal')\n",
+                            death.commander, death.x, death.z));
+            if (!killed) {
+                spdlog::warn("{}: {}", death.commander, killed.error().message);
+            }
+            std::string effect_bp;
+            f32 effect_x = death.x;
+            f32 effect_z = death.z;
+            u32 draws = 0;
+            int made_at = 0;
+            for (int i = 1; i <= 120; ++i) {
+                ctx.sim.tick();
+                ctx.sim.entity_registry().for_each([&](const sim::Entity& e) {
+                    if (e.destroyed() || !e.is_projectile() ||
+                        lower(e.blueprint_id()).find(death.effect) == std::string::npos) {
+                        return;
+                    }
+                    effect_bp = e.blueprint_id();
+                    effect_x = e.position().x;
+                    effect_z = e.position().z;
+                });
+                if (!effect_bp.empty() && made_at == 0) {
+                    made_at = i;
+                }
+                if (made_at == 0 || (i != made_at + 10 && i != made_at + 50)) {
+                    continue;
+                }
+                const ImageRGBA8 image = frame(effect_x, effect_z, map::ScmapLighting{}, 60.0f);
+                draws += r.mesh_draws(death.technique);
+                if (dump) {
+                    write_png(fmt::format("{}_{}_t{}.png", dump, death.commander, i - made_at),
+                              image);
+                }
+            }
+            const MeshTechnique seen =
+                effect_bp.empty() ? MeshTechnique::Unit : r.mesh_technique(effect_bp, ctx.L);
+            t.check(seen == death.technique && draws > 0,
+                    fmt::format("Test 17: the {} commander's death makes {} ({}), drawn by "
+                                "technique {} ({} {} draws in the frames)",
+                                death.commander, death.effect,
+                                effect_bp.empty() ? "never made" : effect_bp,
+                                static_cast<u32>(seen), draws,
+                                renderer::mesh_technique_name(death.technique)));
+        }
+    }
+
+    const auto middle_crossing_shift = [&](const std::vector<f32>& before,
+                                           const std::vector<f32>& after) {
+        const f32 from = nearest_middle(before);
+        f32 best = 1.0f;
+        for (const f32 e : after) {
+            best = std::min(best, std::abs(e - from));
+        }
+        return best;
+    };
+
+    // Test 18: PhalanxEffect (TwoTexShiftScalePS, AlphaBlend_One_InvSrcAlpha_Write_RGBA,
+    // Depth_Enable_Less_Write_None, POSTWATER + PREEFFECT).
+    {
+        Look sphere;
+        sphere.shader = "PhalanxEffect";
+        sphere.albedo = "albedo_slice.dds";
+        Look unit;
+        unit.albedo = "albedo_green.dds";
+        stand(unit, 1.0f, 100.0f, 480.0f);
+        stand(sphere, 1.0f, 100.0f, 480.0f, false, 2.0f);
+        stand(effect, 1.0f, 130.0f, 480.0f);
+        stand(sphere, 1.0f, 130.0f, 480.0f, false, 2.0f);
+        Look striped = sphere;
+        striped.albedo = "albedo_stripes.dds";
+        stand(striped, 1.0f, 160.0f, 480.0f);
+        const Rgb above = at_lit(100.0f, 480.0f);
+        const Rgb over_effect = at_lit(130.0f, 480.0f);
+        dispatch("technique=PhalanxEffect stage=post-water pass=0 pipeline=phalanx "
+                 "drawn=PhalanxEffect lane=2");
+        const Rgb normal = rgb(0, 128, 0);
+        const Rgb lit_unit = scaled(green, 0.72f);
+        Rgb expected{};
+        for (int c = 0; c < 3; ++c) {
+            expected[c] = (slice[c] + normal[c]) * 0.2f + 0.8f * lit_unit[c];
+        }
+        const std::vector<f32> before = red_crossings(160.0f, 480.0f, 138);
+        for (int i = 0; i < 2; ++i) {
+            ctx.sim.tick();
+        }
+        const f32 moved = middle_crossing_shift(before, red_crossings(160.0f, 480.0f, 138));
+        t.check(near(above, expected) && near(over_effect, green) && moved > 0.08f && moved < 0.12f,
+                fmt::format("Test 18: a PhalanxEffect plate over a Unit plate shows {} ({} "
+                            "expected); over an Effect plate, {} (the Effect plate, {}); its "
+                            "stripes move {:.3f} of the plate in 2 ticks (0.1)",
+                            show(above), show(expected), show(over_effect), show(green), moved));
+    }
+
+    // Test 19: UEFQuantumGate (TexSubAlphaMaskStaticLoFiPS, Rasterizer_Cull_None).
+    {
+        Look field;
+        field.shader = "UEFQuantumGate";
+        Look banded = field;
+        banded.albedo = "albedo_bands.dds";
+        stand(banded, 1.0f, 130.0f, 510.0f);
+        const auto turned = ctx.lua_state.do_string(
+            "__osc_last_plate:SetOrientation({0, 0.70710678, 0, 0.70710678}, true)\n");
+        if (!turned) {
+            spdlog::warn("turning the plate: {}", turned.error().message);
+        }
+        std::array<Rgb, 4> sides{};
+        for (u32 i = 0; i < 4; ++i) {
+            Look one = i < 2 ? Look{} : field;
+            one.mesh = i % 2 == 0 ? "plate_side0.scm" : "plate_side1.scm";
+            stand(one, 1.0f, 160.0f + 30.0f * static_cast<f32>(i), 510.0f);
+        }
+        ctx.sim.tick();
+        for (u32 i = 0; i < 4; ++i) {
+            sides[i] = at_lit(160.0f + 30.0f * static_cast<f32>(i), 510.0f);
+        }
+        dispatch("technique=UEFQuantumGate stage=post-water pass=0 pipeline=quantum_gate "
+                 "drawn=UEFQuantumGate lane=2");
+        const std::vector<f32> before = red_crossings(130.0f, 510.0f, 128);
+        for (int i = 0; i < 3; ++i) {
+            ctx.sim.tick();
+        }
+        const f32 moved = middle_crossing_shift(before, red_crossings(130.0f, 510.0f, 128));
+        const Rgb expected = over(sky_lit, Rgb{1.0f, 1.0f - 128.0f / 255.0f, 1.0f}, 0.4f);
+        const bool unit_one_side = near(sides[0], sky_lit) != near(sides[1], sky_lit);
+        t.check(unit_one_side && near(sides[2], expected) && near(sides[3], expected) &&
+                    moved > 0.06f && moved < 0.09f,
+                fmt::format("Test 19: wound one way and the other, a Unit plate shows {} and {} "
+                            "(one the sky, {}), a UEFQuantumGate plate {} and {} ({} expected); "
+                            "its bands move {:.3f} of the plate in 3 ticks (0.075)",
+                            show(sides[0]), show(sides[1]), show(sky_lit), show(sides[2]),
+                            show(sides[3]), show(expected), moved));
+    }
+
+    // Test 20: URB4201's zapper sphere and UEB0304's field.
+    {
+        struct Host {
+            const char* unit;
+            MeshTechnique technique;
+            f32 x;
+        };
+        for (const Host& host : {Host{"urb4201", MeshTechnique::PhalanxEffect, 150.0f},
+                                 Host{"ueb0304", MeshTechnique::UEFQuantumGate, 260.0f}}) {
+            const auto made = ctx.lua_state.do_string(fmt::format(
+                "CreateUnitHPR('{}', 'ARMY_1', {}, 0, 560, 0, 0, 0)\n", host.unit, host.x));
+            if (!made) {
+                spdlog::warn("{}: {}", host.unit, made.error().message);
+            }
+            for (int i = 0; i < 20; ++i) {
+                ctx.sim.tick();
+            }
+            (void)frame(host.x, 560.0f, map::ScmapLighting{}, 60.0f);
+            const u32 draws = r.mesh_draws(host.technique);
+            t.check(draws > 0,
+                    fmt::format("Test 20: a {} carries a mesh drawn by {} ({} draws)", host.unit,
+                                renderer::mesh_technique_name(host.technique), draws));
+        }
+    }
+
+    // Test 21: CommandFeedback3 (Depth_Disable, POSTWATER + PREEFFECT).
+    {
+        Look ping;
+        ping.shader = "CommandFeedback3";
+        ping.albedo = "albedo_cube.dds";
+        Look unit;
+        unit.albedo = "albedo_green.dds";
+        stand(unit, 1.0f, 100.0f, 600.0f, false, 2.0f);
+        stand(ping, 1.0f, 100.0f, 600.0f);
+        Look dim = ping;
+        dim.albedo = "albedo_dim.dds";
+        stand(dim, 1.0f, 130.0f, 600.0f);
+        const Rgb under = at_lit(100.0f, 600.0f);
+        const Rgb faint = at_lit(130.0f, 600.0f);
+        dispatch("technique=CommandFeedback3 stage=post-water pass=0 pipeline=feedback "
+                 "drawn=CommandFeedback3 lane=2");
+        for (int i = 0; i < 50; ++i) {
+            ctx.sim.tick();
+        }
+        const Rgb later = at_lit(100.0f, 600.0f);
+        const Rgb expected = over(scaled(green, 0.72f), cube, cube_a);
+        const Rgb expected_faint = over(sky_lit, slice, 30.0f / 255.0f);
+        t.check(near(under, expected) && near(later, expected) && near(faint, expected_faint),
+                fmt::format("Test 21: a CommandFeedback3 plate under a Unit plate shows {} ({} "
+                            "expected), 50 ticks on {}; at alpha 30, {} ({})",
+                            show(under), show(expected), show(later), show(faint),
+                            show(expected_faint)));
+    }
+
+    // Test 22: CommandFeedback4 (Depth_Enable_LessEqual_Write_None, DepthBias = -0.0001).
+    {
+        Look beacon;
+        beacon.shader = "CommandFeedback4";
+        beacon.albedo = "albedo_cube.dds";
+        Look unit;
+        unit.albedo = "albedo_green.dds";
+        stand(unit, 1.0f, 160.0f, 600.0f, false, 2.0f);
+        stand(beacon, 1.0f, 160.0f, 600.0f);
+        stand(unit, 1.0f, 190.0f, 600.0f, false, 0.1f);
+        stand(beacon, 1.0f, 190.0f, 600.0f);
+        const Rgb deep = at_lit(160.0f, 600.0f);
+        const Rgb shallow = at_lit(190.0f, 600.0f);
+        dispatch("technique=CommandFeedback4 stage=post-water pass=0 pipeline=cube "
+                 "drawn=CommandFeedback4 lane=2");
+        const Rgb lit_unit = scaled(green, 0.72f);
+        const Rgb expected = over(lit_unit, cube, cube_a);
+        t.check(near(deep, lit_unit) && near(shallow, expected),
+                fmt::format("Test 22: a CommandFeedback4 plate 2 under a Unit plate shows {} (the "
+                            "Unit plate, {}); 0.1 under one, {} ({})",
+                            show(deep), show(lit_unit), show(shallow), show(expected)));
+    }
+
+    // Test 23: retail's ping (SimPing.SpawnPing), out of ARMY_1's sight, and a UEF ferry beacon.
+    {
+        const auto pinged = ctx.lua_state.do_string(
+            fmt::format("import('/lua/SimPing.lua').SpawnPing({{Owner = 0, Location = {{250, {}, "
+                        "600}}, Mesh = 'alert_marker', Lifetime = 60, Type = 'alert'}})\n"
+                        "CreateUnitHPR('ueb5102', 'ARMY_1', 300, 0, 600, 0, 0, 0)\n",
+                        ground_y));
+        if (!pinged) {
+            spdlog::warn("the ping: {}", pinged.error().message);
+        }
+        for (int i = 0; i < 5; ++i) {
+            ctx.sim.tick();
+        }
+        (void)frame(250.0f, 600.0f, lit, 40.0f);
+        const u32 ping_draws = r.mesh_draws(MeshTechnique::CommandFeedback3);
+        (void)frame(300.0f, 600.0f, lit, 40.0f);
+        const u32 beacon_draws = r.mesh_draws(MeshTechnique::CommandFeedback4);
+        t.check(ping_draws > 0 && beacon_draws > 0,
+                fmt::format("Test 23: a ping draws by CommandFeedback3 ({} draws), a UEF ferry "
+                            "beacon by CommandFeedback4 ({})",
+                            ping_draws, beacon_draws));
     }
 
     // The dump sees actual shadow draws, with terrain in view.

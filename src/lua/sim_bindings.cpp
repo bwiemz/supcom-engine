@@ -97,16 +97,32 @@ static int l_c_CreateEntity(lua_State* L) {
     if (!sim) return luaL_error(L, "_c_CreateEntity: no SimState");
 
     auto entity = std::make_unique<sim::Entity>();
-    // It belongs to its spec's Owner's army: a Flare or DepthCharge lures
-    // only the other side's missiles and torpedoes.
+    // Its army is its spec's Owner's or Army, as Moho's cfunc__c_CreateEntityL reads them: a
+    // Flare or DepthCharge lures only the other side's missiles and torpedoes.
     if (lua_istable(L, 2)) {
         lua_pushstring(L, "Owner");
         lua_gettable(L, 2);
-        if (lua_istable(L, -1)) {
-            if (const auto* owner = extract_entity(L, lua_gettop(L)); owner && !owner->destroyed())
-                entity->set_army(owner->army());
+        lua_pushstring(L, "Army");
+        lua_gettable(L, 2);
+        const int owner = lua_gettop(L) - 1;
+        const int army = lua_gettop(L);
+        if (lua_type(L, owner) == LUA_TNUMBER) {
+            const auto index = static_cast<i32>(lua_tonumber(L, owner));
+            if (index >= 0 && index < 255) {
+                entity->set_army(index);
+            }
+        } else if (!lua_isnil(L, owner)) {
+            if (const auto* o = extract_entity(L, owner); o && !o->destroyed()) {
+                entity->set_army(o->army());
+            }
+        } else if (!lua_isnil(L, army)) {
+            const auto index = static_cast<i32>(lua_tonumber(L, army)) - 1;
+            if (index < 0) {
+                return luaL_error(L, "Army < 0 passed in");
+            }
+            entity->set_army(index);
         }
-        lua_pop(L, 1);
+        lua_pop(L, 2);
     }
     u32 id = sim->entity_registry().register_entity(std::move(entity));
     auto* ent = sim->entity_registry().find(id);
@@ -1293,6 +1309,30 @@ static void setup_categories(lua_State* L) {
 
 static void push_vec3(lua_State* L, f32 x, f32 y, f32 z);
 
+// Moho's SIM_DoDamagePoint: a unit hit by an entity of an army hears OnDamageBy(army + 1) first.
+static void call_ondamageby(lua_State* L, int target_idx, const sim::Entity* by) {
+    if (!by || by->army() < 0) {
+        return;
+    }
+    lua_pushstring(L, "OnDamageBy");
+    lua_gettable(L, target_idx);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_pushvalue(L, target_idx);
+    lua_pushnumber(L, by->army() + 1);
+    if (lua_pcall(L, 2, 0, 0) != 0) {
+        const char* err = lua_tostring(L, -1);
+        const std::string message = std::string("OnDamageBy error: ") + (err ? err : "(unknown)");
+        spdlog::warn("{}", message);
+        if (test_status::count_lua_failures()) {
+            test_status::record_failure(message);
+        }
+        lua_pop(L, 1);
+    }
+}
+
 // Damage(instigator, target, amount, damageType)
 // or: Damage(instigator, target, amount, vector, damageType)
 // FA canonical signature. Calls target:OnDamage(instigator, amount, vector, damageType).
@@ -1353,6 +1393,11 @@ static int l_Damage(lua_State* L) {
                          ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
                          : nullptr;
     lua_pop(L, 1);
+    // Moho's SIM_Damage deals single-target damage only to the living.
+    if (target_e && target_e->is_unit() && static_cast<sim::Unit*>(target_e)->is_dying()) {
+        return 0;
+    }
+    const sim::Entity* by = nullptr;
     if (target_e && target_e->is_unit() && sim) {
         auto* target_unit = static_cast<sim::Unit*>(target_e);
         // can_take_damage guard
@@ -1363,7 +1408,6 @@ static int l_Damage(lua_State* L) {
             target_unit->armor_type(), dtype);
         if (amount <= 0) return 0;
         // Track attacker
-        u32 instigator_id = 0;
         if (lua_istable(L, 1)) {
             lua_pushstring(L, "_c_object");
             lua_rawget(L, 1);
@@ -1372,14 +1416,12 @@ static int l_Damage(lua_State* L) {
             lua_pop(L, 1);
             if (instigator) {
                 target_unit->set_last_attacker_id(instigator->entity_id());
-                instigator_id = instigator->entity_id();
+                by = instigator;
             }
         }
-        // Record damage contribution for the army credited with the kill
-        if (instigator_id > 0) {
-            target_unit->record_damage(instigator_id, amount);
-        }
     }
+
+    call_ondamageby(L, 2, by);
 
     // Look up OnDamage method on the target
     lua_pushstring(L, "OnDamage");
@@ -1440,17 +1482,6 @@ static bool is_object_handle(lua_State* L, int idx) {
 
 // Helper: call OnDamage on a target entity via its Lua table registry ref.
 // Returns true if the call succeeded (regardless of whether OnDamage existed).
-
-/// Area damage's direction: from the blast's centre to the target, level
-/// and of unit length (straight up at the centre). Trees fall along it.
-static sim::Vector3 area_direction(const sim::Entity& target, f32 cx, f32 cz) {
-    const f32 dx = target.position().x - cx;
-    const f32 dz = target.position().z - cz;
-    const f32 len = std::sqrt(dx * dx + dz * dz);
-    if (len < 1e-4f) return {0.0f, 1.0f, 0.0f};
-    return {dx / len, 0.0f, dz / len};
-}
-
 static bool call_ondamage(lua_State* L, int target_ref, int instigator_idx, f32 amount,
                           int damageType_idx, const sim::Vector3* direction = nullptr) {
     lua_rawgeti(L, LUA_REGISTRYINDEX, target_ref);
@@ -1466,6 +1497,7 @@ static bool call_ondamage(lua_State* L, int target_ref, int instigator_idx, f32 
                   ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
                   : nullptr;
     lua_pop(L, 1);
+    const sim::Entity* by = nullptr;
     if (e && e->is_unit()) {
         auto* sim = get_sim(L);
         const char* dtype = (damageType_idx > 0 && lua_type(L, damageType_idx) == LUA_TSTRING)
@@ -1475,15 +1507,13 @@ static bool call_ondamage(lua_State* L, int target_ref, int instigator_idx, f32 
             amount *= sim->armor_definition().get_multiplier(
                 u->armor_type(), dtype);
         }
-        // Credit the instigator, as Damage does: its share of the kill.
-        if (const sim::Entity* by =
-                instigator_idx > 0 ? extract_entity(L, instigator_idx) : nullptr;
-            by && amount > 0) {
+        by = instigator_idx > 0 ? extract_entity(L, instigator_idx) : nullptr;
+        if (by && amount > 0) {
             u->set_last_attacker_id(by->entity_id());
-            u->record_damage(by->entity_id(), amount);
         }
     }
     if (amount <= 0) { lua_pop(L, 1); return true; }
+    call_ondamageby(L, lua_gettop(L), by);
 
     lua_pushstring(L, "OnDamage");
     lua_gettable(L, -2);
@@ -1528,6 +1558,7 @@ struct Blast {
     int type_idx = 0; ///< the damage type's stack index
     bool friendly = false;
     bool self = false;
+    bool ring = false;
 };
 
 /// A shield the blast meets from outside, and how much of it it absorbs.
@@ -1590,8 +1621,9 @@ static bool no_splash(const sim::Entity& e) {
 ///   the projectiles whose collision shapes it touches.
 /// - Allies are spared unless damageFriendly, and the instigator unless
 ///   damageSelf; NOSPLASHDAMAGE ones always.
-/// - A shield the blast meets from outside takes the blast, and the units
-///   under it take only what its OnGetDamageAbsorption leaves.
+/// - A shield the blast meets from outside, if it absorbs anything, takes what
+///   it absorbs after the units (a ring's, nothing), and the units under it
+///   take only what its OnGetDamageAbsorption leaves.
 static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
     auto& registry = sim.entity_registry();
     const sim::Entity* instigator = extract_entity(L, 1);
@@ -1624,6 +1656,7 @@ static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
     for (auto& c : covers)
         if (const sim::Entity* e = registry.find(c.id); e && !e->destroyed())
             c.absorbed = shield_absorption(L, *e, blast);
+    std::erase_if(covers, [](const Cover& c) { return c.absorbed <= 0; });
 
     // What stands in it, and what reaches each past the shields over it. A
     // blast reaches what its radius touches: the distance is to a unit's or
@@ -1664,20 +1697,29 @@ static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
         if (amount > 0) hits.emplace_back(id, amount);
     }
 
-    // The shields first. Retail's shields set their impact where the blast
-    // was, the vector running from it to their centre.
-    for (const auto& c : covers) {
-        const sim::Entity* e = registry.find(c.id);
-        if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
-        const sim::Vector3 v{e->position().x - blast.at.x, e->position().y - blast.at.y,
-                             e->position().z - blast.at.z};
-        call_ondamage(L, e->lua_table_ref(), 1, blast.amount, blast.type_idx, &v);
-    }
+    // Moho's SIM_DoDamageArea and func_DoDamageRing: each hit's vector runs from the centre to it.
+    const auto from_centre = [&](const sim::Entity& e) {
+        return sim::Vector3{e.position().x - blast.at.x, e.position().y - blast.at.y,
+                            e.position().z - blast.at.z};
+    };
     for (const auto& [id, amount] : hits) {
         const sim::Entity* e = registry.find(id);
-        if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
-        const sim::Vector3 direction = area_direction(*e, blast.at.x, blast.at.z);
-        call_ondamage(L, e->lua_table_ref(), 1, amount, blast.type_idx, &direction);
+        if (!e || e->destroyed() || e->lua_table_ref() < 0) {
+            continue;
+        }
+        const sim::Vector3 v = from_centre(*e);
+        call_ondamage(L, e->lua_table_ref(), 1, amount, blast.type_idx, &v);
+    }
+    if (blast.ring) {
+        return;
+    }
+    for (const auto& c : covers) {
+        const sim::Entity* e = registry.find(c.id);
+        if (!e || e->destroyed() || e->lua_table_ref() < 0) {
+            continue;
+        }
+        const sim::Vector3 v = from_centre(*e);
+        call_ondamage(L, e->lua_table_ref(), 1, c.absorbed, blast.type_idx, &v);
     }
 }
 
@@ -1725,6 +1767,7 @@ static int l_DamageRing(lua_State* L) {
     blast.type_idx = 6;
     blast.friendly = lua_toboolean(L, 7) != 0;
     blast.self = lua_toboolean(L, 8) != 0;
+    blast.ring = true;
     if (blast.amount <= 0 || blast.outer <= 0) return 0;
     deal_blast(L, *sim, blast);
     return 0;

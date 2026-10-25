@@ -1176,25 +1176,49 @@ void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
     // The order marks (CommandFeedback) blend colour with no depth test;
     // the map border's second pass writes its glow alone. OuterCloud is the
     // cube's state but tests strictly less (Depth_Enable_Less_Write_None).
-    enum class Blend { Opaque, Fade, Overlay, FadeNoDepthWrite, Feedback, GlowOnly, OuterCloud };
+    enum class Blend {
+        Opaque,
+        Fade,
+        Overlay,
+        FadeNoDepthWrite,
+        Feedback,
+        GlowOnly,
+        OuterCloud,
+        NukeEMP,
+        NukeQuantum,
+        Phalanx,
+        QuantumGate
+    };
     const auto build_mesh = [&](Blend blend, VkPipelineLayout* layout) {
-        const bool no_depth_write = blend == Blend::FadeNoDepthWrite || blend == Blend::OuterCloud;
-        const bool colour_only = blend == Blend::Fade || no_depth_write || blend == Blend::Feedback;
+        const bool less = blend == Blend::OuterCloud || blend == Blend::NukeEMP ||
+                          blend == Blend::NukeQuantum || blend == Blend::Phalanx ||
+                          blend == Blend::QuantumGate;
+        const VkBlendFactor src =
+            blend == Blend::Phalanx ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_SRC_ALPHA;
+        const bool no_depth_write = blend == Blend::FadeNoDepthWrite || less;
+        const bool colour_only = blend == Blend::Fade || blend == Blend::FadeNoDepthWrite ||
+                                 blend == Blend::OuterCloud || blend == Blend::Feedback;
         constexpr VkColorComponentFlags kGlowOnly = VK_COLOR_COMPONENT_A_BIT;
-        const VkColorComponentFlags written = blend == Blend::GlowOnly ? kGlowOnly
-                                              : colour_only            ? kColorOnly
-                                                                       : kColorAndGlow;
+        constexpr VkColorComponentFlags kRedBlueGlow =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        VkColorComponentFlags written = colour_only ? kColorOnly : kColorAndGlow;
+        if (blend == Blend::GlowOnly) {
+            written = kGlowOnly;
+        } else if (blend == Blend::NukeQuantum) {
+            written = kRedBlueGlow;
+        }
         return PipelineBuilder()
             .set_shaders(mv, mf)
             .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
                               static_cast<u32>(attrs.size()))
             .set_depth_test(blend != Blend::Feedback, !no_depth_write && blend != Blend::Feedback)
-            .set_depth_compare(blend == Blend::OuterCloud ? VK_COMPARE_OP_LESS
-                                                          : VK_COMPARE_OP_LESS_OR_EQUAL)
+            .set_depth_compare(less ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_LESS_OR_EQUAL)
             .set_blend(blend != Blend::Opaque && blend != Blend::GlowOnly)
-            .set_alpha_blend(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+            .set_color_blend(src, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+            .set_alpha_blend(src, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
             .set_color_write_mask(written)
-            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+            .set_cull_mode(blend == Blend::QuantumGate ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT,
+                           VK_FRONT_FACE_COUNTER_CLOCKWISE)
             .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 +
                                    sizeof(u32) * 2 + sizeof(f32) + sizeof(u32) + sizeof(f32) +
                                    sizeof(u32) * 2,
@@ -1215,6 +1239,10 @@ void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
     mesh_feedback_pipeline_ = build_mesh(Blend::Feedback, &mesh_feedback_layout_);
     mesh_glow_pipeline_ = build_mesh(Blend::GlowOnly, &mesh_glow_layout_);
     mesh_outer_cloud_pipeline_ = build_mesh(Blend::OuterCloud, &mesh_outer_cloud_layout_);
+    mesh_nuke_emp_pipeline_ = build_mesh(Blend::NukeEMP, &mesh_nuke_emp_layout_);
+    mesh_nuke_quantum_pipeline_ = build_mesh(Blend::NukeQuantum, &mesh_nuke_quantum_layout_);
+    mesh_phalanx_pipeline_ = build_mesh(Blend::Phalanx, &mesh_phalanx_layout_);
+    mesh_quantum_gate_pipeline_ = build_mesh(Blend::QuantumGate, &mesh_quantum_gate_layout_);
 
     // The shields' (M211k): their own shaders, the mesh's input, push
     // block and sets, and mesh.fx's states. Each depth-tests; only the
@@ -2704,6 +2732,18 @@ const char* Renderer::mesh_pipeline_role(VkPipeline pipeline) const {
     if (pipeline == mesh_overlay_pipeline_) return "overlay";
     if (pipeline == mesh_cube_pipeline_) return "cube";
     if (pipeline == mesh_outer_cloud_pipeline_) return "outer_cloud";
+    if (pipeline == mesh_nuke_emp_pipeline_) {
+        return "nuke_emp";
+    }
+    if (pipeline == mesh_nuke_quantum_pipeline_) {
+        return "nuke_quantum";
+    }
+    if (pipeline == mesh_phalanx_pipeline_) {
+        return "phalanx";
+    }
+    if (pipeline == mesh_quantum_gate_pipeline_) {
+        return "quantum_gate";
+    }
     if (pipeline == mesh_feedback_pipeline_) return "feedback";
     if (pipeline == mesh_glow_pipeline_) return "glow";
     static constexpr std::array<const char*, 6> shields = {
@@ -2878,6 +2918,19 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         // The map's border: lit colour, then its glow alone.
         else if (technique == MeshTechnique::MapImager)
             passes[1] = mesh_glow_pipeline_;
+        if (technique == MeshTechnique::NukeEMP) {
+            passes[0] = mesh_nuke_emp_pipeline_;
+        } else if (technique == MeshTechnique::NukeQuantum) {
+            passes[0] = mesh_nuke_quantum_pipeline_;
+        } else if (technique == MeshTechnique::PhalanxEffect) {
+            passes[0] = mesh_phalanx_pipeline_;
+        } else if (technique == MeshTechnique::UEFQuantumGate) {
+            passes[0] = mesh_quantum_gate_pipeline_;
+        } else if (technique == MeshTechnique::CommandFeedback3) {
+            passes[0] = mesh_feedback_pipeline_;
+        } else if (technique == MeshTechnique::CommandFeedback4) {
+            passes[0] = mesh_cube_pipeline_;
+        }
         mesh_pc.boneBase = group.bone_base_offset;
         mesh_pc.bonesPerInst = group.bones_per_instance;
         for (u32 pass = 0; pass < passes.size() && passes[pass]; ++pass) {
@@ -2896,6 +2949,9 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
             if (technique == MeshTechnique::SeraphimPersonalShield && lane < 2) {
                 lane = 0;
                 if (pass == 1) drawn = MeshTechnique::PhaseShield;
+            }
+            if (technique == MeshTechnique::AeonCZAR && lane < 2) {
+                drawn = MeshTechnique::Aeon;
             }
             mesh_pc.technique = static_cast<u32>(drawn);
             mesh_pc.pass = pass;
@@ -5189,6 +5245,14 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, mesh_glow_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_outer_cloud_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, mesh_outer_cloud_layout_, nullptr);
+    vkDestroyPipeline(device_, mesh_nuke_emp_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, mesh_nuke_emp_layout_, nullptr);
+    vkDestroyPipeline(device_, mesh_nuke_quantum_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, mesh_nuke_quantum_layout_, nullptr);
+    vkDestroyPipeline(device_, mesh_phalanx_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, mesh_phalanx_layout_, nullptr);
+    vkDestroyPipeline(device_, mesh_quantum_gate_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, mesh_quantum_gate_layout_, nullptr);
     for (u32 i = 0; i < kShieldStates; ++i) {
         vkDestroyPipeline(device_, shield_pipelines_[i], nullptr);
         vkDestroyPipelineLayout(device_, shield_layouts_[i], nullptr);

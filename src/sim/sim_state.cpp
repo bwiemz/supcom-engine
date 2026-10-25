@@ -221,11 +221,7 @@ void SimState::on_destroy(Entity& entity) {
             drop_adjacency(unit);
             detach_all_units(unit, false);
         }
-        const bool handed_over = unit.transferred();
-        if (!handed_over && !unit.is_dying()) {
-            record_unit_death(unit);
-        }
-        if (!handed_over) {
+        if (!unit.transferred()) {
             const Vector3 pos = unit.position();
             const f32 scale = unit.footprint_size_x() > 0 ? unit.footprint_size_x() * 0.5f : 1.0f;
             add_death_event(pos.x, pos.y, pos.z, scale, unit.army());
@@ -265,8 +261,6 @@ void SimState::detach_all_units(Unit& transport, bool destroy_some) {
         auto& unit = static_cast<Unit&>(*entity_registry_.find(id));
         if (destroy_some && sim_random_.range(0.0f, 1.0f) < 0.99f) {
             if (script_says(L_, unit, "CheckCanBeKilled")) {
-                transport.remove_cargo(id);
-                unit.set_transport_id(0);
                 if (L_ && unit.lua_table_ref() >= 0) {
                     const int top = lua_gettop(L_);
                     lua_rawgeti(L_, LUA_REGISTRYINDEX, unit.lua_table_ref());
@@ -287,6 +281,8 @@ void SimState::detach_all_units(Unit& transport, bool destroy_some) {
                     }
                     lua_settop(L_, top);
                 } else {
+                    transport.remove_cargo(id);
+                    unit.set_transport_id(0);
                     entity_registry_.destroy(unit);
                 }
                 continue;
@@ -339,7 +335,7 @@ void SimState::detach_all_units(Unit& transport, bool destroy_some) {
     }
 }
 
-void SimState::record_unit_death(Unit& unit) {
+void SimState::record_unit_death(Unit& unit, i32 killer_army) {
     // Moho's Unit::Kill: the blueprint's cost, the part built of it while being built
     const BuildEconomy cost =
         L_ ? blueprint_build_economy(L_, unit.blueprint_id()) : BuildEconomy{};
@@ -349,26 +345,13 @@ void SimState::record_unit_death(Unit& unit) {
     if (auto* brain = get_army(unit.army())) {
         brain->record_unit_lost(unit.blueprint_id(), mass, energy);
     }
-    if (!unit.damage_contributions().empty()) {
-        i32 killer_army = -1;
-        f32 max_dmg = 0;
-        for (const auto& [attacker_id, dmg] : unit.damage_contributions()) {
-            if (dmg > max_dmg) {
-                const Entity* attacker = entity_registry_.find(attacker_id);
-                if (attacker && !attacker->destroyed()) {
-                    max_dmg = dmg;
-                    killer_army = attacker->army();
-                }
-            }
-        }
-        if (killer_army >= 0 && killer_army != unit.army()) {
-            if (auto* killer = get_army(killer_army)) {
-                killer->record_enemy_killed(unit.blueprint_id(), mass, energy,
-                                            unit.has_category("COMMAND"));
-            }
-        }
+    if (killer_army < 0 || !is_enemy(unit.army(), killer_army)) {
+        return;
     }
-    unit.clear_damage_contributions();
+    if (auto* killer = get_army(killer_army)) {
+        killer->record_enemy_killed(unit.blueprint_id(), mass, energy,
+                                    unit.has_category("COMMAND"));
+    }
 }
 
 void SimState::on_entity_unregistered(Entity& entity) {
