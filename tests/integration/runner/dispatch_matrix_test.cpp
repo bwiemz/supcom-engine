@@ -56,7 +56,7 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     ctx.vfs.mount(root, std::make_unique<vfs::DirectoryMount>(dir));
     map::Terrain ground(map::Heightmap(512, 512, 1.0f, std::vector<u16>(513 * 513, 0)), 0.0f, true);
     ground.set_lighting(white_fill(), {});
-    constexpr u32 techniques = static_cast<u32>(MeshTechnique::Flat) + 1;
+    constexpr u32 techniques = static_cast<u32>(MeshTechnique::GlassAlpha) + 1;
     bool shared = true;
     for (u32 id = 0; id <= techniques; ++id) {
         if (id == static_cast<u32>(MeshTechnique::UnitPlace)) continue;
@@ -191,7 +191,7 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     std::sort(matrix.begin(), matrix.end());
     std::string all;
     for (const auto& line : matrix) all += line + '\n';
-    for (u32 id = 0; id <= static_cast<u32>(MeshTechnique::Flat); ++id) {
+    for (u32 id = 0; id <= static_cast<u32>(MeshTechnique::GlassAlpha); ++id) {
         const std::string name = renderer::mesh_technique_name(static_cast<MeshTechnique>(id));
         for (int lane = 0; lane < 3; ++lane)
             for (const char* view : {"world", "cartographic-main", "cartographic-minimap"}) {
