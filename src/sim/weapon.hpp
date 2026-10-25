@@ -125,6 +125,7 @@ public:
     bool above_water_targets_only = false; // AboveWaterTargetsOnly
     bool below_water_targets_only = false; // BelowWaterTargetsOnly
     bool yaw_only_on_target = false;       // YawOnlyOnTarget: its aim controllers ignore the pitch
+    bool aims_straight_on_disable = false; // AimsStraightOnDisable: disabled, its aim turns ahead
     bool above_water_fire_only = false;    // AboveWaterFireOnly
     bool always_recheck_target = true;     // AlwaysRecheckTarget
     bool prefers_primary_weapon_target = false; // PrefersPrimaryWeaponTarget
