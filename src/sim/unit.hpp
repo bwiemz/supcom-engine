@@ -974,8 +974,9 @@ public:
     /// aircraft on the ground, to lift off. A sub's dive is over. Its move is
     /// aborted, which the order running hears: a Move order ends (the
     /// original, probed); one issued after, or not begun, goes on. Without a
-    /// terrain, `at` as given.
-    void warp(const map::Terrain* terrain, const Vector3& at);
+    /// terrain, `at` as given. Then the terrain type there (`L`: for its
+    /// OnTerrainTypeChange).
+    void warp(const map::Terrain* terrain, const Vector3& at, lua_State* L = nullptr);
     /// Air.FlyInWater: an aircraft that may fly under the water's surface.
     bool fly_in_water() const { return fly_in_water_; }
     void set_fly_in_water(bool b) { fly_in_water_ = b; }
@@ -1112,6 +1113,13 @@ public:
     /// Moho's CUnitMotion::UpdateCurrentLayer, each tick it moves: the layer
     /// it is on by the ground under it and the water over that.
     void update_current_layer(const map::Terrain* terrain, lua_State* L);
+    /// Moho's Unit::CurrentTerrainType: the TypeCode (/lua/TerrainTypes.lua)
+    /// of the cell at its footprint's corner; 0 until it is placed.
+    u8 current_terrain_type() const { return terrain_type_; }
+    /// Moho's Unit::UpdateTerrainType: the terrain type under it at `at`. A
+    /// change calls its script's OnTerrainTypeChange(new, old), the two
+    /// TerrainTypes.lua entries (none with `L` null: a unit being made).
+    void update_terrain_type(const map::Terrain* terrain, const Vector3& at, lua_State* L);
     /// Moho's Unit::IsMobile: a blueprint that moves (a structure's
     /// MotionType is RULEUMT_None).
     bool is_mobile() const { return !motion_type_.empty() && motion_type_ != "RULEUMT_None"; }
@@ -1874,6 +1882,7 @@ private:
     Vector3 layer_transition_to_;
     Quaternion layer_transition_to_facing_;
     Vector3 layer_transition_step_;
+    u8 terrain_type_ = 0; // Moho's CurrentTerrainType
     std::vector<f32> raised_platforms_;
     bool stand_upright_ = false;
     bool sink_lower_ = false;

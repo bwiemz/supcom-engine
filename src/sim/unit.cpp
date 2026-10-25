@@ -16,6 +16,7 @@
 #include "sim/occupancy.hpp"
 #include "sim/prop.hpp"
 #include "sim/script_warning.hpp"
+#include "sim/terrain_types.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/thread_manager.hpp"
 #include "map/pathfinding_grid.hpp"
@@ -1205,6 +1206,17 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     update_current_layer(ctx.terrain, L);
     if (!in_registry()) {
         return false;
+    }
+    // ...and, on the same terms, the terrain type under it (Moho's Unit::UpdateTerrainType, after
+    // UpdateCurrentLayer, for a unit that can't fly)
+    if (!dying_ && !can_fly() && !immobile_ && !is_stunned() &&
+        (velocity_.x * velocity_.x + velocity_.y * velocity_.y + velocity_.z * velocity_.z) *
+                0.01f >
+            1e-6f) {
+        update_terrain_type(ctx.terrain, position(), L);
+        if (!in_registry()) {
+            return false;
+        }
     }
     // Crossing the shore, the tick is the blend's alone: Moho's CalcMoveCommon runs it before
     // anything else and returns, so the unit takes no step, coasts no way, and doesn't drown.
@@ -2849,7 +2861,7 @@ i32 Unit::transport_attach_bone() const {
     return bone;
 }
 
-void Unit::warp(const map::Terrain* terrain, const Vector3& at) {
+void Unit::warp(const map::Terrain* terrain, const Vector3& at, lua_State* L) {
     Vector3 p = at;
     if (terrain) {
         const char* layer = starting_layer(footprint().caps, has_category("EXPERIMENTAL"), *terrain,
@@ -2893,6 +2905,8 @@ void Unit::warp(const map::Terrain* terrain, const Vector3& at) {
     warp_aborted_command_ = !command_queue_.empty() && command_queue_.front().begun
                                 ? command_queue_.front().command_id
                                 : 0;
+    // Unit::Warp then looks at the terrain type where it now is
+    update_terrain_type(terrain, p, L);
 }
 
 f32 Unit::air_floor(const map::Terrain* terrain, f32 x, f32 z) const {
@@ -3752,6 +3766,34 @@ void Unit::transition_between_layers() {
     layer_transition_ticks_ += 1.0f;
     surface_collision_ = false;
     if (layer_transition_ticks_ >= span) layer_transition_ticks_ = 0.0f;
+}
+
+void Unit::update_terrain_type(const map::Terrain* terrain, const Vector3& at, lua_State* L) {
+    if (!terrain) return;
+    // The cell at its footprint's corner, to the nearest, as a short; off the map, 'Default' (1)
+    const auto cell = [](f32 v) {
+        return static_cast<f32>(static_cast<i16>(static_cast<i32>(std::lrint(v))));
+    };
+    const u8 was = terrain_type_;
+    terrain_type_ = terrain->terrain_type(cell(at.x - footprint().size_x * 0.5f),
+                                          cell(at.z - footprint().size_z * 0.5f));
+    if (terrain_type_ == was || !L || lua_table_ref() < 0) return;
+    // Its script's OnTerrainTypeChange(self, new, old) (CScriptObject's
+    // RunScript_OnTerrainTypeChange), an error logged, not raised
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    const int self = lua_gettop(L);
+    lua_pushstring(L, "OnTerrainTypeChange");
+    lua_gettable(L, self);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, self);
+        push_terrain_type(L, terrain_type_);
+        push_terrain_type(L, was);
+        if (lua_pcall(L, 3, 0, 0) != 0) {
+            log_script_warning(this, "OnTerrainTypeChange", lua_tostring(L, -1));
+        }
+    }
+    lua_settop(L, top);
 }
 
 void Unit::free_landing_reservation(SimState& sim) {
