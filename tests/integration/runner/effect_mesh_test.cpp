@@ -1233,6 +1233,29 @@ void test_effect_meshes(TestContext& ctx) {
                             ping_draws, beacon_draws));
     }
 
+    // Test 24: Flat (TMeshNoLighting: FlatPS, alpha-tested over 0x7F). A unit's instance
+    // colour is its army's (Test 4's).
+    {
+        Look flat;
+        flat.shader = "TMeshNoLighting";
+        stand(flat, 1.0f, 100.0f, 640.0f);
+        Look faint = flat;
+        faint.albedo = "albedo_faint.dds";
+        stand(faint, 1.0f, 130.0f, 640.0f);
+        Look slice_flat = flat;
+        slice_flat.albedo = "albedo_slice.dds";
+        stand(slice_flat, 0.4f, 160.0f, 640.0f);
+        const Rgb shown = at_lit(100.0f, 640.0f);
+        const Rgb faint_shown = at_lit(130.0f, 640.0f);
+        const Rgb cut = at_lit(160.0f, 640.0f);
+        dispatch("technique=Flat stage=pre-water pass=0 pipeline=mesh drawn=Flat lane=2");
+        const Rgb team = rgb(220, 30, 30);
+        t.check(near(shown, team) && near(faint_shown, sky_lit) && near(cut, sky_lit),
+                fmt::format("Test 24: under the sun a Flat plate shows {} (its albedo times its "
+                            "army's colour, {}); at alpha 64, {}, and 40% built, {} (the sky, {})",
+                            show(shown), show(team), show(faint_shown), show(cut), show(sky_lit)));
+    }
+
     // The dump sees actual shadow draws, with terrain in view.
     {
         stand(Look{}, 1.0f, 32.0f, 32.0f);

@@ -1438,7 +1438,7 @@ layout(push_constant) uniform PushConstants {
     // 16 NormalMappedTerrain, 17 UndulatingNormalMappedAlpha (M211i); ...;
     // 32 Effect, 33 Cloud, 34 OuterCloud, 35 NukeUEF, 36 NukeEMP, 37 NukeQuantum,
     // 38 PhalanxEffect, 39 UEFQuantumGate, 40 CommandFeedback3, 41 CommandFeedback4,
-    // 42 AeonCZAR (High; below it, Aeon)
+    // 42 AeonCZAR (High; below it, Aeon), 43 Flat
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
@@ -1829,6 +1829,20 @@ vec4 explosionColor() {
                         R"glsl(
 
 void main() {
+    if (pc.technique == 43u) {
+        // FlatPS; into the reflection its alpha is 0.5, which passes the 0x7F test
+        vec4 albedo = texture(texAlbedo, fragUV);
+        if (pc.mirrored != 0u) {
+            if (fragWorldPos.y < pc.surface) {
+                discard;
+            }
+        } else if (fragParameter * albedo.a <= 127.0 / 255.0) {
+            discard;
+        }
+        vec3 tint = fragColor.g < 0.0 ? vec3(1.0) : fragColor.rgb;
+        outColor = vec4(tint * albedo.rgb, pc.mirrored != 0u ? 0.5 : 0.0);
+        return;
+    }
     if (pc.technique == 40u || pc.technique == 41u) {
         outColor = texture(texAlbedo, fragUV);
         return;
@@ -2281,7 +2295,7 @@ layout(location = 0) out vec4 outColor;
 
 void main() {
     bool clipped = fragProp > 0.5 || pc.technique == 9u || pc.technique == 14u ||
-                   pc.technique == 15u || pc.technique == 17u;
+                   pc.technique == 15u || pc.technique == 17u || pc.technique == 43u;
     if (clipped && texture(texAlbedo, fragUV).a < 0.5) discard;
     // Moho's map (M210c): R the light depth, G 0, a mesh nearest the sun.
     outColor = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);

@@ -944,7 +944,7 @@ private:
     std::array<VkPipeline, kCartographicMeshStates> cartographic_mesh_pipelines_{};
     std::array<VkPipelineLayout, kCartographicMeshStates> cartographic_mesh_layouts_{};
     /// This frame's mesh draw calls by technique (mesh_draws).
-    std::array<u32, static_cast<size_t>(MeshTechnique::AeonCZAR) + 1> mesh_draws_{};
+    std::array<u32, static_cast<size_t>(MeshTechnique::Flat) + 1> mesh_draws_{};
     /// And a cartographic view's, by CartographicTechnique, a pass each
     std::array<u32, 7> cartographic_mesh_draws_{};
     /// The cartographic minimap's mesh pipelines (its output's pass), and

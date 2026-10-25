@@ -65,6 +65,7 @@ const char* mesh_technique_name(MeshTechnique technique) {
     case MeshTechnique::CommandFeedback3: return "CommandFeedback3";
     case MeshTechnique::CommandFeedback4: return "CommandFeedback4";
     case MeshTechnique::AeonCZAR: return "AeonCZAR";
+    case MeshTechnique::Flat: return "Flat";
     }
     return "Unknown";
 }
@@ -319,6 +320,9 @@ MeshTechnique mesh_technique(const std::string& shader) {
     }
     if (shader_name == "AeonCZAR") {
         return MeshTechnique::AeonCZAR;
+    }
+    if (shader_name == "Flat") {
+        return MeshTechnique::Flat;
     }
     if (shader_name != "Unit" && !is_wreckage_shader(shader_name)) {
         static std::mutex mutex;
