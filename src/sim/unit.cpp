@@ -4412,6 +4412,17 @@ f32 Unit::anim_motion_scale(f32 dt) const {
     return scale;
 }
 
+namespace {
+
+/// A disabled aim controller whose weapon AimsStraightOnDisable still runs,
+/// and turns its bones back ahead (Moho's CAimManipulator::ManipulatorUpdate).
+bool aims_straight_while_disabled(const Manipulator& m) {
+    const auto* aim = dynamic_cast<const AimManipulator*>(&m);
+    return aim && aim->aims_straight_on_disable();
+}
+
+} // namespace
+
 void Unit::tick_manipulators(f32 dt, lua_State* L) {
     // Reset bone matrices to identity before manipulators write their bones.
     // Each animator/rotator/slider writes only the bones it owns; unowned bones
@@ -4426,7 +4437,7 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
     // the vector is left untouched.
     for (size_t i = 0; i < manipulators_.size(); ++i) {
         Manipulator* m = manipulators_[i].get();
-        if (m->is_destroyed() || !m->enabled()) continue;
+        if (m->is_destroyed() || !(m->enabled() || aims_straight_while_disabled(*m))) continue;
         const auto* arm = dynamic_cast<const AimManipulator*>(m);
         const bool was_tracking = arm && arm->tracking();
         m->tick(dt);
@@ -4554,7 +4565,8 @@ void Unit::update_pose() {
     std::vector<Manipulator*>& order = pose_order_;
     order.clear();
     for (const auto& m : manipulators_) {
-        if (!m->is_destroyed() && m->enabled()) order.push_back(m.get());
+        if (!m->is_destroyed() && (m->enabled() || aims_straight_while_disabled(*m)))
+            order.push_back(m.get());
     }
     std::stable_sort(order.begin(), order.end(), [](const Manipulator* a, const Manipulator* b) {
         return a->precedence() < b->precedence();

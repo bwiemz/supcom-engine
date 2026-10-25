@@ -2699,6 +2699,7 @@ static int l_CreateAimController(lua_State* L) {
         manip->set_weapon(weapon->weapon_index,
                           lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "");
         manip->set_yaw_only_on_target(weapon->yaw_only_on_target);
+        manip->set_aims_straight_on_disable(weapon->aims_straight_on_disable);
     }
     // arg 3 = yawBone
     if (lua_gettop(L) >= 3) {

@@ -255,6 +255,12 @@ public:
     /// blueprint into the controller as it is made.
     void set_yaw_only_on_target(bool b) { yaw_only_on_target_ = b; }
     bool yaw_only_on_target() const { return yaw_only_on_target_; }
+    /// Its weapon's AimsStraightOnDisable: disabled, it goes on but takes no
+    /// target, so after its reset time it turns back to straight ahead
+    /// (Moho's CAimManipulator::ManipulatorUpdate); without, a disabled one
+    /// isn't run.
+    void set_aims_straight_on_disable(bool b) { aims_straight_on_disable_ = b; }
+    bool aims_straight_on_disable() const { return aims_straight_on_disable_; }
     /// CreateBuilderArmController's: the unit's build orders aim it
     void set_builder_arm(bool b) { builder_arm_ = b; }
     bool builder_arm() const { return builder_arm_; }
@@ -295,6 +301,7 @@ private:
     bool builder_arm_ = false;
     bool tracking_ = false;
     bool yaw_only_on_target_ = false;
+    bool aims_straight_on_disable_ = false;
 };
 
 // ---------------------------------------------------------------------------
