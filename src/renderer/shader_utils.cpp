@@ -1437,7 +1437,8 @@ layout(push_constant) uniform PushConstants {
     // 13 AeonBuildPuddle, 14 BlackenedNormalMappedAlpha (M211g); 15 VertexNormal,
     // 16 NormalMappedTerrain, 17 UndulatingNormalMappedAlpha (M211i); ...;
     // 32 Effect, 33 Cloud, 34 OuterCloud, 35 NukeUEF, 36 NukeEMP, 37 NukeQuantum,
-    // 38 PhalanxEffect, 39 UEFQuantumGate, 40 CommandFeedback3, 41 CommandFeedback4
+    // 38 PhalanxEffect, 39 UEFQuantumGate, 40 CommandFeedback3, 41 CommandFeedback4,
+    // 42 AeonCZAR (High; below it, Aeon)
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
@@ -1832,7 +1833,7 @@ void main() {
         outColor = texture(texAlbedo, fragUV);
         return;
     }
-    if (pc.technique >= 32u) {
+    if (pc.technique >= 32u && pc.technique <= 39u) {
         outColor = explosionColor();
         return;
     }
@@ -2012,6 +2013,19 @@ void main() {
             lit = albedo * (emissive + computeLight(NdotL, shadow, 1.0, 0.6) +
                             specTeam.r * environment) +
                   phongAdditive;
+        } else if (pc.technique == 42u) {
+            // AeonCZARPS: no "environment" named, so the "<default>" cube
+            float age = pc.time - fragShaderTime;
+            if (age < 0.0) {
+                age += 36000.0;
+            }
+            float energy = (texture(texSecondary, fragUV * 60.0 - age * vec2(0.16, 0.01)).b +
+                            texture(texSecondary, fragUV * 30.0 + age * vec2(0.08, -0.005)).g) *
+                           (1.0 - texColor.a);
+            lit = albedo * (emissive + computeLight(NdotL, shadow, 1.0, 0.6) +
+                            specTeam.r * texture(environmentMap, R).rgb) +
+                  pow(phongAmount, 8.0) * specTeam.g + vec3(0.2, 0.7, 1.0) * energy;
+            alpha += energy;
         } else if (pc.technique == 2u || pc.technique == 3u) {
             // NormalMappedInsectPS (Cybran) and NormalMappedMetalPS: an
             // anisotropic highlight from a lookup, half the environment.

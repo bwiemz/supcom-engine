@@ -64,6 +64,7 @@ const char* mesh_technique_name(MeshTechnique technique) {
     case MeshTechnique::UEFQuantumGate: return "UEFQuantumGate";
     case MeshTechnique::CommandFeedback3: return "CommandFeedback3";
     case MeshTechnique::CommandFeedback4: return "CommandFeedback4";
+    case MeshTechnique::AeonCZAR: return "AeonCZAR";
     }
     return "Unknown";
 }
@@ -315,6 +316,9 @@ MeshTechnique mesh_technique(const std::string& shader) {
     }
     if (shader_name == "CommandFeedback4") {
         return MeshTechnique::CommandFeedback4;
+    }
+    if (shader_name == "AeonCZAR") {
+        return MeshTechnique::AeonCZAR;
     }
     if (shader_name != "Unit" && !is_wreckage_shader(shader_name)) {
         static std::mutex mutex;

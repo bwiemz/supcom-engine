@@ -1,5 +1,4 @@
 # Retail ShaderName values with no technique yet (tools/check_shader_names.py)
-AeonCZAR
 BloatingNormalMappedAlpha
 Clutter
 EditorMarker

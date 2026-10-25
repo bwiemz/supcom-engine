@@ -2950,6 +2950,9 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
                 lane = 0;
                 if (pass == 1) drawn = MeshTechnique::PhaseShield;
             }
+            if (technique == MeshTechnique::AeonCZAR && lane < 2) {
+                drawn = MeshTechnique::Aeon;
+            }
             mesh_pc.technique = static_cast<u32>(drawn);
             mesh_pc.pass = pass;
             mesh_pc.lane = static_cast<u32>(lane);
