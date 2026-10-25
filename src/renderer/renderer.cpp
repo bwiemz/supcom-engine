@@ -4526,6 +4526,7 @@ void Renderer::poll_events(f64 dt) {
         // Its clocks: the system's, and the game's
         camera_.set_clocks(glfwGetTime(), camera_game_time_);
         CameraInput in = camera_.read_input(window_.get());
+        in.nis = nis_mode_;
         take_scrub(in);
         camera_.apply(in, dt);
         settle_scrub(views);
@@ -4534,6 +4535,7 @@ void Renderer::poll_events(f64 dt) {
     // Each view's camera takes the mouse over it; only the one that GetsGlobalCameraCommands
     // takes the keys' and the screen edges' pans and spins (CUIWorldView::Frame)
     CameraInput in = camera_.read_input(window_.get());
+    in.nis = nis_mode_;
     take_scrub(in);
     for (const SceneView& v : views) {
         Camera& c = *v.camera;
