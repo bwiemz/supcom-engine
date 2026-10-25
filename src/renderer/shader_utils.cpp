@@ -1438,7 +1438,7 @@ layout(push_constant) uniform PushConstants {
     // 16 NormalMappedTerrain, 17 UndulatingNormalMappedAlpha (M211i); ...;
     // 32 Effect, 33 Cloud, 34 OuterCloud, 35 NukeUEF, 36 NukeEMP, 37 NukeQuantum,
     // 38 PhalanxEffect, 39 UEFQuantumGate, 40 CommandFeedback3, 41 CommandFeedback4,
-    // 42 AeonCZAR (High; below it, Aeon), 43 Flat
+    // 42 AeonCZAR (High; below it, Aeon), 43 Flat, 44 GlassAlpha
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
@@ -1912,7 +1912,7 @@ void main() {
     // VertexNormal) and the build ghost's fade: FA drew them into an 8-bit
     // target, which clamps what a shader writes before it blends.
     bool blended = (pc.technique >= 5u && pc.technique <= 8u) || pc.technique == 11u ||
-                   pc.technique == 12u || vertexNormal || fragColor.a < 1.0;
+                   pc.technique == 12u || vertexNormal || pc.technique == 44u || fragColor.a < 1.0;
     // Alpha: the build ghost's fade, which its pipeline blends by, leaving
     // the frame's alpha; a build technique's or effect's own (M211f/g); else
     // the glow FA's techniques write there (M211e): a unit's SpecTeam blue
@@ -1967,6 +1967,11 @@ void main() {
             float age = pc.time - fragShaderTime;
             lowLit = texColor.rgb * lowLight;
             lowAlpha = texColor.a * fragParameter * clamp(1.0 - (age - 2.0) * 0.145, 0.0, 1.0);
+        } else if (pc.technique == 44u) {
+            // GlassAlphaLoFiPS
+            lowLit = 2.0 * lowLight * lowLight *
+                     mix(texColor.rgb, tint, clamp(specTeam.a, 0.0, 1.0));
+            lowAlpha = texColor.a + specTeam.b;
         } else {
             // VertexNormalPS_LowFidelity (NormalMappedAlpha, NormalMappedGlow,
             // VertexNormal, UndulatingNormalMappedAlpha): untinted; the glow's
@@ -2040,6 +2045,12 @@ void main() {
                             specTeam.r * texture(environmentMap, R).rgb) +
                   pow(phongAmount, 8.0) * specTeam.g + vec3(0.2, 0.7, 1.0) * energy;
             alpha += energy;
+        } else if (pc.technique == 44u) {
+            // GlassAlphaPS: no "environment" named, so the "<default>" cube
+            float keep = 1.0 - specTeam.a;
+            lit = albedo * (emissive + computeLight(NdotL, shadow, 2.0, 1.0)) +
+                  (specTeam.g + 0.5 * specTeam.r * texture(environmentMap, R).rgb) * keep;
+            alpha = texColor.a + specTeam.b + specTeam.g * keep;
         } else if (pc.technique == 2u || pc.technique == 3u) {
             // NormalMappedInsectPS (Cybran) and NormalMappedMetalPS: an
             // anisotropic highlight from a lookup, half the environment.

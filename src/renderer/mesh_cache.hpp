@@ -84,8 +84,9 @@ enum class MeshTechnique : u32 {
     // blended by the albedo's alpha.
     CommandFeedback3 = 40, ///< over everything
     CommandFeedback4 = 41, ///< depth tested, unwritten, biased nearer
-    AeonCZAR = 42, ///< AeonCZARPS at High: AeonPS's light, the secondary's energy; else Aeon
-    Flat = 43,     ///< FlatPS (TMeshNoLighting): unlit, alpha-tested over 0x7F by f * albedo.a
+    AeonCZAR = 42,   ///< AeonCZARPS at High: AeonPS's light, the secondary's energy; else Aeon
+    Flat = 43,       ///< FlatPS (TMeshNoLighting): unlit, alpha-tested over 0x7F by f * albedo.a
+    GlassAlpha = 44, ///< GlassAlphaPS (Medium's at High): lit, blended, no depth written
 };
 
 /// Stable names for render dumps.
@@ -120,7 +121,8 @@ inline bool is_blended_technique(MeshTechnique t) {
            t == MeshTechnique::OuterCloud || t == MeshTechnique::NukeUEF ||
            t == MeshTechnique::NukeEMP || t == MeshTechnique::NukeQuantum ||
            t == MeshTechnique::PhalanxEffect || t == MeshTechnique::UEFQuantumGate ||
-           t == MeshTechnique::CommandFeedback3 || t == MeshTechnique::CommandFeedback4;
+           t == MeshTechnique::CommandFeedback3 || t == MeshTechnique::CommandFeedback4 ||
+           t == MeshTechnique::GlassAlpha;
 }
 
 /// A shield's technique (M211k), which the shield shaders draw.
@@ -161,10 +163,11 @@ inline bool is_post_water_technique(MeshTechnique t) {
 /// A technique of the POSTWATER + POSTEFFECT stage, the last meshes Moho
 /// draws: after the water and the beams, particles and trails above it
 /// (WRenViewport::Render's RenderMeshes(0x28)). The shields' (M211k), UnitPlace,
-/// Effect, Cloud and NukeQuantum.
+/// Effect, Cloud, NukeQuantum and GlassAlpha.
 inline bool is_post_effect_technique(MeshTechnique t) {
     return is_shield_technique(t) || t == MeshTechnique::UnitPlace || t == MeshTechnique::Effect ||
-           t == MeshTechnique::Cloud || t == MeshTechnique::NukeQuantum;
+           t == MeshTechnique::Cloud || t == MeshTechnique::NukeQuantum ||
+           t == MeshTechnique::GlassAlpha;
 }
 
 /// The mesh.fx states the shields' passes draw with (M211k): blended
@@ -208,7 +211,7 @@ inline bool has_depth_stage(MeshTechnique t) {
            t != MeshTechnique::NukeUEF && t != MeshTechnique::NukeEMP &&
            t != MeshTechnique::NukeQuantum && t != MeshTechnique::PhalanxEffect &&
            t != MeshTechnique::UEFQuantumGate && t != MeshTechnique::CommandFeedback3 &&
-           t != MeshTechnique::CommandFeedback4;
+           t != MeshTechnique::CommandFeedback4 && t != MeshTechnique::GlassAlpha;
 }
 
 /// What a technique reads as its instance's material.y (its `parameter`

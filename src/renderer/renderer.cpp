@@ -2928,7 +2928,8 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
             passes[0] = mesh_quantum_gate_pipeline_;
         } else if (technique == MeshTechnique::CommandFeedback3) {
             passes[0] = mesh_feedback_pipeline_;
-        } else if (technique == MeshTechnique::CommandFeedback4) {
+        } else if (technique == MeshTechnique::CommandFeedback4 ||
+                   technique == MeshTechnique::GlassAlpha) {
             passes[0] = mesh_cube_pipeline_;
         }
         mesh_pc.boneBase = group.bone_base_offset;
@@ -2952,6 +2953,9 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
             }
             if (technique == MeshTechnique::AeonCZAR && lane < 2) {
                 drawn = MeshTechnique::Aeon;
+            }
+            if (technique == MeshTechnique::GlassAlpha && lane == 2) {
+                lane = 1;
             }
             mesh_pc.technique = static_cast<u32>(drawn);
             mesh_pc.pass = pass;

@@ -3,7 +3,6 @@ BloatingNormalMappedAlpha
 Clutter
 EditorMarker
 Explosion
-GlassAlpha
 NormalMappedAlphaNoShadow
 Shield
 UnderwaterClutter

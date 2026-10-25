@@ -46,3 +46,5 @@ which the test passes.
 ## Left
 
 `Explosion`, `GlassAlpha` and the rest of `tools/shader_names_baseline.txt`.
+
+*Done (2026-10-25) — M211u: `GlassAlpha`.*
