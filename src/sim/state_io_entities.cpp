@@ -1130,6 +1130,13 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.str(u.layer_);
     w.str(u.motion_type_);
     w.f32v(u.layer_change_offset_);
+    w.f32v(u.layer_transition_duration_);
+    w.f32v(u.layer_transition_ticks_);
+    w.vec3(u.layer_transition_from_);
+    w.quat(u.layer_transition_from_facing_);
+    w.vec3(u.layer_transition_to_);
+    w.quat(u.layer_transition_to_facing_);
+    w.vec3(u.layer_transition_step_);
     w.size(u.raised_platforms_.size());
     for (f32 v : u.raised_platforms_) {
         w.f32v(v);
@@ -1538,6 +1545,13 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.layer_ = r.str();
     u.motion_type_ = r.str();
     u.layer_change_offset_ = r.f32v();
+    u.layer_transition_duration_ = r.f32v();
+    u.layer_transition_ticks_ = r.f32v();
+    u.layer_transition_from_ = r.vec3();
+    u.layer_transition_from_facing_ = r.quat();
+    u.layer_transition_to_ = r.vec3();
+    u.layer_transition_to_facing_ = r.quat();
+    u.layer_transition_step_ = r.vec3();
     u.raised_platforms_.resize(r.size(4));
     for (f32& v : u.raised_platforms_) {
         v = r.f32v();

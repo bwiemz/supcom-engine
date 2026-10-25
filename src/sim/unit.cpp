@@ -1055,6 +1055,7 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
     drove_ = false;
     const Vector3 from = pending_position();
     const u32 snaps = snap_serial();
+    const f32 crossing = layer_transition_ticks_;
     const bool goes_on = motion_tick(dt, ctx);
     if (!in_registry()) {
         return;
@@ -1062,7 +1063,9 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
     if (goes_on && ctx.sim) {
         tick_hover(ctx.terrain, ctx.sim->tick_count(), ctx.sim->random(), ctx.sim->moho_pathing());
     }
-    if (snap_serial() == snaps) {
+    if (crossing != 0.0f || in_layer_transition()) {
+        motion_step_ = layer_transition_step_; // its velocity, kept while it crosses
+    } else if (snap_serial() == snaps) {
         const Vector3& to = pending_position();
         motion_step_ = {to.x - from.x, to.y - from.y, to.z - from.z};
     }
@@ -1202,6 +1205,12 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     update_current_layer(ctx.terrain, L);
     if (!in_registry()) {
         return false;
+    }
+    // Crossing the shore, the tick is the blend's alone: Moho's CalcMoveCommon runs it before
+    // anything else and returns, so the unit takes no step, coasts no way, and doesn't drown.
+    if (in_layer_transition()) {
+        transition_between_layers();
+        return true;
     }
     // Moho's CUnitMotion::CalcMoveCommon: a unit on a layer its motion type can't be on loses 1%
     // of its health a tick, moving or not, unless being built, carried, falling or flying.
@@ -3453,13 +3462,19 @@ Unit::GroundStance Unit::ground_stance(const map::Terrain* terrain, f32 x, f32 z
     if (!terrain) {
         return {pending_position().y, facing};
     }
-    const Unit* platform = raised_platform();
-    const bool hover = is_hover();
     if (!snaps_to_ground()) {
+        const Unit* platform = raised_platform();
         const f32 ground =
             walks_seabed() ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
         return {platform ? ground + platform->raised_platform_height(x, z) : ground, facing};
     }
+    return snap_stance(terrain, x, z, facing, normalize);
+}
+
+Unit::GroundStance Unit::snap_stance(const map::Terrain* terrain, f32 x, f32 z,
+                                     const Quaternion& facing, bool normalize) const {
+    const Unit* platform = raised_platform();
+    const bool hover = is_hover();
     // Moho's MultQuadVec: QuatToMatrix's rows (products pre-doubled), each dotted with the
     // offset from zero up, x then y then z.
     const f32 x2 = facing.x * 2.0f, y2 = facing.y * 2.0f, z2 = facing.z * 2.0f;
@@ -3681,16 +3696,62 @@ void Unit::update_current_layer(const map::Terrain* terrain, lua_State* L) {
     if (walks_seabed() || floats) surface += layer_change_offset_;
     if (ground <= surface) {
         if (surface > ground && layer_ == "Land") {
-            if (walks_seabed()) set_layer_with_callback("Seabed", L);
-            else if (floats) set_layer_with_callback("Water", L);
+            if (walks_seabed()) {
+                set_layer_with_callback("Seabed", L);
+            } else if (floats) {
+                // It settles onto the water where it is (SnapToWater: the water's surface, or
+                // just over the ground, upright)
+                if (layer_transition_duration_ != 0.0f) {
+                    const Vector3& at = position();
+                    const f32 water = terrain->has_water() ? terrain->water_elevation() : -10000.0f;
+                    begin_layer_transition({at.x, std::max(ground + 0.25f, water), at.z},
+                                           tilt_to(orientation(), {0.0f, 1.0f, 0.0f}));
+                }
+                set_layer_with_callback("Water", L);
+            }
         }
         return;
     }
     if (layer_ == "Seabed") {
         if (walks_seabed()) set_layer_with_callback("Land", L);
     } else if (layer_ == "Water" && (floats || motion_type_ == "RULEUMT_Water")) {
+        // It climbs onto the ground it is heading for: ten ticks of its velocity on, so the
+        // blend doesn't drag it back down the shore (SnapToGround there)
+        if (layer_transition_duration_ != 0.0f) {
+            const f32 lead = 10.0f * static_cast<f32>(SimState::SECONDS_PER_TICK);
+            const Vector3& at = position();
+            const f32 x = at.x + v.x * lead;
+            const f32 z = at.z + v.z * lead;
+            const GroundStance stance = snap_stance(terrain, x, z, orientation());
+            begin_layer_transition({x, stance.y, z}, stance.orientation);
+        }
         set_layer_with_callback("Land", L);
     }
+}
+
+void Unit::begin_layer_transition(const Vector3& to, const Quaternion& to_facing) {
+    layer_transition_ticks_ = 1.0f;
+    layer_transition_from_ = position();
+    layer_transition_from_facing_ = orientation();
+    layer_transition_to_ = to;
+    layer_transition_to_facing_ = to_facing;
+    // Its motion's velocity is kept while it crosses (CalcMoveCommon returns before the move).
+    const auto per_tick = static_cast<f32>(SimState::SECONDS_PER_TICK);
+    layer_transition_step_ = {velocity_.x * per_tick, velocity_.y * per_tick,
+                              velocity_.z * per_tick};
+}
+
+void Unit::transition_between_layers() {
+    // Linear in its place, the short way round in its facing, a tick at a time over the
+    // duration's ticks, ending on the tick before the last.
+    const f32 span = layer_transition_duration_ * 10.0f;
+    const f32 progress = layer_transition_ticks_ / span;
+    set_position(vec3_lerp(layer_transition_from_, layer_transition_to_, progress));
+    set_orientation(
+        quat_nlerp(layer_transition_from_facing_, layer_transition_to_facing_, progress));
+    layer_transition_ticks_ += 1.0f;
+    surface_collision_ = false;
+    if (layer_transition_ticks_ >= span) layer_transition_ticks_ = 0.0f;
 }
 
 void Unit::free_landing_reservation(SimState& sim) {

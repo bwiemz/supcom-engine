@@ -12,7 +12,6 @@ GroundCollisionOffset
 IgnoreIfDisabled
 InitialSpeedRange
 LAYER_Air
-LayerTransitionDuration
 MaxBounceCount
 MinBounceCount
 NeedPrep
