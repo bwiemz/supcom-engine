@@ -14,7 +14,6 @@ InitialSpeedRange
 LAYER_Air
 MaxBounceCount
 MinBounceCount
-NeedPrep
 PlaceholderMeshName
 PositionY
 QuickSelectPriority

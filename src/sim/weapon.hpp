@@ -115,6 +115,10 @@ public:
     /// picks (Moho's CAcquireTargetTask), and a winged one's fires only at
     /// a quarter of its top speed.
     bool auto_initiate_attack_command = false;
+    /// NeedPrep: handed its unit's target by an order, it hears OnGotTarget at
+    /// once, so its script readies it (unpacks, opens its bay) before it takes
+    /// the target (Moho's CAiAttackerImpl::SetDesiredTarget).
+    bool need_prep = false;
     f32 bomb_drop_threshold = 1.5f; // BombDropThreshold (Moho's default)
     // Targeting: SetTargetingPriorities (compiled; a candidate must match
     // one, and earlier ones win), the blueprint's restrictions (empty: none)

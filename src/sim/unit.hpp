@@ -1617,8 +1617,12 @@ private:
     /// the unit can go.
     void begin_order(UnitCommand& cmd, lua_State* L);
     /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
-    /// target. False when a script took the unit or the order.
+    /// target, and one that needs prep (NeedPrep) hears OnGotTarget. False
+    /// when a script took the unit or the order.
     bool engage(UnitCommand& cmd, lua_State* L);
+    /// SetDesiredTarget's notice: each NeedPrep weapon hears OnGotTarget.
+    /// False when a script took the unit.
+    bool ready_prep_weapons(lua_State* L);
     /// Fuel, the layer, the step its orders asked for, coasting.
     bool motion_tick(f64 dt, SimContext& ctx);
     /// Moho's CUnitMotion::UpdateCurrentLayer starting a shore crossing:

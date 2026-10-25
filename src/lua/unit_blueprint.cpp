@@ -408,6 +408,12 @@ static std::unique_ptr<sim::Weapon> read_weapon(lua_State* L, int we, i32 index)
     weapon->auto_initiate_attack_command = lua_toboolean(L, -1) != 0;
     lua_pop(L, 1);
 
+    // NeedPrep: an order's target readies it at once (OnGotTarget)
+    lua_pushstring(L, "NeedPrep");
+    lua_gettable(L, we);
+    weapon->need_prep = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+
     // BombDropThreshold (distance threshold for overhead check)
     lua_pushstring(L, "BombDropThreshold");
     lua_gettable(L, we);
