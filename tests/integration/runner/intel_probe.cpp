@@ -7,6 +7,7 @@
 #include "renderer/camera.hpp"
 #include "renderer/minimap_renderer.hpp"
 #include "renderer/renderer.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
@@ -153,7 +154,7 @@ u32 spawn_unit(TestContext& ctx, const char* global, const char* bp, const char*
                              ctx.sim.terrain()->get_terrain_height(at.x, at.z) + lift, at.z));
     lua_pushstring(ctx.L, "__osc_intel_id");
     lua_rawget(ctx.L, LUA_GLOBALSINDEX);
-    const u32 id = lua_isnumber(ctx.L, -1) ? static_cast<u32>(lua_tonumber(ctx.L, -1)) : 0;
+    const u32 id = osc::sim::to_entity_id(ctx.L, -1);
     lua_pop(ctx.L, 1);
     // Moho stands a unit made by script on its spawn height (the ground, the
     // water's surface: IUnit::CalcSpawnElevation). A scene that lifts one does

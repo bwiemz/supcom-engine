@@ -222,9 +222,11 @@ static int unit_IsUnitState(lua_State* L) {
                      (!u->command_queue().empty() &&
                       u->command_queue().front().type == sim::CommandType::BuildMobile &&
                       (u->arm_awaited() || u->command_queue().front().task_wait > 0));
-        } else if (std::strcmp(state, "Moving") == 0) result = u->is_moving();
-        else if (std::strcmp(state, "BeingBuilt") == 0)
-            result = u->is_being_built();
+        } else if (std::strcmp(state, "Moving") == 0) {
+            // Moho's move task holds UNITSTATE_Moving from its start (CUnitMoveTask, 0x006180E0),
+            // before it has a path.
+            result = u->navigator().busy();
+        } else if (std::strcmp(state, "BeingBuilt") == 0) result = u->is_being_built();
         else if (std::strcmp(state, "Guarding") == 0)
             result = u->guard_order() != nullptr; // fighting for it too
         else if (std::strcmp(state, "Reclaiming") == 0)
@@ -785,8 +787,7 @@ static int unit_GetBlip(lua_State* L) {
     if (lua_istable(L, 1)) {
         lua_pushstring(L, "EntityId");
         lua_rawget(L, 1);
-        if (lua_isnumber(L, -1))
-            entity_id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        if (lua_isnumber(L, -1)) entity_id = sim::to_entity_id(L, -1);
         lua_pop(L, 1);
     }
     if (entity_id == 0) { lua_pushnil(L); return 1; }

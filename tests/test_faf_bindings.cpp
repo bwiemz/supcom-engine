@@ -225,7 +225,7 @@ TEST_CASE("A sim unit's queue gives each order's place, target and build", "[faf
         w.sim.entity_registry().find(id)->set_lua_table_ref(luaL_ref(S, LUA_REGISTRYINDEX));
         lua_setglobal(S, name);
     }
-    lua_pushstring(S, std::to_string(guarded_id).c_str());
+    lua_pushstring(S, std::to_string(osc::sim::EntityRegistry::moho_id(guarded_id)).c_str());
     lua_setglobal(S, "guarded_id");
 
     osc::sim::UnitCommand build;
@@ -347,7 +347,7 @@ TEST_CASE("GetHighlightCommand is the waypoint under the cursor's order", "[faf]
     CHECK(error.empty());
 
     w.input.set_hovered_command(guarded);
-    lua_pushstring(L, std::to_string(w.id).c_str());
+    lua_pushstring(L, std::to_string(osc::sim::EntityRegistry::moho_id(w.id)).c_str());
     lua_setglobal(L, "target");
     error = run(w.ui, R"(
         local c = GetHighlightCommand()

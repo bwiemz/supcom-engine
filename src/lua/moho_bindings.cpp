@@ -3191,8 +3191,8 @@ static int l_GetUnitById(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
 
-    u32 eid = static_cast<u32>(luaL_checknumber(L, 1));
-    auto* entity = sim->entity_registry().find(eid);
+    luaL_checknumber(L, 1);
+    auto* entity = sim->entity_registry().find(sim::to_entity_id(L, 1));
     if (!entity || entity->destroyed()) {
         lua_pushnil(L);
         return 1;
@@ -3501,7 +3501,8 @@ static int l_GetOrderBitmapNames(lua_State* L) {
 /// Returns: {Back="AdvancedEngineering", RCH="CoolingUpgrade", ...} (slot → enhName)
 static int l_GetEnhancements(lua_State* L) {
     auto* sim = get_sim(L);
-    u32 entity_id = static_cast<u32>(luaL_checknumber(L, 1));
+    luaL_checknumber(L, 1);
+    const u32 entity_id = sim::to_entity_id(L, 1);
     lua_newtable(L);
 
     if (!sim) return 1;

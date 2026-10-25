@@ -22,6 +22,7 @@
 #include "lua/lua_state.hpp"
 #include "renderer/input_handler.hpp"
 #include "sim/lua_bytes.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
@@ -160,7 +161,7 @@ void test_script_orders(TestContext& ctx) {
     // has no ability to take it.
     if (!run(ctx, "the Eye's id", "__eye_id = tonumber(__eye:GetEntityId())")) return;
     lua_getglobal(ctx.L, "__eye_id");
-    const auto eye_id = static_cast<u32>(lua_tonumber(ctx.L, -1));
+    const auto eye_id = osc::sim::to_entity_id(ctx.L, -1);
     lua_pop(ctx.L, 1);
     acu = acu_of(ctx.sim);
     if (!acu) return;

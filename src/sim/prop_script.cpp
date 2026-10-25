@@ -164,8 +164,9 @@ void create_prop_object(lua_State* L, SimState& sim, Prop& prop, bool push) {
         prop.set_footprint_size(sx, sz);
         // One worth reclaiming stands on its footprint's ground, with
         // its blueprint's Footprint.OccupancyCaps (Moho's Prop: 88 of
-        // retail's, buses, ruins and the like, have LAND|SEABED; trees and
-        // rocks none).
+        // retail's, buses, ruins and the like, have LAND|SEABED; trees none,
+        // yet their occupying and its release still dirty the path clusters
+        // under them).
         lua_pushstring(L, "Footprint");
         lua_rawget(L, -2);
         const u8 caps = lua_istable(L, -1) ? [&] {
@@ -177,7 +178,7 @@ void create_prop_object(lua_State* L, SimState& sim, Prop& prop, bool push) {
         }()
                                            : u8{0};
         lua_pop(L, 1);
-        if (caps != 0 && (prop.reclaim_mass_max > 0 || prop.reclaim_energy_max > 0)) {
+        if (prop.reclaim_mass_max > 0 || prop.reclaim_energy_max > 0) {
             blueprints::Footprint fp;
             fp.size_x = static_cast<u8>(std::clamp(std::lround(sx), 0L, 255L));
             fp.size_z = static_cast<u8>(std::clamp(std::lround(sz), 0L, 255L));

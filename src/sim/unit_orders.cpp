@@ -14,6 +14,7 @@
 #include "sim/entity_registry.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/prepare_move.hpp"
+#include "sim/script_class.hpp"
 #include "sim/work_range.hpp"
 #include "map/terrain.hpp"
 
@@ -196,7 +197,7 @@ u32 Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
         if (lua_istable(L, -1)) {
             lua_pushstring(L, "EntityId");
             lua_rawget(L, -2);
-            if (lua_isnumber(L, -1)) made = static_cast<u32>(lua_tonumber(L, -1));
+            made = to_entity_id(L, -1);
         }
     } else {
         const char* err = lua_tostring(L, -1);

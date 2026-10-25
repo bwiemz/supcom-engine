@@ -40,5 +40,9 @@ void push_new_script_object(lua_State* L, const char* kind);
 /// SimUnitEnhancements, FAF's UnitData -- and look those up with ids from
 /// other sources, so a number from one and a string from another miss.
 void push_entity_id(lua_State* L, u32 id);
+/// The entity id a script hands back (a string or a number, as push_entity_id gives it) at
+/// `idx`, as the engine numbers it; 0 when there is none. Scripts see Moho's ids, one below
+/// the engine's, which keeps 0 for no entity.
+u32 to_entity_id(lua_State* L, int idx);
 
 } // namespace osc::sim

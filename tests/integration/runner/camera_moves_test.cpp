@@ -165,7 +165,8 @@ void test_camera_moves(TestContext& ui, TestContext& sim, const std::function<vo
     // Test 3: UIZoomTo frames a unit: its place, 20 about it each way
     {
         const auto* e = sim.sim.entity_registry().find(acu);
-        run(fmt::format("UIZoomTo({{GetUnitById('{}')}}, 0)", acu));
+        run(fmt::format("UIZoomTo({{GetUnitById('{}')}}, 0)",
+                        osc::sim::EntityRegistry::moho_id(acu)));
         const bool ok = e && std::abs(cam.target_x() - e->position().x) < 1e-2f &&
                         std::abs(cam.target_z() - e->position().z) < 1e-2f &&
                         std::abs(cam.zoom() - 40.0f) < 1e-3f &&
@@ -180,11 +181,13 @@ void test_camera_moves(TestContext& ui, TestContext& sim, const std::function<vo
         // A frame of the world: the camera finds its targets in it
         shots.recapture();
         shots.redraw();
-        run(fmt::format("GetCamera('WorldCamera'):TrackEntities({{'{}'}}, 60, 0)", acu));
+        run(fmt::format("GetCamera('WorldCamera'):TrackEntities({{'{}'}}, 60, 0)",
+                        osc::sim::EntityRegistry::moho_id(acu)));
         const bool tracking = cam.target_type() == renderer::CameraTarget::Entity;
         const auto* e = sim.sim.entity_registry().find(acu);
         const f32 x0 = e ? e->position().x : 0.0f;
-        sim_lua(fmt::format("IssueMove({{GetEntityById('{}')}}, {{{}, 0, {}}})", acu, x0 + 30.0f,
+        sim_lua(fmt::format("IssueMove({{GetEntityById('{}')}}, {{{}, 0, {}}})",
+                            osc::sim::EntityRegistry::moho_id(acu), x0 + 30.0f,
                             e ? e->position().z : 0.0f)
                     .c_str());
         play(50);

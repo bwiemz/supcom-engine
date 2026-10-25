@@ -22,6 +22,7 @@
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
 #include "sim/projectile.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
@@ -46,7 +47,7 @@ u32 global_id(TestContext& ctx, const char* name) {
     lua_State* L = ctx.lua_state.raw();
     lua_pushstring(L, name);
     lua_rawget(L, LUA_GLOBALSINDEX);
-    const auto id = lua_isnumber(L, -1) ? static_cast<u32>(lua_tonumber(L, -1)) : 0u;
+    const auto id = osc::sim::to_entity_id(L, -1);
     lua_pop(L, 1);
     return id;
 }
@@ -338,7 +339,7 @@ void test_air_auto_engage(TestContext& ctx) {
     const auto id = [&](const char* name) {
         lua_pushstring(L, name);
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto v = lua_isnumber(L, -1) ? static_cast<u32>(lua_tonumber(L, -1)) : 0u;
+        const auto v = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
         return v;
     };

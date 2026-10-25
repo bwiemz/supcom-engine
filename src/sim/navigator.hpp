@@ -3,8 +3,10 @@
 #include "core/types.hpp"
 #include "sim/entity.hpp" // Vector3
 #include "sim/path_navigator.hpp"
+#include "sim/path_spline.hpp"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace osc::map {
@@ -85,14 +87,19 @@ public:
     /// Its Moho pathing state (whether it is following, its waypoint and
     /// its path navigator's), for the sync checksum.
     void fingerprint_moho(Fnv& f) const;
+    /// Its spline gear (backing up), for the sync checksum.
+    void fingerprint_gear(Fnv& f) const;
 
     // Steering (M203c; Moho's CAiSteeringImpl, see steering.hpp).
     /// A meeting the unit expects on the path ahead (Moho's
     /// COLLISIONTYPE_1): the unit it would meet, the tick and the spot.
+    /// With Moho pathing, also what its steering does about it (Moho's
+    /// ECollisionType): 2 step aside, 4 brake, 5 brake for the other.
     struct Collision {
         u32 other = 0;
         i32 tick = 0;
         Vector3 at{};
+        u8 type = 0;
     };
     const Collision& collision() const { return collision_; }
     bool has_collision() const { return collision_.other != 0; }
@@ -108,16 +115,56 @@ public:
     /// when it has no path.
     void path_ahead(const Vector3& from, f32 speed, f32 top_speed, f32 accel, int nodes,
                     std::vector<Vector3>& out) const;
+    // Moho's steering on its spline (CAiSteeringImpl), with Moho pathing: the
+    // steering pass (steering.cpp) drives it, the motion step stands the unit on
+    // the node it hands over.
+    /// The navigator set a new waypoint (SetWaypoints' mNeedsWaypointRefresh), taken once.
+    bool take_waypoint_refresh() { return std::exchange(waypoint_refresh_, false); }
+    /// mDestination: the waypoint it steers for, set as it takes a new one.
+    const Vector3* steer_destination() const { return steer_dest_set_ ? &steer_dest_ : nullptr; }
+    void set_steer_destination(const Vector3& to) {
+        steer_dest_ = to;
+        steer_dest_set_ = true;
+    }
+    /// The target outside the goal is driven through (IAiSteering::GetVal's PT_1).
+    bool through_target() const { return through_target_; }
+    /// UpdatePath: a new spline toward `to`; `carry_on` from the last one's continuation.
+    void spline_generate(const Unit& unit, const Vector3& to, path::PathType type, bool carry_on);
+    /// UpdatePath(4) / Update(3): brake to a stop where it goes.
+    void spline_brake(const Unit& unit, int mode);
+    /// Stop: no spline, and no node to stand on.
+    void spline_stop();
+    bool has_spline() const { return has_spline_; }
+    const path::Spline& spline() const { return spline_; }
+    /// The motion holds a node to stand on (CUnitMotion::IsMoving on the ground).
+    bool has_motion_node() const { return motion_node_set_; }
+    /// UpdateMotionPathPointers: hand the motion the spline's next node, and move on.
+    void advance_motion_node();
+    /// Stopped while immobile (mPausedForStateTransition); it sets off afresh after.
+    bool steer_paused() const { return steer_paused_; }
+    void set_steer_paused(bool p) { steer_paused_ = p; }
+    /// Moho's point to step aside to (mCollisionAvoidTarget).
+    const Vector3& avoid_target() const { return avoid_target_; }
+    void set_avoid_target(const Vector3& p) { avoid_target_ = p; }
+    /// Unit::IsAtPosition: its footprint's cell is `p`'s.
+    static bool unit_at(const Unit& unit, const Vector3& p);
+
     /// Step aside to overtake: drive to `point` first, then on (Moho's PT_2
     /// path).
     void sidestep(const Vector3& point);
-    bool sidestepping() const { return sidestep_ && waypoint_index_ <= sidestep_index_; }
+    bool sidestepping() const {
+        return (sidestep_ && waypoint_index_ <= sidestep_index_) ||
+               (has_spline_ && spline_.type() == path::PathType::Sidestep);
+    }
     /// Stop for unit `for_id` crossing or coming head-on (Moho's mode 4
     /// path): brake at twice its brake, then wait `ticks` once still.
     void hold(int ticks, u32 for_id);
-    bool holding() const { return hold_ticks_ > 0; }
+    bool holding() const {
+        return hold_ticks_ > 0 || (has_spline_ && spline_.type() == path::PathType::Brake);
+    }
     /// The unit it is stopped for (while holding).
-    u32 held_for() const { return hold_ticks_ > 0 ? held_for_ : 0; }
+    u32 held_for() const { return holding() ? held_for_ : 0; }
+    void set_held_for(u32 id) { held_for_ = id; }
 
     /// After a path request fails outright (nothing reachable is closer to
     /// the goal), identical requests -- same goal, unit still where it was --
@@ -150,6 +197,9 @@ private:
     void reset_steering();
     /// Moho pathing's motion step: the drive at its waypoint, if it has one.
     bool drive_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain);
+    /// Moho's spline drive: generate toward its waypoint as its steering does,
+    /// and stand the unit on the spline's next node (CUnitMotion::CalcMoveCommon).
+    void drive_spline(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain);
     /// Drop the Moho path, if any.
     void reset_moho();
     /// The goal by the grid pathfinder (set_goal's own way, and Moho
@@ -178,6 +228,16 @@ private:
     size_t sidestep_index_ = 0; ///< its index; passed, the sidestep is done
     int hold_ticks_ = 0;        ///< stopping, then this many ticks still
     u32 held_for_ = 0;          ///< the unit it stops for
+
+    /// Moho's spline states (faf-re CAiPathSpline::Generate's PPS_7, PPS_4, PPS_5,
+    /// PPS_6 and PPS_3): backing up, for a unit that doesn't rotate on the spot,
+    /// and braking to stop on its goal.
+    enum class Gear : u8 { Forward, BrakeForward, Reverse, BrakeReverse, Stop };
+    Gear gear_ = Gear::Forward;
+    bool backup_ = false; ///< reversing tail first to a goal close behind (doBackup)
+    /// The waypoint its gear was chosen for; a new one, or a new move, chooses again.
+    Vector3 gear_target_{};
+    bool gear_fresh_ = true;
     /// A sidestep point is reached, not passed near.
     static constexpr f32 SIDESTEP_TOLERANCE = 0.25f;
 
@@ -185,6 +245,16 @@ private:
     path::PathNavigator moho_;
     bool moho_pending_ = false; ///< a goal set, taken up by the next navigate()
     bool moho_active_ = false;  ///< following moho_
+    // Moho's spline (docs/plans/2026-10-22-moho-spline-port-design.md).
+    path::Spline spline_;
+    bool has_spline_ = false;       ///< Moho's mPath
+    bool waypoint_refresh_ = false; ///< mNeedsWaypointRefresh
+    Vector3 steer_dest_{};          ///< mDestination
+    bool steer_dest_set_ = false;
+    Vector3 avoid_target_{};   ///< mCollisionAvoidTarget
+    path::Node motion_node_{}; ///< CUnitMotion's mNextWaypoint
+    bool motion_node_set_ = false;
+    bool steer_paused_ = false; ///< mPausedForStateTransition
     /// Its target is outside the goal: driven through at speed, not stopped
     /// on (Moho's IAiSteering::UseTopSpeed).
     bool through_target_ = false;

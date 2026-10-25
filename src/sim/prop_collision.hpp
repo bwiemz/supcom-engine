@@ -12,7 +12,10 @@ class Unit;
 /// Moho's CUnitMotion::ProcessSurfaceCollisionFromLastMove and
 /// Sim::DoCollisionsFor, for props: a surface unit that moved, whose SizeX
 /// by SizeZ is over 0.2, on the ticks its id matches mod 5, calls
-/// OnCollision(unit, nx, ny, nz, depth) of each prop its box meets.
-void collide_with_props(Unit& unit, EntityRegistry& registry, lua_State* L, u32 tick);
+/// OnCollision(unit, nx, ny, nz, depth) of each prop its box meets. With Moho pathing
+/// the unit's motion opens it as it opens the units' half (MotionTick: moved since, or
+/// its surface collision pending, as a new unit's is).
+void collide_with_props(Unit& unit, EntityRegistry& registry, lua_State* L, u32 tick,
+                        bool moho_pathing);
 
 } // namespace osc::sim

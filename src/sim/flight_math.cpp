@@ -60,6 +60,54 @@ Quaternion coords_orient(const Vector3& dir) {
                       (m[2][0] - m[0][2]) / t};
 }
 
+namespace {
+
+/// Wm3's Vector3::Normalize: zero and its length 0 at 1e-6 or under, else times the
+/// inverse length.
+f32 wm3_normalize(Vector3& v) {
+    const f32 length = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (!(length > 1.0e-6f)) {
+        v = {};
+        return 0.0f;
+    }
+    const f32 inv = 1.0f / length;
+    v = {v.x * inv, v.y * inv, v.z * inv};
+    return length;
+}
+
+} // namespace
+
+Quaternion coords_orient_moho(const Vector3& dir) {
+    Vector3 f = dir;
+    if (wm3_normalize(f) == 0.0f) return Quaternion{0, 0, 0, 1};
+    Vector3 r{f.z, 0.0f, -f.x};
+    if (wm3_normalize(r) == 0.0f) {
+        constexpr f32 kHalfSqrtTwo = 0.70710677f;
+        return Quaternion{dir.y > 0.0f ? -kHalfSqrtTwo : kHalfSqrtTwo, 0, 0, kHalfSqrtTwo};
+    }
+    const Vector3 u{f.y * r.z - f.z * r.y, f.z * r.x - r.z * f.x, r.y * f.x - f.y * r.x};
+    const f32 m[3][3] = {{r.x, r.y, r.z}, {u.x, u.y, u.z}, {f.x, f.y, f.z}};
+    const f32 trace = m[0][0] + m[1][1] + m[2][2];
+    if (trace > 0.0f) {
+        const f32 root = std::sqrt(trace + 1.0f);
+        const f32 inv = 0.5f / root;
+        return Quaternion{(m[1][2] - m[2][1]) * inv, (m[2][0] - m[0][2]) * inv,
+                          (m[0][1] - m[1][0]) * inv, root * 0.5f};
+    }
+    constexpr int kNext[3] = {1, 2, 0};
+    int d = m[1][1] > m[0][0] ? 1 : 0;
+    if (m[2][2] > m[d][d]) d = 2;
+    const int b = kNext[d];
+    const int c = kNext[b];
+    const f32 root = std::sqrt(m[d][d] - (m[b][b] + m[c][c]) + 1.0f);
+    const f32 inv = 0.5f / root;
+    f32 v[3] = {};
+    v[d] = root * 0.5f;
+    v[b] = (m[d][b] + m[b][d]) * inv;
+    v[c] = (m[d][c] + m[c][d]) * inv;
+    return Quaternion{v[0], v[1], v[2], (m[b][c] - m[c][b]) * inv};
+}
+
 Quaternion shortest_arc(Vector3 from, Vector3 to) {
     normalize(from);
     normalize(to);

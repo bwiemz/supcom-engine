@@ -6,6 +6,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
 #include "sim/entity.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 
 extern "C" {
@@ -142,7 +143,7 @@ TEST_CASE("The scroller bindings drive an entity's scroll", "[scroller]") {
     lua_rawset(L, LUA_REGISTRYINDEX);
     REQUIRE(state.do_string("tank = CreateUnit('test_tank', 1, 0, 0, 0)").ok());
     REQUIRE(state.do_string("return tank.EntityId").ok());
-    const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+    const auto id = osc::sim::to_entity_id(L, -1);
     lua_pop(L, 1);
     osc::sim::Entity* tank = sim.entity_registry().find(id);
     REQUIRE(tank);

@@ -324,8 +324,6 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         // At a fixed metric (Mesh::ComputeLOD), a mesh no LOD of which takes
         // it shows nothing: first, before anything else is looked up
         if (lod_metric) {
-            if (entity.id >= reaches_.size())
-                reaches_.resize(std::max<size_t>(entity.id + 1, reaches_.size() * 3 / 2));
             CachedReach& cached = reaches_[entity.id];
             if (cached.reach < 0.0f || cached.mesh_changes != entity.mesh_changes) {
                 const std::string& id =

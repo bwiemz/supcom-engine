@@ -252,7 +252,9 @@ TEST_CASE("With Moho pathing a game saved with searches waiting and one in fligh
     REQUIRE(err.empty());
     CHECK(b.sim.moho_pathing());
     CHECK(b.sim.compute_sync_checksum() == a.sim.compute_sync_checksum());
-    for (int t = 0; t < 300; ++t) {
+    // Moho's motion pushes units that overlap apart (Sim::DoCollisionsFor), so the jam at
+    // the gap takes longer to clear than the engine's old separation did.
+    for (int t = 0; t < 600; ++t) {
         a.sim.tick();
         b.sim.tick();
         INFO("tick " << t);

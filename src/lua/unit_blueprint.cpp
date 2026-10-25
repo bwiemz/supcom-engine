@@ -143,6 +143,7 @@ static void read_drive(lua_State* L, const BlueprintStore& store, const Blueprin
         }
         drive.rotate_threshold = number("RotateOnSpotThreshold", 0.5f);
         drive.turn_facing_rate = number("TurnFacingRate", 0) * kDegToRad;
+        drive.max_steer_force = number("MaxSteerForce", 0);
         lua_pushstring(L, "RotateOnSpot");
         lua_rawget(L, physics);
         drive.rotate_on_spot = lua_toboolean(L, -1) != 0;

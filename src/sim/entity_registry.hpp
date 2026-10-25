@@ -7,10 +7,14 @@
 #include <algorithm>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
+#include <map>
+#include <unordered_map>
 #include <vector>
 
 namespace osc::sim {
@@ -28,7 +32,17 @@ public:
     ~EntityRegistry();
 
     /// Register an entity and assign it a unique ID. Returns the ID.
+    ///
+    /// Ids are Moho's (EntityDB::DoReserveId, 0x00684480), plus one so that 0 stays
+    /// "none": a family and source in the high bits (a unit its army << 20; a
+    /// projectile (army | 0x100) << 20; a prop 0x2FF << 20; a shield
+    /// (army | 0x400) << 20; any other (army | 0x500) << 20; no army is 255), and the
+    /// next serial of that pool (Moho reuses released ones; see reserve_id).
     u32 register_entity(std::unique_ptr<Entity> entity);
+    /// Moho's id of the entity the engine numbers `id`.
+    static u32 moho_id(u32 id) { return id - 1; }
+    /// The engine's number of the entity Moho numbers `moho`.
+    static u32 from_moho_id(u32 moho) { return moho + 1; }
 
     /// Remove an entity by ID: Moho's EntityDB::Purge. The deletion queue
     /// (destroy, purge_destroyed) comes here, so the unregister hook sees each
@@ -216,12 +230,11 @@ public:
     u32 tick() const { return tick_ ? *tick_ : 0; }
 
 private:
-    /// Every live entity at its id (ids start at 1 and only grow), so a
-    /// lookup is an index, not a hash; a removed entity leaves null.
-    std::vector<std::unique_ptr<Entity>> entities_;
+    /// Every live entity by its id: looked up, never walked (order_ is the order).
+    std::unordered_map<u32, std::unique_ptr<Entity>> entities_;
     size_t live_count_ = 0;
     std::unordered_set<const void*> live_; ///< the registered entities, for holds()
-    /// Every live entity in id order (ids only grow, so a new one appends).
+    /// Every live entity in the order it was made (a new one appends).
     /// A removed entity leaves a null slot until compact(), so a walk in
     /// progress keeps its place.
     struct Slot {
@@ -231,6 +244,16 @@ private:
     std::vector<Slot> order_;
     std::vector<Slot> unit_order_; ///< the units of order_, for for_each_unit
     size_t removed_slots_ = 0;     ///< null slots in order_ (and so in unit_order_)
+    /// Each live entity's slot in order_ and in unit_order_ (npos for a non-unit).
+    std::unordered_map<u32, std::pair<size_t, size_t>> slot_of_;
+    static constexpr size_t kNoSlot = static_cast<size_t>(-1);
+    /// Moho's id pools, by family and source bits: each one's next serial.
+    struct IdPool {
+        u32 next = 0;
+    };
+    std::map<u32, IdPool> id_pools_;
+    u32 reserve_id(const Entity& e);
+    void index_slots();
     /// Walks in progress (a walk's callback may start another).
     mutable u32 walking_ = 0;
     struct Walking {
@@ -245,7 +268,6 @@ private:
     std::deque<u32> deletion_queue_;
     std::vector<u32> walk_;
     UnregisterHook unregister_hook_;
-    u32 next_id_ = 1;
 
     SimRandom default_random_;
     SimRandom* sim_random_ = &default_random_;

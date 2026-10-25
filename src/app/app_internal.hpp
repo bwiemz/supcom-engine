@@ -210,6 +210,7 @@ extern std::ofstream* g_entity_trace;
 extern u32 g_entity_trace_from;
 extern u32 g_entity_trace_to;
 extern std::ofstream* g_rng_trace;
+extern std::ofstream* g_steer_log;
 extern u32 g_rng_trace_from;
 extern u32 g_rng_trace_to;
 extern bool g_moho_pathing;
@@ -496,6 +497,7 @@ private:
     std::ofstream checksum_trace;
     std::ofstream entity_trace;
     std::ofstream rng_trace;
+    std::ofstream steer_log;
 
     WorldInterp world_interp; // outlives every sim it observes
     std::unique_ptr<sim::SimState> sim_state;

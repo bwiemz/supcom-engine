@@ -2,9 +2,12 @@
 #include "core/dmath.hpp"
 #include "sim/air_combat.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/entity_registry.hpp"
+#include "sim/flight_math.hpp"
 #include "sim/path_tables.hpp"
 #include "sim/prepare_move.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/steering.hpp"
 #include "sim/unit.hpp"
 #include "map/pathfinder.hpp"
 #include "map/terrain.hpp"
@@ -128,12 +131,20 @@ void Navigator::reset_steering() {
     sidestep_index_ = 0;
     hold_ticks_ = 0;
     held_for_ = 0;
+    gear_fresh_ = true; // its next target chooses its gear again
 }
 
 void Navigator::path_ahead(const Vector3& from, f32 speed, f32 top_speed, f32 accel, int nodes,
                            std::vector<Vector3>& out) const {
     out.clear();
     if (status_ != Status::Moving || waypoint_index_ >= waypoints_.size() || nodes <= 0) return;
+    // On Moho's spline, its nodes from the next are where it will be (CheckCollisions).
+    if (moho_active_ && has_spline_ && !spline_.empty()) {
+        for (size_t k = spline_.current();
+             k < spline_.nodes().size() && static_cast<int>(out.size()) < nodes; ++k)
+            out.push_back(spline_.nodes()[k].position);
+        return;
+    }
     constexpr f32 kTick = 0.1f;
     Vector3 p = from;
     f32 v = std::abs(speed);
@@ -181,6 +192,9 @@ bool Navigator::update(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* te
 }
 
 void Navigator::reset_moho() {
+    spline_stop();
+    steer_dest_set_ = false;
+    waypoint_refresh_ = false;
     moho_.reset();
     moho_pending_ = false;
     moho_active_ = false;
@@ -279,7 +293,7 @@ void Navigator::navigate(Unit& unit) {
     nav.waiting_for_transport = !unit.command_queue().empty() &&
                                 unit.command_queue().front().type == CommandType::TransportLoad;
     nav.tick = sim_->tick_count();
-    nav.probe_bucket = unit.entity_id() % 7;
+    nav.probe_bucket = EntityRegistry::moho_id(unit.entity_id()) % 7;
     nav.max_speed = unit.max_speed();
     // TurnRadius against TurnRate in its blueprint's units, degrees a second.
     constexpr f32 kRadToDeg = 180.0f / 3.14159265358979f;
@@ -293,10 +307,15 @@ void Navigator::navigate(Unit& unit) {
     moho_.update(nav, world, army->path_queue());
     const State st = moho_.state();
     if (st == State::Idle || st == State::Failed) {
-        // There (or as near as it gets), or given up: it stops. Moho's
-        // steering->Stop() retargets CUnitMotion to where the unit is, which
-        // brakes it from its speed (CUnitMotion::Stop); undriven, the unit
-        // coasts to a stop at its brake (Unit::coast), not dead in a tick.
+        // There (or as near as it gets), or given up: CAiNavigatorLand::Execute stops its
+        // steering first (Stop: off its spline, its meetings checked afresh if nodes were
+        // left), then goes idle, handing the steering no waypoints, and nothing is left to
+        // brake on. Undriven, it coasts.
+        if (sim_->steer_log())
+            *sim_->steer_log() << "STEER t=" << sim_->tick_count() << ' ' << unit.blueprint_id()
+                               << " waypoints none #" << EntityRegistry::moho_id(unit.entity_id())
+                               << '\n';
+        steer_stop(*sim_, unit);
         reset_moho();
         arrive();
         ended_ = true;
@@ -306,14 +325,29 @@ void Navigator::navigate(Unit& unit) {
     // (and any sidestep); one outside the goal it drives through.
     const path::Cell target = moho_.target();
     if (target != moho_waypoint_cell_ || waypoints_.empty()) {
+        if (target != moho_waypoint_cell_ && sim_->steer_log()) {
+            *sim_->steer_log() << "STEER t=" << sim_->tick_count() << ' ' << unit.blueprint_id()
+                               << " waypoints " << moho_.target_x() << ',' << moho_.target_z()
+                               << " #" << EntityRegistry::moho_id(unit.entity_id()) << '\n';
+        }
         moho_waypoint_cell_ = target;
         // CAiSteeringImpl::DriveToNextWaypoint: a waypoint the unit is at (Unit::IsAtPosition)
         // sets no motion target.
         if (target != moho_.current()) {
+            waypoint_refresh_ = true;
             waypoints_.assign(1, Vector3{moho_.target_x(), pos.y, moho_.target_z()});
             waypoint_index_ = 0;
             sidestep_ = false;
-            through_target_ = !moho_.cell_in_goal(target);
+            // UseTopSpeed(IsCellInGoal) picks the flag GetVal reads: in the goal, the
+            // order's speed through it (CalcAtTopSpeed1); short of it, none left of its
+            // path and not thinking (CalcAtTopSpeed2). CAiNavigatorLand::Execute, 0x005A4280.
+            through_target_ = moho_.cell_in_goal(target) ? speed_through_goal_
+                                                         : status_ != Status::WaitingForPath &&
+                                                               moho_.last_node_index() < 0;
+        } else {
+            // At it, the steering still takes it for its destination (mDestination), what a
+            // path asked afresh after a push makes for.
+            set_steer_destination(Vector3{moho_.target_x(), pos.y, moho_.target_z()});
         }
     }
     status_ = st == State::HasPath ? Status::Moving : Status::WaitingForPath;
@@ -325,7 +359,7 @@ bool Navigator::drive_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrain
     }
     const Status was = status_;
     status_ = Status::Moving;
-    drive(unit, max_speed, dt, terrain);
+    drive_spline(unit, max_speed, dt, terrain);
     if (status_ != Status::Idle) {
         status_ = was;
     }
@@ -351,6 +385,198 @@ f32 wrap_angle(f32 a) {
 }
 
 } // namespace
+
+namespace {
+
+/// What Moho's spline reads of a unit.
+path::SplineUnit spline_unit(const Unit& unit) {
+    const Unit::Drive& d = unit.drive();
+    path::SplineUnit su;
+    su.max_speed = unit.max_speed();
+    su.max_speed_reverse = d.max_speed_reverse;
+    su.max_accel = d.max_accel > 0 ? d.max_accel : unit.max_speed();
+    su.max_brake = d.max_brake;
+    su.max_steer_force = d.max_steer_force;
+    su.turn_rate = d.turn_rate * 57.29578f; // the blueprint's degrees
+    su.turn_radius = d.turn_radius;
+    su.rotate_on_spot = d.rotate_on_spot;
+    su.rotate_threshold = d.rotate_threshold;
+    su.backup_distance = d.backup_distance;
+    su.size_x = unit.size_x();
+    su.size_z = unit.size_z();
+    su.speed_mult = unit.speed_mult();
+    su.accel_mult = unit.accel_mult();
+    su.turn_mult = unit.turn_mult();
+    // Its nav speed carries its speed multiplier, which the spline applies itself.
+    su.top_speed = su.speed_mult > 0 ? unit.nav_speed() / su.speed_mult : unit.nav_speed();
+    return su;
+}
+
+/// Where it is: its position, heading and last tick's step.
+path::Pose spline_pose(const Unit& unit) {
+    // Its forward axis straight from its orientation, pitch and all, as Moho's
+    // QuatForwardAxis (Generate, 0x005B30E3): a unit made side-on to its goal has a
+    // forward z of float noise, whose sign picks forward or reverse.
+    const Quaternion& q = unit.orientation();
+    const Vector3 forward{(q.w * q.y + q.z * q.x) * 2.0f, (q.z * q.y - q.w * q.x) * 2.0f,
+                          1.0f - (q.y * q.y + q.x * q.x) * 2.0f};
+    // Its velocity a tick, as Unit::GetVelocity (0x006A9C90) gives it: off the ground, its
+    // motion's own (CUnitMotion's mVelocity), not the step between its last two places.
+    if (unit.layer() != "Air") return {unit.position(), forward, unit.motion_velocity()};
+    const Vector3& v = unit.velocity();
+    constexpr f32 kTick = 0.1f;
+    return {unit.position(), forward, {v.x * kTick, v.y * kTick, v.z * kTick}};
+}
+
+} // namespace
+
+bool Navigator::unit_at(const Unit& unit, const Vector3& p) {
+    const f32 hx = unit.footprint().size_x * 0.5f;
+    const f32 hz = unit.footprint().size_z * 0.5f;
+    const Vector3& at = unit.position();
+    return std::lrint(at.x - hx) == std::lrint(p.x - hx) &&
+           std::lrint(at.z - hz) == std::lrint(p.z - hz);
+}
+
+namespace {
+
+/// A node's height as Generate and Update give it: the terrain's, or the water's where a
+/// ship, a floating amphibian or a hover rides above it.
+void set_node_height(path::SplineWorld& world, const map::Terrain* terrain, const Unit& unit) {
+    if (!terrain) return;
+    const std::string& motion = unit.motion_type();
+    const bool rides_water = motion == "RULEUMT_Water" || motion == "RULEUMT_AmphibiousFloating" ||
+                             motion == "RULEUMT_Hover";
+    world.height = [terrain, rides_water](f32 x, f32 z) {
+        const f32 ground = terrain->get_terrain_height(x, z);
+        return rides_water && terrain->has_water() && terrain->water_elevation() > ground
+                   ? terrain->water_elevation()
+                   : ground;
+    };
+}
+
+} // namespace
+
+void Navigator::spline_generate(const Unit& unit, const Vector3& to, path::PathType type,
+                                bool carry_on) {
+    collision_ = {}; // UpdatePath starts its collision afresh
+    path::SplineWorld world;
+    if (sim_) {
+        set_node_height(world, sim_->terrain(), unit);
+        world.wont_fit = [&](f32 x, f32 z) {
+            return sim_->footprint_fits_at(unit.footprint(), x, z) == 0;
+        };
+        // A unit that turns wider than it turns fast brakes for one standing where it
+        // would go (Generate's PPS_7: UnitIsBlockedAt, mode 2).
+        world.blocked = [&](f32 x, f32 z) {
+            return sim_->unit_blockers().unit_blocked_at(unit.entity_id(), x, z, 2);
+        };
+    }
+    spline_.generate(spline_unit(unit), spline_pose(unit), to, type, carry_on, unit_at(unit, to),
+                     world);
+    has_spline_ = true;
+}
+
+void Navigator::spline_brake(const Unit& unit, int mode) {
+    collision_ = {};
+    path::SplineWorld world;
+    if (sim_) set_node_height(world, sim_->terrain(), unit);
+    spline_.brake(spline_unit(unit), spline_pose(unit), mode, world);
+    has_spline_ = true;
+}
+
+void Navigator::spline_stop() {
+    spline_.clear();
+    has_spline_ = false;
+    motion_node_set_ = false;
+    avoid_target_ = {};
+    collision_ = {};
+}
+
+void Navigator::advance_motion_node() {
+    if (!has_spline_) return; // the motion keeps what it holds
+    const path::Node* node = spline_.advance();
+    motion_node_set_ = node != nullptr;
+    if (node) motion_node_ = *node;
+}
+
+void Navigator::drive_spline(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
+    if (unit.immobile()) {
+        unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
+        return;
+    }
+    // No node handed over, or pushed: undriven, it coasts on its velocity (CalcMoveCommon's
+    // branch for no node or mIsBeingPushed; Unit::coast_moho).
+    // The node stays the motion's till its steering hands over the next (mNextWaypoint).
+    if (!motion_node_set_ || unit.pushed()) return;
+    const auto step = static_cast<f32>(dt);
+    const Unit::Drive& d = unit.drive();
+    Vector3 pos = unit.pending_position();
+    const Vector3 from = pos;
+    const f32 heading_from = quat_yaw(unit.pending_orientation());
+    const path::Node* node = &motion_node_;
+
+    pos.x = node->position.x;
+    pos.z = node->position.z;
+    const f32 heading = osc::dmath::atan2(node->direction.x, node->direction.z);
+    // Facing the node's heading as CalcMoveCommon sets it (COORDS_Orient), tilted to the
+    // ground unnormalized: the motion normalizes once, in MoveTo.
+    const Quaternion level = coords_orient_moho(node->direction);
+    Quaternion facing = level;
+    if (terrain) {
+        const Unit::GroundStance stance = unit.ground_stance(terrain, pos.x, pos.z, level, false);
+        pos.y = stance.y;
+        facing = stance.orientation;
+    }
+    if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
+    const f32 turn = std::abs(wrap_angle(heading - heading_from));
+    f32 max_turn = d.turn_rate * unit.turn_mult() * step;
+    if (d.turn_radius > 0)
+        max_turn = std::max(max_turn, std::abs(unit.ground_speed()) * step * unit.turn_mult() /
+                                          d.turn_radius);
+    const Unit::MotionTurn turning = turn < 1e-3f               ? Unit::MotionTurn::Straight
+                                     : turn >= max_turn * 0.99f ? Unit::MotionTurn::SharpTurn
+                                                                : Unit::MotionTurn::Turn;
+    // A step onto ground it won't fit leaves it where it was (CalcMoveCommon), and
+    // its steering asks for the way afresh.
+    if (moho_active_ && sim_ && sim_->footprint_fits_at(unit.footprint(), pos.x, pos.z) == 0 &&
+        sim_->footprint_fits_at(unit.footprint(), from.x, from.z) != 0) {
+        // It stays, its velocity gone, and is pushed back toward where it was
+        // (CalcMoveCommon: AddImpulse at a hundredth of its top speed).
+        unit.set_motion_velocity({});
+        unit.set_motion_pos(from);
+        const f32 bx = from.x - pos.x;
+        const f32 bz = from.z - pos.z;
+        const f32 blen = std::sqrt(bx * bx + bz * bz);
+        if (!unit.pushed() && blen > 0) {
+            const f32 scale = unit.nav_speed() * 0.010000001f / blen;
+            unit.add_impulse({bx * scale, 0, bz * scale}, true);
+        }
+        unit.set_orientation(
+            terrain ? unit.ground_stance(terrain, from.x, from.z, level, false).orientation
+                    : level);
+        unit.note_drive(0, 0, max_speed, turning);
+        return;
+    }
+    unit.set_position(pos);
+    unit.set_orientation(facing);
+    // Its step from mPos to the node, the node's own height and all (CalcMoveCommon).
+    const Vector3& was = unit.motion_pos();
+    unit.set_motion_velocity(
+        {node->position.x - was.x, node->position.y - was.y, node->position.z - was.z});
+    unit.set_motion_pos(node->position);
+    // Its speed along its heading; it is stopping within a second's run of its target
+    // (CUnitMotion::ProcessCommonMotionState).
+    const f32 speed = ((pos.x - from.x) * osc::dmath::sin(heading) +
+                       (pos.z - from.z) * osc::dmath::cos(heading)) /
+                      step;
+    const Vector3* dest = steer_destination();
+    const f32 tx = dest ? dest->x - pos.x : 0.0f;
+    const f32 tz = dest ? dest->z - pos.z : 0.0f;
+    const f32 second = unit.effective_speed();
+    const bool near_target = !through_target_ && second * second > tx * tx + tz * tz;
+    unit.note_drive(speed, near_target ? 0.0f : max_speed, max_speed, turning);
+}
 
 bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
     if (status_ == Status::WaitingForPath) return true; // not there yet
@@ -448,6 +674,9 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     }
     // Forward, or backing up to a goal close behind.
     f32 err = dist > 1e-4f ? wrap_angle(osc::dmath::atan2(dx, dz) - heading) : 0.0f;
+    // Dead behind it turns the positive way, as Moho's RotateDirectionTowardTargetLimited
+    // (0x006992C0) does on a zero cross product.
+    if (std::abs(err) > kPi - 1e-4f) err = kPi;
     // Moho caps the speed from the heading the unit has before this tick's turn.
     const f32 err_before_turn = err;
     const f32 brake = (d.max_brake > 0 ? d.max_brake : d.max_accel) * unit.accel_mult();
@@ -470,16 +699,41 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     if (crowded || (final && dist <= ARRIVAL_TOLERANCE &&
                     (std::abs(speed) <= brake * step + 1e-3f || std::abs(err) > REVERSE_ANGLE ||
                      dist <= 0.05f))) {
-        unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
-        if (moho_active_) return true; // holds there till its navigator says
+        if (moho_active_) {
+            unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
+            return true; // holds there till its navigator says
+        }
+        // Undriven, it coasts what speed Moho's stopping speed left it (Unit::coast).
         arrive();
         return false;
     }
-    const bool reverse = final && d.max_speed_reverse > 0 && std::abs(err) > REVERSE_ANGLE &&
-                         to_goal <= d.backup_distance;
-    if (reverse) err = wrap_angle(err + kPi);
-    // The cap reads the way it goes: backing up, its tail's.
-    const f32 cap_err = reverse ? wrap_angle(err_before_turn + kPi) : err_before_turn;
+    // Moho's spline states (faf-re CAiPathSpline::Generate): chosen for each new
+    // target, then stepped below. A unit that backs up and doesn't rotate on the
+    // spot, stopped (or slow, or turning wide) with its target behind, backs
+    // while its nose comes round, or, the target within its BackUpDistance and
+    // within 60 degrees of dead behind, backs straight to it tail first; going
+    // on fast, it brakes first. Any other drives on.
+    constexpr f32 kStopped = 0.01f;      // kStoppedSpeedRatio
+    constexpr f32 kRadToDeg = 57.29578f; // Moho compares TurnRadius with TurnRate in degrees
+    const f32 align = osc::dmath::cos(err_before_turn);
+    const f32 ratio = max_speed > 0 ? std::abs(speed) / max_speed : 0.0f;
+    const bool wide = d.turn_radius > d.turn_rate * kRadToDeg;
+    if (gear_fresh_ || wp.x != gear_target_.x || wp.z != gear_target_.z) {
+        gear_target_ = wp;
+        gear_fresh_ = false;
+        const bool backward = speed < 0;
+        if (d.max_speed_reverse <= 0 || d.rotate_on_spot) gear_ = Gear::Forward;
+        else if (align < 0 && (ratio < 0.5f || wide))
+            gear_ = ratio > kStopped && !backward ? Gear::BrakeForward : Gear::Reverse;
+        else if (backward) gear_ = align >= 0 ? Gear::BrakeReverse : Gear::Reverse;
+        else gear_ = Gear::Forward;
+        backup_ = gear_ == Gear::Reverse && d.backup_distance > dist && align < -0.5f;
+    }
+    const bool reverse = gear_ == Gear::Reverse;
+    const bool coasting =
+        gear_ == Gear::Stop || gear_ == Gear::BrakeForward || gear_ == Gear::BrakeReverse;
+    if (backup_) err = wrap_angle(err + kPi); // its tail to the target, braking too (PPS_6)
+    const f32 cap_err = err_before_turn;
 
     // Turn: at its TurnRate, faster at speed where its TurnRadius allows.
     f32 omega = d.turn_rate * unit.turn_mult();
@@ -505,7 +759,6 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     //   radius a tick. Always slow enough to stop on its goal (below).
     const f32 top = reverse ? std::min(d.max_speed_reverse, max_speed) : max_speed;
     f32 target = top;
-    const f32 ratio = max_speed > 0 ? std::abs(speed) / max_speed : 0.0f;
     if (d.rotate_on_spot && d.rotate_threshold > ratio) {
         target = osc::dmath::cos(cap_err) >= 0.98f ? top : 0.0f;
     } else {
@@ -520,13 +773,18 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         }
     }
     target = std::min(target, top);
-    // Braking to stop on its goal, a tick ahead so it doesn't overrun.
+    // Braking to stop on its goal, at Moho's stopping speed (CAiPathSpline::Generate, PT_0):
+    // sqrt(2 d brake) from where it is, or the whole way in a tick once a tick's brake covers it.
     const f32 stop_at =
         brake > 0 && !through
-            ? std::sqrt(2.0f * brake * std::max(to_goal - std::abs(speed) * step, 0.0f))
+            ? (brake * step * step < to_goal ? std::sqrt(2.0f * brake * to_goal) : to_goal / step)
             : target;
     const bool stopping = stop_at < target;
     target = std::min(target, stop_at);
+    // One that turns wider than it turns fast goes slower the further off it
+    // faces (backing tail first, from its tail).
+    if (wide) target *= (std::max(backup_ ? -align : align, -0.5f) + 1.0f) * 0.5f;
+    if (coasting) target = 0; // braking to a stop: PPS_3, PPS_4, PPS_6
 
     // Speed up at its acceleration, slow down at its brake.
     const f32 want = reverse ? -target : target;
@@ -546,6 +804,43 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         facing = stance.orientation;
     }
     if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
+    // The spline's states step: braking forward it stops, then backs (PPS_4);
+    // backing, it goes on till its nose has come round to its target (tail
+    // first: till it is within its braking distance) or the ground behind it
+    // won't take it (PPS_5); braking back it stops, then drives on, or, tail
+    // first, chooses again (PPS_6). Driving on, it brakes once its braking
+    // distance is past its goal (PPS_7 to PPS_3), and, stopped, drives on
+    // (its next spline's PPS_7).
+    {
+        const bool stopped = max_speed > 0 && std::abs(speed) / max_speed <= kStopped;
+        const f32 decel = std::max(d.max_accel, d.max_brake);
+        const f32 braking = decel > 0 ? speed * speed / (2.0f * decel) : 0.0f;
+        const f32 rx = wp.x - pos.x, rz = wp.z - pos.z;
+        const f32 left = std::sqrt(rx * rx + rz * rz);
+        if (gear_ == Gear::Forward) {
+            if (!through && braking > left + (to_goal - dist)) gear_ = Gear::Stop;
+        } else if (gear_ == Gear::Stop && stopped) {
+            gear_ = Gear::Forward;
+        } else if (gear_ == Gear::BrakeForward && stopped) {
+            gear_ = Gear::Reverse;
+        } else if (gear_ == Gear::Reverse) {
+            const f32 reach = std::max(unit.size_x(), unit.size_z()) + braking;
+            const bool blocked =
+                sim_ &&
+                sim_->footprint_fits_at(unit.footprint(), pos.x - osc::dmath::sin(heading) * reach,
+                                        pos.z - osc::dmath::cos(heading) * reach) == 0;
+            const bool keep =
+                backup_ ? braking <= left
+                        : osc::dmath::cos(wrap_angle(osc::dmath::atan2(rx, rz) - heading)) <= 0.15f;
+            if (blocked || !keep) gear_ = Gear::BrakeReverse;
+        } else if (gear_ == Gear::BrakeReverse && stopped) {
+            if (backup_) gear_fresh_ = true;
+            gear_ = Gear::Forward;
+            backup_ = false;
+        }
+    }
+    // shortcut: Moho's PPS_7 brakes to back up when ground ahead won't take a sharp turn
+    // (UnitWontFitAt, UnitIsBlockedAt); left out until a probe shows it.
     // Refused (as above): it stays where it was, as CalcMoveCommon puts it
     // back (its push, AddImpulse, is to its velocity, which its next node
     // replaces), and its steering asks for the way afresh (ProcessSplineMovement:
@@ -722,6 +1017,13 @@ bool Navigator::update_air(Unit& unit, f64 dt,
     return true;
 }
 
+void Navigator::fingerprint_gear(Fnv& f) const {
+    f.mix(static_cast<u64>(gear_) | static_cast<u64>(backup_ ? 1 : 0) << 8 |
+          static_cast<u64>(gear_fresh_ ? 1 : 0) << 9);
+    f.mix_f32(gear_target_.x);
+    f.mix_f32(gear_target_.z);
+}
+
 void Navigator::fingerprint_moho(Fnv& f) const {
     f.mix(static_cast<u64>(moho_pending_ ? 1 : 0) | static_cast<u64>(moho_active_ ? 1 : 0) << 1 |
           static_cast<u64>(through_target_ ? 1 : 0) << 2 |
@@ -735,6 +1037,17 @@ void Navigator::fingerprint_moho(Fnv& f) const {
     for (const char c : moho_layer_) f.mix(static_cast<u8>(c));
     f.mix_f32(moho_draft_);
     moho_.fingerprint(f);
+    // Its spline: the node it is on, where its next is, and its steering's state.
+    f.mix(spline_.nodes().size() << 8 | spline_.current() << 3 | (has_spline_ ? 1 : 0) |
+          (waypoint_refresh_ ? 2 : 0) | (motion_node_set_ ? 4 : 0));
+    if (!spline_.empty()) {
+        const Vector3& at = spline_.nodes()[spline_.current()].position;
+        f.mix_f32(at.x);
+        f.mix_f32(at.z);
+    }
+    f.mix(collision_.type);
+    f.mix_f32(steer_dest_.x);
+    f.mix_f32(steer_dest_.z);
 }
 
 } // namespace osc::sim

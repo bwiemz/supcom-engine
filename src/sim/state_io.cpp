@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 82; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 85; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -110,11 +110,13 @@ constexpr u32 kVersion = 82; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 80: whole-tick requests' grants; economy events' ticks left
                              // 81: units' consumption requests' grants and spending
                              // 82: armies' stores and storage as floats
+                             // 83: a navigator's spline gear (backing up, Moho's PPS_4-PPS_7)
+                             // 84: a unit's MaxSteerForce; a navigator's Moho spline
+                             // 85: Moho's entity ids: the registry's id pools
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).
-constexpr u32 kMaxEntityId = 1u << 26;
 
 // An entity's class, in the stream.
 enum class EntityKind : u8 { Entity = 1, Unit, Projectile, Prop, Shield };
@@ -155,13 +157,13 @@ template <typename Map, typename Save> void save_by_id(StateWriter& w, const Map
 
 void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
     w.tag("REGY");
-    // entities_ in id order, each with its class; live_, order_,
-    // unit_order_, the grids and large_colliders_ follow from them.
+    // entities_ in order_'s order, each with its class; live_, order_,
+    // unit_order_, slot_of_, the grids and large_colliders_ follow from them.
     // graveyard_ is empty between ticks, removed_slots_ is order_'s own.
     std::vector<std::reference_wrapper<const Entity>> live;
     live.reserve(reg.live_count_);
-    for (const auto& e : reg.entities_)
-        if (e) live.emplace_back(*e);
+    for (const auto& slot : reg.order_)
+        if (slot.entity) live.emplace_back(*slot.entity);
     w.size(live.size());
     for (const Entity& e : live) {
         if (const auto* u = dynamic_cast<const Unit*>(&e)) {
@@ -181,7 +183,11 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
             save(w, e);
         }
     }
-    w.u32v(reg.next_id_);
+    w.size(reg.id_pools_.size());
+    for (const auto& [bits, pool] : reg.id_pools_) {
+        w.u32v(bits);
+        w.u32v(pool.next);
+    }
     save_ids(w, std::vector<u32>(reg.deletion_queue_.begin(), reg.deletion_queue_.end()));
     std::vector<u32> walk;
     for (const u32 id : reg.walk_) {
@@ -210,6 +216,8 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     reg.live_count_ = 0;
     reg.order_.clear();
     reg.unit_order_.clear();
+    reg.slot_of_.clear();
+    reg.id_pools_.clear();
     reg.removed_slots_ = 0;
     reg.graveyard_.clear();
     reg.deletion_queue_.clear();
@@ -223,7 +231,6 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     reg.cells_.clear();
 
     const size_t n = r.size(64);
-    u32 last_id = 0;
     for (size_t i = 0; i < n && r.ok(); ++i) {
         std::unique_ptr<Entity> e;
         switch (enum8<EntityKind>(r)) {
@@ -264,20 +271,17 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
         }
         if (!r.ok()) return;
         const u32 id = e->entity_id();
-        if (id <= last_id) return r.fail("entities out of id order");
-        if (id > kMaxEntityId) return r.fail("an entity id past any game's");
-        last_id = id;
+        if (id == 0 || reg.entities_.count(id) != 0) return r.fail("an entity id twice");
         // As register_entity takes one, at its own id
         e->set_registry(&reg);
         e->set_grid_cell(-1, -1);
         e->set_prop_cell(-1);
         reg.order_.push_back({id, e.get()});
         if (e->is_unit()) reg.unit_order_.push_back({id, e.get()});
-        if (reg.entities_.size() <= id) reg.entities_.resize(id + 1);
         reg.live_.insert(e.get());
+        Entity& placed = *e;
         reg.entities_[id] = std::move(e);
         ++reg.live_count_;
-        Entity& placed = *reg.entities_[id];
         // As notify_collision_shape_changed, but for the collision cells,
         // which link below, all in their saved order.
         if (placed.shape_reach() > EntityRegistry::COLLIDER_REACH) reg.large_colliders_.insert(id);
@@ -291,8 +295,12 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
             }
         }
     }
-    reg.next_id_ = r.u32v();
-    if (r.ok() && reg.next_id_ <= last_id) r.fail("an entity id past the next one");
+    reg.index_slots();
+    const size_t pools = r.size(8);
+    for (size_t i = 0; i < pools && r.ok(); ++i) {
+        EntityRegistry::IdPool& pool = reg.id_pools_[r.u32v()];
+        pool.next = r.u32v();
+    }
     const std::vector<u32> queued = load_ids(r);
     reg.deletion_queue_.assign(queued.begin(), queued.end());
     reg.walk_ = load_ids(r);
@@ -387,7 +395,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.u32v(sim.intel_pass_);
     // sound_manager_, beat_observer_, checksum_trace_, entity_trace_,
     // rng_trace_, rng_trace_from_, rng_trace_to_, rng_trace_draws_,
-    // entity_trace_from_, entity_trace_to_, faf_exe_: the host's; bone_cache_,
+    // entity_trace_from_, entity_trace_to_, steer_log_, faf_exe_: the host's; bone_cache_,
     // anim_cache_: caches
     {
         std::vector<std::string> armor;

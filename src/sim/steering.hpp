@@ -28,6 +28,16 @@ void steer_units(SimState& sim, const std::vector<u32>& ids);
 /// formation order, in that order's.
 u64 formation_layer(const Unit& u);
 
+/// With Moho pathing, a ground unit's collisions with the units it overlaps, as
+/// Moho's motion meets them before it moves (Sim::DoCollisionsFor): each pushed
+/// apart by an impulse, shared by their masses.
+void collide_units(SimState& sim, Unit& u);
+
+/// With Moho pathing, CAiSteeringImpl::Stop: the unit off its spline, and with nodes left
+/// on it its meetings checked afresh, with it standing (which clears the neighbours' meetings
+/// with it that no longer hold).
+void steer_stop(SimState& sim, Unit& u);
+
 /// Moho's Unit::IsSameFormationLayerWith: in one formation, and neither
 /// attacking.
 bool same_formation_layer(const Unit& a, const Unit& b);

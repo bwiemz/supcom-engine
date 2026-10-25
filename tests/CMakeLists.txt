@@ -47,6 +47,7 @@ add_executable(osc_tests
     test_path_clusters.cpp
     test_path_search.cpp
     test_path_navigator.cpp
+    test_path_spline.cpp
     test_moho_pathing.cpp
     test_air_landing.cpp
     test_air_lift.cpp

@@ -30,8 +30,9 @@ struct LuaGuard {
     ~LuaGuard() { lua_close(L); }
 };
 
-// Populate a sim with an identical starting layout.
-void populate(SimState& sim) {
+// Populate a sim with an identical starting layout; the commanders' ids.
+std::vector<osc::u32> populate(SimState& sim) {
+    std::vector<osc::u32> ids;
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2");
     for (int army = 0; army < 2; ++army) {
@@ -40,8 +41,9 @@ void populate(SimState& sim) {
         u->add_category("COMMAND");
         u->set_health(1000.0f);
         u->set_position({static_cast<osc::f32>(army * 50), 0.0f, 0.0f});
-        sim.entity_registry().register_entity(std::move(u));
+        ids.push_back(sim.entity_registry().register_entity(std::move(u)));
     }
+    return ids;
 }
 
 } // namespace
@@ -66,24 +68,24 @@ TEST_CASE("A state divergence changes the checksum", "[sync]") {
     LuaGuard ga, gb;
     SimState a(ga.L, nullptr);
     SimState b(gb.L, nullptr);
-    populate(a);
+    const std::vector<osc::u32> ids = populate(a);
     populate(b);
     REQUIRE(a.compute_sync_checksum() == b.compute_sync_checksum());
 
     SECTION("position drift") {
-        auto* u = static_cast<Unit*>(a.entity_registry().find(1));
+        auto* u = static_cast<Unit*>(a.entity_registry().find(ids[0]));
         REQUIRE(u != nullptr);
         u->set_position({1.0f, 0.0f, 0.0f});
         CHECK(a.compute_sync_checksum() != b.compute_sync_checksum());
     }
     SECTION("health drift") {
-        auto* u = static_cast<Unit*>(a.entity_registry().find(1));
+        auto* u = static_cast<Unit*>(a.entity_registry().find(ids[0]));
         REQUIRE(u != nullptr);
         u->set_health(999.0f);
         CHECK(a.compute_sync_checksum() != b.compute_sync_checksum());
     }
     SECTION("a destroyed unit") {
-        a.entity_registry().find(2)->mark_destroyed();
+        a.entity_registry().find(ids[1])->mark_destroyed();
         CHECK(a.compute_sync_checksum() != b.compute_sync_checksum());
     }
     SECTION("tick count") {

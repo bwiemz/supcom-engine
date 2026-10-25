@@ -42,6 +42,15 @@ inline Vector3 quat_rotate(const Quaternion& q, const Vector3& v) {
     };
 }
 
+/// A quaternion made unit length as Moho's NormalizeQuatInPlace (0x004EDAA0): the squares
+/// summed w, x, y, z, each lane times the inverse length; all zero below 1e-6 (or NaN).
+inline Quaternion quat_normalized_moho(const Quaternion& q) {
+    const f32 length = std::sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
+    if (!(length > 1.0e-6f)) return {0, 0, 0, 0};
+    const f32 inv = 1.0f / length;
+    return {q.x * inv, q.y * inv, q.z * inv, q.w * inv};
+}
+
 /// Multiply two quaternions (Hamilton product).
 inline Quaternion quat_multiply(const Quaternion& a, const Quaternion& b) {
     return {

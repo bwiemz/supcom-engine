@@ -14,7 +14,6 @@ InitialSpeedRange
 LAYER_Air
 LayerTransitionDuration
 MaxBounceCount
-MaxSteerForce
 MinBounceCount
 NeedPrep
 PlaceholderMeshName

@@ -47,6 +47,7 @@ extern "C" {
 #include <cctype>
 #include <cstring>
 #include <map>
+#include <unordered_set>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -377,7 +378,21 @@ void SimState::on_entity_unregistered(Entity& entity) {
     entity.clear_ambient_sounds();
 
     // Its ground is free (Moho's ReleaseOccupyGround, a prop's destructor),
-    // and any place it reserved to land on.
+    // and any place it reserved to land on. A prop frees its footprint where it stands
+    // now (~Prop works it out afresh from its transform): a fallen tree's may be a cell
+    // off the one it took.
+    if (entity.is_prop()) {
+        if (auto it = ground_occupants_.find(entity.entity_id());
+            it != ground_occupants_.end() && it->second.rects.size() == 1) {
+            OccupancyRect& r = it->second.rects.front();
+            const i32 w = r.x1 - r.x0;
+            const i32 h = r.z1 - r.z0;
+            r.x0 = static_cast<i32>(std::lrint(entity.position().x - static_cast<f32>(w) * 0.5f));
+            r.z0 = static_cast<i32>(std::lrint(entity.position().z - static_cast<f32>(h) * 0.5f));
+            r.x1 = r.x0 + w;
+            r.z1 = r.z0 + h;
+        }
+    }
     release_ground(entity.entity_id());
     if (entity.is_unit()) static_cast<Unit&>(entity).free_landing_reservation(*this);
 
@@ -706,7 +721,8 @@ void SimState::crash_impact(Unit& unit) {
 Entity::Walk SimState::step_entity(Entity& e, bool attached, SimContext& ctx) {
     if (e.is_unit()) {
         auto& unit = static_cast<Unit&>(e);
-        collide_with_props(unit, entity_registry_, L_, tick_count());
+        collide_with_props(unit, entity_registry_, L_, tick_count(), moho_pathing_);
+        if (moho_pathing_) collide_units(*this, unit);
         unit.update(SECONDS_PER_TICK, ctx);
         unit.note_queue_head();
         return Entity::Walk::Stepping;
@@ -2331,19 +2347,18 @@ void SimState::tick_unit_orders() {
     PROFILE_ZONE("Sim::orders");
     SimContext ctx = sim_context();
     std::vector<u32> ids;
-    u32 done = 0;
+    std::unordered_set<u32> done; // looked up only
     // CTaskStage::UserFrame runs its list to the end: a unit made during the stage runs in it too.
     while (true) {
         ids.clear();
         entity_registry_.for_each_unit([&](Entity& e) {
-            if (e.entity_id() > done) {
+            if (done.insert(e.entity_id()).second) {
                 ids.push_back(e.entity_id());
             }
         });
         if (ids.empty()) {
             break;
         }
-        done = ids.back();
         for (const u32 id : ids) {
             Entity* e = entity_registry_.find(id);
             if (e && !e->destroyed() && e->is_unit()) {
@@ -2422,10 +2437,13 @@ void SimState::update_entities() {
     }
     walk = std::move(walked);
     stepping_events_.clear();
-    separate_ground_units();
+    // With Moho pathing, units meet as Moho's motion has them (collide_units).
+    // shortcut: Moho's motion leaves submerged units be (ProcessSurfaceCollisionFromLastMove
+    // skips LAYER_Sub); the engine's separation keeps them apart until that is probed.
+    separate_ground_units(moho_pathing_);
 }
 
-void SimState::separate_ground_units() {
+void SimState::separate_ground_units(bool submerged_only) {
     PROFILE_ZONE("Sim::separation");
     struct Body {
         Unit* unit;
@@ -2442,6 +2460,7 @@ void SimState::separate_ground_units() {
         if (u.destroyed() || u.is_dying() || u.is_air_unit() || u.max_speed() <= 0 ||
             u.is_being_built() || u.transport_id() != 0 || u.parent_entity_id() != 0)
             return;
+        if (submerged_only && u.layer() != "Sub") return;
         const f32 r = u.separation_radius();
         if (r <= 0) return;
         const Vector3& p = u.position();

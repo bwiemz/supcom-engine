@@ -75,6 +75,8 @@ public:
     void reset();
 
     State state() const { return state_; }
+    /// mLastPathNodeIndex: the last node of its path still ahead, -1 past them all.
+    i32 last_node_index() const { return last_node_index_; }
     /// Everything that decides its next step (its path, cells, clocks,
     /// counts and its finder's), for the sync checksum.
     void fingerprint(Fnv& f) const;

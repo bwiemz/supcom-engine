@@ -148,7 +148,7 @@ void test_notify_upgrade(TestContext& ctx) {
                 end
                 return false
             end
-            __up_t2_id = __up_t2 and tonumber(__up_t2:GetEntityId()) or 0
+            __up_t2_id = __up_t2 and tonumber(__up_t2:GetEntityId()) or -1
             return __up_t2 ~= nil and not __up_t2:BeenDestroyed()
         end
     )"))
@@ -164,7 +164,8 @@ void test_notify_upgrade(TestContext& ctx) {
     if (!upgraded) return;
 
     {
-        const auto id = static_cast<u32>(global_number("__up_t2_id"));
+        const auto id = osc::sim::EntityRegistry::from_moho_id(
+            static_cast<u32>(static_cast<i32>(global_number("__up_t2_id"))));
         auto* e = ctx.sim.entity_registry().find(id);
         int tanks = 0, upgrades = 0;
         if (e && e->is_unit())

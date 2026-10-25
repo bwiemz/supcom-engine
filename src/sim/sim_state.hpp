@@ -762,6 +762,12 @@ public:
         entity_trace_from_ = from;
         entity_trace_to_ = to;
     }
+    /// Write each ground unit's steering decisions to `out`, a line each
+    /// ("STEER t=<tick> <blueprint> <event>"): the waypoints its navigator sets
+    /// and the meetings it resolves and how, as the original's /synclog does
+    /// (--steer-log; tools/moho_probes/drivegrid/steer_diff.py). Null stops it.
+    void set_steer_log(std::ostream* out) { steer_log_ = out; }
+    std::ostream* steer_log() const { return steer_log_; }
 
     // --- Deterministic sim RNG ---
     // Any sim randomness (e.g. weapon firing spread) must draw from this seeded
@@ -1047,7 +1053,8 @@ private:
     /// makes way for a moving one, otherwise the smaller gives more, and a
     /// held one (SetImmobile) doesn't move. Submerged units meet only each
     /// other. A push never takes a unit where its layer can't go.
-    void separate_ground_units();
+    /// With `submerged_only`, the submerged ones alone (as with Moho pathing).
+    void separate_ground_units(bool submerged_only = false);
     void update_visibility();
     /// This tick's look at the decals (CDecalBuffer::CleanupTick): one army
     /// in turn may come to see those it didn't.
@@ -1184,6 +1191,7 @@ private:
     std::function<void(const SimState&)> beat_observer_;
     std::ostream* checksum_trace_ = nullptr;
     std::ostream* entity_trace_ = nullptr;
+    std::ostream* steer_log_ = nullptr;
     std::ostream* rng_trace_ = nullptr;
     u32 rng_trace_from_ = 0;
     u32 rng_trace_to_ = 0;

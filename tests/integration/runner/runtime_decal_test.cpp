@@ -357,7 +357,7 @@ void test_runtime_decal(TestContext& ctx) {
         }
         lua(fmt::format("CreateSplatOnBone(GetEntityById({}), {{0, 0, 10}}, 0, {}, 8, 2, 1000, 0, "
                         "1)",
-                        acu, tex("red.dds")));
+                        osc::sim::EntityRegistry::moho_id(acu), tex("red.dds")));
         const ImageRGBA8 img = shoot(fill);
         const f32 along = redness(pixel_at(r, img, {32, 0, 35}));
         const f32 across = redness(pixel_at(r, img, {35, 0, 32}));

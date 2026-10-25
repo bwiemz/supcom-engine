@@ -673,8 +673,7 @@ static int camera_MoveToRegion(lua_State* L) {
 static std::vector<u32> read_entity_ids(lua_State* L, int idx) {
     std::vector<u32> ids;
     const auto one = [&](int at) {
-        if (lua_type(L, at) == LUA_TSTRING || lua_type(L, at) == LUA_TNUMBER)
-            ids.push_back(static_cast<u32>(std::strtoul(lua_tostring(L, at), nullptr, 10)));
+        if (lua_isnumber(L, at)) ids.push_back(sim::to_entity_id(L, at));
     };
     if (!lua_istable(L, idx)) {
         one(idx);
@@ -1550,7 +1549,7 @@ static int l_SelectUnits(lua_State* L) {
             lua_pushstring(L, "EntityId");
             lua_rawget(L, -2);
             if (lua_isnumber(L, -1)) {
-                auto eid = static_cast<u32>(lua_tonumber(L, -1));
+                auto eid = sim::to_entity_id(L, -1);
                 if (sim) {
                     auto* entity = sim->entity_registry().find(eid);
                     if (entity && renderer::selectable(*entity)) {
@@ -1612,7 +1611,7 @@ static int l_AddSelectUnits(lua_State* L) {
             lua_pushstring(L, "EntityId");
             lua_rawget(L, -2);
             if (lua_isnumber(L, -1)) {
-                auto eid = static_cast<u32>(lua_tonumber(L, -1));
+                auto eid = sim::to_entity_id(L, -1);
                 if (sim) {
                     auto* entity = sim->entity_registry().find(eid);
                     if (entity && renderer::selectable(*entity)) {

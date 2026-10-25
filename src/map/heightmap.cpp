@@ -165,34 +165,30 @@ void Heightmap::reset() {
 }
 
 f32 Heightmap::get_height(f32 x, f32 z) const {
-    // Clamp to valid world range
-    f32 max_x = static_cast<f32>(grid_width_ - 1);
-    f32 max_z = static_cast<f32>(grid_height_ - 1);
-    x = std::clamp(x, 0.0f, max_x);
-    z = std::clamp(z, 0.0f, max_z);
-
-    // Grid integer coordinates
-    u32 gx = static_cast<u32>(x);
-    u32 gz = static_cast<u32>(z);
-
-    // Clamp to avoid reading past the last grid cell
-    if (gx >= grid_width_ - 1) gx = grid_width_ - 2;
-    if (gz >= grid_height_ - 1) gz = grid_height_ - 2;
-
-    // Fractional parts for interpolation
-    f32 fx = x - static_cast<f32>(gx);
-    f32 fz = z - static_cast<f32>(gz);
-
-    // Four corner heights
-    f32 h00 = get_height_at_grid(gx, gz);
-    f32 h10 = get_height_at_grid(gx + 1, gz);
-    f32 h01 = get_height_at_grid(gx, gz + 1);
-    f32 h11 = get_height_at_grid(gx + 1, gz + 1);
-
-    // Bilinear interpolation
-    f32 h0 = h00 + (h10 - h00) * fx;
-    f32 h1 = h01 + (h11 - h01) * fx;
-    return h0 + (h1 - h0) * fz;
+    // Moho's CHeightField::GetElevation (0x0044FB90): the cell by floor, each corner's
+    // index clamped to the grid on its own, then BilinearHeight's order, along z first:
+    // a = h00 + (h01 - h00) fz, b = h10 + (h11 - h10) fz, a + (b - a) fx. Off the grid
+    // both corners clamp to one, so it reads the edge.
+    const auto clamp_index = [](i32 i, i32 hi) { return std::clamp(i, 0, hi); };
+    const f32 flx = std::floor(x);
+    const f32 flz = std::floor(z);
+    const i32 ix = static_cast<i32>(flx);
+    const i32 iz = static_cast<i32>(flz);
+    const f32 fx = x - flx;
+    const f32 fz = z - flz;
+    const i32 w = static_cast<i32>(grid_width_) - 1;
+    const i32 h = static_cast<i32>(grid_height_) - 1;
+    const auto x0 = static_cast<u32>(clamp_index(ix, w));
+    const auto x1 = static_cast<u32>(clamp_index(ix + 1, w));
+    const auto z0 = static_cast<u32>(clamp_index(iz, h));
+    const auto z1 = static_cast<u32>(clamp_index(iz + 1, h));
+    const f32 h00 = get_height_at_grid(x0, z0);
+    const f32 h01 = get_height_at_grid(x0, z1);
+    const f32 h10 = get_height_at_grid(x1, z0);
+    const f32 h11 = get_height_at_grid(x1, z1);
+    const f32 a = h00 + (h01 - h00) * fz;
+    const f32 b = (h11 - h10) * fz + h10;
+    return a + (b - a) * fx;
 }
 
 namespace {

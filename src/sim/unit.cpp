@@ -544,7 +544,8 @@ void Unit::begin_dying() {
     if (is_air_unit()) {
         crashing_ = true;
         crash_velocity_y_ = 0;
-        crash_spin_rate_ = (static_cast<f32>(entity_id() % 100) / 100.0f - 0.5f) * 4.0f;
+        crash_spin_rate_ =
+            (static_cast<f32>(EntityRegistry::moho_id(entity_id()) % 100) / 100.0f - 0.5f) * 4.0f;
     }
 }
 
@@ -1059,7 +1060,7 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
         return;
     }
     if (goes_on && ctx.sim) {
-        tick_hover(ctx.terrain, ctx.sim->tick_count(), ctx.sim->random());
+        tick_hover(ctx.terrain, ctx.sim->tick_count(), ctx.sim->random(), ctx.sim->moho_pathing());
     }
     if (snap_serial() == snaps) {
         const Vector3& to = pending_position();
@@ -1225,19 +1226,36 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     if (!drove_ && !is_air_unit()) {
         const Vector3 was = pending_position();
         const Quaternion facing = pending_orientation();
-        coast(dt, ctx.terrain);
+        const bool moho = ctx.sim && ctx.sim->moho_pathing();
+        if (moho) coast_moho(ctx.terrain);
+        else coast(dt, ctx.terrain);
         // With Moho's pathing, a unit stopping is braked by its motion
         // (CUnitMotion::Stop, then CalcMoveCommon), which puts a step onto
-        // ground it won't fit back, as the drive does: it stops there.
+        // ground it won't fit back, as the drive does: it stops there, and
+        // is pushed back toward where it was.
         const Vector3& now = pending_position();
-        if (ctx.sim && ctx.sim->moho_pathing() &&
-            ctx.sim->footprint_fits_at(footprint(), now.x, now.z) == 0 &&
+        if (moho && ctx.sim->footprint_fits_at(footprint(), now.x, now.z) == 0 &&
             ctx.sim->footprint_fits_at(footprint(), was.x, was.z) != 0) {
+            Vector3 back{was.x - now.x, 0, was.z - now.z};
             set_position(was);
             set_orientation(facing);
             ground_speed_ = 0;
+            motion_velocity_ = {};
+            motion_pos_ = was;
+            const f32 len = std::sqrt(back.x * back.x + back.z * back.z);
+            if (!pushed_ && len > 0) {
+                const f32 scale = nav_speed() * 0.010000001f / len;
+                add_impulse({back.x * scale, 0, back.z * scale}, false);
+            }
         }
     }
+    surface_collision_ = false; // CalcMoveLand has met what it touched
+    // Moho's motion task ends a ground unit's tick in MoveTo, which normalizes its
+    // orientation, standing or not (CUnitMotion::MoveTo, 0x006B92E0).
+    // (A hover's comes after its hover tick, which tilts it.)
+    if (ctx.sim && ctx.sim->moho_pathing() && is_mobile() && !can_fly() && !immobile() &&
+        parent_entity_id() == 0 && !crashing_ && !is_hover())
+        set_orientation(quat_normalized_moho(pending_orientation()));
 
     // A sub dives or surfaces, moving or not (M206o).
     tick_dive(ctx.terrain, L);
@@ -2853,6 +2871,7 @@ void Unit::warp(const map::Terrain* terrain, const Vector3& at) {
         }
     }
     set_position(p);
+    motion_pos_ = p;
     note_snap(); // a jump, not drawn sliding there
     place_now();
     // CUnitMotion::Warp advances its coords twice: no velocity is left to coast on.
@@ -3255,6 +3274,67 @@ f32 Unit::separation_radius() const {
     return 0;
 }
 
+void Unit::add_impulse(const Vector3& impulse, bool moving) {
+    if (is_dying() || is_being_built_ || is_air_unit()) return;
+    if (moving) in_state_transition_ = true;
+    motion_velocity_ = {impulse.x + motion_velocity_.x * 0.5f,
+                        impulse.y + motion_velocity_.y * 0.5f,
+                        impulse.z + motion_velocity_.z * 0.5f};
+    // mFormationTopSpeed * 0.2, against a tick's step, as the binary compares them.
+    const f32 most = nav_speed() * 0.2f;
+    const Vector3& v = motion_velocity_;
+    const f32 speed = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (speed > most && speed > 0) {
+        const f32 scale = most / speed;
+        motion_velocity_ = {v.x * scale, v.y * scale, v.z * scale};
+    }
+    surface_collision_ = true;
+    pushed_ = true;
+}
+
+void Unit::coast_moho(const map::Terrain* terrain) {
+    target_speed_ = 0;
+    if (immobile_ || parent_entity_id() != 0) {
+        ground_speed_ = 0;
+        motion_velocity_ = {};
+        return;
+    }
+    Vector3 v = motion_velocity_;
+    if (v.x * v.x + v.y * v.y + v.z * v.z < 0.000001f && !turned_in_place_) {
+        motion_velocity_ = {};
+        motion_pos_ = pending_position();
+        ground_speed_ = 0;
+        // Still, it is snapped to the ground only when its motion asks (CalcMoveLand:
+        // mProcessSurfaceCollision, set as it is made and as it is pushed).
+        if (surface_collision_ && terrain)
+            stand_on_ground(terrain, pending_position(), pending_orientation(), false);
+        return;
+    }
+    const f32 rate = drive_.max_brake > 0 ? drive_.max_brake : drive_.max_accel;
+    const f32 brake = rate * accel_mult_ * 0.0099999998f;
+    // Its velocity damped to 0.8, and braked against by up to its brake.
+    Vector3 against{-v.x, -v.y, -v.z};
+    const f32 len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (len > brake && len > 0) {
+        const f32 scale = brake / len;
+        against = {against.x * scale, against.y * scale, against.z * scale};
+    }
+    v = {against.x + v.x * 0.80000001f, against.y + v.y * 0.80000001f,
+         against.z + v.z * 0.80000001f};
+    motion_velocity_ = v;
+    Vector3 p = pending_position();
+    p.x += v.x;
+    p.z += v.z;
+    motion_pos_ = {p.x, p.y + v.y, p.z}; // where it coasted to, before the ground snap
+    const f32 heading = quat_yaw(pending_orientation());
+    ground_speed_ = (v.x * osc::dmath::sin(heading) + v.z * osc::dmath::cos(heading)) * 10.0f;
+    if (terrain) {
+        stand_on_ground(terrain, p, pending_orientation(), false);
+    } else {
+        set_position(p);
+    }
+}
+
 void Unit::coast(f64 dt, const map::Terrain* terrain) {
     target_speed_ = 0;
     if (ground_speed_ == 0) return;
@@ -3337,7 +3417,8 @@ Quaternion tilt_to(const Quaternion& q, const Vector3& normal) {
                      2.0f * (q.z * q.y + q.w * q.x)};
     const Vector3 h = normalized({up.x + n.x, up.y + n.y, up.z + n.z});
     Quaternion delta;
-    delta.w = up.x * h.x + up.y * h.y + up.z * h.z;
+    // The dot summed (z, x) then y (BuildTiltShortestArcDelta, 0x0050CBC4).
+    delta.w = (up.z * h.z + up.x * h.x) + up.y * h.y;
     if (delta.w == 0.0f) {
         // Exactly upside down: no half-way vector, so a half turn about an
         // axis square to up, away from its shorter lane of x and y (in
@@ -3358,12 +3439,17 @@ Quaternion tilt_to(const Quaternion& q, const Vector3& normal) {
         delta.y = up.z * h.x - up.x * h.z;
         delta.z = up.x * h.y - up.y * h.x;
     }
-    return quat_multiply(delta, q);
+    // delta * q, grouped as COORDS_Tilt inlines it (0x0050B8DA).
+    const Quaternion& d = delta;
+    return {((q.z * d.y + q.x * d.w) + q.w * d.x) - q.y * d.z,
+            ((q.w * d.y + q.x * d.z) + q.y * d.w) - q.z * d.x,
+            ((q.w * d.z + q.z * d.w) + q.y * d.x) - q.x * d.y,
+            ((q.w * d.w - q.x * d.x) - q.y * d.y) - q.z * d.z};
 }
 
 // Moho's CUnitMotion::SnapToGround (from CalcMoveHover and CalcMoveLand).
 Unit::GroundStance Unit::ground_stance(const map::Terrain* terrain, f32 x, f32 z,
-                                       const Quaternion& facing) const {
+                                       const Quaternion& facing, bool normalize) const {
     if (!terrain) {
         return {pending_position().y, facing};
     }
@@ -3374,8 +3460,28 @@ Unit::GroundStance Unit::ground_stance(const map::Terrain* terrain, f32 x, f32 z
             walks_seabed() ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
         return {platform ? ground + platform->raised_platform_height(x, z) : ground, facing};
     }
+    // Moho's MultQuadVec: QuatToMatrix's rows (products pre-doubled), each dotted with the
+    // offset from zero up, x then y then z.
+    const f32 x2 = facing.x * 2.0f, y2 = facing.y * 2.0f, z2 = facing.z * 2.0f;
+    const f32 wx = facing.w * x2, wy = facing.w * y2, wz = facing.w * z2;
+    const f32 xx = facing.x * x2, xy = facing.x * y2, xz = facing.x * z2;
+    const f32 yy = facing.y * y2, yz = facing.y * z2, zz = facing.z * z2;
+    const f32 rows[3][3] = {{1.0f - (zz + yy), xy - wz, xz + wy},
+                            {xy + wz, 1.0f - (zz + xx), yz - wx},
+                            {xz - wy, yz + wx, 1.0f - (yy + xx)}};
+    const auto mult_quad_vec = [&](f32 dx, f32 dz) {
+        Vector3 out;
+        f32* lanes[3] = {&out.x, &out.y, &out.z};
+        const f32 in[3] = {dx, 0.0f, dz};
+        for (int r = 0; r < 3; ++r) {
+            f32 acc = 0.0f;
+            for (int c = 0; c < 3; ++c) acc = in[c] * rows[r][c] + acc;
+            *lanes[r] = acc;
+        }
+        return out;
+    };
     const auto corner = [&](f32 dx, f32 dz) {
-        const Vector3 d = quat_rotate(facing, {dx, 0, dz});
+        const Vector3 d = mult_quad_vec(dx, dz);
         Vector3 c{x + d.x, terrain->get_terrain_height(x + d.x, z + d.z), z + d.z};
         if (hover && terrain->has_water()) {
             c.y = std::max(c.y, terrain->water_elevation());
@@ -3405,12 +3511,15 @@ Unit::GroundStance Unit::ground_stance(const map::Terrain* terrain, f32 x, f32 z
                                               d0.x * d1.y - d0.y * d1.x};
     if (hover) {
         y += elevation_;
-        normal.x += hover_tilt_.x + wobble_offset_.x;
-        normal.y += hover_tilt_.y + wobble_offset_.y;
-        normal.z += hover_tilt_.z + wobble_offset_.z;
+        // The tilt is added to the normal first, the wobble to that sum (SnapToGround,
+        // 0x006C1C15).
+        normal.x = (hover_tilt_.x + normal.x) + wobble_offset_.x;
+        normal.y = (hover_tilt_.y + normal.y) + wobble_offset_.y;
+        normal.z = (hover_tilt_.z + normal.z) + wobble_offset_.z;
     }
     // Moho's MoveTo normalizes the orientation SnapToGround tilted (faf-re CUnitMotion.cpp).
-    return {y, quat_normalized(tilt_to(facing, normal))};
+    const Quaternion tilted = tilt_to(facing, normal);
+    return {y, normalize ? quat_normalized(tilted) : tilted};
 }
 
 namespace {
@@ -3429,7 +3538,7 @@ void limit_length(Vector3& v, f32 max_length) {
 
 } // namespace
 
-void Unit::tick_hover(const map::Terrain* terrain, u32 tick, SimRandom& random) {
+void Unit::tick_hover(const map::Terrain* terrain, u32 tick, SimRandom& random, bool moho) {
     if (!is_hover() || can_fly() || is_being_built_ || dying_ || immobile_ || is_stunned() ||
         parent_entity_id() != 0) {
         return;
@@ -3464,12 +3573,15 @@ void Unit::tick_hover(const map::Terrain* terrain, u32 tick, SimRandom& random) 
     wobble_offset_.z = wobble_offset_.z * 0.98f + wobble_velocity_.z;
 
     if (terrain && !teleporting_) {
-        stand_on_ground(terrain, pending_position(), pending_orientation());
+        // With Moho pathing the tilt is left for MoveTo to normalize, once, after it.
+        stand_on_ground(terrain, pending_position(), pending_orientation(), !moho);
     }
+    if (moho) set_orientation(quat_normalized_moho(pending_orientation()));
 }
 
-void Unit::stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quaternion& facing) {
-    const GroundStance stance = ground_stance(terrain, at.x, at.z, facing);
+void Unit::stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quaternion& facing,
+                           bool normalize) {
+    const GroundStance stance = ground_stance(terrain, at.x, at.z, facing, normalize);
     at.y = stance.y;
     set_position(at);
     set_orientation(stance.orientation);

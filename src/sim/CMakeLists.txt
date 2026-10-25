@@ -33,6 +33,7 @@ add_library(osc_sim STATIC
     flight_math.cpp
     shield.cpp
     navigator.cpp
+    path_spline.cpp
     occupancy.cpp
     path_clusters.cpp
     path_tables.cpp

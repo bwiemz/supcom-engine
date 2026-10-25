@@ -909,8 +909,8 @@ static int l_GetEntityById(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    u32 id = static_cast<u32>(luaL_checknumber(L, 1));
-    auto* entity = sim->entity_registry().find(id);
+    luaL_checknumber(L, 1);
+    auto* entity = sim->entity_registry().find(sim::to_entity_id(L, 1));
     if (!entity || entity->lua_table_ref() < 0) {
         lua_pushnil(L);
         return 1;

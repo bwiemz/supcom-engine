@@ -205,6 +205,7 @@ void load_world(WorldLoad& load, osc::vfs::VirtualFileSystem& vfs,
     sim.set_checksum_trace(g_checksum_trace);
     sim.set_entity_trace(g_entity_trace, g_entity_trace_from, g_entity_trace_to);
     sim.set_rng_trace(g_rng_trace, g_rng_trace_from, g_rng_trace_to);
+    sim.set_steer_log(g_steer_log);
     sim.set_moho_pathing(setup.moho_pathing);
     sim.set_moho_random(setup.moho_random);
     sim.set_faf_exe(!config.faf_data_path.empty());
