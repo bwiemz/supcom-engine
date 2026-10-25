@@ -10,7 +10,6 @@ method OnNukeArmed
 method OnSpecialAction
 method OnStart
 method OnSubtitle
-method OnTerrainTypeChange
 module /lua/UserScriptCommand.lua:VerifyScriptCommand
 module /lua/ui/game/gamemain.lua:OnDetectAdjacencyBonus
 module /lua/ui/uimain.lua:OnApplicationResize
