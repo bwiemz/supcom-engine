@@ -87,6 +87,8 @@ enum class MeshTechnique : u32 {
     AeonCZAR = 42,   ///< AeonCZARPS at High: AeonPS's light, the secondary's energy; else Aeon
     Flat = 43,       ///< FlatPS (TMeshNoLighting): unlit, alpha-tested over 0x7F by f * albedo.a
     GlassAlpha = 44, ///< GlassAlphaPS (Medium's at High): lit, blended, no depth written
+    BloatingNormalMappedAlpha = 45, ///< NormalMappedAlpha, swelling; its shadow swaying
+    NormalMappedAlphaNoShadow = 46, ///< NormalMappedAlpha after the water, casting no shadow
 };
 
 /// Stable names for render dumps.
@@ -154,9 +156,10 @@ inline bool is_post_water_technique(MeshTechnique t) {
     return t == MeshTechnique::AlphaFade || t == MeshTechnique::BlackenedNormalMappedAlpha ||
            t == MeshTechnique::VertexNormal || t == MeshTechnique::UndulatingNormalMappedAlpha ||
            is_feedback_technique(t) || t == MeshTechnique::OuterCloud ||
-           t == MeshTechnique::NukeUEF || t == MeshTechnique::NukeEMP ||
-           t == MeshTechnique::PhalanxEffect || t == MeshTechnique::UEFQuantumGate ||
-           t == MeshTechnique::CommandFeedback3 ||
+           t == MeshTechnique::BloatingNormalMappedAlpha ||
+           t == MeshTechnique::NormalMappedAlphaNoShadow || t == MeshTechnique::NukeUEF ||
+           t == MeshTechnique::NukeEMP || t == MeshTechnique::PhalanxEffect ||
+           t == MeshTechnique::UEFQuantumGate || t == MeshTechnique::CommandFeedback3 ||
            t == MeshTechnique::CommandFeedback4; // STAGE_POSTWATER + STAGE_PREEFFECT
 }
 
@@ -211,7 +214,8 @@ inline bool has_depth_stage(MeshTechnique t) {
            t != MeshTechnique::NukeUEF && t != MeshTechnique::NukeEMP &&
            t != MeshTechnique::NukeQuantum && t != MeshTechnique::PhalanxEffect &&
            t != MeshTechnique::UEFQuantumGate && t != MeshTechnique::CommandFeedback3 &&
-           t != MeshTechnique::CommandFeedback4 && t != MeshTechnique::GlassAlpha;
+           t != MeshTechnique::CommandFeedback4 && t != MeshTechnique::GlassAlpha &&
+           t != MeshTechnique::NormalMappedAlphaNoShadow;
 }
 
 /// What a technique reads as its instance's material.y (its `parameter`

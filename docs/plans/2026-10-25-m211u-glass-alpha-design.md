@@ -48,3 +48,5 @@ colour (the plates' specular is black), and the Low lane's colour.
 ## Left
 
 `Explosion` and the rest of `tools/shader_names_baseline.txt`.
+
+*Done (2026-10-25) — M211v: `BloatingNormalMappedAlpha` and `NormalMappedAlphaNoShadow`.*

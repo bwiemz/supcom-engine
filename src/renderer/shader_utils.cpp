@@ -1372,6 +1372,12 @@ void main() {
         float t = clamp(age / max(inParameter, 1e-4), 0.0, 1.0);
         local *= mix(1.0, pc.technique == 29u ? 1.1 : 0.7, t);
     }
+    if (pc.technique == 45u) {
+        // BloatingNormalMappedVS and BloatingVertexNormalVS
+        vec3 direction = normalize(local);
+        local += 2.0 * length(direction.xz) * sin(0.1 * pc.time + length(inModel[3].xz)) *
+                 direction;
+    }
     vec4 skinnedPos = bone * vec4(local, 1.0);
     vec4 worldPos = inModel * skinnedPos;
     // At Low the undulating trees take VertexNormalVS: no sway (M211m)
@@ -1438,7 +1444,7 @@ layout(push_constant) uniform PushConstants {
     // 16 NormalMappedTerrain, 17 UndulatingNormalMappedAlpha (M211i); ...;
     // 32 Effect, 33 Cloud, 34 OuterCloud, 35 NukeUEF, 36 NukeEMP, 37 NukeQuantum,
     // 38 PhalanxEffect, 39 UEFQuantumGate, 40 CommandFeedback3, 41 CommandFeedback4,
-    // 42 AeonCZAR (High; below it, Aeon), 43 Flat, 44 GlassAlpha
+    // 42 AeonCZAR (High; below it, Aeon), 43 Flat, 44 GlassAlpha, 45 BloatingNormalMappedAlpha
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
@@ -1904,9 +1910,9 @@ void main() {
     bool vertexNormal = pc.technique == 15u;
     bool terrainProp = pc.technique == 16u;
     bool unmasked = prop || pc.technique == 9u || pc.technique == 10u || pc.technique == 14u ||
-                    vertexNormal || terrainProp || pc.technique == 17u;
+                    vertexNormal || terrainProp || pc.technique == 17u || pc.technique == 45u;
     bool alphaTested = (prop && !vertexNormal && !terrainProp) || pc.technique == 9u ||
-                       pc.technique == 14u || pc.technique == 17u;
+                       pc.technique == 14u || pc.technique == 17u || pc.technique == 45u;
     vec3 tint = prop ? vec3(1.0) : fragColor.rgb;
     // The blended techniques (the builds, AlphaFade, UEFBuildCube,
     // VertexNormal) and the build ghost's fade: FA drew them into an 8-bit
@@ -2181,8 +2187,9 @@ void main() {
     float grow = pc.technique == 8u ? 0.25 + inParameter * 0.75 : 1.0;
     vec4 skinnedPos = bone * vec4(inPosition * grow, 1.0);
     vec4 worldPos = inModel * skinnedPos;
-    if (pc.technique == 17u) {
+    if (pc.technique == 17u || pc.technique == 45u) {
         // UndulatingDepthVS: the tree's shadow sways as it does (M211j).
+        // BloatingNormalMappedAlpha's depthTechnique is UndulatingDepthClip too.
         const vec3 wind = vec3(0.707, 0.0, 0.707);
         float sway = sin(0.05 * pc.time - dot(wind, inModel[3].xyz));
         worldPos.xyz += 0.003 * inPosition.y * sway * sway * wind;
@@ -2306,7 +2313,8 @@ layout(location = 0) out vec4 outColor;
 
 void main() {
     bool clipped = fragProp > 0.5 || pc.technique == 9u || pc.technique == 14u ||
-                   pc.technique == 15u || pc.technique == 17u || pc.technique == 43u;
+                   pc.technique == 15u || pc.technique == 17u || pc.technique == 43u ||
+                   pc.technique == 45u;
     if (clipped && texture(texAlbedo, fragUV).a < 0.5) discard;
     // Moho's map (M210c): R the light depth, G 0, a mesh nearest the sun.
     outColor = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);

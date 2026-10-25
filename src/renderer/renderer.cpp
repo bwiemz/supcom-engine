@@ -2957,6 +2957,9 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
             if (technique == MeshTechnique::GlassAlpha && lane == 2) {
                 lane = 1;
             }
+            if (technique == MeshTechnique::NormalMappedAlphaNoShadow) {
+                drawn = MeshTechnique::NormalMappedAlpha;
+            }
             mesh_pc.technique = static_cast<u32>(drawn);
             mesh_pc.pass = pass;
             mesh_pc.lane = static_cast<u32>(lane);
