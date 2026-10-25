@@ -703,6 +703,34 @@ TEST_CASE("A right button held moves the selection in formation, facing the drag
     CHECK_FALSE(input.formation_drag());
 }
 
+TEST_CASE("In a campaign's cinematic a right button's drag drops its formation",
+          "[order_edit][input][formation]") {
+    // Moho's CFormation::UpdateOrientation resets the formation once its drag
+    // moves on while gamemain.IsNISMode() says an NIS runs: let go, the move
+    // has none.
+    World w;
+    Unit& a = w.walker(10, 10);
+    Unit& b = w.walker(14, 10);
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({a.entity_id(), b.entity_id()});
+    osc::renderer::CommandModeHooks hooks;
+    hooks.formation_scripts = [](bool) {
+        return std::vector<std::string>{"AttackFormation", "GrowthFormation"};
+    };
+    hooks.nis_mode = [] { return true; };
+    input.set_command_mode_hooks(hooks);
+    input.right_press(*w.sim, 60, 60, false);
+    REQUIRE(input.formation_drag());
+    input.right_drag(std::array<osc::f32, 2>{70, 60}, 0.3);
+    input.right_drag(std::array<osc::f32, 2>{70, 60}, 0.3);
+    CHECK_FALSE(input.formation_drag());
+    input.right_release(*w.sim);
+    const UnitCommand c = pending_order(*w.sim, a.entity_id());
+    CHECK(c.type == CommandType::Move);
+    CHECK(c.formation.empty());
+}
+
 TEST_CASE("A right click let go before the formation settles moves to the formation's slots",
           "[order_edit][input][formation]") {
     World w;

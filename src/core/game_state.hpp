@@ -285,6 +285,31 @@ inline void call_on_beat(lua_State* L, f64 dt) {
     call_ui_callback(L, nullptr, "OnBeat", 1);
 }
 
+/// gamemain.IsNISMode(): a campaign's scripted cinematic (an NIS) runs. Moho's
+/// camera drag doesn't pan then, and its formation drag ends (faf-re
+/// CameraImpl::CameraPan, CFormation::UpdateOrientation). False without FA's
+/// game interface (gamemain isn't loaded at the front end).
+inline bool ui_nis_mode(lua_State* L) {
+    lua_pushstring(L, kWorldUiActiveKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const bool world_ui = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    if (!world_ui) return false;
+    push_loaded_module_function(L, kGameMainModule, "IsNISMode");
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return false;
+    }
+    if (lua_pcall(L, 0, 1, 0) != 0) {
+        spdlog::warn("gamemain.IsNISMode error: {}", lua_tostring(L, -1));
+        lua_pop(L, 1);
+        return false;
+    }
+    const bool nis = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    return nis;
+}
+
 /// gamemain.OnBeat(), once per sim beat while FA's game interface exists:
 /// runs the game UI's beat functions (economy, score, avatars, objectives).
 inline void call_game_beat(lua_State* L) {

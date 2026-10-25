@@ -90,3 +90,21 @@ TEST_CASE("GetCurrentUIState answers Moho's UI state from boot to the front end"
     CHECK(std::string(osc::ui_state_to_string(osc::UIState::Lobby)) == "lobby");
     osc::set_ui_state(osc::UIState::None);
 }
+
+TEST_CASE("gamemain.IsNISMode answers once FA's game interface is up", "[game_state][nis]") {
+    // What the camera's and the formation's drags ask each frame (Moho's
+    // CameraImpl::CameraPan, CFormation::UpdateOrientation); at the front end
+    // gamemain isn't there to ask
+    osc::lua::LuaState lua;
+    lua_State* L = lua.raw();
+    REQUIRE(lua.do_string("nis = true __modules = {['/lua/ui/game/gamemain.lua'] = "
+                          "{IsNISMode = function() return nis end}}")
+                .ok());
+    CHECK_FALSE(osc::core::ui_nis_mode(L));
+    lua_pushstring(L, osc::core::kWorldUiActiveKey);
+    lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    CHECK(osc::core::ui_nis_mode(L));
+    REQUIRE(lua.do_string("nis = false").ok());
+    CHECK_FALSE(osc::core::ui_nis_mode(L));
+}
