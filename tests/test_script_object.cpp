@@ -208,3 +208,28 @@ TEST_CASE("IsDestroyed reads each kind of script object, as Moho's", "[scriptobj
         assert(IsDestroyed(weapon), 'a destroyed unit\'s weapon')
     )"));
 }
+
+TEST_CASE("An entity's spec names its army as Moho's _c_CreateEntity reads it", "[scriptobject]") {
+    ScriptWorld w;
+    w.sim.add_army("ARMY_2", "ARMY_2");
+    REQUIRE(w.check("u = CreateUnit('test_plain', 2, 0, 0, 0)"));
+    const auto army_of = [&](const char* spec) {
+        REQUIRE(w.check((std::string("e = {} _c_CreateEntity(e, ") + spec + ")").c_str()));
+        lua_State* L = w.state.raw();
+        lua_getglobal(L, "e");
+        lua_pushstring(L, "_entity_id");
+        lua_rawget(L, -2);
+        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        lua_pop(L, 2);
+        const osc::sim::Entity* e = w.sim.entity_registry().find(id);
+        REQUIRE(e != nullptr);
+        return e->army();
+    };
+    CHECK(army_of("{Owner = 1}") == 1);
+    CHECK(army_of("{Owner = 0, Army = 2}") == 0);
+    CHECK(army_of("{Owner = u}") == 1);
+    CHECK(army_of("{Army = 1}") == 0);
+    CHECK(army_of("{Owner = 255}") == -1);
+    CHECK(army_of("{}") == -1);
+    CHECK_FALSE(w.state.do_string("e = {} _c_CreateEntity(e, {Army = 0})").ok());
+}
