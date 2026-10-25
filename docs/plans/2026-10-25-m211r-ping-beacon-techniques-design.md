@@ -73,3 +73,5 @@ What they do not prove: the bias's exact size (only that it lies between
 A technique's `STAGE_REFLECTION` (the engine reflects every unit);
 `Explosion`, `GlassAlpha`, `Flat` and the rest of
 `tools/shader_names_baseline.txt`.
+
+*Done (2026-10-25) — M211s: `AeonCZAR`.*

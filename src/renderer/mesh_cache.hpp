@@ -84,6 +84,7 @@ enum class MeshTechnique : u32 {
     // blended by the albedo's alpha.
     CommandFeedback3 = 40, ///< over everything
     CommandFeedback4 = 41, ///< depth tested, unwritten, biased nearer
+    AeonCZAR = 42, ///< AeonCZARPS at High: AeonPS's light, the secondary's energy; else Aeon
 };
 
 /// Stable names for render dumps.
