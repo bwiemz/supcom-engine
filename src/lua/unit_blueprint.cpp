@@ -890,6 +890,11 @@ static void read_motion(lua_State* L, const BlueprintStore& store, const Bluepri
         if (lua_isnumber(L, -1))
             unit.set_layer_change_offset(static_cast<f32>(lua_tonumber(L, -1)));
         lua_pop(L, 1);
+        lua_pushstring(L, "LayerTransitionDuration");
+        lua_gettable(L, -2);
+        if (lua_isnumber(L, -1))
+            unit.set_layer_transition_duration(static_cast<f32>(lua_tonumber(L, -1)));
+        lua_pop(L, 1);
         lua_pushstring(L, "RaisedPlatforms");
         lua_gettable(L, -2);
         if (lua_istable(L, -1)) {
