@@ -10,6 +10,7 @@
 #include "render_probe.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/command_scheduler.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit_command.hpp"
@@ -45,6 +46,18 @@ f64 number_of(lua::LuaState& state, const std::string& expr) {
 
 bool truth_of(lua::LuaState& state, const std::string& expr) {
     return number_of(state, "(" + expr + ") and 1 or 0") != 0;
+}
+
+u32 entity_id_of(lua::LuaState& state, const std::string& expr) {
+    auto r = state.do_string("return " + expr);
+    if (!r) {
+        spdlog::error("command-sources-test Lua: {}", r.error().message);
+        return 0;
+    }
+    lua_State* L = state.raw();
+    const u32 id = sim::to_entity_id(L, -1);
+    lua_pop(L, 1);
+    return id;
 }
 
 std::string sources_of(const sim::SimState& sim, i32 army) {
@@ -149,17 +162,18 @@ void run_command_sources_test(app::Engine& e) {
                         "sources for the AI ally",
                         own_listed, ally_listed));
 
-    // Test 3: player one's order reaches the AI ally's units only under union
-    const f64 ally_unit =
-        number_of(sim_lua, "ArmyBrains[3]:GetListOfUnits(categories.ALLUNITS, false)[1]"
-                           ":GetEntityId()");
-    const f64 enemy_unit =
-        number_of(sim_lua, "ArmyBrains[4]:GetListOfUnits(categories.ALLUNITS, false)[1]"
-                           ":GetEntityId()");
+    // Test 3: player one's order reaches its own units, the AI ally's only under union
+    const auto first_unit_of = [&](int brain) {
+        return entity_id_of(sim_lua, fmt::format("ArmyBrains[{}]:GetListOfUnits("
+                                                 "categories.ALLUNITS, false)[1]:GetEntityId()",
+                                                 brain));
+    };
+    const u32 own_unit = first_unit_of(1);
+    const u32 ally_unit = first_unit_of(3);
+    const u32 enemy_unit = first_unit_of(4);
     sim::UnitCommand stop;
     stop.type = sim::CommandType::Stop;
-    sim.schedule_command(0, {static_cast<u32>(ally_unit), static_cast<u32>(enemy_unit)}, stop,
-                         true);
+    sim.schedule_command(0, {own_unit, ally_unit, enemy_unit}, stop, true);
     beat(2);
     std::vector<u32> applied;
     const auto& recorded = sim.recorded_replay().commands;
@@ -169,11 +183,11 @@ void run_command_sources_test(app::Engine& e) {
             break;
         }
     const std::vector<u32> want_applied =
-        faf ? std::vector<u32>{static_cast<u32>(ally_unit)} : std::vector<u32>{};
-    t.check(ally_unit != 0 && enemy_unit != 0 && applied == want_applied,
-            fmt::format("Test 3: player one's Stop to the ally's {} and the enemy's {} reached "
-                        "{} (want {})",
-                        ally_unit, enemy_unit, applied, want_applied));
+        faf ? std::vector<u32>{own_unit, ally_unit} : std::vector<u32>{own_unit};
+    t.check(own_unit != 0 && ally_unit != 0 && enemy_unit != 0 && applied == want_applied,
+            fmt::format("Test 3: player one's Stop to its own {}, the ally's {} and the enemy's "
+                        "{} reached {} (want {})",
+                        own_unit, ally_unit, enemy_unit, applied, want_applied));
 
     // Test 4: player one may watch the AI ally only when it commands it
     const bool asked = ask_focus(3);
