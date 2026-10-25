@@ -97,16 +97,32 @@ static int l_c_CreateEntity(lua_State* L) {
     if (!sim) return luaL_error(L, "_c_CreateEntity: no SimState");
 
     auto entity = std::make_unique<sim::Entity>();
-    // It belongs to its spec's Owner's army: a Flare or DepthCharge lures
-    // only the other side's missiles and torpedoes.
+    // Its army is its spec's Owner's or Army, as Moho's cfunc__c_CreateEntityL reads them: a
+    // Flare or DepthCharge lures only the other side's missiles and torpedoes.
     if (lua_istable(L, 2)) {
         lua_pushstring(L, "Owner");
         lua_gettable(L, 2);
-        if (lua_istable(L, -1)) {
-            if (const auto* owner = extract_entity(L, lua_gettop(L)); owner && !owner->destroyed())
-                entity->set_army(owner->army());
+        lua_pushstring(L, "Army");
+        lua_gettable(L, 2);
+        const int owner = lua_gettop(L) - 1;
+        const int army = lua_gettop(L);
+        if (lua_type(L, owner) == LUA_TNUMBER) {
+            const auto index = static_cast<i32>(lua_tonumber(L, owner));
+            if (index >= 0 && index < 255) {
+                entity->set_army(index);
+            }
+        } else if (!lua_isnil(L, owner)) {
+            if (const auto* o = extract_entity(L, owner); o && !o->destroyed()) {
+                entity->set_army(o->army());
+            }
+        } else if (!lua_isnil(L, army)) {
+            const auto index = static_cast<i32>(lua_tonumber(L, army)) - 1;
+            if (index < 0) {
+                return luaL_error(L, "Army < 0 passed in");
+            }
+            entity->set_army(index);
         }
-        lua_pop(L, 1);
+        lua_pop(L, 2);
     }
     u32 id = sim->entity_registry().register_entity(std::move(entity));
     auto* ent = sim->entity_registry().find(id);
