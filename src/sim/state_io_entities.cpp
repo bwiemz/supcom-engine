@@ -657,6 +657,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.str(wp.fire_control_label);
     w.b(wp.need_compute_bomb_drop);
     w.b(wp.auto_initiate_attack_command);
+    w.b(wp.need_prep);
     w.f32v(wp.bomb_drop_threshold);
     w.size(wp.target_priorities.size());
     for (const CategoryExpr& c : wp.target_priorities) save(w, c);
@@ -742,6 +743,7 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.fire_control_label = r.str();
     wp.need_compute_bomb_drop = r.b();
     wp.auto_initiate_attack_command = r.b();
+    wp.need_prep = r.b();
     wp.bomb_drop_threshold = r.f32v();
     wp.target_priorities.resize(r.size(5));
     for (CategoryExpr& c : wp.target_priorities) load(r, c);

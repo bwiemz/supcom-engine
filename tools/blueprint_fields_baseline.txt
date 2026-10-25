@@ -15,7 +15,6 @@ LAYER_Air
 LayerTransitionDuration
 MaxBounceCount
 MinBounceCount
-NeedPrep
 PlaceholderMeshName
 PositionY
 QuickSelectPriority
