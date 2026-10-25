@@ -54,6 +54,8 @@ TEST_CASE("mesh_technique: a LOD's ShaderName picks FA's technique", "[renderer]
     CHECK(mesh_technique("TMeshEMPNuke") == MeshTechnique::NukeEMP);
     CHECK(mesh_technique("NukeQuantum") == MeshTechnique::NukeQuantum);
     CHECK(mesh_technique("TMeshQuantumNuke") == MeshTechnique::NukeQuantum);
+    CHECK(mesh_technique("PhalanxEffect") == MeshTechnique::PhalanxEffect);
+    CHECK(mesh_technique("UEFQuantumGate") == MeshTechnique::UEFQuantumGate);
     // Anything unported draws as Unit.
     CHECK(mesh_technique("") == MeshTechnique::Unit);
     CHECK(mesh_technique("Clutter") == MeshTechnique::Unit);
@@ -113,9 +115,12 @@ TEST_CASE("The explosions' techniques: mesh.fx's stages and blending", "[rendere
     CHECK(is_post_water_technique(MeshTechnique::NukeUEF));
     CHECK(is_post_water_technique(MeshTechnique::NukeEMP));
     CHECK(is_post_effect_technique(MeshTechnique::NukeQuantum));
+    CHECK(is_post_water_technique(MeshTechnique::PhalanxEffect));
+    CHECK(is_post_water_technique(MeshTechnique::UEFQuantumGate));
     for (const MeshTechnique t :
          {MeshTechnique::Effect, MeshTechnique::Cloud, MeshTechnique::OuterCloud,
-          MeshTechnique::NukeUEF, MeshTechnique::NukeEMP, MeshTechnique::NukeQuantum}) {
+          MeshTechnique::NukeUEF, MeshTechnique::NukeEMP, MeshTechnique::NukeQuantum,
+          MeshTechnique::PhalanxEffect, MeshTechnique::UEFQuantumGate}) {
         CHECK(is_post_effect_technique(t) != is_post_water_technique(t));
         CHECK_FALSE(has_depth_stage(t)); // no STAGE_DEPTH: no shadow
     }
@@ -126,6 +131,8 @@ TEST_CASE("The explosions' techniques: mesh.fx's stages and blending", "[rendere
     CHECK(is_blended_technique(MeshTechnique::NukeUEF));
     CHECK(is_blended_technique(MeshTechnique::NukeEMP));
     CHECK(is_blended_technique(MeshTechnique::NukeQuantum));
+    CHECK(is_blended_technique(MeshTechnique::PhalanxEffect));
+    CHECK(is_blended_technique(MeshTechnique::UEFQuantumGate));
 }
 
 TEST_CASE("is_blended_technique: what draws after the opaque meshes", "[renderer][mesh]") {
@@ -323,7 +330,7 @@ TEST_CASE("mesh technique dump names round trip", "[renderer][mesh]") {
     constexpr std::array engine_internal = {MeshTechnique::UnitPlace};
     for (const auto technique : engine_internal)
         CHECK(mesh_technique(mesh_technique_name(technique)) == MeshTechnique::Unit);
-    for (osc::u32 id = 0; id <= static_cast<osc::u32>(MeshTechnique::NukeQuantum); ++id) {
+    for (osc::u32 id = 0; id <= static_cast<osc::u32>(MeshTechnique::UEFQuantumGate); ++id) {
         const auto technique = static_cast<MeshTechnique>(id);
         if (std::find(engine_internal.begin(), engine_internal.end(), technique) !=
             engine_internal.end())

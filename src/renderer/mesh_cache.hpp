@@ -77,6 +77,9 @@ enum class MeshTechnique : u32 {
     NukeUEF = 35,     ///< NukeHeadPS: the UEF nuke's dome; blended, alpha-tested
     NukeEMP = 36,     ///< AlphaFadeTexShiftScalePS: OuterCloud's, its alpha written too
     NukeQuantum = 37, ///< AlphaFadeTexShiftScalePS: red, blue and alpha written
+    // The script entities' (TwoTexShiftScalePS, TexSubAlphaMaskStaticLoFiPS).
+    PhalanxEffect = 38,  ///< the Cybran zapper's sphere: added, darkening what's behind a fifth
+    UEFQuantumGate = 39, ///< the UEF gate's field: blended, unculled
 };
 
 /// Stable names for render dumps.
@@ -109,7 +112,8 @@ inline bool is_blended_technique(MeshTechnique t) {
            t == MeshTechnique::UEFBuildCube || t == MeshTechnique::VertexNormal ||
            is_feedback_technique(t) || t == MeshTechnique::Cloud ||
            t == MeshTechnique::OuterCloud || t == MeshTechnique::NukeUEF ||
-           t == MeshTechnique::NukeEMP || t == MeshTechnique::NukeQuantum;
+           t == MeshTechnique::NukeEMP || t == MeshTechnique::NukeQuantum ||
+           t == MeshTechnique::PhalanxEffect || t == MeshTechnique::UEFQuantumGate;
 }
 
 /// A shield's technique (M211k), which the shield shaders draw.
@@ -141,8 +145,9 @@ inline bool is_post_water_technique(MeshTechnique t) {
     return t == MeshTechnique::AlphaFade || t == MeshTechnique::BlackenedNormalMappedAlpha ||
            t == MeshTechnique::VertexNormal || t == MeshTechnique::UndulatingNormalMappedAlpha ||
            is_feedback_technique(t) || t == MeshTechnique::OuterCloud ||
-           t == MeshTechnique::NukeUEF ||
-           t == MeshTechnique::NukeEMP; // STAGE_POSTWATER + STAGE_PREEFFECT
+           t == MeshTechnique::NukeUEF || t == MeshTechnique::NukeEMP ||
+           t == MeshTechnique::PhalanxEffect ||
+           t == MeshTechnique::UEFQuantumGate; // STAGE_POSTWATER + STAGE_PREEFFECT
 }
 
 /// A technique of the POSTWATER + POSTEFFECT stage, the last meshes Moho
@@ -193,7 +198,8 @@ inline bool has_depth_stage(MeshTechnique t) {
            !is_shield_technique(t) && !is_feedback_technique(t) && t != MeshTechnique::Effect &&
            t != MeshTechnique::Cloud && t != MeshTechnique::OuterCloud &&
            t != MeshTechnique::NukeUEF && t != MeshTechnique::NukeEMP &&
-           t != MeshTechnique::NukeQuantum;
+           t != MeshTechnique::NukeQuantum && t != MeshTechnique::PhalanxEffect &&
+           t != MeshTechnique::UEFQuantumGate;
 }
 
 /// What a technique reads as its instance's material.y (its `parameter`

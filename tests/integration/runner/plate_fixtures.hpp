@@ -105,14 +105,15 @@ int plate_width(const ImageRGBA8& image, const Rgb& sky, int row = -1);
 /// unit be. Each kept a plate still over 100 ticks (M211g): sensors,
 /// storages, T3 generators and fabricators animate, and turn a plate with
 /// them.
-inline constexpr std::array<const char*, 53> kPlateBlueprints = {
+inline constexpr std::array<const char*, 63> kPlateBlueprints = {
     "uab1201", "uab1202", "uab1302", "uab5101", "uab5202", "uab0101", "uab0102", "uab0103",
     "uab0201", "uab0202", "uab0203", "uab0301", "uab0302", "uab0303", "ueb1102", "ueb1201",
     "ueb1202", "ueb1301", "ueb1302", "ueb1104", "ueb5101", "ueb5202", "ueb0102", "ueb0103",
     "ueb0201", "ueb0202", "ueb0203", "ueb0301", "ueb0302", "ueb0303", "urb1201", "urb1202",
     "urb1301", "urb1302", "urb5101", "xsb1201", "xsb1104", "xsb5101", "urb0101", "urb0102",
     "urb0103", "urb0201", "urb0202", "urb0203", "urb0301", "urb0302", "urb0303", "xsb0101",
-    "xsb0102", "xsb0103", "xsb0201", "xsb0202", "xsb0203",
+    "xsb0102", "xsb0103", "xsb0201", "xsb0202", "xsb0203", "xsb1202", "xsb1302", "xsb0301",
+    "xsb0302", "xsb0303", "urb5202", "xsb5202", "uab1102", "urb1102", "xsb1102",
 };
 
 /// A one-bone SCM mesh: a square `half` units either side of the origin,

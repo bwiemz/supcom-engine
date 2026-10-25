@@ -9,8 +9,6 @@ Explosion
 Flat
 GlassAlpha
 NormalMappedAlphaNoShadow
-PhalanxEffect
 Shield
-UEFQuantumGate
 UnderwaterClutter
 UndulatingClutter

@@ -60,6 +60,8 @@ const char* mesh_technique_name(MeshTechnique technique) {
     case MeshTechnique::NukeUEF: return "NukeUEF";
     case MeshTechnique::NukeEMP: return "NukeEMP";
     case MeshTechnique::NukeQuantum: return "NukeQuantum";
+    case MeshTechnique::PhalanxEffect: return "PhalanxEffect";
+    case MeshTechnique::UEFQuantumGate: return "UEFQuantumGate";
     }
     return "Unknown";
 }
@@ -299,6 +301,12 @@ MeshTechnique mesh_technique(const std::string& shader) {
     }
     if (shader_name == "NukeQuantum") {
         return MeshTechnique::NukeQuantum;
+    }
+    if (shader_name == "PhalanxEffect") {
+        return MeshTechnique::PhalanxEffect;
+    }
+    if (shader_name == "UEFQuantumGate") {
+        return MeshTechnique::UEFQuantumGate;
     }
     if (shader_name != "Unit" && !is_wreckage_shader(shader_name)) {
         static std::mutex mutex;
