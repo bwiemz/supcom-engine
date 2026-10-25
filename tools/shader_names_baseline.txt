@@ -2,8 +2,6 @@
 AeonCZAR
 BloatingNormalMappedAlpha
 Clutter
-CommandFeedback3
-CommandFeedback4
 EditorMarker
 Explosion
 Flat

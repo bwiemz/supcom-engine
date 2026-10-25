@@ -150,6 +150,7 @@ void test_effect_meshes(TestContext& ctx) {
     write_dds(dir / "spec_none.dds", 1, flat(0, 0, 0, 0));
     write_dds(dir / "sec_black.dds", 1, flat(0, 0, 0, 0));
     write_dds(dir / "mask_full.dds", 1, flat(0, 255, 0, 255));
+    write_dds(dir / "albedo_dim.dds", 1, flat(200, 100, 50, 30));
     write_dds(
         dir / "albedo_bands.dds", 1,
         [](int, u32, u32 row) {
@@ -1155,6 +1156,81 @@ void test_effect_meshes(TestContext& ctx) {
                     fmt::format("Test 20: a {} carries a mesh drawn by {} ({} draws)", host.unit,
                                 renderer::mesh_technique_name(host.technique), draws));
         }
+    }
+
+    // Test 21: CommandFeedback3 (Depth_Disable, POSTWATER + PREEFFECT).
+    {
+        Look ping;
+        ping.shader = "CommandFeedback3";
+        ping.albedo = "albedo_cube.dds";
+        Look unit;
+        unit.albedo = "albedo_green.dds";
+        stand(unit, 1.0f, 100.0f, 600.0f, false, 2.0f);
+        stand(ping, 1.0f, 100.0f, 600.0f);
+        Look dim = ping;
+        dim.albedo = "albedo_dim.dds";
+        stand(dim, 1.0f, 130.0f, 600.0f);
+        const Rgb under = at_lit(100.0f, 600.0f);
+        const Rgb faint = at_lit(130.0f, 600.0f);
+        dispatch("technique=CommandFeedback3 stage=post-water pass=0 pipeline=feedback "
+                 "drawn=CommandFeedback3 lane=2");
+        for (int i = 0; i < 50; ++i) {
+            ctx.sim.tick();
+        }
+        const Rgb later = at_lit(100.0f, 600.0f);
+        const Rgb expected = over(scaled(green, 0.72f), cube, cube_a);
+        const Rgb expected_faint = over(sky_lit, slice, 30.0f / 255.0f);
+        t.check(near(under, expected) && near(later, expected) && near(faint, expected_faint),
+                fmt::format("Test 21: a CommandFeedback3 plate under a Unit plate shows {} ({} "
+                            "expected), 50 ticks on {}; at alpha 30, {} ({})",
+                            show(under), show(expected), show(later), show(faint),
+                            show(expected_faint)));
+    }
+
+    // Test 22: CommandFeedback4 (Depth_Enable_LessEqual_Write_None, DepthBias = -0.0001).
+    {
+        Look beacon;
+        beacon.shader = "CommandFeedback4";
+        beacon.albedo = "albedo_cube.dds";
+        Look unit;
+        unit.albedo = "albedo_green.dds";
+        stand(unit, 1.0f, 160.0f, 600.0f, false, 2.0f);
+        stand(beacon, 1.0f, 160.0f, 600.0f);
+        stand(unit, 1.0f, 190.0f, 600.0f, false, 0.1f);
+        stand(beacon, 1.0f, 190.0f, 600.0f);
+        const Rgb deep = at_lit(160.0f, 600.0f);
+        const Rgb shallow = at_lit(190.0f, 600.0f);
+        dispatch("technique=CommandFeedback4 stage=post-water pass=0 pipeline=cube "
+                 "drawn=CommandFeedback4 lane=2");
+        const Rgb lit_unit = scaled(green, 0.72f);
+        const Rgb expected = over(lit_unit, cube, cube_a);
+        t.check(near(deep, lit_unit) && near(shallow, expected),
+                fmt::format("Test 22: a CommandFeedback4 plate 2 under a Unit plate shows {} (the "
+                            "Unit plate, {}); 0.1 under one, {} ({})",
+                            show(deep), show(lit_unit), show(shallow), show(expected)));
+    }
+
+    // Test 23: retail's ping (SimPing.SpawnPing), out of ARMY_1's sight, and a UEF ferry beacon.
+    {
+        const auto pinged = ctx.lua_state.do_string(
+            fmt::format("import('/lua/SimPing.lua').SpawnPing({{Owner = 0, Location = {{250, {}, "
+                        "600}}, Mesh = 'alert_marker', Lifetime = 60, Type = 'alert'}})\n"
+                        "CreateUnitHPR('ueb5102', 'ARMY_1', 300, 0, 600, 0, 0, 0)\n",
+                        ground_y));
+        if (!pinged) {
+            spdlog::warn("the ping: {}", pinged.error().message);
+        }
+        for (int i = 0; i < 5; ++i) {
+            ctx.sim.tick();
+        }
+        (void)frame(250.0f, 600.0f, lit, 40.0f);
+        const u32 ping_draws = r.mesh_draws(MeshTechnique::CommandFeedback3);
+        (void)frame(300.0f, 600.0f, lit, 40.0f);
+        const u32 beacon_draws = r.mesh_draws(MeshTechnique::CommandFeedback4);
+        t.check(ping_draws > 0 && beacon_draws > 0,
+                fmt::format("Test 23: a ping draws by CommandFeedback3 ({} draws), a UEF ferry "
+                            "beacon by CommandFeedback4 ({})",
+                            ping_draws, beacon_draws));
     }
 
     // The dump sees actual shadow draws, with terrain in view.

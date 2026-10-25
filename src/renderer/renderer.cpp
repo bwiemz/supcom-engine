@@ -2926,6 +2926,10 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
             passes[0] = mesh_phalanx_pipeline_;
         } else if (technique == MeshTechnique::UEFQuantumGate) {
             passes[0] = mesh_quantum_gate_pipeline_;
+        } else if (technique == MeshTechnique::CommandFeedback3) {
+            passes[0] = mesh_feedback_pipeline_;
+        } else if (technique == MeshTechnique::CommandFeedback4) {
+            passes[0] = mesh_cube_pipeline_;
         }
         mesh_pc.boneBase = group.bone_base_offset;
         mesh_pc.bonesPerInst = group.bones_per_instance;

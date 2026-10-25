@@ -1395,6 +1395,10 @@ void main() {
         worldPos.z += sin(20.5 * r * nvert.y + phi) * s;
     }
     gl_Position = pc.viewProj * worldPos;
+    if (pc.technique == 41u) {
+        // CommandFeedback4's DepthBias = -0.0001
+        gl_Position.z -= 0.0001 * gl_Position.w;
+    }
     fragWorldPos = worldPos.xyz;
     // Transform TBN vectors through blended bone then model
     mat3 normalMat = mat3(inModel) * mat3(bone);
@@ -1433,7 +1437,7 @@ layout(push_constant) uniform PushConstants {
     // 13 AeonBuildPuddle, 14 BlackenedNormalMappedAlpha (M211g); 15 VertexNormal,
     // 16 NormalMappedTerrain, 17 UndulatingNormalMappedAlpha (M211i); ...;
     // 32 Effect, 33 Cloud, 34 OuterCloud, 35 NukeUEF, 36 NukeEMP, 37 NukeQuantum,
-    // 38 PhalanxEffect, 39 UEFQuantumGate
+    // 38 PhalanxEffect, 39 UEFQuantumGate, 40 CommandFeedback3, 41 CommandFeedback4
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
@@ -1824,6 +1828,10 @@ vec4 explosionColor() {
                         R"glsl(
 
 void main() {
+    if (pc.technique == 40u || pc.technique == 41u) {
+        outColor = texture(texAlbedo, fragUV);
+        return;
+    }
     if (pc.technique >= 32u) {
         outColor = explosionColor();
         return;

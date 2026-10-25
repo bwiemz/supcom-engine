@@ -76,3 +76,5 @@ flat) and that the sphere and the field look as the original's in play.
 
 `Explosion`, `GlassAlpha`, `Flat` and the rest of
 `tools/shader_names_baseline.txt`.
+
+*Done (2026-10-25) — M211r: `CommandFeedback3` and `CommandFeedback4`.*
