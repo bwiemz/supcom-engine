@@ -928,6 +928,10 @@ private:
     VkPipelineLayout mesh_nuke_emp_layout_ = VK_NULL_HANDLE;
     VkPipeline mesh_nuke_quantum_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_nuke_quantum_layout_ = VK_NULL_HANDLE;
+    VkPipeline mesh_phalanx_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout mesh_phalanx_layout_ = VK_NULL_HANDLE;
+    VkPipeline mesh_quantum_gate_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout mesh_quantum_gate_layout_ = VK_NULL_HANDLE;
     /// The shields' pipelines (M211k), one per ShieldState: blended (Cybran,
     /// Aeon), blended unculled (UEF, Cybran's impact), added colour
     /// (Seraphim), added colour and glow (the impact), the fill's depth, and
@@ -940,7 +944,7 @@ private:
     std::array<VkPipeline, kCartographicMeshStates> cartographic_mesh_pipelines_{};
     std::array<VkPipelineLayout, kCartographicMeshStates> cartographic_mesh_layouts_{};
     /// This frame's mesh draw calls by technique (mesh_draws).
-    std::array<u32, static_cast<size_t>(MeshTechnique::NukeQuantum) + 1> mesh_draws_{};
+    std::array<u32, static_cast<size_t>(MeshTechnique::UEFQuantumGate) + 1> mesh_draws_{};
     /// And a cartographic view's, by CartographicTechnique, a pass each
     std::array<u32, 7> cartographic_mesh_draws_{};
     /// The cartographic minimap's mesh pipelines (its output's pass), and

@@ -1432,7 +1432,8 @@ layout(push_constant) uniform PushConstants {
     // 9 NormalMappedAlpha, 10 NormalMappedGlow, 11 AlphaFade, 12 UEFBuildCube,
     // 13 AeonBuildPuddle, 14 BlackenedNormalMappedAlpha (M211g); 15 VertexNormal,
     // 16 NormalMappedTerrain, 17 UndulatingNormalMappedAlpha (M211i); ...;
-    // 32 Effect, 33 Cloud, 34 OuterCloud, 35 NukeUEF, 36 NukeEMP, 37 NukeQuantum
+    // 32 Effect, 33 Cloud, 34 OuterCloud, 35 NukeUEF, 36 NukeEMP, 37 NukeQuantum,
+    // 38 PhalanxEffect, 39 UEFQuantumGate
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
@@ -1788,6 +1789,19 @@ vec4 explosionColor() {
         vec4 albedo = texture(texAlbedo, uv);
         float mask = texture(texNormal, fragUV).g;
         return vec4(albedo.rgb, albedo.a * mask * fadeAfter(age, quantum ? 150.0 : 180.0, 0.025));
+    }
+    if (pc.technique == 38u) {
+        // TwoTexShiftScalePS(0.2, 0.2) by EffectVertexNormalLoFiVS(1, 1, -0.05, 0, -0.05, -0.025)
+        vec4 albedo = texture(texAlbedo, fragUV + age * vec2(-0.05, 0.0));
+        vec4 second = texture(texNormal, fragUV + age * vec2(-0.05, -0.025));
+        return vec4(clamp((albedo.rgb + second.rgb) * 0.2 * albedo.a, 0.0, 1.0), 0.2);
+    }
+    if (pc.technique == 39u) {
+        // TexSubAlphaMaskStaticLoFiPS(1, 0.4) by ThreeUVTexShiftScaleLoFiVS(1, 4, 1, 0, 0.025,
+        // 0.025, 0.025, 0, 0)
+        vec4 albedo = texture(texAlbedo, fragUV + vec2(0.0, age * 0.025));
+        vec4 second = texture(texNormal, fragUV * 4.0 + vec2(age * 0.025));
+        return vec4(clamp(albedo.rgb - second.rgb, 0.0, 1.0), 0.4 * texture(texAlbedo, fragUV).a);
     }
     // NukeHeadPS(1, 0.018, 50, 0.015): the normals are noise, read thrice
     // at three scales scrolling up; a grey from them, halfway to the albedo,

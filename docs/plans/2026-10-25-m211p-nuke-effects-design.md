@@ -88,3 +88,5 @@ commanders' deaths are compared with captures of the original by eye.
 
 `Explosion`, `GlassAlpha`, `PhalanxEffect`, `UEFQuantumGate` and `Flat`, and
 the rest of `tools/shader_names_baseline.txt`.
+
+*Done (2026-10-25) — M211q: `PhalanxEffect` and `UEFQuantumGate`.*

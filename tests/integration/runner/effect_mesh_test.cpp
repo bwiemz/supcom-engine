@@ -40,8 +40,11 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -102,6 +105,30 @@ void test_effect_meshes(TestContext& ctx) {
     const TempDir scratch("osc_effect_mesh_test");
     const auto& dir = scratch.path();
     write_plate_scm(dir / "plate.scm", 4.0f);
+    {
+        std::ifstream in(dir / "plate.scm", std::ios::binary);
+        const std::vector<char> both((std::istreambuf_iterator<char>(in)),
+                                     std::istreambuf_iterator<char>());
+        u32 index_offset = 0;
+        u32 index_count = 0;
+        std::memcpy(&index_offset, both.data() + 28, 4);
+        std::memcpy(&index_count, both.data() + 32, 4);
+        for (const u32 side : {0u, 1u}) {
+            std::vector<char> one(both.begin(), both.begin() + index_offset);
+            for (u32 i = 0; i < index_count; ++i) {
+                if ((i / 6) % 2 == side) {
+                    const auto at = both.begin() + index_offset + 2 * i;
+                    one.insert(one.end(), at, at + 2);
+                }
+            }
+            one.insert(one.end(), both.begin() + index_offset + 2 * index_count, both.end());
+            const u32 count = index_count / 2;
+            std::memcpy(one.data() + 32, &count, 4);
+            std::ofstream(dir / (side == 0 ? "plate_side0.scm" : "plate_side1.scm"),
+                          std::ios::binary)
+                .write(one.data(), static_cast<std::streamsize>(one.size()));
+        }
+    }
     const auto flat = [](u8 r_, u8 g_, u8 b_, u8 a_) {
         return [=](int, u32, u32) { return std::array<u8, 4>{r_, g_, b_, a_}; };
     };
@@ -150,6 +177,7 @@ void test_effect_meshes(TestContext& ctx) {
         const char* albedo = "albedo_white.dds";
         const char* secondary = "sec_black.dds";
         const char* normals = "plate_normals.dds";
+        const char* mesh = "plate.scm";
     };
     // A plate at (x, z), `f` built, `lift` higher: a unit's, or a prop's.
     const auto stand = [&](const Look& look, f32 f, f32 x, f32 z, bool prop = false,
@@ -164,6 +192,7 @@ void test_effect_meshes(TestContext& ctx) {
         p.specteam = "spec_none.dds";
         p.secondary = look.secondary;
         p.normals = look.normals;
+        p.mesh = look.mesh;
         if (prop) {
             if (next_prop >= prop_bps.size()) {
                 spdlog::warn("out of prop blueprints");
@@ -1013,6 +1042,118 @@ void test_effect_meshes(TestContext& ctx) {
                                 effect_bp.empty() ? "never made" : effect_bp,
                                 static_cast<u32>(seen), draws,
                                 renderer::mesh_technique_name(death.technique)));
+        }
+    }
+
+    const auto middle_crossing_shift = [&](const std::vector<f32>& before,
+                                           const std::vector<f32>& after) {
+        const f32 from = nearest_middle(before);
+        f32 best = 1.0f;
+        for (const f32 e : after) {
+            best = std::min(best, std::abs(e - from));
+        }
+        return best;
+    };
+
+    // Test 18: PhalanxEffect (TwoTexShiftScalePS, AlphaBlend_One_InvSrcAlpha_Write_RGBA,
+    // Depth_Enable_Less_Write_None, POSTWATER + PREEFFECT).
+    {
+        Look sphere;
+        sphere.shader = "PhalanxEffect";
+        sphere.albedo = "albedo_slice.dds";
+        Look unit;
+        unit.albedo = "albedo_green.dds";
+        stand(unit, 1.0f, 100.0f, 480.0f);
+        stand(sphere, 1.0f, 100.0f, 480.0f, false, 2.0f);
+        stand(effect, 1.0f, 130.0f, 480.0f);
+        stand(sphere, 1.0f, 130.0f, 480.0f, false, 2.0f);
+        Look striped = sphere;
+        striped.albedo = "albedo_stripes.dds";
+        stand(striped, 1.0f, 160.0f, 480.0f);
+        const Rgb above = at_lit(100.0f, 480.0f);
+        const Rgb over_effect = at_lit(130.0f, 480.0f);
+        dispatch("technique=PhalanxEffect stage=post-water pass=0 pipeline=phalanx "
+                 "drawn=PhalanxEffect lane=2");
+        const Rgb normal = rgb(0, 128, 0);
+        const Rgb lit_unit = scaled(green, 0.72f);
+        Rgb expected{};
+        for (int c = 0; c < 3; ++c) {
+            expected[c] = (slice[c] + normal[c]) * 0.2f + 0.8f * lit_unit[c];
+        }
+        const std::vector<f32> before = red_crossings(160.0f, 480.0f, 138);
+        for (int i = 0; i < 2; ++i) {
+            ctx.sim.tick();
+        }
+        const f32 moved = middle_crossing_shift(before, red_crossings(160.0f, 480.0f, 138));
+        t.check(near(above, expected) && near(over_effect, green) && moved > 0.08f && moved < 0.12f,
+                fmt::format("Test 18: a PhalanxEffect plate over a Unit plate shows {} ({} "
+                            "expected); over an Effect plate, {} (the Effect plate, {}); its "
+                            "stripes move {:.3f} of the plate in 2 ticks (0.1)",
+                            show(above), show(expected), show(over_effect), show(green), moved));
+    }
+
+    // Test 19: UEFQuantumGate (TexSubAlphaMaskStaticLoFiPS, Rasterizer_Cull_None).
+    {
+        Look field;
+        field.shader = "UEFQuantumGate";
+        Look banded = field;
+        banded.albedo = "albedo_bands.dds";
+        stand(banded, 1.0f, 130.0f, 510.0f);
+        const auto turned = ctx.lua_state.do_string(
+            "__osc_last_plate:SetOrientation({0, 0.70710678, 0, 0.70710678}, true)\n");
+        if (!turned) {
+            spdlog::warn("turning the plate: {}", turned.error().message);
+        }
+        std::array<Rgb, 4> sides{};
+        for (u32 i = 0; i < 4; ++i) {
+            Look one = i < 2 ? Look{} : field;
+            one.mesh = i % 2 == 0 ? "plate_side0.scm" : "plate_side1.scm";
+            stand(one, 1.0f, 160.0f + 30.0f * static_cast<f32>(i), 510.0f);
+        }
+        ctx.sim.tick();
+        for (u32 i = 0; i < 4; ++i) {
+            sides[i] = at_lit(160.0f + 30.0f * static_cast<f32>(i), 510.0f);
+        }
+        dispatch("technique=UEFQuantumGate stage=post-water pass=0 pipeline=quantum_gate "
+                 "drawn=UEFQuantumGate lane=2");
+        const std::vector<f32> before = red_crossings(130.0f, 510.0f, 128);
+        for (int i = 0; i < 3; ++i) {
+            ctx.sim.tick();
+        }
+        const f32 moved = middle_crossing_shift(before, red_crossings(130.0f, 510.0f, 128));
+        const Rgb expected = over(sky_lit, Rgb{1.0f, 1.0f - 128.0f / 255.0f, 1.0f}, 0.4f);
+        const bool unit_one_side = near(sides[0], sky_lit) != near(sides[1], sky_lit);
+        t.check(unit_one_side && near(sides[2], expected) && near(sides[3], expected) &&
+                    moved > 0.06f && moved < 0.09f,
+                fmt::format("Test 19: wound one way and the other, a Unit plate shows {} and {} "
+                            "(one the sky, {}), a UEFQuantumGate plate {} and {} ({} expected); "
+                            "its bands move {:.3f} of the plate in 3 ticks (0.075)",
+                            show(sides[0]), show(sides[1]), show(sky_lit), show(sides[2]),
+                            show(sides[3]), show(expected), moved));
+    }
+
+    // Test 20: URB4201's zapper sphere and UEB0304's field.
+    {
+        struct Host {
+            const char* unit;
+            MeshTechnique technique;
+            f32 x;
+        };
+        for (const Host& host : {Host{"urb4201", MeshTechnique::PhalanxEffect, 150.0f},
+                                 Host{"ueb0304", MeshTechnique::UEFQuantumGate, 260.0f}}) {
+            const auto made = ctx.lua_state.do_string(fmt::format(
+                "CreateUnitHPR('{}', 'ARMY_1', {}, 0, 560, 0, 0, 0)\n", host.unit, host.x));
+            if (!made) {
+                spdlog::warn("{}: {}", host.unit, made.error().message);
+            }
+            for (int i = 0; i < 20; ++i) {
+                ctx.sim.tick();
+            }
+            (void)frame(host.x, 560.0f, map::ScmapLighting{}, 60.0f);
+            const u32 draws = r.mesh_draws(host.technique);
+            t.check(draws > 0,
+                    fmt::format("Test 20: a {} carries a mesh drawn by {} ({} draws)", host.unit,
+                                renderer::mesh_technique_name(host.technique), draws));
         }
     }
 
