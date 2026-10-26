@@ -912,7 +912,10 @@ void InputHandler::select_similar_in_view(sim::SimState& sim, f32 wx, f32 wz,
     const sim::Entity* hovered = picked ? sim.entity_registry().find(picked) : nullptr;
     if (!hovered || !hovered->is_unit() || hovered->army() != player_army_) return;
     const auto& unit = static_cast<const sim::Unit&>(*hovered);
-    if (unit.has_category("WALL")) return;
+    // Not a wall's, but on FAF's data: its patched exe drops the check
+    // (FA-Binary-Patches hooks/WallSelection.cpp), selecting the walls of
+    // the type in view
+    if (unit.has_category("WALL") && !sim.faf_exe()) return;
     const std::string& blueprint = unit.blueprint_id();
     const auto in_view = [&](const sim::Vector3& p) {
         // Column-major: clip = view_proj * (p, 1); in the frustum with
