@@ -6,7 +6,9 @@
 #include "sim/collision.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/flight_math.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/unit.hpp"
+#include "sim/weapon.hpp"
 #include "map/terrain.hpp"
 
 #include <algorithm>
@@ -31,6 +33,23 @@ constexpr f32 kDegToRad = 0.017453292f;
 /// The water's height, or Moho's -10000 on a map without
 f32 water_line(const map::Terrain* terrain) {
     return terrain && terrain->has_water() ? terrain->water_elevation() : -10000.0f;
+}
+
+/// ReTargetOnMiss (Moho's Projectile::Impact, after OnImpact): while the target unit it was fired
+/// at is still there, the weapon of `launcher` (`weapon`, -1 for none) hears whether the impact on
+/// `hit_id` (0: the ground, the water, the air) of `type` struck it.
+void report_impact(lua_State* L, EntityRegistry& registry, u32 launcher, i32 weapon, u32 fired_at,
+                   u32 hit_id, const char* type) {
+    if (weapon < 0 || !registry.find(fired_at)) return;
+    Entity* e = registry.find(launcher);
+    if (!e || e->destroyed() || !e->is_unit()) return;
+    auto& owner = static_cast<Unit&>(*e);
+    if (static_cast<size_t>(weapon) >= owner.weapons().size()) return;
+    Weapon::TargetMark target;
+    target.entity = fired_at;
+    owner.weapons()[static_cast<size_t>(weapon)]->note_impact(
+        owner, impact_missed(target, hit_id ? registry.find(hit_id) : nullptr, type, true),
+        registry, get_sim(L));
 }
 
 } // namespace
@@ -614,6 +633,12 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
     const u32 id = entity_id();
     const u32 target_id = target ? target->entity_id() : 0;
     const char* type = type_override ? type_override : impact_type(target, terrain);
+    // Its scripts may destroy it: what ReTargetOnMiss's report needs, first. Moho reads the
+    // shot's target as it lands (a script may have changed it); a bomb, which the engine sends at
+    // no unit, keeps the one it was fired at.
+    const u32 launcher = launcher_id;
+    const i32 listener = impact_listener_weapon;
+    const u32 fired_at = target_entity_id != 0 ? target_entity_id : impact_listener_target;
 
     bool scripted = false;
     if (lua_table_ref() >= 0) {
@@ -628,6 +653,7 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
     if (!scripted || engine_damage) {
         deal_engine_damage(L, target, registry);
     }
+    if (!scripted) report_impact(L, registry, launcher, listener, fired_at, target_id, type);
 
     if (scripted) {
         Entity* self = registry.find(id);
@@ -653,6 +679,7 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
             if (test_status::count_lua_failures()) test_status::record_failure(message);
         }
         lua_settop(L, top);
+        report_impact(L, registry, launcher, listener, fired_at, target_id, type);
         if (ok) return; // the script destroys it, now or after its ImpactTimeout
     }
 

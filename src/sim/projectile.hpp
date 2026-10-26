@@ -62,6 +62,12 @@ public:
     /// target, where its target was): a tracking shot flies there.
     bool has_target_position = false;
     u32 launcher_id = 0;
+    /// ReTargetOnMiss: the launcher's weapon that hears where it lands, and
+    /// the target unit it was fired at (Moho binds its impact broadcaster to
+    /// the weapon's acquire task when the weapon has a target entity); -1 for
+    /// none.
+    i32 impact_listener_weapon = -1;
+    u32 impact_listener_target = 0;
     f32 damage_amount = 0;
     f32 damage_radius = 0;
     std::string damage_type = "Normal";
