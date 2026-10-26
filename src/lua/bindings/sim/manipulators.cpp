@@ -82,37 +82,6 @@ namespace osc::lua {
 
 // entity:CreateProjectile(bp, dx, dy, dz) -> projectile Lua table
 // Creates a projectile at entity position with optional velocity direction
-/// A projectile blueprint's Physics.InitialSpeed (0 without one).
-static f32 projectile_initial_speed(lua_State* L, sim::SimState* sim, const std::string& bp_id) {
-    auto* store = sim ? sim->blueprint_store() : nullptr;
-    const auto* entry = store && !bp_id.empty() ? store->find(bp_id) : nullptr;
-    if (!entry) return 0;
-    const int top = lua_gettop(L);
-    store->push_lua_table(*entry, L);
-    f32 speed = 0;
-    lua_pushstring(L, "Physics");
-    lua_rawget(L, -2);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, "InitialSpeed");
-        lua_rawget(L, -2);
-        if (lua_isnumber(L, -1)) speed = static_cast<f32>(lua_tonumber(L, -1));
-    }
-    lua_settop(L, top);
-    return speed;
-}
-
-/// Point a new projectile along `dir`, at its blueprint's InitialSpeed.
-void aim_projectile(lua_State* L, sim::SimState* sim, sim::Projectile& p, const sim::Vector3& dir) {
-    const f32 len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-    if (len < 1e-6f) return;
-    const sim::Vector3 d{dir.x / len, dir.y / len, dir.z / len};
-    p.set_orientation(sim::euler_to_quat(osc::dmath::atan2(d.x, d.z),
-                                         osc::dmath::atan2(-d.y, std::sqrt(d.x * d.x + d.z * d.z)),
-                                         0.0f));
-    const f32 speed = projectile_initial_speed(L, sim, p.blueprint_id());
-    p.velocity = {d.x * speed, d.y * speed, d.z * speed};
-}
-
 // --- Base manipulator methods ---
 
 static int manip_Destroy(lua_State* L) {

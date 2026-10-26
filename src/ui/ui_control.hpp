@@ -328,6 +328,17 @@ public:
         f32 lifetime = 0.0f;
         std::array<f32, 3> position{};
         bool hidden = true;
+        /// SetScale's, its mesh instance's scale (Moho's SetMesh makes it the
+        /// UniformScale on each axis); none: that uniform scale
+        std::optional<std::array<f32, 3>> scale;
+        /// Packed ARGB: SetMesh's Color, or SetColor's (white without one)
+        u32 color = 0xFFFFFFFFu;
+        /// Its mesh instance's parameters, as Mesh.cpp makes them: a
+        /// technique's `parameter` annotation picks which of them, or the
+        /// lifetime, its shader reads as material.y
+        f32 fraction_complete = 1.0f;
+        f32 fraction_health = 1.0f;
+        f32 auxiliary = 0.0f;
     };
     std::optional<WorldMesh>& world_mesh() { return world_mesh_; }
     const std::optional<WorldMesh>& world_mesh() const { return world_mesh_; }

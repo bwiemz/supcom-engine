@@ -250,7 +250,7 @@ TEST_CASE("The user state's stand-ins and lua_stubs helpers are constant stand-i
     lua_rawset(L, LUA_GLOBALSINDEX);
     std::set<std::string> constant;
     collect_constant_stand_ins(L, constant);
-    for (const char* name : {"ClearFrame", "DebugFacilitiesEnabled", "Nil"}) {
+    for (const char* name : {"ClearFrame", "PrefetchSession", "Nil"}) {
         INFO(name);
         CHECK(constant.count(name) == 1);
     }

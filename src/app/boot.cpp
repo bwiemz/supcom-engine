@@ -33,6 +33,7 @@ extern "C" {
 
 #include <algorithm>
 #include <charconv>
+#include <cstdlib>
 #include <memory>
 #include <random>
 #include <spdlog/spdlog.h>
@@ -503,6 +504,19 @@ std::optional<int> App::boot_ui() {
     if (!opt.map_path.empty()) {
         osc::set_ui_state(osc::UIState::Game);
         osc::core::call_setup_ui(ui_lua_state.raw());
+    } else if (!opt.host_game.empty() || !opt.join_game.empty()) {
+        // /hostgame and /joingame: as Moho's CScApp, the lobby at once, in its
+        // UI state, after SetupUI (UI_StartHostLobbyUI, UI_StartJoinLobbyUI)
+        osc::set_ui_state(osc::UIState::Lobby);
+        osc::core::call_setup_ui(ui_lua_state.raw());
+        if (const auto& host = opt.host_game; !host.empty()) {
+            const int port = static_cast<int>(std::strtol(host[1].c_str(), nullptr, 10));
+            osc::core::call_start_host_lobby_ui(ui_lua_state.raw(), host[0], port, host[2], host[3],
+                                                osc::core::find_map_scenario(host[4]));
+        } else {
+            const auto& join = opt.join_game;
+            osc::core::call_start_join_lobby_ui(ui_lua_state.raw(), join[0], join[1], join[2]);
+        }
     } else if (!opt.gpgnet_endpoint.empty()) {
         // /gpgnet: the matchmaking client drives the game (M220a). As Moho's
         // CScApp: link to it, and show gpgnet.lua's screen until it makes a

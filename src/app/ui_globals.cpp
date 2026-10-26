@@ -8,6 +8,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
 #include "map/terrain.hpp"
+#include "renderer/renderer.hpp"
 #include "sim/lua_sim.hpp"
 
 extern "C" {
@@ -23,7 +24,22 @@ namespace osc::app {
 // ── Engine global Lua C functions (file-static, outside run) ──
 // Note: GetCurrentUIState and WorldIsLoading moved to moho_bindings.cpp (M144c)
 
-static int l_FlushEvents(lua_State*) { return 0; }
+/// FlushEvents(): the input queued and not yet handled is dropped (faf-re
+/// func_FlushEvents: with a UI, the window's queue pumped empty with the
+/// input handlers set aside). Retail's gamemain calls it as the game's
+/// interface is made and as a cinematic starts and ends, so a click made
+/// meanwhile doesn't land after.
+static int l_FlushEvents(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return osc::lua::arg_count_error(L, "FlushEvents() -- flush mouse/keyboard events", 0,
+                                         lua_gettop(L));
+    lua_pushstring(L, "__osc_renderer");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* renderer = static_cast<osc::renderer::Renderer*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (renderer) renderer->flush_events();
+    return 0;
+}
 
 /// SessionIsReplay() for the UI: whether the game is a replay being played
 /// (retail's UI then hides orders and shows the replay controls). The sim

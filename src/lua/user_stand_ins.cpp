@@ -19,7 +19,6 @@ constexpr UserStandIn kStandIns[] = {
     // two matter only to a state booted without one.
     {"__language",              GlobalString{"us"}},
     {"__installedlanguages",    GlobalStrings{kInstalledLanguages}},
-    {"DebugFacilitiesEnabled",  ReturnsBool{false}},
     {"PrefetchSession",         Command{}}, // a background load ahead of a launch
     {"ClearFrame",              Command{}},
 };

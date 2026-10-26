@@ -152,7 +152,6 @@ bool sound_arg(lua_State* L, int idx, std::string& bank, std::string& cue);
 void push_brain_personality(lua_State* L, const sim::ArmyBrain& brain);
 
 // lua/bindings/sim/manipulators.cpp
-void aim_projectile(lua_State* L, sim::SimState* sim, sim::Projectile& p, const sim::Vector3& dir);
 int sequence_count(lua_State* L, int table_idx);
 
 // lua/bindings/sim/unit.cpp

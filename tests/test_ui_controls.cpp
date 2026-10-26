@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "app/app_internal.hpp"
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -554,6 +555,68 @@ struct InputFixture {
 
 } // namespace
 
+TEST_CASE("A WorldMesh's SetScale, SetColor and parameters set its mesh instance, as Moho's",
+          "[ui][lua]") {
+    // faf-re cfunc_CUIWorldMesh*L: SetMesh makes the instance at its
+    // UniformScale and Color; SetScale and SetColor replace them, and the
+    // parameter setters write theirs. FAF's cursor scripts set a hovered
+    // mesh's scale and its fraction complete.
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+    auto result = lua.do_string(R"(
+        ring = setmetatable({}, { __index = moho.world_mesh_methods })
+        InternalCreateWorldMesh(ring)
+        ring:SetMesh({
+            MeshName = '/meshes/game/Rally_lod0.scm',
+            TextureName = '/meshes/game/Rally_albedo.dds',
+            ShaderName = 'FakeRings',
+            UniformScale = 0.3,
+            Color = 'red',
+        })
+        ring:SetHidden(false)
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    auto shown = osc::renderer::shown_world_meshes(registry);
+    REQUIRE(shown.size() == 1);
+    CHECK_FALSE(shown[0].scale);
+    CHECK(shown[0].color == 0xFFFF0000u);
+    CHECK(shown[0].fraction_complete == 1.0f);
+    CHECK(shown[0].fraction_health == 1.0f);
+
+    REQUIRE(lua.do_string("ring:SetScale({2, 1, 3}) ring:SetColor('8000ff00')"
+                          " ring:SetFractionCompleteParameter(0.25)"
+                          " ring:SetFractionHealthParameter(0.5) ring:SetAuxiliaryParameter(7)")
+                .ok());
+    shown = osc::renderer::shown_world_meshes(registry);
+    REQUIRE(shown.size() == 1);
+    REQUIRE(shown[0].scale);
+    CHECK(*shown[0].scale == std::array<float, 3>{2.0f, 1.0f, 3.0f});
+    CHECK(shown[0].color == 0x8000FF00u);
+    CHECK(shown[0].fraction_complete == 0.25f);
+    CHECK(shown[0].fraction_health == 0.5f);
+    auto* mesh = control_of(lua.raw(), "ring");
+    REQUIRE(mesh);
+    CHECK(mesh->world_mesh()->auxiliary == 7.0f);
+
+    // Moho's checks: two arguments, a number, a colour it knows
+    CHECK_FALSE(lua.do_string("ring:SetFractionCompleteParameter()").ok());
+    CHECK_FALSE(lua.do_string("ring:SetFractionCompleteParameter('half')").ok());
+    CHECK_FALSE(lua.do_string("ring:SetColor('no such colour')").ok());
+    CHECK_FALSE(lua.do_string("ring:SetScale(2)").ok());
+
+    // A new mesh is a new instance, at its own scale and white
+    REQUIRE(lua.do_string("ring:SetMesh({BlueprintID = 'uel0001'}) ring:SetHidden(false)").ok());
+    shown = osc::renderer::shown_world_meshes(registry);
+    REQUIRE(shown.size() == 1);
+    CHECK_FALSE(shown[0].scale);
+    CHECK(shown[0].color == 0xFFFFFFFFu);
+    CHECK(shown[0].fraction_complete == 1.0f);
+}
+
 TEST_CASE("UI events reach Lua with Moho's codes and modifiers", "[ui][lua][input]") {
     InputFixture f;
     f.run("target = box('target', GetFrame(0), 0, 0, 100, 100, 1) target.eats = true");
@@ -638,6 +701,58 @@ TEST_CASE("A side mouse button is a key only where the key names name it, as FAF
     f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_4, GLFW_RELEASE, 0);
     f.deliver();
     CHECK(f.check("hotkeys == 1"));
+}
+
+TEST_CASE("FlushEvents drops the events not yet handled, as Moho's", "[ui][lua][input]") {
+    // faf-re func_FlushEvents: the window's queue is pumped with the input
+    // handlers set aside. What is held stays held, and a dropped press makes
+    // no double-click of the next.
+    InputFixture f;
+    f.run("target = box('target', GetFrame(0), 0, 0, 100, 100, 1) target.eats = true");
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS, 0);
+    f.dispatch.drop_pending_events();
+    f.deliver();
+    CHECK(f.check("table.getn(handled) == 0"));
+
+    // Where the dropped one was, at once: a press, not a double-click
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.dispatch.on_cursor_pos(10, 10);
+    f.deliver();
+    CHECK(f.check("table.getn(of_type('ButtonPress')) == 1"));
+    CHECK(f.check("table.getn(of_type('ButtonDClick')) == 0"));
+    CHECK(f.check("of_type('MouseMotion')[1].event.Modifiers.Right"));
+
+    // A handler that flushes drops the rest of its batch: the second press
+    // is never heard
+    f.run("handled = {} target.eats = false");
+    lua_State* L = f.lua.raw();
+    lua_pushlightuserdata(L, &f.dispatch);
+    lua_pushcclosure(
+        L,
+        [](lua_State* s) -> int {
+            static_cast<osc::ui::UIDispatch*>(lua_touserdata(s, lua_upvalueindex(1)))
+                ->drop_pending_events();
+            return 0;
+        },
+        1);
+    lua_setglobal(L, "Flush");
+    f.run("target.HandleEvent = function(self, event)"
+          "  table.insert(handled, {who = 'target', event = event})"
+          "  if event.Type == 'ButtonPress' then Flush() end"
+          "  return true end");
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_MIDDLE, GLFW_PRESS, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_MIDDLE, GLFW_RELEASE, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("table.getn(of_type('ButtonPress')) == 1"));
+    CHECK(f.check("table.getn(of_type('ButtonRelease')) == 0"));
+
+    // The Lua function takes no argument; with no window it has nothing to pump
+    osc::app::register_session_ui_globals(f.lua);
+    f.run("FlushEvents()");
+    CHECK(f.check("not pcall(FlushEvents, 1)"));
 }
 
 TEST_CASE("A press no control eats reaches each control under the mouse once", "[ui][lua][input]") {

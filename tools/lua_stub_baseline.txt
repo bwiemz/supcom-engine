@@ -6,7 +6,6 @@ BeginLoggingStats l_BeginLoggingStats
 BlueprintLoaderUpdateProgress l_BlueprintLoaderUpdateProgress
 BlueprintLoaderUpdateProgress stub_noop
 ClearFrame Command
-DebugFacilitiesEnabled ReturnsBool
 DebugGetSelection stub_nil
 Destroy wlduiprovider_Destroy
 DrawCircle stub_noop
@@ -14,7 +13,6 @@ DrawLine stub_noop
 DrawLinePop stub_noop
 EndLoggingStats l_EndLoggingStats
 EntityCategoryEmpty l_EntityCategoryEmpty
-FlushEvents l_FlushEvents
 GetOmni shield_GetOmni
 GetScreenPos worldview_GetScreenPos
 InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService
@@ -26,12 +24,7 @@ PrefetchSession Command
 ProjectMultiple worldview_ProjectMultiple
 RefreshSteamGames l_RefreshSteamGames
 SetArmyShowScore stub_noop
-SetAuxiliaryParameter worldmesh_SetAuxiliaryParameter
-SetColor worldmesh_SetColor
-SetFractionCompleteParameter worldmesh_SetFractionCompleteParameter
-SetFractionHealthParameter worldmesh_SetFractionHealthParameter
 SetGreaterOf brain_SetGreaterOf
-SetScale worldmesh_SetScale
 SetTargetHead frame_SetTargetHead
 ShouldCreateInitialArmyUnits l_ShouldCreateInitialArmyUnits
 SimConExecute stub_noop

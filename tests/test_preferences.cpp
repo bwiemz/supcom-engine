@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include "core/preferences.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
+#include "ui/ui_control.hpp"
 #include "support/temp_path.hpp"
 
 extern "C" {
@@ -224,4 +226,33 @@ TEST_CASE("Preferences without a path are not saved", "[preferences]") {
     osc::core::Preferences prefs;
     prefs.set_int("x", 1);
     CHECK_FALSE(prefs.save()); // in memory only (tests, captures)
+}
+
+TEST_CASE("DebugFacilitiesEnabled answers the debug.enable_debug_facilities preference",
+          "[preferences][lua]") {
+    // Moho's USER_DebugFacilitiesEnabled: the preference as a boolean, false
+    // by default; its Lua function takes no argument
+    osc::core::Preferences prefs;
+    osc::ui::UIControlRegistry registry;
+    osc::lua::LuaState ui;
+    osc::lua::register_ui_bindings(ui, registry);
+    lua_State* L = ui.raw();
+    const auto answer = [&] {
+        REQUIRE(ui.do_string("on = DebugFacilitiesEnabled()").ok());
+        lua_getglobal(L, "on");
+        const bool on = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        return on;
+    };
+    CHECK_FALSE(answer()); // no preferences at all
+
+    lua_pushstring(L, "__osc_preferences");
+    lua_pushlightuserdata(L, &prefs);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    CHECK_FALSE(answer());
+    prefs.set_bool("debug.enable_debug_facilities", true);
+    CHECK(answer());
+    prefs.set_string("debug.enable_debug_facilities", "true"); // not a boolean
+    CHECK_FALSE(answer());
+    CHECK_FALSE(ui.do_string("DebugFacilitiesEnabled(1)").ok());
 }
