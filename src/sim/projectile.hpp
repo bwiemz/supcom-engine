@@ -140,9 +140,6 @@ public:
     bool bounce_pending = false;
     Vector3 bounce_velocity;
 
-    /// Entities an OnCollisionCheck turned it away from: it passes them.
-    std::vector<u32> passed;
-
     /// Its step, `tick` the sim's (Moho's MotionTick): the impact its last
     /// step found, else its move and the collision check.
     void update(f64 dt, EntityRegistry& registry, lua_State* L,

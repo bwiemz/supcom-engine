@@ -7,6 +7,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
@@ -113,4 +114,17 @@ TEST_CASE("A detonate height set below zero leaves the blueprint's; one set at o
     down.p->detonate_above_override = 10.0f;
     down.step();
     CHECK_FALSE(down.p->impact_waiting());
+}
+
+TEST_CASE("Over the sea a shot that skims no surface bursts by the water on retail's rule, by "
+          "the ground on FAF's",
+          "[projectile]") {
+    const bool faf = GENERATE(false, true);
+    Shot sea(30.0f, -80.0f, 20.0f); // ends at 22: 2 over the water, 14 over the ground
+    sea.reg.set_faf_exe(faf);
+    sea.p->collide_surface = false;
+    sea.p->detonate_below_height = 3.0f;
+    sea.step();
+    INFO("faf " << faf);
+    CHECK(sea.p->impact_waiting() == !faf);
 }

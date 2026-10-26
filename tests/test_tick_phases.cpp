@@ -1606,6 +1606,8 @@ TEST_CASE("A tree a projectile hits leans in the tick of the hit", "[tick-phases
     tree.set_collision_shape(box);
     w.sim.entity_registry().register_entity(std::move(owned));
     lua_handle(w, "tree", tree);
+    // As retail's Prop.lua answers (none is no collision, as Moho's)
+    REQUIRE(w.run("function tree:OnCollisionCheck(other) return true end"));
     w.make("shooter", "tank", 1, 100.0f, 100.0f);
     w.projectile_class("/shell", "OnImpact = function(self, kind, other)"
                                  "   hit = GetGameTick() hit_kind = kind"
@@ -1632,6 +1634,8 @@ TEST_CASE("A beam deals its damage at its place in the entity walk, after its un
     Weapon& gun = w.arm(launcher, nullptr);
     w.make("shooter", "tank", 1, 90.0f, 110.0f);
     give_box(w.make("target", "tank", 1, 100.0f, 110.0f));
+    // As retail's Unit.lua answers (none is no collision, as Moho's)
+    REQUIRE(w.run("function target:OnCollisionCheck(other) return true end"));
     lua_State* L = w.state.raw();
     lua_newtable(L);
     lua_pushstring(L, "_c_object");

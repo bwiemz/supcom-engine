@@ -2037,7 +2037,6 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.u32v(p.impact_entity_id);
     w.str(p.impact_kind);
     w.b(p.in_water);
-    save_ids(w, p.passed);
     // info_: the sim's blueprint info, by blueprint (load_sim_state); launch_position,
     // launch_orientation, launch_tick: the display's, for the frame of its first step
 }
@@ -2097,7 +2096,6 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.impact_entity_id = r.u32v();
     p.impact_kind = r.str();
     p.in_water = r.b();
-    p.passed = load_ids(r);
 }
 
 void StateIO::save(StateWriter& w, const Prop& p) {
