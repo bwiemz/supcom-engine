@@ -139,6 +139,13 @@ struct Options {
     unsigned play_until_tick = 0;
 
     bool lan_game_test() const { return lan_game_host || !lan_game_join.empty(); }
+    /// `/hostgame protocol port playerName gameName map` (Moho's CScApp): the
+    /// lobby of the game this hosts, opened at once in place of the front end;
+    /// empty if not given.
+    std::vector<std::string> host_game;
+    /// `/joingame protocol address playerName`: the lobby of the game there,
+    /// joined at once.
+    std::vector<std::string> join_game;
     /// `/gpgnet host:port` (Moho's; also --gpgnet): the matchmaking client to
     /// link to, instead of the front end (M220a).
     std::string gpgnet_endpoint;

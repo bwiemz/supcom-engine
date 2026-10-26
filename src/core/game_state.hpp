@@ -7,6 +7,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cstring>
+#include <string>
 
 extern "C" {
 #include <lua.h>
@@ -169,6 +170,56 @@ inline void call_start_game_ui(lua_State* L) {
     }
 }
 inline void call_on_first_update(lua_State* L) { call_lua_global(L, "OnFirstUpdate"); }
+
+/// Moho's FindMapScenario: a map's name is its /maps/<map>/<map>_scenario.lua;
+/// one with a '/' or '\' in it is a path already, and stays as it is.
+inline std::string find_map_scenario(const std::string& map) {
+    if (map.empty() || map.find_first_of("/\\") != std::string::npos) return map;
+    return "/maps/" + map + "/" + map + "_scenario.lua";
+}
+
+/// /hostgame's and /joingame's lobby (Moho's UI_StartHostLobbyUI and
+/// UI_StartJoinLobbyUI): the lobby's UI state, then uimain's
+/// StartHostLobbyUI(protocol, port, playerName, gameName, map) or
+/// StartJoinLobbyUI(protocol, address, playerName). The caller runs SetupUI
+/// first, as for the other entry points.
+inline void call_start_host_lobby_ui(lua_State* L, const std::string& protocol, int port,
+                                     const std::string& player, const std::string& game,
+                                     const std::string& map) {
+    set_ui_state(UIState::Lobby);
+    push_uimain_function(L, "StartHostLobbyUI");
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_pushstring(L, protocol.c_str());
+    lua_pushnumber(L, port);
+    lua_pushstring(L, player.c_str());
+    lua_pushstring(L, game.c_str());
+    lua_pushstring(L, map.c_str());
+    if (lua_pcall(L, 5, 0, 0) != 0) {
+        spdlog::warn("Error running '/lua/ui/uimain.lua:StartHostLobbyUI': {}",
+                     lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+}
+inline void call_start_join_lobby_ui(lua_State* L, const std::string& protocol,
+                                     const std::string& address, const std::string& player) {
+    set_ui_state(UIState::Lobby);
+    push_uimain_function(L, "StartJoinLobbyUI");
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_pushstring(L, protocol.c_str());
+    lua_pushstring(L, address.c_str());
+    lua_pushstring(L, player.c_str());
+    if (lua_pcall(L, 3, 0, 0) != 0) {
+        spdlog::warn("Error running '/lua/ui/uimain.lua:StartJoinLobbyUI': {}",
+                     lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+}
 
 /// Engine -> game UI callbacks. Moho calls them in UI modules:
 inline constexpr const char* kGameMainModule = "/lua/ui/game/gamemain.lua";
