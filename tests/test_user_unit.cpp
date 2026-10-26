@@ -431,6 +431,23 @@ TEST_CASE("GetEconData reports whole units a second, as the original game's UI d
     }
 }
 
+TEST_CASE("On FAF's data GetEconData reports the float, as FAF's exe does", "[userunit][economy]") {
+    UiWorld w;
+    w.sim.add_army("ARMY_1", "ARMY_1");
+    w.sim.set_faf_exe(true);
+    auto& econ = w.unit().economy();
+    // A T2 extractor's 6 beside storage, and a fraction of a unit
+    econ.produced_mass = 6.75;
+    econ.spent_energy = 1.44;
+    auto result =
+        w.ui.do_string("local e = units[1]:GetEconData(); return e.massProduced, e.energyConsumed");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    lua_State* L = w.ui.raw();
+    CHECK(lua_tonumber(L, -2) == 6.75);
+    CHECK(lua_tonumber(L, -1) == static_cast<double>(1.44f));
+}
+
 TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
     UiWorld w;
     auto& u = w.unit();
