@@ -3693,12 +3693,6 @@ static int l_MapBorderAdd(lua_State* L) {
     return 0;
 }
 
-/// IsNISMode() -> false: no in-game cinematic (a campaign's NIS) runs here.
-static int l_IsNISMode(lua_State* L) {
-    lua_pushboolean(L, 0);
-    return 1;
-}
-
 /// LaunchSinglePlayerSession(sessionConfig) — launch a game from lobby config.
 /// Reads ScenarioFile from GameOptions or the legacy top-level field, stores
 /// config in FrontEndData, signals main loop.
@@ -5159,7 +5153,6 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("WorldIsPlaying", l_WorldIsPlaying);
     state.register_function("GameTime", l_GameTime);
     state.register_function("SessionIsPaused", l_SessionIsPaused);
-    state.register_function("IsNISMode", l_IsNISMode);
     state.register_function("MapBorderClear", l_MapBorderClear);
     state.register_function("MapBorderAdd", l_MapBorderAdd);
     state.register_function("LaunchSinglePlayerSession", l_LaunchSinglePlayerSession);

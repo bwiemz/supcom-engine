@@ -774,6 +774,7 @@ void App::Window::update_ui(double dt) {
         renderer.camera().set_playable_rect(sim_state->playable_x0(), sim_state->playable_z0(),
                                             sim_state->playable_x1(), sim_state->playable_z1());
     }
+    renderer.set_nis_mode(osc::core::ui_nis_mode(ui_lua_state.raw()));
     renderer.poll_events(dt);
     // While the pointer is pinned FA's cursor is hidden, every frame
     // (func_ProcessMouseScrubbing), and let go, it is shown again

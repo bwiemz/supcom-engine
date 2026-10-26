@@ -141,6 +141,8 @@ struct CommandModeHooks {
                                                   const std::string& script, const sim::Vector3& at,
                                                   f32 facing)>
         formation_slots;
+    /// gamemain.IsNISMode: a campaign's cinematic, which ends a formation drag
+    std::function<bool()> nis_mode;
 };
 
 /// Moho's CFormation: the right button's drag formation

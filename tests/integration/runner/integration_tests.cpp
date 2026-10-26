@@ -20211,7 +20211,8 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
            R"(
         if not SessionIsActive() then error('no active session in game') end
         if not WorldIsPlaying() then error('the world is not playing') end
-        if IsNISMode() then error('an NIS is running') end
+        if import('/lua/ui/game/gamemain.lua').IsNISMode() then error('an NIS is running') end
+        if rawget(_G, 'IsNISMode') ~= nil then error('IsNISMode is gamemain\'s, no global') end
         if math.abs(GameTime() - GetGameTimeSeconds()) > 1e-6 then
             error('GameTime ' .. GameTime() .. ' vs ' .. GetGameTimeSeconds())
         end

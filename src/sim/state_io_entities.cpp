@@ -657,6 +657,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.str(wp.fire_control_label);
     w.b(wp.need_compute_bomb_drop);
     w.b(wp.auto_initiate_attack_command);
+    w.b(wp.need_prep);
     w.f32v(wp.bomb_drop_threshold);
     w.size(wp.target_priorities.size());
     for (const CategoryExpr& c : wp.target_priorities) save(w, c);
@@ -665,6 +666,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.b(wp.above_water_targets_only);
     w.b(wp.below_water_targets_only);
     w.b(wp.yaw_only_on_target);
+    w.b(wp.aims_straight_on_disable);
     w.b(wp.above_water_fire_only);
     w.b(wp.always_recheck_target);
     w.b(wp.prefers_primary_weapon_target);
@@ -742,6 +744,7 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.fire_control_label = r.str();
     wp.need_compute_bomb_drop = r.b();
     wp.auto_initiate_attack_command = r.b();
+    wp.need_prep = r.b();
     wp.bomb_drop_threshold = r.f32v();
     wp.target_priorities.resize(r.size(5));
     for (CategoryExpr& c : wp.target_priorities) load(r, c);
@@ -750,6 +753,7 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.above_water_targets_only = r.b();
     wp.below_water_targets_only = r.b();
     wp.yaw_only_on_target = r.b();
+    wp.aims_straight_on_disable = r.b();
     wp.above_water_fire_only = r.b();
     wp.always_recheck_target = r.b();
     wp.prefers_primary_weapon_target = r.b();
@@ -878,6 +882,7 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         w.b(x.builder_arm_);
         w.b(x.tracking_);
         w.b(x.yaw_only_on_target_);
+        w.b(x.aims_straight_on_disable_);
         break;
     }
     case ManipKind::Slaver: {
@@ -1031,6 +1036,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         x->builder_arm_ = r.b();
         x->tracking_ = r.b();
         x->yaw_only_on_target_ = r.b();
+        x->aims_straight_on_disable_ = r.b();
         m = std::move(x);
         break;
     }
@@ -1130,6 +1136,14 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.str(u.layer_);
     w.str(u.motion_type_);
     w.f32v(u.layer_change_offset_);
+    w.f32v(u.layer_transition_duration_);
+    w.f32v(u.layer_transition_ticks_);
+    w.vec3(u.layer_transition_from_);
+    w.quat(u.layer_transition_from_facing_);
+    w.vec3(u.layer_transition_to_);
+    w.quat(u.layer_transition_to_facing_);
+    w.vec3(u.layer_transition_step_);
+    w.u8v(u.terrain_type_);
     w.size(u.raised_platforms_.size());
     for (f32 v : u.raised_platforms_) {
         w.f32v(v);
@@ -1538,6 +1552,14 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.layer_ = r.str();
     u.motion_type_ = r.str();
     u.layer_change_offset_ = r.f32v();
+    u.layer_transition_duration_ = r.f32v();
+    u.layer_transition_ticks_ = r.f32v();
+    u.layer_transition_from_ = r.vec3();
+    u.layer_transition_from_facing_ = r.quat();
+    u.layer_transition_to_ = r.vec3();
+    u.layer_transition_to_facing_ = r.quat();
+    u.layer_transition_step_ = r.vec3();
+    u.terrain_type_ = r.u8v();
     u.raised_platforms_.resize(r.size(4));
     for (f32& v : u.raised_platforms_) {
         v = r.f32v();

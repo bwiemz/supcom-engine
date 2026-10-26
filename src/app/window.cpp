@@ -189,7 +189,8 @@ std::optional<int> App::Window::set_up() {
              return osc::lua::plan_ui_formation(ui_lua_state.raw(), units,
                                                 sim_state ? sim_state->terrain() : nullptr, script,
                                                 at, facing);
-         }});
+         },
+         [this] { return osc::core::ui_nis_mode(ui_lua_state.raw()); }});
     prev_time = std::chrono::high_resolution_clock::now();
 
     // --screenshot <png> [--screenshot-frame N]: render N frames on a

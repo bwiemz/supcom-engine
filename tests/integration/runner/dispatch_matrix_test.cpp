@@ -56,7 +56,7 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     ctx.vfs.mount(root, std::make_unique<vfs::DirectoryMount>(dir));
     map::Terrain ground(map::Heightmap(512, 512, 1.0f, std::vector<u16>(513 * 513, 0)), 0.0f, true);
     ground.set_lighting(white_fill(), {});
-    constexpr u32 techniques = static_cast<u32>(MeshTechnique::AeonCZAR) + 1;
+    constexpr u32 techniques = static_cast<u32>(MeshTechnique::NormalMappedAlphaNoShadow) + 1;
     bool shared = true;
     for (u32 id = 0; id <= techniques; ++id) {
         if (id == static_cast<u32>(MeshTechnique::UnitPlace)) continue;
@@ -191,7 +191,7 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     std::sort(matrix.begin(), matrix.end());
     std::string all;
     for (const auto& line : matrix) all += line + '\n';
-    for (u32 id = 0; id <= static_cast<u32>(MeshTechnique::AeonCZAR); ++id) {
+    for (u32 id = 0; id <= static_cast<u32>(MeshTechnique::NormalMappedAlphaNoShadow); ++id) {
         const std::string name = renderer::mesh_technique_name(static_cast<MeshTechnique>(id));
         for (int lane = 0; lane < 3; ++lane)
             for (const char* view : {"world", "cartographic-main", "cartographic-minimap"}) {
@@ -231,6 +231,8 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     fact(0, "technique=AeonCZAR stage=pre-water pass=0 pipeline=mesh drawn=Aeon lane=0");
     fact(1, "technique=AeonCZAR stage=pre-water pass=0 pipeline=mesh drawn=Aeon lane=1");
     fact(2, "technique=AeonCZAR stage=pre-water pass=0 pipeline=mesh drawn=AeonCZAR lane=2");
+    fact(2, "technique=NormalMappedAlphaNoShadow stage=post-water pass=0 pipeline=mesh "
+            "drawn=NormalMappedAlpha lane=2");
     fact(1, "drawn=PhaseShield lane=0 shader_id=25 shadow=0");
     fact(2, "drawn=SeraphimPersonalShield lane=2 shader_id=26 shadow=2");
     for (const char* name : {"Unit",
@@ -264,7 +266,10 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
                              "UEFQuantumGate",
                              "CommandFeedback3",
                              "CommandFeedback4",
-                             "AeonCZAR"}) {
+                             "AeonCZAR",
+                             "Flat",
+                             "BloatingNormalMappedAlpha",
+                             "NormalMappedAlphaNoShadow"}) {
         fact(2, fmt::format("technique={} stage=reflection ", name));
         fact(0, fmt::format("technique={} stage=reflection ", name), false);
         fact(1, fmt::format("technique={} stage=reflection ", name), false);
