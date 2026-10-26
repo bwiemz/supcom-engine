@@ -1416,8 +1416,9 @@ public:
     bool launches_on_unload() const;
     /// Drop those of `ids` still aboard, in cargo order: each is set down
     /// where it hung, level, and on the ground when `terrain` is given (M206n).
+    /// Moho's Unit::DetachFrom (`heard` false) leaves out OnTransportDetach.
     void detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L,
-                      const map::Terrain* terrain = nullptr);
+                      const map::Terrain* terrain = nullptr, bool heard = true);
     /// Whether the unit's footprint fits the ground where it is (Moho's
     /// SFootprint::FitsAt): every cell under it passable for it.
     bool footprint_fits(const map::PathfindingGrid& grid) const;

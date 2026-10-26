@@ -3193,7 +3193,7 @@ bool Unit::footprint_fits(const map::PathfindingGrid& grid) const {
 }
 
 void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L,
-                        const map::Terrain* terrain) {
+                        const map::Terrain* terrain, bool heard) {
     // Taken off the cargo list first (safety against modification during
     // Lua callbacks), in cargo order.
     std::vector<u32> snapshot;
@@ -3240,7 +3240,7 @@ void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_Stat
 
         // Lua callback: transport:OnTransportDetach(bone, cargo)
         // FA Lua chains to cargo:OnDetachedFromTransport internally
-        if (lua_table_ref() >= 0 && cargo->lua_table_ref() >= 0) {
+        if (heard && lua_table_ref() >= 0 && cargo->lua_table_ref() >= 0) {
             lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
             int transport_tbl = lua_gettop(L);
             lua_pushstring(L, "OnTransportDetach");
