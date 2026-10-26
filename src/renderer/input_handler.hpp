@@ -148,6 +148,10 @@ struct CommandModeHooks {
         formation_slots;
     /// gamemain.IsNISMode: a campaign's cinematic, which ends a formation drag
     std::function<bool()> nis_mode;
+    /// uimain.lua's StartCursorText(x, y, text, color, seconds, flash) and StopCursorText()
+    std::function<void(f32 x, f32 y, const char* text, const char* color, f32 seconds, bool flash)>
+        start_cursor_text;
+    std::function<void()> stop_cursor_text;
 };
 
 /// Moho's CFormation: the right button's drag formation
@@ -243,8 +247,9 @@ public:
     /// A left-click at world (wx, wz) under command mode `mode`: route its
     /// order to the selected units. Build places `mode.name` at the snapped
     /// point (builders only); an order issues that cap, at the unit under the
-    /// click when the order targets one. Nothing when the mode has no world
-    /// click (none, ping) or nothing takes the order.
+    /// click when the order targets one, but a move is a patrol_click when it
+    /// can be. Nothing when the mode has no world click (none, ping) or
+    /// nothing takes the order.
     std::optional<IssuedCommand> click_in_command_mode(sim::SimState& sim,
                                                        const CommandMode& mode,
                                                        f32 wx, f32 wz, bool shift);
@@ -385,6 +390,11 @@ public:
     /// Whether the waypoint under the cursor would start a patrol
     /// (CUIWorldView's ShowConvertToPatrolCursor)
     bool converts_to_patrol() const { return converts_to_patrol_; }
+    /// CUIWorldView::HandleEvent's patrol cursor and cursor text, a mouse event at (mx, my)
+    void world_mouse_event(sim::SimState& sim, const CommandMode& mode, f32 mx, f32 my);
+    /// The right button down at world (wx, wz): patrol_click if its order is a move, else
+    /// right_press
+    void right_button_down(sim::SimState& sim, f32 wx, f32 wz, bool shift);
 
     /// The shown unit the cursor is on, as it is drawn (an aircraft where it
     /// flies): of those whose box (its mesh's bounds, turned with it) the
@@ -485,6 +495,8 @@ private:
     u32 hovered_ = 0;
     u32 hovered_command_ = 0;
     bool converts_to_patrol_ = false;
+    bool in_view_ = false;
+    std::array<f32, 2> mouse_at_{};
     std::optional<OrderDrag> order_drag_;
     bool order_drag_moved_ = false;
     std::optional<OrderDrag> dropped_;
@@ -493,6 +505,9 @@ private:
     bool rmb_removes_ = false;
     std::optional<CommandGraphNode> graph_node(u32 command_id) const;
     std::vector<u32> own_units(sim::SimState& sim, const std::vector<u32>& ids) const;
+    /// IssueMoveOrderForDrag over a waypoint that starts a patrol: the moves restarted as one, and
+    /// the cursor text saying so at the last mouse event; whether it was such a waypoint
+    bool patrol_click(sim::SimState& sim);
     OrderDrag order_drop(sim::SimState& sim, const CommandGraphNode& node, f32 wx, f32 wz,
                          bool released, u32& target) const;
     static constexpr f32 DRAG_THRESHOLD = 5.0f; // pixels before drag starts
