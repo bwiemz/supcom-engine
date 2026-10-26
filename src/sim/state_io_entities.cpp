@@ -1514,6 +1514,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     enum8(w, u.vert_motion_);
     w.f32v(u.sub_elevation_);
     w.f32v(u.dive_surface_speed_);
+    w.vec3(u.dive_lean_);
     w.str(u.vert_event_);
     w.b(u.crashing_);
     w.vec3(u.velocity_);
@@ -1941,6 +1942,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.vert_motion_ = enum8<Unit::VertMotion>(r);
     u.sub_elevation_ = r.f32v();
     u.dive_surface_speed_ = r.f32v();
+    u.dive_lean_ = r.vec3();
     u.vert_event_ = r.str();
     u.crashing_ = r.b();
     u.velocity_ = r.vec3();

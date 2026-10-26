@@ -12337,8 +12337,18 @@ void test_naval_depth(TestContext& ctx) {
         __osc_trace = {}
         function __osc_watch()
             local p = __osc_sub:GetPosition()
+            local nose = __osc_sub:CalculateWorldPositionFromRelative({0, 0, 1})
             table.insert(__osc_trace, {y = p[2] - GetSurfaceHeight(p[1], p[3]), x = p[1], z = p[3],
-                                       layer = __osc_sub:GetCurrentLayer()})
+                                       layer = __osc_sub:GetCurrentLayer(),
+                                       pitch = math.deg(math.asin(nose[2] - p[2]))})
+        end
+        function __osc_pitches()
+            local low, high = 0, 0
+            for i = 1, table.getn(__osc_trace) do
+                low = math.min(low, __osc_trace[i].pitch)
+                high = math.max(high, __osc_trace[i].pitch)
+            end
+            return low, high, __osc_trace[table.getn(__osc_trace)].pitch
         end
     )");
     run(5);
@@ -12375,6 +12385,12 @@ void test_naval_depth(TestContext& ctx) {
         if steps < 10 then error('it sank in ' .. steps .. ' steps') end
         if under_on_water then error('it reached its depth still on Water') end
     )");
+    lua_check("Test 1b: it dives nose first, and is level again at its depth", R"(
+        local low, high, last = __osc_pitches()
+        if math.abs(low + 18.531) > 0.01 then error('its nose dipped ' .. -low .. ' degrees') end
+        if high > 0.01 then error('its nose rose ' .. high .. ' degrees') end
+        if math.abs(last) > 0.1 then error('it ends ' .. last .. ' degrees off level') end
+    )");
     lua_check("Test 2: its script heard Down on Water, then Bottom on Sub", R"(
         local e = __osc_events
         if table.getn(e) ~= 2 then error(table.getn(e) .. ' events') end
@@ -12387,6 +12403,7 @@ void test_naval_depth(TestContext& ctx) {
     )");
     lua_check("Test 3: told again, it surfaces: Up on Sub, then Top on Water", R"(
         __osc_events = {}
+        __osc_trace = {}
         IssueDive({__osc_sub})
     )");
     run(60);
@@ -12401,6 +12418,12 @@ void test_naval_depth(TestContext& ctx) {
             error('heard ' .. table.getn(e) .. ' events: ' .. (e[1] and e[1].new or '-') .. ', ' ..
                   (e[2] and e[2].new or '-'))
         end
+    )");
+    lua_check("Test 3a: it surfaces nose first, and is level again on top", R"(
+        local low, high, last = __osc_pitches()
+        if math.abs(high - 18.531) > 0.01 then error('its nose rose ' .. high .. ' degrees') end
+        if low < -0.01 then error('its nose dipped ' .. -low .. ' degrees') end
+        if math.abs(last) > 0.1 then error('it ends ' .. last .. ' degrees off level') end
     )");
 
     // Only a submarine dives: a frigate told to stays on the surface, and its
