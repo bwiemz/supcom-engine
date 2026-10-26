@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sim/ai_personality.hpp"
 #include "sim/armor_definition.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/bounded_props.hpp"
@@ -181,6 +182,13 @@ public:
     /// (hooks/HTransferACUs.cpp). The host's, as the executable is.
     bool faf_exe() const { return faf_exe_; }
     void set_faf_exe(bool on) { faf_exe_ = on; }
+    /// The AI brains' personality (CAiPersonality), the same for every
+    /// brain: read from /lua/aipersonality.lua as the first is asked for
+    /// (lua/bindings/sim/aipersonality.cpp); nullptr until then.
+    const AiPersonality* ai_personality() const {
+        return ai_personality_ ? &*ai_personality_ : nullptr;
+    }
+    void set_ai_personality(AiPersonality p) { ai_personality_ = std::move(p); }
     map::PathfindingGrid* pathfinding_grid() { return pathfinding_grid_.get(); }
     const map::PathfindingGrid* pathfinding_grid() const { return pathfinding_grid_.get(); }
 
@@ -1173,6 +1181,7 @@ private:
     UnitBlockers unit_blockers_{*this};
     bool moho_pathing_ = false;
     bool faf_exe_ = false; // see faf_exe
+    std::optional<AiPersonality> ai_personality_; // see ai_personality
     /// Stored units whose carrier is gone, destroyed at a safe point of the
     /// tick (destroy_orphaned_stored_units).
     std::vector<u32> stored_to_destroy_;

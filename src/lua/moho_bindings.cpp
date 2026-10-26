@@ -1707,7 +1707,7 @@ static const MohoClassDef moho_classes[] = {
     {"aibrain_methods",         aibrain_methods,         nullptr},
     {"platoon_methods",         platoon_methods,         nullptr},
     {"navigator_methods",       navigator_methods,       nullptr},
-    {"aipersonality_methods",   empty_methods,           nullptr},
+    {"aipersonality_methods",   aipersonality_methods,   nullptr},
     {"CAiAttackerImpl_methods", empty_methods,           nullptr},
     {"ScriptTask_Methods",      script_task_methods,     nullptr},
     {"sound_methods",           empty_methods,           nullptr},
