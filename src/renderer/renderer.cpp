@@ -3292,9 +3292,18 @@ void Renderer::update_world_shapes(lua_State* L, const sim::FrameView& frame,
         if (length > 0.0f) forward = {forward.x / length, forward.y / length, forward.z / length};
         const f32 fov = view_camera_->fov();
         const f32 width = view_points()[0] > 0 ? static_cast<f32>(view_points()[0]) : 1.0f;
-        world_shapes_.begin([eye, forward, fov, width](const sim::Vector3& p) {
-            return lod_metric(p, eye, forward, fov) / width;
-        });
+        world_shapes_.begin(
+            [eye, forward, fov, width](const sim::Vector3& p) {
+                return lod_metric(p, eye, forward, fov) / width;
+            },
+            eye);
+
+        // The sim's debug drawing: both canvases of the latest beat, a pixel wide, as Moho's
+        // WRenViewport::Render draws them in every world view (DrawLine, DrawCircle)
+        if (const sim::WorldSnapshot* now = frame.cur()) {
+            for (const sim::DebugLine& l : now->debug_lines)
+                world_shapes_.hairline(l.a, l.b, l.color);
+        }
 
         // Placing a structure: its pad and the pads of the focus army's structures
         // standing or under way, outlined on the ground, those in view

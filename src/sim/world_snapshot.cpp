@@ -637,6 +637,9 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
     }
     out.player_result = sim.player_result();
     out.no_rush_radius = sim.no_rush_active() ? sim.no_rush_radius() : 0.0f;
+    out.debug_lines = sim.debug_lines();
+    out.debug_lines.insert(out.debug_lines.end(), sim.debug_canvas().lines().begin(),
+                           sim.debug_canvas().lines().end());
     capture_pending(sim, out);
 }
 

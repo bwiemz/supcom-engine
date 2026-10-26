@@ -2009,6 +2009,8 @@ void SimState::advance_tick() {
     kill_cleanup();
     // Moho's AdvanceCoords, after KillCleanup: the tick's moves are committed at once.
     entity_registry_.advance_coords();
+    // AdvanceBeat's roll of the debug canvas: this tick's drawing is the last tick's
+    debug_lines_ = debug_canvas_.take();
 }
 
 void SimState::end_beat(bool ticked) {

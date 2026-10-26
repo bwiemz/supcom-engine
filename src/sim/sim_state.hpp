@@ -8,6 +8,7 @@
 #include "sim/command_scheduler.hpp"
 #include "sim/economy_event.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/debug_canvas.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/intel_sources.hpp"
 #include "sim/occupancy.hpp"
@@ -174,6 +175,12 @@ public:
     /// Ground units path as Moho's do (roadmap item 4c-2c): their army's
     /// queue searches the footprint classes' cluster maps, and they follow
     /// the cells as CAiPathNavigator does. Off by default for now.
+    /// Moho's debug canvases (Sim::GetDebugCanvas): the one the sim's scripts draw into this
+    /// tick (DrawLine, DrawLinePop, DrawCircle), and the last tick's, which AdvanceBeat rolls
+    /// it into. The UI draws both, until the next beat replaces them.
+    DebugCanvas& debug_canvas() { return debug_canvas_; }
+    const DebugCanvas& debug_canvas() const { return debug_canvas_; }
+    const std::vector<DebugLine>& debug_lines() const { return debug_lines_; }
     bool moho_pathing() const { return moho_pathing_; }
     void set_moho_pathing(bool on) { moho_pathing_ = on; }
     /// How far along its path, in cells, a navigator may pick a target to
@@ -1195,6 +1202,8 @@ private:
     /// (roadmap item 4c), made with the pathfinding grid.
     std::unique_ptr<PathTables> path_tables_;
     UnitBlockers unit_blockers_{*this};
+    DebugCanvas debug_canvas_;           // see debug_canvas
+    std::vector<DebugLine> debug_lines_; // see debug_canvas
     bool moho_pathing_ = false;
     bool faf_exe_ = false; // see faf_exe
     bool run_opponent_ai_ = true;                 // see run_opponent_ai

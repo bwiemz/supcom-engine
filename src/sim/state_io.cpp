@@ -412,7 +412,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     // entity_trace_from_, entity_trace_to_, steer_log_, faf_exe_, run_opponent_ai_: the host's;
     // nav_personal_pos_max_distance_: no save holds FAF's exe global, which
     // its OnPostLoad sets again;
-    // bone_cache_, anim_cache_: caches
+    // bone_cache_, anim_cache_: caches; debug_canvas_, debug_lines_: the scripts' debug
+    // drawing, which no save holds (Moho's canvases aren't saved either)
     {
         std::vector<std::string> armor;
         armor.reserve(sim.armor_def_.table_.size());
