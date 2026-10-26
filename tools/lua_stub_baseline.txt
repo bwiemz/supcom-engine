@@ -27,7 +27,6 @@ GetVersion l_GetVersion
 InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService
 IsKnownFake blip_IsKnownFake
 IsNISMode l_IsNISMode
-IsOpponentAIRunning brain_IsOpponentAIRunning
 IsRestricted <lambda>
 IssuePause stub_noop
 MetaImpact stub_noop

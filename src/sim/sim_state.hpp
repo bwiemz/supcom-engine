@@ -181,6 +181,10 @@ public:
     /// (hooks/HTransferACUs.cpp). The host's, as the executable is.
     bool faf_exe() const { return faf_exe_; }
     void set_faf_exe(bool on) { faf_exe_ = on; }
+    /// Moho's CAiBrain::IsOpponentAIRunning: off with the process's /noai (its sim variable
+    /// AI_RunOpponentAI, true by default, has no console here). The host's, not saved.
+    bool run_opponent_ai() const { return run_opponent_ai_; }
+    void set_run_opponent_ai(bool on) { run_opponent_ai_ = on; }
     map::PathfindingGrid* pathfinding_grid() { return pathfinding_grid_.get(); }
     const map::PathfindingGrid* pathfinding_grid() const { return pathfinding_grid_.get(); }
 
@@ -1173,6 +1177,7 @@ private:
     UnitBlockers unit_blockers_{*this};
     bool moho_pathing_ = false;
     bool faf_exe_ = false; // see faf_exe
+    bool run_opponent_ai_ = true; // see run_opponent_ai
     /// Stored units whose carrier is gone, destroyed at a safe point of the
     /// tick (destroy_orphaned_stored_units).
     std::vector<u32> stored_to_destroy_;
