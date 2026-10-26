@@ -1132,6 +1132,42 @@ TEST_CASE("A Ctrl click selects every unit of its blueprint the player has", "[s
     CHECK(input.selected() == std::unordered_set<osc::u32>{engineer});
 }
 
+TEST_CASE("A double-click on a wall selects its like only on FAF's data", "[selection]") {
+    // Moho's HandleDoubleClickSelection passes over a wall; FAF's patched
+    // exe drops the check (FA-Binary-Patches hooks/WallSelection.cpp)
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim{lua.raw(), nullptr};
+    const auto add = [&](const char* bp, osc::f32 x, bool wall) {
+        auto unit = std::make_unique<osc::sim::Unit>();
+        unit->set_army(0);
+        unit->set_blueprint_id(bp);
+        unit->add_category("SELECTABLE");
+        if (wall) unit->add_category("WALL");
+        unit->set_size_xz(1.0f, 1.0f);
+        unit->set_size_y(1.0f);
+        const osc::u32 id = sim.entity_registry().register_entity(std::move(unit));
+        sim.entity_registry().find(id)->set_position({x, 0.0f, 10.0f});
+        sim.entity_registry().find(id)->place_now();
+        return id;
+    };
+    const osc::u32 wall = add("ueb5101", 10.0f, true);
+    const osc::u32 next_wall = add("ueb5101", 12.0f, true);
+    add("uel0201", 14.0f, false);
+    // Everything in view: clip = world / 1000
+    std::array<osc::f32, 16> view{};
+    view[0] = view[5] = view[10] = 0.001f;
+    view[15] = 1.0f;
+    osc::renderer::InputHandler input;
+
+    input.set_selected({wall});
+    input.select_similar_in_view(sim, 10.0f, 10.0f, view);
+    CHECK(input.selected() == std::unordered_set<osc::u32>{wall});
+
+    sim.set_faf_exe(true);
+    input.select_similar_in_view(sim, 10.0f, 10.0f, view);
+    CHECK(input.selected() == std::unordered_set<osc::u32>{wall, next_wall});
+}
+
 TEST_CASE("UserUnit:CanAttackTarget holds a structure to its weapon's reach", "[userunit]") {
     UiWorld w;
     auto gun = std::make_unique<osc::sim::Weapon>();
