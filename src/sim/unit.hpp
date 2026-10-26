@@ -1941,7 +1941,7 @@ private:
     bool being_captured_ = false; // is this unit currently being captured?
     bool paused_ = false;
     MotionHorz motion_horz_ = MotionHorz::Stopped;
-    void update_motion_horz(lua_State* L);
+    void update_motion_horz(lua_State* L, bool crossing);
     MotionTurn motion_turn_ = MotionTurn::Straight;
     MotionTurn motion_turn_next_ = MotionTurn::Straight;
     void update_motion_turn(lua_State* L);
