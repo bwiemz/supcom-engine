@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "app/app_internal.hpp"
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -638,6 +639,58 @@ TEST_CASE("A side mouse button is a key only where the key names name it, as FAF
     f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_4, GLFW_RELEASE, 0);
     f.deliver();
     CHECK(f.check("hotkeys == 1"));
+}
+
+TEST_CASE("FlushEvents drops the events not yet handled, as Moho's", "[ui][lua][input]") {
+    // faf-re func_FlushEvents: the window's queue is pumped with the input
+    // handlers set aside. What is held stays held, and a dropped press makes
+    // no double-click of the next.
+    InputFixture f;
+    f.run("target = box('target', GetFrame(0), 0, 0, 100, 100, 1) target.eats = true");
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS, 0);
+    f.dispatch.drop_pending_events();
+    f.deliver();
+    CHECK(f.check("table.getn(handled) == 0"));
+
+    // Where the dropped one was, at once: a press, not a double-click
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.dispatch.on_cursor_pos(10, 10);
+    f.deliver();
+    CHECK(f.check("table.getn(of_type('ButtonPress')) == 1"));
+    CHECK(f.check("table.getn(of_type('ButtonDClick')) == 0"));
+    CHECK(f.check("of_type('MouseMotion')[1].event.Modifiers.Right"));
+
+    // A handler that flushes drops the rest of its batch: the second press
+    // is never heard
+    f.run("handled = {} target.eats = false");
+    lua_State* L = f.lua.raw();
+    lua_pushlightuserdata(L, &f.dispatch);
+    lua_pushcclosure(
+        L,
+        [](lua_State* s) -> int {
+            static_cast<osc::ui::UIDispatch*>(lua_touserdata(s, lua_upvalueindex(1)))
+                ->drop_pending_events();
+            return 0;
+        },
+        1);
+    lua_setglobal(L, "Flush");
+    f.run("target.HandleEvent = function(self, event)"
+          "  table.insert(handled, {who = 'target', event = event})"
+          "  if event.Type == 'ButtonPress' then Flush() end"
+          "  return true end");
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_MIDDLE, GLFW_PRESS, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_MIDDLE, GLFW_RELEASE, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("table.getn(of_type('ButtonPress')) == 1"));
+    CHECK(f.check("table.getn(of_type('ButtonRelease')) == 0"));
+
+    // The Lua function takes no argument; with no window it has nothing to pump
+    osc::app::register_session_ui_globals(f.lua);
+    f.run("FlushEvents()");
+    CHECK(f.check("not pcall(FlushEvents, 1)"));
 }
 
 TEST_CASE("A press no control eats reaches each control under the mouse once", "[ui][lua][input]") {

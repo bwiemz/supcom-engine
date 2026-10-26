@@ -204,6 +204,10 @@ public:
 
     /// Poll window events and update camera.
     void poll_events(f64 dt);
+    /// Moho's FlushEvents: the window's queued input is pumped through with
+    /// the input set aside (a wheel notch doesn't zoom), then the UI's
+    /// undelivered events are dropped.
+    void flush_events();
     /// Moho's mouse scrubbing: the pointer is pinned to a world view's centre
     /// while its camera's spin or middle drag asks (Camera::scrubs), and put
     /// back where it was after; meanwhile FA's cursor is hidden, and the
@@ -1079,6 +1083,7 @@ private:
     SelectionInfoRenderer selection_info_renderer_;
     ProfileOverlay profile_overlay_;
     ui::UIDispatch ui_dispatch_;
+    bool flushing_input_ = false; ///< flush_events is pumping the window's queue
     f64 last_frame_time_ = 0.0;
     f32 total_time_ = 0.0f;
     f32 frame_dt_ = 0.0f;

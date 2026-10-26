@@ -79,6 +79,14 @@ public:
     void on_cursor_pos(f64 x, f64 y);
     void on_scroll(f64 y_offset);
     void on_char(u32 codepoint);
+    /// FlushEvents: the events not yet dispatched are dropped, the rest of a
+    /// batch being dispatched among them. What is held stays held and the
+    /// mouse where it is, and a dropped press starts no double-click.
+    void drop_pending_events() {
+        pending_events_.clear();
+        last_press_time_ = -1.0;
+        ++flushes_;
+    }
 
     /// The control currently under the mouse (for enter/exit tracking).
     UIControl* hover_control() const { return hover_control_; }
@@ -152,6 +160,7 @@ private:
     void hover_item_list(lua_State* L, UIControl* target, const UIEvent& ev);
 
     std::vector<UIEvent> pending_events_;
+    u32 flushes_ = 0; ///< drop_pending_events calls: one in a handler ends its batch
     f64 mouse_x_ = 0;
     f64 mouse_y_ = 0;
     u8 buttons_down_ = 0; ///< kMouseLeft... held now

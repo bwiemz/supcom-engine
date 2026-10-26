@@ -15,7 +15,6 @@ DrawLine stub_noop
 DrawLinePop stub_noop
 EndLoggingStats l_EndLoggingStats
 EntityCategoryEmpty l_EntityCategoryEmpty
-FlushEvents l_FlushEvents
 GetAirUnitsEmphasis <lambda>
 GetBotUnitsEmphasis <lambda>
 GetOmni shield_GetOmni

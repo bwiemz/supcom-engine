@@ -549,7 +549,11 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
     std::vector<UIEvent> events;
     events.swap(pending_events_);
 
+    const u32 flushes = flushes_;
     for (const auto& ev : events) {
+        // A handler's FlushEvents drops the batch's rest too, as Moho's empties
+        // the window's queue
+        if (flushes_ != flushes) break;
         // A side button's key reaches the UI only where the key names name
         // it, as FAF's keyNames.lua does for its patched game: retail's names
         // stop at MiddleMouse (04), and its game never sees the buttons.
