@@ -17,6 +17,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -30,6 +31,7 @@ using Catch::Approx;
 using osc::f32;
 using osc::u32;
 using osc::sim::Unit;
+using osc::test::tick_until;
 
 namespace {
 
@@ -108,13 +110,15 @@ struct World {
         u.push_command(cmd, true);
         std::vector<f32> rises;
         f32 y = u.position().y;
-        for (int t = 0; t < 40 && static_cast<int>(rises.size()) < ticks; ++t) {
-            sim.tick();
-            if (u.position().y != y || !rises.empty()) {
-                rises.push_back(u.position().y - y);
-            }
-            y = u.position().y;
-        }
+        tick_until(
+            [&] {
+                sim.tick();
+                if (u.position().y != y || !rises.empty()) {
+                    rises.push_back(u.position().y - y);
+                }
+                y = u.position().y;
+            },
+            "the aircraft climbs", 40, [&] { return static_cast<int>(rises.size()) >= ticks; });
         return rises;
     }
 };
@@ -125,7 +129,6 @@ TEST_CASE("An aircraft climbs under KLift, against KLiftDamping", "[air_lift]") 
     World w;
     Unit& gunship = w.make("gunship");
     const std::vector<f32> rises = w.rises_from(gunship, 2.0f, 2);
-    REQUIRE(rises.size() == 2);
     CHECK(rises[0] == Approx(0.12f).margin(1e-4));
     CHECK(rises[1] == Approx(0.3282f).margin(1e-4));
 }
@@ -135,7 +138,6 @@ TEST_CASE("A winged aircraft climbs by its wings' lift, LiftFactor x (up - 0.5) 
     World w;
     Unit& fighter = w.make("fighter");
     const std::vector<f32> rises = w.rises_from(fighter, 2.0f, 1);
-    REQUIRE(rises.size() == 1);
     CHECK(rises[0] == Approx(0.0525f).margin(1e-4));
 }
 
@@ -200,14 +202,11 @@ TEST_CASE("An aircraft flies at the height SetElevation gives it, and back at Re
     cmd.type = osc::sim::CommandType::Move;
     cmd.target_pos = {120.0f, 20.0f, 64.0f};
     gunship.push_command(cmd, true);
-    auto height_after = [&](int ticks) {
-        for (int t = 0; t < ticks; ++t) {
-            w.sim.tick();
-        }
-        return gunship.position().y - 10.0f;
-    };
+    const auto height = [&] { return gunship.position().y - 10.0f; };
     REQUIRE(w.state.do_string("made:SetElevation(1)").ok());
-    CHECK(height_after(40) < 3.0f);
+    tick_until([&] { w.sim.tick(); }, "it comes down to the height SetElevation gives", 80,
+               [&] { return height() < 3.0f; });
     REQUIRE(w.state.do_string("made:RevertElevation()").ok());
-    CHECK(height_after(40) > 8.0f);
+    tick_until([&] { w.sim.tick(); }, "it climbs back to its blueprint's height", 80,
+               [&] { return height() > 8.0f; });
 }

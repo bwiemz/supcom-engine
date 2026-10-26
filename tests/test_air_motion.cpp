@@ -17,6 +17,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -32,6 +33,7 @@ extern "C" {
 using Catch::Approx;
 using osc::f32;
 using osc::sim::Unit;
+using osc::test::tick_until;
 
 namespace {
 
@@ -197,16 +199,16 @@ TEST_CASE("An aircraft brakes onto the end of its move rather than stopping in o
     f32 top = 0.0f;
     f32 sharpest = 0.0f;
     f32 last = 0.0f;
-    int ticks = 0;
-    for (; ticks < 300 && !gunship.command_queue().empty(); ++ticks) {
-        const auto before = gunship.position();
-        w.sim.tick();
-        const f32 speed = World::flat_speed(before, gunship.position());
-        top = std::max(top, speed);
-        sharpest = std::max(sharpest, last - speed);
-        last = speed;
-    }
-    REQUIRE(ticks < 300);
+    tick_until(
+        [&] {
+            const auto before = gunship.position();
+            w.sim.tick();
+            const f32 speed = World::flat_speed(before, gunship.position());
+            top = std::max(top, speed);
+            sharpest = std::max(sharpest, last - speed);
+            last = speed;
+        },
+        "the gunship finishes its move", 300, [&] { return gunship.command_queue().empty(); });
     CHECK(top > 11.0f);
     CHECK(sharpest < 2.0f);
     CHECK(last < 1.0f);
@@ -226,16 +228,16 @@ TEST_CASE("A gunship brakes onto the centre of its goal's cell as retail's does"
     gunship.set_heading(1.5707964f);
     gunship.set_air_velocity({11.982f, 0.0f, 0.0f});
     World::move(gunship, 120.0f, 128.0f);
-    int closed = -1;
-    for (int t = 1; t <= 60 && closed < 0; ++t) {
-        w.sim.tick();
-        if (t <= 20) {
-            CHECK(gunship.position().x - 108.9213f == Approx(retail[t - 1]).margin(0.01f));
-        }
-        if (gunship.command_queue().empty()) {
-            closed = t;
-        }
-    }
+    int t = 0;
+    const int closed = tick_until(
+        [&] {
+            w.sim.tick();
+            ++t;
+            if (t <= 20) {
+                CHECK(gunship.position().x - 108.9213f == Approx(retail[t - 1]).margin(0.01f));
+            }
+        },
+        "the gunship finishes its move", 60, [&] { return gunship.command_queue().empty(); });
     CHECK(std::abs(closed - kRetailClose) <= 1);
     CHECK(gunship.position().x == Approx(120.264f).margin(0.02f));
     CHECK(gunship.position().z == Approx(128.5f).margin(0.01f));
@@ -249,16 +251,18 @@ TEST_CASE("An aircraft with a move queued after its move flies through its goal 
     World::move(gunship, 80.0f, 200.0f, false);
     f32 slowest = 1e9f;
     bool climbed = false;
-    for (int t = 0; t < 400 && gunship.command_queue().size() > 1; ++t) {
-        const auto before = gunship.position();
-        w.sim.tick();
-        const f32 speed = World::flat_speed(before, gunship.position());
-        climbed = climbed || speed > 11.0f;
-        if (climbed) {
-            slowest = std::min(slowest, speed);
-        }
-    }
-    REQUIRE(gunship.command_queue().size() == 1);
+    tick_until(
+        [&] {
+            const auto before = gunship.position();
+            w.sim.tick();
+            const f32 speed = World::flat_speed(before, gunship.position());
+            climbed = climbed || speed > 11.0f;
+            if (climbed) {
+                slowest = std::min(slowest, speed);
+            }
+        },
+        "the gunship passes its first goal", 400,
+        [&] { return gunship.command_queue().size() == 1; });
     CHECK(slowest > 10.0f);
 }
 
@@ -272,19 +276,21 @@ TEST_CASE("An aircraft whose move ends at speed holds where it would be a second
     World::move(fighter, 60.0f, 128.0f);
     osc::sim::Vector3 held{};
     std::vector<f32> drops;
-    for (int t = 0; t < 600 && fighter.layer() == "Air"; ++t) {
-        const f32 y = fighter.position().y;
-        const bool moving = !fighter.command_queue().empty();
-        w.sim.tick();
-        if (moving && fighter.command_queue().empty()) {
-            held = fighter.position();
-            held.x += fighter.air_velocity().x;
-            held.z += fighter.air_velocity().z;
-        }
-        if (fighter.has_unit_state("MovingDown")) {
-            drops.push_back(y - fighter.position().y);
-        }
-    }
+    tick_until(
+        [&] {
+            const f32 y = fighter.position().y;
+            const bool moving = !fighter.command_queue().empty();
+            w.sim.tick();
+            if (moving && fighter.command_queue().empty()) {
+                held = fighter.position();
+                held.x += fighter.air_velocity().x;
+                held.z += fighter.air_velocity().z;
+            }
+            if (fighter.has_unit_state("MovingDown")) {
+                drops.push_back(y - fighter.position().y);
+            }
+        },
+        "the fighter lands", 600, [&] { return fighter.layer() != "Air"; });
     REQUIRE(fighter.layer() == "Land");
     REQUIRE(drops.size() > 2);
     const f32 steepest = *std::max_element(drops.begin(), drops.end());
@@ -400,9 +406,8 @@ TEST_CASE("Near its goal a winged aircraft turns its nose to the way its order s
     Unit& a = w.make("uea0102", 30.0f, 128.0f);
     a.set_air_velocity({0.0f, 0.0f, 15.0f});
     World::move(a, 60.0f, 128.0f);
-    for (int t = 0; t < 600 && a.layer() == "Air"; ++t) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the aircraft lands", 600,
+               [&] { return a.layer() != "Air"; });
     REQUIRE(a.layer() == "Land");
     CHECK(a.heading() == Approx(1.5707964f).margin(0.05f));
 }
@@ -422,18 +427,19 @@ TEST_CASE("An aircraft breaking off its patrol to attack flies on at its speed, 
     a.push_command(patrol, true);
     f32 cruise = 0.0f;
     std::vector<f32> after;
-    for (int t = 0; t < 300 && after.size() < 5; ++t) {
-        a.weapons().front()->fire_clock = 1000000;
-        const auto before = a.position();
-        w.sim.tick();
-        const f32 speed = World::flat_speed(before, a.position());
-        if (!after.empty() || a.command_queue().front().from_patrol) {
-            after.push_back(speed);
-        } else {
-            cruise = speed;
-        }
-    }
-    REQUIRE(after.size() == 5);
+    tick_until(
+        [&] {
+            a.weapons().front()->fire_clock = 1000000;
+            const auto before = a.position();
+            w.sim.tick();
+            const f32 speed = World::flat_speed(before, a.position());
+            if (!after.empty() || a.command_queue().front().from_patrol) {
+                after.push_back(speed);
+            } else {
+                cruise = speed;
+            }
+        },
+        "the aircraft flies five ticks of its attack", 300, [&] { return after.size() == 5; });
     CHECK(cruise > 14.0f);
     CHECK(*std::min_element(after.begin(), after.end()) > cruise - 3.0f);
 }
@@ -458,25 +464,26 @@ TEST_CASE("An aircraft whose ground attack goes round the queue flies on through
         f32 at_turn = 0.0f;
         f32 sharpest = 0.0f;
         int after = -1;
-        for (int t = 0; t < 600 && after < 5; ++t) {
-            gun_ref.fire_clock = 1000000;
-            if (a.command_queue().front().engaged) {
-                gun_ref.shots_at_target = gun_ref.attack_ground_tries;
-            }
-            const auto before = a.position();
-            w.sim.tick();
-            const f32 speed = World::flat_speed(before, a.position());
-            if (after < 0 && a.command_queue().front().type == osc::sim::CommandType::Move) {
-                after = 0;
-                at_turn = last;
-            }
-            if (after >= 0) {
-                sharpest = std::max(sharpest, last - speed);
-                ++after;
-            }
-            last = speed;
-        }
-        REQUIRE(after == 5);
+        tick_until(
+            [&] {
+                gun_ref.fire_clock = 1000000;
+                if (a.command_queue().front().engaged) {
+                    gun_ref.shots_at_target = gun_ref.attack_ground_tries;
+                }
+                const auto before = a.position();
+                w.sim.tick();
+                const f32 speed = World::flat_speed(before, a.position());
+                if (after < 0 && a.command_queue().front().type == osc::sim::CommandType::Move) {
+                    after = 0;
+                    at_turn = last;
+                }
+                if (after >= 0) {
+                    sharpest = std::max(sharpest, last - speed);
+                    ++after;
+                }
+                last = speed;
+            },
+            "the aircraft flies five ticks of its move", 600, [&] { return after == 5; });
         CHECK(at_turn > 5.0f);
         CHECK(sharpest < 4.0f);
     }
@@ -489,10 +496,8 @@ TEST_CASE("An aircraft the engine held docked or hovering flies again from rest"
         Unit& a = w.make("gunship", 30.0f, 128.0f);
         Unit& pad = w.make("pad", 60.0f, 60.0f);
         World::move(a, 200.0f, 128.0f);
-        for (int t = 0; t < 40; ++t) {
-            w.sim.tick();
-        }
-        REQUIRE(std::abs(a.air_velocity().x) > 8.0f);
+        tick_until([&] { w.sim.tick(); }, "the gunship is at speed", 80,
+                   [&] { return std::abs(a.air_velocity().x) > 8.0f; });
         a.attach_to_transport(&pad, w.sim.entity_registry(), L);
         REQUIRE(a.transport_id() == pad.entity_id());
         for (int t = 0; t < 5; ++t) {
@@ -507,13 +512,14 @@ TEST_CASE("An aircraft the engine held docked or hovering flies again from rest"
         Unit& ferry = w.make("ferry", 40.0f, 40.0f);
         Unit& tank = w.make("tank", 44.0f, 40.0f);
         tank.attach_to_transport(&ferry, w.sim.entity_registry(), L);
-        for (int t = 0; t < 300 && ferry.vert_event() != "Hover"; ++t) {
-            if (ferry.has_unit_state("MovingDown")) {
-                ferry.set_air_spin({0.0f, 3.0f, 0.0f});
-            }
-            w.sim.tick();
-        }
-        REQUIRE(ferry.vert_event() == "Hover");
+        tick_until(
+            [&] {
+                if (ferry.has_unit_state("MovingDown")) {
+                    ferry.set_air_spin({0.0f, 3.0f, 0.0f});
+                }
+                w.sim.tick();
+            },
+            "the transport hovers", 300, [&] { return ferry.vert_event() == "Hover"; });
         World::move(ferry, 100.0f, 40.0f);
         const auto before = ferry.orientation();
         w.sim.tick();
@@ -539,13 +545,14 @@ TEST_CASE("An aircraft's weapon takes its ordered target only once the attack en
     a.push_command(attack, true);
     const osc::sim::Weapon& weapon = *a.weapons().front();
     bool early = false;
-    for (int t = 0; t < 300 && !a.command_queue().front().engaged; ++t) {
-        a.weapons().front()->fire_clock = 1000000;
-        w.sim.tick();
-        early = early ||
-                (!a.command_queue().front().engaged && weapon.target_entity_id == tank.entity_id());
-    }
-    REQUIRE(a.command_queue().front().engaged);
+    tick_until(
+        [&] {
+            a.weapons().front()->fire_clock = 1000000;
+            w.sim.tick();
+            early = early || (!a.command_queue().front().engaged &&
+                              weapon.target_entity_id == tank.entity_id());
+        },
+        "the attack engages", 300, [&] { return a.command_queue().front().engaged; });
     CHECK_FALSE(early);
     CHECK(weapon.target_entity_id == 0);
     a.weapons().front()->fire_clock = 1000000;
@@ -596,21 +603,24 @@ TEST_CASE("An attack that engages makes the weapons drop their target, then take
     a.add_weapon(std::move(gun));
     const Unit& tank = w.make("tank", 45.0f, 128.0f, 2);
     const osc::sim::Weapon& weapon = *a.weapons().front();
-    for (int t = 0; t < 20 && weapon.target_entity_id != tank.entity_id(); ++t) {
-        a.weapons().front()->fire_clock = 1000000;
-        w.sim.tick();
-    }
-    REQUIRE(weapon.target_entity_id == tank.entity_id());
+    tick_until(
+        [&] {
+            a.weapons().front()->fire_clock = 1000000;
+            w.sim.tick();
+        },
+        "the weapon picks the tank", 20,
+        [&] { return weapon.target_entity_id == tank.entity_id(); });
     REQUIRE(w.state.do_string("heard = {}").ok());
     osc::sim::UnitCommand attack;
     attack.type = osc::sim::CommandType::Attack;
     attack.target_id = tank.entity_id();
     a.push_command(attack, true);
-    for (int t = 0; t < 100 && !a.command_queue().front().engaged; ++t) {
-        a.weapons().front()->fire_clock = 1000000;
-        w.sim.tick();
-    }
-    REQUIRE(a.command_queue().front().engaged);
+    tick_until(
+        [&] {
+            a.weapons().front()->fire_clock = 1000000;
+            w.sim.tick();
+        },
+        "the attack engages", 100, [&] { return a.command_queue().front().engaged; });
     REQUIRE(w.state.do_string("assert(table.concat(heard, ' ') == 'lost')").ok());
     a.weapons().front()->fire_clock = 1000000;
     w.sim.tick();
@@ -657,32 +667,33 @@ TEST_CASE("An aircraft whose move hands over to its next order as it runs dry fl
             .ok());
     Unit& plane = start(handed);
     Unit& reference = start(alone);
-    int ticks = 0;
-    for (; ticks < 300 && plane.command_queue().size() == 2; ++ticks) {
-        plane.weapons().front()->fire_clock = 1000000;
-        reference.weapons().front()->fire_clock = 1000000;
-        if (plane.navigator().ended()) {
-            for (Unit* u : {&plane, &reference}) {
-                u->set_fuel_use_time(1.0f);
-                u->set_fuel_ratio(0.05f);
+    tick_until(
+        [&] {
+            plane.weapons().front()->fire_clock = 1000000;
+            reference.weapons().front()->fire_clock = 1000000;
+            if (plane.navigator().ended()) {
+                for (Unit* u : {&plane, &reference}) {
+                    u->set_fuel_use_time(1.0f);
+                    u->set_fuel_ratio(0.05f);
+                }
+                reference.set_speed_mult(0.25f);
+                const osc::sim::UnitCommand order = reference.command_queue().back();
+                reference.push_command(order, true);
             }
-            reference.set_speed_mult(0.25f);
-            const osc::sim::UnitCommand order = reference.command_queue().back();
-            reference.push_command(order, true);
-        }
-        const auto before = plane.position();
-        handed.sim.tick();
-        alone.sim.tick();
-        if (plane.command_queue().size() == 1) {
-            REQUIRE(plane.speed_mult() == 0.25f);
-            CHECK(plane.air_combat().flying);
-            CHECK(World::flat_speed(before, plane.position()) <= top + 1e-3f);
-        }
-        CHECK(plane.position().x == reference.position().x);
-        CHECK(plane.position().y == reference.position().y);
-        CHECK(plane.position().z == reference.position().z);
-    }
-    CHECK(ticks < 300);
+            const auto before = plane.position();
+            handed.sim.tick();
+            alone.sim.tick();
+            if (plane.command_queue().size() == 1) {
+                REQUIRE(plane.speed_mult() == 0.25f);
+                CHECK(plane.air_combat().flying);
+                CHECK(World::flat_speed(before, plane.position()) <= top + 1e-3f);
+            }
+            CHECK(plane.position().x == reference.position().x);
+            CHECK(plane.position().y == reference.position().y);
+            CHECK(plane.position().z == reference.position().z);
+        },
+        "the move hands over to the next order", 300,
+        [&] { return plane.command_queue().size() != 2; });
 }
 
 TEST_CASE("An aircraft docking at a staging platform is taken aboard on the tick after the step "
@@ -706,25 +717,26 @@ TEST_CASE("An aircraft docking at a staging platform is taken aboard on the tick
     dock.target_pos = pad.position();
     plane.push_command(dock, true);
     int settled = -1;
-    int aboard = -1;
-    for (int t = 0; t < 400; ++t) {
-        w.sim.tick();
-        if (plane.transport_id() == pad.entity_id()) {
-            aboard = t;
-            break;
-        }
-        const osc::sim::TransportSlots* slots = pad.built_transport_slots();
-        const auto* slot = slots ? slots->slot_of(plane.entity_id()) : nullptr;
-        if (settled < 0 && slot) {
-            const auto at = pad.bone_world_position(slot->bone);
-            const auto& p = plane.position();
-            const f32 floor = plane.air_floor(w.sim.terrain(), p.x, p.z);
-            if (std::hypot(at.x - p.x, at.z - p.z) <= 0.5f &&
-                plane.current_altitude() == at.y - floor && std::cos(plane.heading()) > 0.95f) {
-                settled = t;
+    int t = 0;
+    const int aboard = tick_until(
+        [&] {
+            w.sim.tick();
+            ++t;
+            if (plane.transport_id() == pad.entity_id()) {
+                return;
             }
-        }
-    }
-    REQUIRE(aboard >= 0);
+            const osc::sim::TransportSlots* slots = pad.built_transport_slots();
+            const auto* slot = slots ? slots->slot_of(plane.entity_id()) : nullptr;
+            if (settled < 0 && slot) {
+                const auto at = pad.bone_world_position(slot->bone);
+                const auto& p = plane.position();
+                const f32 floor = plane.air_floor(w.sim.terrain(), p.x, p.z);
+                if (std::hypot(at.x - p.x, at.z - p.z) <= 0.5f &&
+                    plane.current_altitude() == at.y - floor && std::cos(plane.heading()) > 0.95f) {
+                    settled = t;
+                }
+            }
+        },
+        "the plane is taken aboard", 400, [&] { return plane.transport_id() == pad.entity_id(); });
     CHECK(aboard == settled + 1);
 }

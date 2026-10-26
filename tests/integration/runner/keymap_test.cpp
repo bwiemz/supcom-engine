@@ -5,6 +5,7 @@
 #include "integration_tests.hpp"
 #include "lua/lua_state.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 #include "ui/keymap.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/ui_dispatch.hpp"
@@ -64,15 +65,13 @@ void test_keymap(TestContext& ctx, ui::UIControlRegistry& registry, GameStateMan
     // Retail locks the input as a game starts (worldview.LockInput: a modal
     // group over the screen) and lets go 3 s after the first update.
     const bool locked = registry.input_capture() != nullptr;
-    int frames = 0;
-    while (registry.input_capture() && frames < 600) {
-        pump_frames(1);
-        ++frames;
-    }
-    t.check(locked && !registry.input_capture() && frames >= 180,
+    const auto frames =
+        tick_until([&] { pump_frames(1); }, "Test 2: the input unlocks after the opening zoom", 600,
+                   [&] { return !registry.input_capture(); });
+    t.check(locked && frames && *frames >= 180,
             fmt::format("Test 2: the game starts with its input locked, and unlocks it after the "
                         "opening zoom ({} frames)",
-                        frames));
+                        frames.value_or(-1)));
 
     // Esc: uimain.EscapeHandler, through the escape handler a screen sets.
     run("esc_hits = 0 import('/lua/ui/uimain.lua').SetEscapeHandler(function() esc_hits = esc_hits "
@@ -268,11 +267,8 @@ void test_session_commands(TestContext& ctx, ui::UIControlRegistry& registry,
                         started, toggled, refused));
 
     // The hotkeys reach them: M (move), Ctrl-B (engineers), S (stop).
-    int frames = 0;
-    while (registry.input_capture() && frames < 600) {
-        pump_frames(1);
-        ++frames;
-    }
+    tick_until([&] { pump_frames(1); }, "the input unlocks after the opening zoom", 600,
+               [&] { return !registry.input_capture(); });
     run("SelectUnits({})");
     press(GLFW_KEY_B, GLFW_MOD_CONTROL);
     const std::string by_key = text("selection_text()");
@@ -370,11 +366,8 @@ void test_keyboard(TestContext& ctx, ui::UIControlRegistry& registry,
         dispatch.dispatch_events(L, registry);
         pump_frames(1);
     };
-    int frames = 0;
-    while (registry.input_capture() && frames < 600) {
-        pump_frames(1);
-        ++frames;
-    }
+    tick_until([&] { pump_frames(1); }, "the input unlocks after the opening zoom", 600,
+               [&] { return !registry.input_capture(); });
 
     // Retail's control groups: Ctrl-1 keeps the selection as group 1, and 1
     // brings it back (selection.lua, through UI_MakeSelectionSet and

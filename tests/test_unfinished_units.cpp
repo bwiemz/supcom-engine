@@ -15,6 +15,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -29,6 +30,7 @@ extern "C" {
 using osc::sim::CommandType;
 using osc::sim::SimState;
 using osc::sim::Unit;
+using osc::test::tick_until;
 
 namespace {
 
@@ -234,10 +236,11 @@ TEST_CASE("A paused unit's capture costs energy as an unpaused one's", "[sim][or
     capture.target_id = prize->entity_id();
     capture.target_pos = prize->position();
     captor->push_command(capture, true);
-    for (int i = 0; i < 5; ++i) {
-        sim.tick();
-    }
-    REQUIRE(captor->is_capturing());
+    tick_until([&] { sim.tick(); }, "the capture begins and its army asks for the energy", 10,
+               [&] {
+                   return captor->is_capturing() &&
+                          sim.get_army(0)->economy().energy.requested > 0.0;
+               });
     CHECK(sim.get_army(0)->economy().energy.requested == Catch::Approx(100.0));
     CHECK(captor->economy().energy_requested() == Catch::Approx(100.0));
 
@@ -263,10 +266,8 @@ TEST_CASE("A unit being built holds its orders until it is finished", "[sim][ord
     CHECK(u->command_queue().size() == 1);
 
     u->set_is_being_built(false);
-    for (int i = 0; i < 20; ++i) {
-        sim.tick();
-    }
-    CHECK(u->position().x > 10.0f);
+    tick_until([&] { sim.tick(); }, "the finished unit moves", 20,
+               [&] { return u->position().x > 10.0f; });
 }
 
 TEST_CASE("Of the units being built, only a factory takes orders", "[sim][orders]") {

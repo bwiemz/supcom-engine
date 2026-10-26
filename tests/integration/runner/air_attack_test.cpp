@@ -18,6 +18,7 @@
 // target: a bomber given an attack order never dropped.
 
 #include "integration_tests.hpp"
+#include "tick_until.hpp"
 
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
@@ -352,23 +353,25 @@ void test_air_auto_engage(TestContext& ctx) {
     };
     const u32 bomber = id("__auto_bomber_id");
     const u32 tank = id("__auto_tank_id");
-    bool f1_attacked = false, b1_attacked = false;
-    for (int tick = 0; tick < 120 && !(f1_attacked && b1_attacked); ++tick) {
-        ctx.sim.tick();
-        if (const auto* c = head(id("__auto_f1_id"));
-            c && c->type == sim::CommandType::Attack && c->target_id == bomber)
-            f1_attacked = true;
-        if (const auto* c = head(id("__auto_b1_id"));
-            c && c->type == sim::CommandType::Attack && c->target_id == tank)
-            b1_attacked = true;
-    }
-    record(f1_attacked, "Test 1: an idle fighter attacks an enemy bomber passing by");
+    const auto attacks = [&](const char* name, u32 target) {
+        const auto* c = head(id(name));
+        return c && c->type == sim::CommandType::Attack && c->target_id == target;
+    };
+    bool b1_attacked = false;
+    const auto b1_seen = [&] {
+        b1_attacked = b1_attacked || attacks("__auto_b1_id", tank);
+        return b1_attacked;
+    };
+    tick_until(ctx, "Test 1: an idle fighter attacks an enemy bomber passing by", 120, [&] {
+        b1_seen();
+        return attacks("__auto_f1_id", bomber);
+    });
+    tick_until(ctx, "Test 4: an idle bomber attacks an enemy tank 45 out", 120, b1_seen);
     const auto* f2 = head(id("__auto_f2_id"));
     record(!f2 || f2->type != sim::CommandType::Attack,
            "Test 2: a fighter on hold fire stays idle");
     const auto* f3 = head(id("__auto_f3_id"));
     record(f3 && f3->type == sim::CommandType::Move, "Test 3: a fighter on a move order keeps it");
-    record(b1_attacked, "Test 4: an idle bomber attacks an enemy tank 45 out");
     spdlog::info("Air auto engage test: {}/{} passed", pass, pass + fail);
 }
 

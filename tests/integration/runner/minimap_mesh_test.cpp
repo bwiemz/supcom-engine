@@ -13,6 +13,7 @@
 
 #include "integration_tests.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "core/ui_registry_keys.hpp"
 #include "lua/lua_state.hpp"
@@ -22,6 +23,7 @@
 #include "renderer/renderer.hpp"
 #include "sim/entity.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/world_view.hpp"
 
@@ -166,10 +168,19 @@ void test_minimap_meshes(TestContext& ctx) {
     lua_pushboolean(L, 1);
     lua_rawset(L, LUA_REGISTRYINDEX);
 
-    // The commanders' warp-in first plays out (their bones hold them at no
-    // size, then they wear the phase shield's mesh), and the renderer sees
-    // the world as it then is
-    for (int i = 0; i < 250; ++i) ctx.sim.tick();
+    tick_until(ctx, "the commanders' warp-in plays out", 250, [&] {
+        for (i32 army = 0; army < 8; ++army) {
+            const sim::Entity* e = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, army));
+            if (e && e->is_unit()) {
+                const auto& u = static_cast<const sim::Unit&>(*e);
+                if (u.is_bone_hidden(0) ||
+                    u.mesh_override().find("PhaseShield") != std::string::npos) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    });
     shots.recapture();
 
     // Each world entity's mesh and how far it shows, read apart from the

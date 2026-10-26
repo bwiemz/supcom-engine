@@ -18,6 +18,7 @@
 #include "sim/shield.hpp"
 #include "sim/unit.hpp"
 #include "sim/weapon.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -41,6 +42,7 @@ using osc::sim::Projectile;
 using osc::sim::Quaternion;
 using osc::sim::Unit;
 using osc::sim::Vector3;
+using osc::test::tick_until;
 
 namespace {
 
@@ -444,10 +446,8 @@ TEST_CASE("a straight weapon lobs its falling shots onto their target", "[collis
     const Vector3 v = shot->velocity;
     const f32 pitch = std::asin(v.y / std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z));
     CHECK(std::sin(2.0f * pitch) == Approx(Projectile::GRAVITY * 30.0f / 400.0f).epsilon(1e-3));
-    for (int tick = 0; tick < 20 && !shot->destroyed(); ++tick) {
-        fly(reg, *shot);
-    }
-    CHECK(shot->destroyed());
+    tick_until([&] { fly(reg, *shot); }, "the shot lands on its target", 40,
+               [&] { return shot->destroyed(); });
     CHECK(shot->position().z == Approx(129.0f).margin(1e-3));
 }
 
@@ -526,12 +526,13 @@ TEST_CASE("a straight weapon's turret pitches up to lob its falling shots", "[co
     const f32 low = std::atan((v2 - std::sqrt(v2 * v2 - g * (g * d * d + 2 * h * v2))) / (g * d));
     CHECK(t.aim->pitch() == Approx(low).margin(1e-4));
     Vector3 was = shot->position();
-    for (int tick = 0; tick < 30 && shot->position().y > 0.0f; ++tick) {
-        was = shot->position();
-        fly(t.reg, *shot);
-    }
+    tick_until(
+        [&] {
+            was = shot->position();
+            fly(t.reg, *shot);
+        },
+        "the shot comes down", 60, [&] { return shot->position().y <= 0.0f; });
     const Vector3 now = shot->position();
-    REQUIRE(now.y <= 0.0f);
     const f32 landed = was.z + (now.z - was.z) * was.y / (was.y - now.y);
     CHECK(landed == Approx(30.0f).margin(0.05f));
 }
@@ -541,6 +542,7 @@ TEST_CASE("a straight weapon's turret holds, off target, where no arc reaches", 
     CHECK(t.fire_at({0, 25, 30}, 30) == nullptr);
     CHECK_FALSE(t.aim->on_target());
     CHECK(t.aim->pitch() == 0.0f);
+    CHECK(t.fire_at({0, 0, 20}, 30) != nullptr);
 }
 
 TEST_CASE("a shot whose projectile gives no Lifetime lives Moho's 15 seconds", "[collision]") {

@@ -20,6 +20,7 @@
 #include "hidpi_test.hpp"
 #include "unitview_sweep_test.hpp"
 #include "integration_tests.hpp"
+#include "tick_until.hpp"
 #include "core/game_state.hpp"
 #include "core/log.hpp"
 #include "core/profiler.hpp"
@@ -767,20 +768,20 @@ std::optional<int> IntegrationModes::front_end(Engine& e) {
             lan_harness.deactivate();
             return 1;
         }
-        bool found = false;
-        for (int frame = 0; frame < 300 && !found; ++frame) {
-            osc::lua::pump_net_lobbies(ui_lua_state.raw(), osc::lua::net_lobby_clock_ms());
-            pump_ui_frames_with_controls(ui_lua_state, ui_thread_manager, beat_registry,
-                                         ui_registry, 1, ui_frame_count);
-            auto check = ui_lua_state.do_string(
-                "rawset(_G, '__osc_lan_found', __osc_lan_discovery ~= nil and "
-                "__osc_lan_discovery:GetGameCount() == 1)");
-            lua_State* uL = ui_lua_state.raw();
-            lua_getglobal(uL, "__osc_lan_found");
-            found = check && lua_toboolean(uL, -1) != 0;
-            lua_pop(uL, 1);
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
+        const bool found =
+            tick_until(
+                [&] {
+                    osc::lua::pump_net_lobbies(ui_lua_state.raw(), osc::lua::net_lobby_clock_ms());
+                    pump_ui_frames_with_controls(ui_lua_state, ui_thread_manager, beat_registry,
+                                                 ui_registry, 1, ui_frame_count);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                },
+                "LAN screen: the hosted game is found", 300,
+                [&] {
+                    return lua_true(ui_lua_state, "__osc_lan_discovery ~= nil and "
+                                                  "__osc_lan_discovery:GetGameCount() == 1");
+                })
+                .has_value();
         // A few more frames: the screen formats and lists it
         for (int frame = 0; frame < 10; ++frame) {
             osc::lua::pump_net_lobbies(ui_lua_state.raw(), osc::lua::net_lobby_clock_ms());
@@ -790,7 +791,6 @@ std::optional<int> IntegrationModes::front_end(Engine& e) {
         osc::lua::close_net_lobbies(ui_lua_state.raw());
         osc::lua::set_lan_discovery("255.255.255.255", osc::sim::kLanDiscoveryPort);
         if (!found) {
-            spdlog::error("LAN screen: the hosted game wasn't found");
             lan_harness.print_report(true);
             lan_harness.deactivate();
             return 1;

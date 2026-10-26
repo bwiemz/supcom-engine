@@ -22,6 +22,7 @@
 // hooks, and a sacrifice donated its builder's last target's cost, nothing.
 
 #include "integration_tests.hpp"
+#include "tick_until.hpp"
 
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
@@ -56,9 +57,6 @@ void test_unit_hooks(TestContext& ctx) {
         auto r = ctx.lua_state.do_string(code);
         record(static_cast<bool>(r), r ? what : what + ": " + r.error().message);
         return static_cast<bool>(r);
-    };
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
     // The C++ unit a Lua global names.
     const auto unit = [&](const char* global) -> sim::Unit* {
@@ -165,13 +163,13 @@ void test_unit_hooks(TestContext& ctx) {
         __hooks_fab = __hooks_make('ueb1104', 0, 20)
     )"))
         return;
-    run(3);
+    tick_for(ctx, 3);
     const sim::Unit* fab = unit("__hooks_fab");
     const bool producing = fab && fab->economy().production_active;
     check("Test 5 switch", R"(
         __hooks_fab:SetConsumptionActive(false)
     )");
-    run(1);
+    tick_for(ctx, 1);
     fab = unit("__hooks_fab");
     record(producing && fab && !fab->economy().production_active,
            "Test 5: a mass fabricator produces, and its consumption turned off stops it");
@@ -190,7 +188,7 @@ void test_unit_hooks(TestContext& ctx) {
                                 1 + __hooks_pgen:GetMaxHealth() * __hooks_step)
         IssueSacrifice({__hooks_eng}, __hooks_pgen)
     )");
-    run(60);
+    tick_until(ctx, "Test 6: the engineer sacrifices itself", 120, "__hooks_eng:BeenDestroyed()");
     check("Test 6: the generator is mended, the engineer gone", R"(
         local got = __hooks_pgen:GetHealth()
         if __hooks_step <= 0 or math.abs(got - __hooks_want) > 0.01 then
@@ -208,7 +206,7 @@ void test_unit_hooks(TestContext& ctx) {
         IssueEnhancement({__hooks_acu}, 'AdvancedEngineering')
     )"))
         return;
-    run(5);
+    tick_for(ctx, 5);
     check("Test 7 sacrifice", R"(
         if not __hooks_acu:IsUnitState('Enhancing') then error('not enhancing') end
         local p = __hooks_acu:GetPosition()
@@ -219,14 +217,17 @@ void test_unit_hooks(TestContext& ctx) {
             eng.BuildCostEnergy * eng.SacrificeEnergyMult / __hooks_acu.WorkItemBuildCostEnergy)
         __hooks_wp = {__hooks_acu.WorkProgress}
     )");
-    run(1);
+    tick_for(ctx, 1);
     check("Test 7 order", R"(
         IssueSacrifice({__hooks_eng2}, __hooks_acu)
     )");
-    for (int i = 0; i < 80 && unit("__hooks_eng2"); ++i) {
-        ctx.lua_state.do_string("table.insert(__hooks_wp, __hooks_acu.WorkProgress)");
-        run(1);
-    }
+    tick_until(
+        [&] {
+            ctx.lua_state.do_string("table.insert(__hooks_wp, __hooks_acu.WorkProgress)");
+            ctx.sim.tick();
+        },
+        "Test 7: the engineer sacrifices itself into the ACU", 80,
+        [&] { return unit("__hooks_eng2") == nullptr; });
     check("Test 7: a sacrifice into an enhancing unit adds its share to the enhancement's work", R"(
         local n = table.getn(__hooks_wp)
         local own = __hooks_wp[n] - __hooks_wp[n - 1]
@@ -259,7 +260,7 @@ void test_unit_hooks(TestContext& ctx) {
         IssueSacrifice({__hooks_eng8}, __hooks_gen8)
         __hooks_tick8 = GetGameTick()
     )");
-    run(200);
+    tick_until(ctx, "Test 8: the sacrifice ends", 400, "table.getn(__hooks_eng8.__heard) >= 2");
     check("Test 8: OnStartSacrifice once within reach, OnStopSacrifice 9 ticks later", R"(
         local h = __hooks_eng8.__heard
         if table.getn(h) ~= 2 or h[1].what ~= 'start' or h[2].what ~= 'stop' then
@@ -279,7 +280,7 @@ void test_unit_hooks(TestContext& ctx) {
         __hooks_eng9 = __hooks_sacrificer(3, 60)
         IssueSacrifice({__hooks_eng9}, __hooks_gen9)
     )");
-    run(40);
+    tick_for(ctx, 40);
     check("Test 9: a sound, idle target takes no sacrifice", R"(
         if table.getn(__hooks_eng9.__heard) ~= 0 then error('sacrificed') end
         if __hooks_eng9:BeenDestroyed() then error('the engineer is gone') end
@@ -293,7 +294,7 @@ void test_unit_hooks(TestContext& ctx) {
         __hooks_eng10 = __hooks_sacrificer(p[1] - __hooks_x0 + 3, p[3] - __hooks_z0)
         IssueSacrifice({__hooks_eng10}, __hooks_acu)
     )");
-    run(40);
+    tick_for(ctx, 40);
     check("Test 10: a paused enhancement takes no sacrifice", R"(
         __hooks_acu:SetPaused(false)
         if table.getn(__hooks_eng10.__heard) ~= 0 then error('sacrificed') end
@@ -304,14 +305,14 @@ void test_unit_hooks(TestContext& ctx) {
         __hooks_fac = __hooks_make('uab0101', 20, 75)
         IssueUpgrade({__hooks_fac}, 'uab0201')
     )");
-    run(5);
+    tick_for(ctx, 5);
     check("Test 11 sacrifice", R"(
         __hooks_next = __hooks_fac:GetFocusUnit()
         if not __hooks_next then error('not upgrading') end
         __hooks_eng11 = __hooks_sacrificer(32, 75)
         IssueSacrifice({__hooks_eng11}, __hooks_fac)
     )");
-    run(200);
+    tick_until(ctx, "Test 11: the sacrifice ends", 400, "table.getn(__hooks_eng11.__heard) >= 2");
     check("Test 11: a sacrifice into an upgrading unit goes to what it becomes", R"(
         local h = __hooks_eng11.__heard
         if table.getn(h) ~= 2 then error('heard ' .. table.getn(h)) end
@@ -334,16 +335,11 @@ void test_unit_hooks(TestContext& ctx) {
             end
             IssueSacrifice({__hooks_eng12}, __hooks_gen12)
         )");
-        for (int i = 0; i < 100; ++i) {
-            run(1);
-            if (ctx.lua_state.do_string(
-                    "if table.getn(__hooks_eng12.__heard) == 0 then error('') end")) {
-                break;
-            }
-        }
-        run(delay);
+        tick_until(ctx, "Test 12: the sacrifice starts", 100,
+                   "table.getn(__hooks_eng12.__heard) > 0");
+        tick_for(ctx, delay);
         check("Test 12 clear", "IssueClearCommands({__hooks_eng12})");
-        run(1);
+        tick_for(ctx, 1);
         check(
             "Test 12: a started sacrifice cleared off its queue destroys the unit, giving nothing",
             R"(

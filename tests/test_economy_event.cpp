@@ -12,6 +12,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -28,6 +29,7 @@ using osc::sim::EconomyEvent;
 using osc::sim::EconomyEventRegistry;
 using osc::sim::SimState;
 using osc::sim::Unit;
+using osc::test::tick_until;
 
 namespace {
 
@@ -200,11 +202,8 @@ TEST_CASE("An economy event takes its duration's whole ticks, a tick at least, a
         ->set_callback_ref(luaL_ref(L, LUA_REGISTRYINDEX));
     a.sim.tick();
     CHECK(a.sim.get_army(0)->economy().energy.requested == Approx(army == 0 ? 100.0 / ticks : 0.0));
-    int taken = 1;
-    while (a.sim.economy_events().count() != 0 && taken < 100) {
-        a.sim.tick();
-        ++taken;
-    }
+    const int taken = 1 + tick_until([&] { a.sim.tick(); }, "the economy event finishes", 100,
+                                     [&] { return a.sim.economy_events().count() == 0; });
     CHECK(taken == ticks);
     lua_getglobal(L, "heard");
     lua_rawgeti(L, -1, 1);

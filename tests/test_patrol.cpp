@@ -20,6 +20,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -37,6 +38,7 @@ using osc::sim::CommandType;
 using osc::sim::Prop;
 using osc::sim::SimState;
 using osc::sim::Unit;
+using osc::test::tick_until;
 
 namespace {
 
@@ -151,13 +153,13 @@ TEST_CASE("A patrol clicked once runs between the click and where it was given",
     REQUIRE(input.click_in_command_mode(sim, mode, 60.0f, 10.0f, false));
     bool there = false;
     bool back = false;
-    for (int t = 0; t < 600; ++t) {
-        sim.tick();
-        there |= u->position().x > 58.0f;
-        back |= there && u->position().x < 12.0f;
-    }
-    CHECK(there);
-    CHECK(back);
+    tick_until(
+        [&] {
+            sim.tick();
+            there |= u->position().x > 58.0f;
+            back |= there && u->position().x < 12.0f;
+        },
+        "the patrol reaches the click and comes back", 600, [&] { return back; });
 }
 
 TEST_CASE("A patrol point added to a running patrol joins the loop after the last", "[patrol]") {
@@ -167,10 +169,8 @@ TEST_CASE("A patrol point added to a running patrol joins the loop after the las
     Unit* u = walker(sim, 10.0f, 10.0f);
     u->push_command(patrol(60.0f, 10.0f, 1), true);
     u->push_command(patrol(60.0f, 60.0f, 2), false);
-    for (int t = 0; t < 400 && u->command_queue().front().command_id != 2; ++t) {
-        sim.tick();
-    }
-    REQUIRE(u->command_queue().front().command_id == 2);
+    tick_until([&] { sim.tick(); }, "the patrol reaches its first point", 400,
+               [&] { return u->command_queue().front().command_id == 2; });
     u->push_command(patrol(10.0f, 60.0f, 3), false);
     REQUIRE(u->command_queue().size() == 3);
     CHECK(u->command_queue()[1].command_id == 3);
@@ -430,20 +430,21 @@ TEST_CASE("A patrol's chase ends at GuardReturnRadius from where it broke off", 
         const auto& q = tank->command_queue();
         return !q.empty() && q.front().from_patrol && q.front().type == CommandType::Attack;
     };
-    for (int t = 0; t < 30 && !fighting(); ++t) sim.tick();
-    REQUIRE(fighting());
+    tick_until([&] { sim.tick(); }, "the patrol breaks off to chase the runner", 60, fighting);
     const osc::sim::Vector3 from = tank->command_queue().front().leash_anchor_pos;
     CHECK(std::hypot(from.x - tank->position().x, from.z - tank->position().z) < 1.0f);
     float farthest = 0;
     bool armed = false;
-    for (int t = 0; t < 400 && fighting(); ++t) {
-        sim.tick();
-        farthest = std::max(farthest, static_cast<float>(std::hypot(tank->position().x - from.x,
-                                                                    tank->position().z - from.z)));
-        armed = armed || (fighting() && tank->command_queue().front().leash_armed);
-    }
+    tick_until(
+        [&] {
+            sim.tick();
+            farthest =
+                std::max(farthest, static_cast<float>(std::hypot(tank->position().x - from.x,
+                                                                 tank->position().z - from.z)));
+            armed = armed || (fighting() && tank->command_queue().front().leash_armed);
+        },
+        "the chase ends", 400, [&] { return !fighting(); });
     CHECK(armed);
-    CHECK_FALSE(fighting());
     CHECK(farthest <= 32.0f);
     REQUIRE(!tank->command_queue().empty());
     CHECK(tank->command_queue().front().type == CommandType::Patrol);
@@ -461,9 +462,8 @@ TEST_CASE("A patrol goes for an enemy ahead on its route only within its GuardSc
     tank->add_weapon(std::move(gun));
     still(sim, 1, 90.0f, 10.0f);
     tank->push_command(patrol(100.0f, 10.0f, 1), true);
-    for (int t = 0; t < 300 && !tank->command_queue().front().from_patrol; ++t) {
-        sim.tick();
-    }
+    tick_until([&] { sim.tick(); }, "the patrol breaks off", 300,
+               [&] { return tank->command_queue().front().from_patrol; });
     REQUIRE(tank->command_queue().front().type == CommandType::Attack);
     CHECK(tank->position().x >= 65.0f);
 }
@@ -491,20 +491,11 @@ TEST_CASE("A patrol back from reclaiming looks for the next prop at once", "[pat
     rock(sim, 24.0f, 14.0f, 1.0f, 0.0f);
     eng->push_command(patrol(90.0f, 10.0f, 1), true);
     const auto patrolling = [&] { return !eng->command_queue().front().from_patrol; };
-    int t = 0;
-    for (; t < 400 && patrolling(); ++t) {
-        sim.tick();
-    }
-    REQUIRE_FALSE(patrolling());
-    for (; t < 400 && !patrolling(); ++t) {
-        sim.tick();
-    }
+    tick_until([&] { sim.tick(); }, "the patrol breaks off", 400, [&] { return !patrolling(); });
+    tick_until([&] { sim.tick(); }, "the patrol is back from reclaiming", 400, patrolling);
     const auto claimed = [&] { return eng->command_queue().back().patrol_claimed.size(); };
-    int heading_on = 0;
-    for (; t < 400 && patrolling() && claimed() < 2; ++t) {
-        sim.tick();
-        ++heading_on;
-    }
+    const int heading_on = tick_until([&] { sim.tick(); }, "the patrol claims the next prop", 400,
+                                      [&] { return !patrolling() || claimed() >= 2; });
     CHECK(claimed() == 2);
     CHECK(heading_on == 0);
 }
@@ -516,10 +507,8 @@ TEST_CASE("A patrol leg looks over all of itself, behind the unit too", "[patrol
     two_armies(sim);
     Unit* eng = engineer(sim, 10.0f, 10.0f);
     eng->push_command(patrol(110.0f, 10.0f, 1), true);
-    for (int t = 0; t < 400 && eng->position().x < 70.0f; ++t) {
-        sim.tick();
-    }
-    REQUIRE(eng->position().x >= 70.0f);
+    tick_until([&] { sim.tick(); }, "the patrol passes x 70", 400,
+               [&] { return eng->position().x >= 70.0f; });
     Prop* behind = rock(sim, 12.0f, 14.0f, 1.0f, 0.0f);
     CHECK(break_offs(sim, *eng, CommandType::Reclaim, 7) ==
           std::vector<osc::u32>{behind->entity_id()});
@@ -533,10 +522,8 @@ TEST_CASE("A patrol's break-off starts 6 ticks after the patrol looked", "[patro
     Unit* eng = engineer(sim, 10.0f, 10.0f);
     rock(sim, 30.0f, 14.0f, 1.0f, 0.0f);
     eng->push_command(patrol(90.0f, 10.0f, 1), true);
-    for (int t = 0; t < 12 && !eng->command_queue().front().from_patrol; ++t) {
-        sim.tick();
-    }
-    REQUIRE(eng->command_queue().front().from_patrol);
+    tick_until([&] { sim.tick(); }, "the patrol breaks off", 24,
+               [&] { return eng->command_queue().front().from_patrol; });
     std::vector<bool> walking;
     for (int t = 0; t < 6; ++t) {
         sim.tick();
@@ -599,15 +586,11 @@ TEST_CASE("A patrol point added while the patrol has broken off joins the loop",
     Unit* eng = engineer(sim, 10.0f, 10.0f);
     eng->push_command(patrol(60.0f, 10.0f, 1), true);
     eng->push_command(patrol(60.0f, 60.0f, 2), false);
-    for (int t = 0; t < 400 && eng->command_queue().front().command_id != 2; ++t) {
-        sim.tick();
-    }
-    REQUIRE(eng->command_queue().front().command_id == 2);
+    tick_until([&] { sim.tick(); }, "the patrol reaches its first point", 400,
+               [&] { return eng->command_queue().front().command_id == 2; });
     rock(sim, 62.0f, 40.0f, 1.0f, 0.0f);
-    for (int t = 0; t < 12 && !eng->command_queue().front().from_patrol; ++t) {
-        sim.tick();
-    }
-    REQUIRE(eng->command_queue().front().from_patrol);
+    tick_until([&] { sim.tick(); }, "the patrol breaks off for the rock", 24,
+               [&] { return eng->command_queue().front().from_patrol; });
     eng->push_command(patrol(10.0f, 60.0f, 3), false);
     const auto& q = eng->command_queue();
     REQUIRE(q.size() == 4);
@@ -625,15 +608,11 @@ TEST_CASE("A patrol point moved while the patrol has broken off moves, before it
     Unit* eng = engineer(sim, 10.0f, 10.0f);
     eng->push_command(patrol(60.0f, 10.0f, 1), true);
     eng->push_command(patrol(60.0f, 60.0f, 2), false);
-    for (int t = 0; t < 400 && eng->command_queue().front().command_id != 2; ++t) {
-        sim.tick();
-    }
-    REQUIRE(eng->command_queue().front().command_id == 2);
+    tick_until([&] { sim.tick(); }, "the patrol reaches its first point", 400,
+               [&] { return eng->command_queue().front().command_id == 2; });
     rock(sim, 62.0f, 40.0f, 1.0f, 0.0f);
-    for (int t = 0; t < 12 && !eng->command_queue().front().from_patrol; ++t) {
-        sim.tick();
-    }
-    REQUIRE(eng->command_queue().front().from_patrol);
+    tick_until([&] { sim.tick(); }, "the patrol breaks off for the rock", 24,
+               [&] { return eng->command_queue().front().from_patrol; });
     osc::sim::SimCallbackEntry cb;
     cb.func_name = osc::sim::kSetCommandTargetCallback;
     cb.args["Command"] = 2.0;
@@ -721,14 +700,15 @@ TEST_CASE("A patrol broken off to reclaim plays on the same after a restore",
     const osc::u32 id = world(a, ga.L);
     a.set_recording(true);
     const auto* eng = static_cast<const Unit*>(a.entity_registry().find(id));
-    for (int t = 0; t < 400 && eng->command_queue()[1].patrol_claimed.size() < 2; ++t) {
-        a.tick();
-    }
-    REQUIRE(eng->command_queue()[1].patrol_claimed.size() == 2);
+    tick_until([&] { a.tick(); }, "the patrol claims two props", 400,
+               [&] { return eng->command_queue()[1].patrol_claimed.size() == 2; });
     const osc::sim::SavedGame save = osc::sim::save_game(a, "patrolling");
+    bool moved = false;
     for (int t = 0; t < 300; ++t) {
         a.tick();
+        moved = moved || eng->is_moving();
     }
+    CHECK(moved);
 
     LuaGuard gb;
     SimState b(gb.L, nullptr);
@@ -766,10 +746,8 @@ TEST_CASE("An attack-move goes for an enemy near its route, then ends where it a
     const auto seen = break_offs(sim, *tank, CommandType::Attack, 120);
     REQUIRE(seen == std::vector<osc::u32>{near->entity_id()});
     sim.entity_registry().unregister_entity(near->entity_id());
-    for (int t = 0; t < 400 && !tank->command_queue().empty(); ++t) {
-        sim.tick();
-    }
-    CHECK(tank->command_queue().empty());
+    tick_until([&] { sim.tick(); }, "the attack-move ends", 400,
+               [&] { return tank->command_queue().empty(); });
     CHECK(tank->position().x > 95.0f);
 }
 
@@ -806,13 +784,16 @@ TEST_CASE("A support commander on attack-move leaves the reclaiming to others, a
         two_armies(sim);
         Unit* sacu = engineer(sim, 10.0f, 10.0f);
         sacu->add_category(category);
-        rock(sim, 50.0f, 14.0f, 1.0f, 0.0f);
+        const osc::u32 stone = rock(sim, 50.0f, 14.0f, 1.0f, 0.0f)->entity_id();
         osc::sim::UnitCommand go;
         go.type = CommandType::AggressiveMove;
         go.target_pos = {90.0f, 0.0f, 10.0f};
         go.command_id = 1;
         sacu->push_command(go, true);
         CHECK(break_offs(sim, *sacu, CommandType::Reclaim, 300).empty());
+
+        sacu->push_command(patrol(10.0f, 10.0f, 2), true);
+        CHECK(break_offs(sim, *sacu, CommandType::Reclaim, 300) == std::vector<osc::u32>{stone});
     }
 }
 
@@ -1301,9 +1282,8 @@ TEST_CASE("A unit with no weapon takes an attack order and drops it when it come
     CHECK(eng->command_queue().back().type == CommandType::Attack);
     sim.tick();
     CHECK(eng->command_queue().size() == 2);
-    for (int i = 0; i < 400 && eng->command_queue().size() == 2; ++i) {
-        sim.tick();
-    }
+    tick_until([&] { sim.tick(); }, "the engineer's move ends", 400,
+               [&] { return eng->command_queue().size() < 2; });
     sim.tick();
     CHECK(eng->command_queue().empty());
 }

@@ -19,6 +19,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 #include "ui/ui_control.hpp"
 
 extern "C" {
@@ -39,6 +40,7 @@ using osc::sim::SaveLoadError;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
+using osc::test::tick_until;
 
 namespace {
 
@@ -246,6 +248,8 @@ TEST_CASE("A game saved before its first tick is the player's at once", "[savega
     b.tick();
     a.tick();
     CHECK(b.compute_sync_checksum() == a.compute_sync_checksum());
+    const auto* u = static_cast<const Unit*>(b.entity_registry().find(ids[0]));
+    CHECK_FALSE(u->command_queue().empty());
 }
 
 TEST_CASE("A game restored from its snapshot plays on as the saved one did", "[savegame][sync]") {
@@ -288,6 +292,8 @@ TEST_CASE("A game restored from its snapshot plays on as the saved one did", "[s
     // Its recording is the whole game, so it saves and loads again.
     CHECK(b.recorded_replay().checksums == a.recorded_replay().checksums);
     CHECK(b.recorded_replay().commands.size() == a.recorded_replay().commands.size());
+    const auto* u = static_cast<const Unit*>(b.entity_registry().find(ids[1]));
+    CHECK(u->position().z > 0.0f);
 }
 
 TEST_CASE("A snapshot holds Moho's random stream where the game left it", "[savegame][sync]") {
@@ -460,6 +466,9 @@ TEST_CASE("A game saved on pause loads unpaused, as retail's, and replays as it 
     REQUIRE(a.tick_count() == 5);
     const SavedGame save = osc::sim::save_game(a, "paused");
     REQUIRE_FALSE(save.snapshot.empty());
+    PauseHeard paused_ui(a);
+    paused_ui.frame();
+    CHECK(paused_ui.count("pauses") == 1);
 
     LuaGuard gb;
     SimState b(gb.L, nullptr);
@@ -471,10 +480,12 @@ TEST_CASE("A game saved on pause loads unpaused, as retail's, and replays as it 
     } else {
         osc::sim::ReplayPlayback catch_up(save.game);
         catch_up.resume(b);
-        while (b.resuming()) {
-            b.tick();
-            REQUIRE(catch_up.check(b));
-        }
+        tick_until(
+            [&] {
+                b.tick();
+                REQUIRE(catch_up.check(b));
+            },
+            "the load catches up to the saved tick", 20, [&] { return !b.resuming(); });
     }
     REQUIRE(b.beat_count() == a.beat_count());
     PauseHeard ui(b);
@@ -498,10 +509,12 @@ TEST_CASE("A game saved on pause loads unpaused, as retail's, and replays as it 
     c.set_recording(true);
     osc::sim::ReplayPlayback replay(again.game);
     replay.resume(c);
-    while (c.resuming()) {
-        c.tick();
-        REQUIRE(replay.check(c));
-    }
+    tick_until(
+        [&] {
+            c.tick();
+            REQUIRE(replay.check(c));
+        },
+        "the load catches up to the saved tick", 30, [&] { return !c.resuming(); });
     CHECK(c.tick_count() == 10);
     CHECK_FALSE(c.paused());
 }
@@ -607,7 +620,8 @@ TEST_CASE("SessionIsBeingRecorded answers false in a game loaded from a save", "
     CHECK(c.recording());
     CHECK(c.loaded_from_save());
     CHECK_FALSE(ui_says_recorded(c));
-    while (c.resuming()) c.tick();
+    tick_until([&] { c.tick(); }, "the load catches up to the saved tick", 20,
+               [&] { return !c.resuming(); });
     CHECK_FALSE(ui_says_recorded(c)); // the player's again: still a loaded game
 }
 

@@ -22,6 +22,7 @@
 #include "renderer/renderer.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/sim_state.hpp"
+#include "tick_until.hpp"
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -190,7 +191,11 @@ void test_camera_moves(TestContext& ui, TestContext& sim, const std::function<vo
                             osc::sim::EntityRegistry::moho_id(acu), x0 + 30.0f,
                             e ? e->position().z : 0.0f)
                     .c_str());
-        play(50);
+        tick_until([&] { play(1); }, "Test 4: the ACU walks off", 100,
+                   [&] {
+                       const auto* walking = sim.sim.entity_registry().find(acu);
+                       return walking && walking->position().x - x0 > 3.0f;
+                   });
         shots.recapture();
         shots.redraw(); // the frame the camera follows the world through
         step(1.0 / 60.0);

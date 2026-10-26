@@ -13,6 +13,7 @@
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/session_manager.hpp"
+#include "support/tick_until.hpp"
 #include "ui/ui_control.hpp"
 #include "vfs/virtual_file_system.hpp"
 
@@ -30,6 +31,8 @@ extern "C" {
 #include <string_view>
 #include <utility>
 #include <vector>
+
+using osc::test::tick_until;
 
 namespace {
 
@@ -126,10 +129,8 @@ TEST_CASE("Army economy stats: totals, rates and waste", "[army][stats][economy]
     CHECK(brain.get_stat("UnitCap_MaxCap") == 500.0);
 
     // Full storage wastes the surplus: 6/s over the 200 base storage.
-    for (int i = 0; i < 400; ++i) {
-        economy_tick(brain, registry, 0.1); // 40 s
-    }
-    CHECK(brain.get_stat("Economy_AccumExcess_Mass") > 0.0);
+    tick_until([&] { economy_tick(brain, registry, 0.1); }, "the full storage wastes the surplus",
+               800, [&] { return brain.get_stat("Economy_AccumExcess_Mass") > 0.0; });
 }
 
 TEST_CASE("The economy sets the stored, storage and peak storage stats each tick",
@@ -157,10 +158,8 @@ TEST_CASE("The economy sets the stored, storage and peak storage stats each tick
     CHECK(brain.get_stat("Economy_PeakStorage_" + lane) == first);
 
     storage = second;
-    for (int i = 0; i < 400; ++i) {
-        economy_tick(brain, registry, 0.1);
-    }
-    CHECK(brain.get_stat("Economy_Stored_" + lane) == second);
+    tick_until([&] { economy_tick(brain, registry, 0.1); }, "the store fills to its new storage",
+               800, [&] { return brain.get_stat("Economy_Stored_" + lane) == second; });
     CHECK(brain.get_stat("Economy_MaxStorage_" + lane) == second);
     CHECK(brain.get_stat("Economy_PeakStorage_" + lane) == std::max(first, second));
 }
@@ -275,10 +274,8 @@ TEST_CASE("A paused unit keeps producing, and its army pays what the unit asks",
     CHECK(brain.get_stat("Economy_TotalConsumed_Mass") > 0.0);
 
     s->economy().consumption_active = false;
-    for (int i = 0; i < 10; ++i) {
-        economy_tick(brain, registry, 0.1);
-    }
-    CHECK(brain.economy().mass.requested == 0.0);
+    tick_until([&] { economy_tick(brain, registry, 0.1); }, "the shield stops asking", 20,
+               [&] { return brain.economy().mass.requested == 0.0; });
 }
 
 TEST_CASE("A reclaimer's own production stays beside its reclaim, and after it",
@@ -952,6 +949,7 @@ TEST_CASE("Sandbox victory option suppresses automatic army defeat", "[session][
 
     auto result = mgr.start_session(lua, osc::vfs::VirtualFileSystem{}, sim, meta);
     REQUIRE(result.ok());
+    CHECK(sim.sandbox_victory());
 
     for (int i = 0; i < 60; ++i) {
         sim.tick();

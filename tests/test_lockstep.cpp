@@ -19,6 +19,7 @@
 #include "sim/state_io.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -36,6 +37,7 @@ using osc::sim::LoopbackTransport;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
+using osc::test::tick_until;
 
 namespace {
 
@@ -268,15 +270,17 @@ TEST_CASE("LockstepSession times out a silent peer", "[lockstep][drop]") {
     }
     REQUIRE(sa.take_dropped().empty());
 
-    // B goes silent; only A keeps sending. A must drop source 1 within ~5 rounds.
     bool dropped = false;
-    for (int r = 0; r < 30 && !dropped; ++r) {
-        sa.send_frame();
-        sa.receive_and_advance();
-        auto d = sa.take_dropped();
-        if (std::find(d.begin(), d.end(), 1u) != d.end()) dropped = true;
-    }
-    REQUIRE(dropped);
+    tick_until(
+        [&] {
+            sa.send_frame();
+            sa.receive_and_advance();
+            auto d = sa.take_dropped();
+            if (std::find(d.begin(), d.end(), 1u) != d.end()) {
+                dropped = true;
+            }
+        },
+        "B goes silent and A drops it", 30, [&] { return dropped; });
     REQUIRE(sa.has_dropped(1));
 
     // After the drop, A is no longer gated on the silent peer — it advances.
@@ -826,11 +830,12 @@ TEST_CASE("A drop report fits one wire message, keeping the newest frames", "[lo
         sc.receive_and_advance();
     }
     hub.drain(1); // what C was sent so far
-    for (int round = 0; round < 30 && !sa.has_dropped(1); ++round) {
-        sa.send_frame();
-        sa.receive_and_advance();
-    }
-    REQUIRE(sa.has_dropped(1));
+    tick_until(
+        [&] {
+            sa.send_frame();
+            sa.receive_and_advance();
+        },
+        "A drops the silent C", 30, [&] { return sa.has_dropped(1); });
     size_t largest = 0;
     for (const auto& msg : hub.drain(1)) {
         CHECK(msg.size() <= osc::sim::kMaxWireMessage);
@@ -943,12 +948,13 @@ TEST_CASE("A peer runs at most two seconds of frames ahead of its sim, and a dea
     CHECK(alive == 5);
     CHECK_FALSE(sa.has_dropped(1));
 
-    // Held at the cap, A still counts B's silence: past the timeout, B drops
-    for (int r = 0; r < 10 && !sa.has_dropped(1); ++r) {
-        sa.send_frame();
-        sa.receive_and_advance();
-    }
-    CHECK(sa.has_dropped(1));
+    tick_until(
+        [&] {
+            sa.send_frame();
+            sa.receive_and_advance();
+        },
+        "held at the cap, A still counts B's silence and drops it", 10,
+        [&] { return sa.has_dropped(1); });
 }
 
 TEST_CASE("Latency costs a local order's delay, not the game's pace (M218h)", "[lockstep][pace]") {
@@ -1029,13 +1035,14 @@ TEST_CASE("The slowest peer sets the game's pace, and isn't dropped (M218h)", "[
     CHECK_FALSE(sb.has_dropped(0));
     CHECK(a.tick_count() > 90); // B's pace: about a tick a round of its
     CHECK(a.tick_count() < 110);
-    // Both run what both have sent, in step
-    for (int r = 0; r < 60 && a.tick_count() != b.tick_count(); ++r) {
-        sb.send_frame();
-        sa.receive_and_advance();
-        sb.receive_and_advance();
-    }
-    REQUIRE(a.tick_count() == b.tick_count());
+    tick_until(
+        [&] {
+            sb.send_frame();
+            sa.receive_and_advance();
+            sb.receive_and_advance();
+        },
+        "both run what both have sent, in step", 60,
+        [&] { return a.tick_count() == b.tick_count(); });
     CHECK(a.compute_sync_checksum() == b.compute_sync_checksum());
     CHECK_FALSE(sa.desynced());
     CHECK_FALSE(sb.desynced());
@@ -1160,14 +1167,14 @@ TEST_CASE("At speed, the lead cap and the drop timeout keep their times (M218i)"
             // this speed, and drops B after three seconds' worth
             const osc::u32 cap = speed > 0 ? 200 : 2;
             const int timeout = speed > 0 ? 300 : 3;
-            int rounds = 0;
             osc::u32 most = 0;
-            while (!sa.has_dropped(1) && rounds < 1000) {
-                sa.send_frame();
-                sa.receive_and_advance();
-                ++rounds;
-                most = std::max(most, lead(sa, a));
-            }
+            const int rounds = tick_until(
+                [&] {
+                    sa.send_frame();
+                    sa.receive_and_advance();
+                    most = std::max(most, lead(sa, a));
+                },
+                "A drops the silent B", 1000, [&] { return sa.has_dropped(1); });
             CHECK(most == cap);
             CHECK(rounds == timeout + 1);
         }
@@ -1210,10 +1217,12 @@ TEST_CASE("A network game every player saved resumes from each one's copy as if 
         if (sim.tick_count() == 0) s.submit_local({ida}, move_to(500.0f, 0.0f), true);
         if (sim.tick_count() == 25) s.submit_local({ida}, move_to(-200.0f, 40.0f), true);
     };
-    while (a.tick_count() < 10) {
-        orders(a, sa);
-        round(sa, sb);
-    }
+    tick_until(
+        [&] {
+            orders(a, sa);
+            round(sa, sb);
+        },
+        "the game reaches tick 10", 20, [&] { return a.tick_count() >= 10; });
     if (held_beats) {
         sa.request_pause();
         for (int r = 0; r < 8; ++r) round(sa, sb);
@@ -1228,10 +1237,12 @@ TEST_CASE("A network game every player saved resumes from each one's copy as if 
     save.args["Name"] = std::string("evening");
     sb.submit_local_callback(std::move(save)); // either player may save
     // The game plays on, never stopped: what the resumed one must match
-    while (a.tick_count() < 40) {
-        orders(a, sa);
-        round(sa, sb);
-    }
+    tick_until(
+        [&] {
+            orders(a, sa);
+            round(sa, sb);
+        },
+        "the game reaches tick 40", 60, [&] { return a.tick_count() >= 40; });
     REQUIRE(saved_at > 10);
     REQUIRE_FALSE(copy_a.empty());
     REQUIRE_FALSE(copy_b.empty());
@@ -1252,10 +1263,12 @@ TEST_CASE("A network game every player saved resumes from each one's copy as if 
     LockstepSession sa2(a2, ta2, 0, {0, 1});
     LockstepSession sb2(b2, tb2, 1, {0, 1});
     CHECK(sa2.current_frame() == a2.beat_count() + 1);
-    for (int r = 0; r < 100 && a2.tick_count() < 40; ++r) {
-        orders(a2, sa2);
-        round(sa2, sb2);
-    }
+    tick_until(
+        [&] {
+            orders(a2, sa2);
+            round(sa2, sb2);
+        },
+        "the resumed game reaches tick 40", 100, [&] { return a2.tick_count() >= 40; });
     CHECK(b2.tick_count() == 40);
     CHECK(a2.compute_sync_checksum() == a.compute_sync_checksum());
     CHECK(b2.compute_sync_checksum() == a.compute_sync_checksum());

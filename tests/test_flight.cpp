@@ -9,6 +9,7 @@
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
 #include "sim/unit.hpp"
+#include "support/tick_until.hpp"
 
 #include <cmath>
 #include <memory>
@@ -22,6 +23,7 @@ using osc::sim::Projectile;
 using osc::sim::Quaternion;
 using osc::sim::Unit;
 using osc::sim::Vector3;
+using osc::test::tick_until;
 
 namespace {
 
@@ -115,10 +117,9 @@ TEST_CASE("A shot lives to the tick nearest its lifetime, moves on it, and burst
         EntityRegistry reg;
         Projectile* shot = add_shot(reg, {0, 10, 0}, {0, 0, 10});
         shot->set_lifetime(lifetime, 1);
-        for (u32 tick = 1; tick <= 10 && !shot->destroyed(); ++tick) {
-            fly(reg, *shot, tick);
-        }
-        REQUIRE(shot->destroyed());
+        u32 tick = 0;
+        tick_until([&] { fly(reg, *shot, ++tick); }, "the shot's lifetime runs out", 10,
+                   [&] { return shot->destroyed(); });
         CHECK(shot->position().z == Approx(moves));
     }
 }

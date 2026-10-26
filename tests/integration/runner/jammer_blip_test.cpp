@@ -12,6 +12,7 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "sim/influence_map.hpp"
@@ -61,9 +62,6 @@ void test_jammer_blips(TestContext& ctx) {
             if (a[i].x != b[i].x || a[i].y != b[i].y || a[i].z != b[i].z) return false;
         return true;
     };
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
-    };
     const int cycle = static_cast<int>(ctx.sim.army_count()) + 1;
     // ARMY_1's influence map: its entries for the engineer's fakes, and
     // ARMY_2's threat about the engineer (summed every 30 ticks)
@@ -84,11 +82,11 @@ void test_jammer_blips(TestContext& ctx) {
     };
 
     lua("__osc_jb_engineer:DisableIntel('Jammer')\n");
-    run(5);
+    tick_for(ctx, 5);
     t.check(!offsets(), "a jammer with its Jammer off gives no fakes");
 
     lua("__osc_jb_engineer:EnableIntel('Jammer')\n");
-    run(2 * cycle);
+    tick_for(ctx, 2 * cycle);
     const auto* fakes = offsets();
     bool within = fakes != nullptr && fakes->size() == 5;
     if (fakes)
@@ -100,12 +98,12 @@ void test_jammer_blips(TestContext& ctx) {
     t.check(sensed == 5,
             "all five are sensed by radar and not known fake (" + std::to_string(sensed) + ")");
     const std::vector<sim::Vector3> before = fakes ? *fakes : std::vector<sim::Vector3>{};
-    run(3);
+    tick_for(ctx, 3);
     t.check(offsets() && same(*offsets(), before), "a fake keeps its place about the jammer");
 
     // Fed as the engineer (SurfaceThreatLevel 1) at their own places, and
     // summed at the map's next update
-    run(31);
+    tick_for(ctx, 31);
     const size_t held = fake_entries();
     t.check(held == 5, "ARMY_1's influence map holds the 5 fakes (" + std::to_string(held) + ")");
     const f32 fooled = threat_about();
@@ -114,9 +112,9 @@ void test_jammer_blips(TestContext& ctx) {
     // no threat from the next update on.
     lua("CreateVisibleAreaAtPoint(1, " + std::to_string(sx) + ", 0, " + std::to_string(sz) +
         ", 30, 5)\n");
-    run(cycle);
+    tick_for(ctx, cycle);
     t.check(shown() == 0, "seen, the fakes are known fake");
-    run(31);
+    tick_for(ctx, 31);
     const f32 seen = threat_about();
     t.check(std::abs(fooled - seen - 5.0f) < 1e-3f, "known fake, they add no threat (" +
                                                         std::to_string(fooled) + " -> " +
@@ -125,7 +123,7 @@ void test_jammer_blips(TestContext& ctx) {
     // The sight gone (its 5 seconds out), radar still holding the engineer:
     // known fake once, known fake for good (Moho's UpdateBlip keeps
     // RECON_KnownFake), so they show and add no threat as before.
-    run(30);
+    tick_for(ctx, 30);
     const sim::Entity* jammer = ctx.sim.entity_registry().find(engineer);
     t.check(jammer &&
                 (ctx.sim.recon_of(*jammer, 0) &
@@ -135,19 +133,19 @@ void test_jammer_blips(TestContext& ctx) {
     t.check(offsets() != nullptr && shown() == 0,
             "out of sight again, the fakes stay known fake (" + std::to_string(shown()) +
                 " shown)");
-    run(31);
+    tick_for(ctx, 31);
     const f32 after = threat_about();
     t.check(std::abs(after - seen) < 1e-3f, "and still add no threat (" + std::to_string(seen) +
                                                 " -> " + std::to_string(after) + ")");
 
     lua("__osc_jb_engineer:DisableIntel('Jammer')\n");
-    run(cycle);
+    tick_for(ctx, cycle);
     t.check(!offsets() && shown() == 0, "the Jammer off, its fakes go");
     lua("__osc_jb_engineer:EnableIntel('Jammer')\n");
-    run(cycle);
+    tick_for(ctx, cycle);
     t.check(offsets() && !same(*offsets(), before), "on again, they are drawn afresh");
     lua("__osc_jb_engineer:Destroy()\n");
-    run(cycle);
+    tick_for(ctx, cycle);
     t.check(!offsets(), "the jammer gone, its fakes go");
 
     spdlog::info("=== JAMMER BLIP TEST: {} passed, {} failed ===", t.pass, t.fail);

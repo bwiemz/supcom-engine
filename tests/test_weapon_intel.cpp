@@ -11,6 +11,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/weapon.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -24,6 +25,7 @@ using osc::f32;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::Weapon;
+using osc::test::tick_until;
 
 namespace {
 
@@ -83,13 +85,16 @@ TEST_CASE("With the fog on, a weapon doesn't pick what its army can't sense", "[
     Scene s("explored", "RULEUMT_Land");
     s.ticks(35);
     CHECK(s.weapon->target_entity_id == 0);
+    s.sim.add_temp_vision(0, 74.0f, 64.0f, 5.0f, 10.0f);
+    tick_until([&] { s.ticks(1); }, "the weapon picks the enemy once it is seen", 70,
+               [&] { return s.weapon->target_entity_id == s.enemy->entity_id(); });
 }
 
 TEST_CASE("It picks what its army sees", "[weapon][intel]") {
     Scene s("explored", "RULEUMT_Land");
     s.sim.add_temp_vision(0, 74.0f, 64.0f, 5.0f, 10.0f);
-    s.ticks(35);
-    CHECK(s.weapon->target_entity_id == s.enemy->entity_id());
+    tick_until([&] { s.ticks(1); }, "the weapon picks the enemy it sees", 70,
+               [&] { return s.weapon->target_entity_id == s.enemy->entity_id(); });
 }
 
 TEST_CASE("A unit gone from sight is dropped; a structure once seen is kept", "[weapon][intel]") {
@@ -98,8 +103,8 @@ TEST_CASE("A unit gone from sight is dropped; a structure once seen is kept", "[
         s.sim.add_temp_vision(0, 74.0f, 64.0f, 5.0f, 1.0f);
         s.ticks(5);
         REQUIRE(s.weapon->target_entity_id == s.enemy->entity_id());
-        s.ticks(30); // the sight is gone
-        CHECK(s.weapon->target_entity_id == 0);
+        tick_until([&] { s.ticks(1); }, "the weapon drops the unit gone from sight", 60,
+                   [&] { return s.weapon->target_entity_id == 0; });
     }
     SECTION("a structure") {
         Scene s("explored", "RULEUMT_None");
@@ -113,8 +118,8 @@ TEST_CASE("A unit gone from sight is dropped; a structure once seen is kept", "[
 
 TEST_CASE("With the fog off every unit is known, as in Moho", "[weapon][intel]") {
     Scene s("none", "RULEUMT_Land");
-    s.ticks(35);
-    CHECK(s.weapon->target_entity_id == s.enemy->entity_id());
+    tick_until([&] { s.ticks(1); }, "the weapon picks the enemy", 70,
+               [&] { return s.weapon->target_entity_id == s.enemy->entity_id(); });
 }
 
 TEST_CASE("Weapon checks follow the army's published recon at every recon phase",

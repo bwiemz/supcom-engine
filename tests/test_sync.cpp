@@ -56,12 +56,14 @@ TEST_CASE("Identical sims produce identical checksums", "[sync]") {
     populate(b);
 
     CHECK(a.compute_sync_checksum() == b.compute_sync_checksum());
+    const auto start = a.compute_sync_checksum();
 
     for (int i = 0; i < 20; ++i) {
         a.tick();
         b.tick();
     }
     CHECK(a.compute_sync_checksum() == b.compute_sync_checksum());
+    CHECK(a.compute_sync_checksum() != start);
 }
 
 TEST_CASE("A state divergence changes the checksum", "[sync]") {

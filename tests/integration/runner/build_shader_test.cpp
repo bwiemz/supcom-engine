@@ -15,6 +15,7 @@
 #include "support/temp_path.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
@@ -271,7 +272,6 @@ void test_build_shaders(TestContext& ctx) {
             });
             return seen;
         };
-        // Until every structure is under way.
         const auto under_way = [&] {
             for (const Job& job : jobs) {
                 const Seen seen = look(job.structure);
@@ -279,7 +279,7 @@ void test_build_shaders(TestContext& ctx) {
             }
             return true;
         };
-        for (int i = 0; i < 300 && !under_way(); ++i) ctx.sim.tick();
+        tick_until(ctx, "Test 1: every structure is under way", 300, under_way);
         for (int i = 0; i < 5; ++i) ctx.sim.tick();
         std::string during;
         bool building_ok = true;
@@ -299,7 +299,15 @@ void test_build_shaders(TestContext& ctx) {
         const auto hurried = ctx.lua_state.do_string(
             "for _, e in __osc_build_engineers do e:SetBuildRate(1000) end\n");
         if (!hurried) spdlog::warn("the build rate: {}", hurried.error().message);
-        for (int i = 0; i < 60; ++i) ctx.sim.tick();
+        tick_until(ctx, "Test 1: every structure is built and out of its build mesh", 120, [&] {
+            for (const Job& job : jobs) {
+                const Seen seen = look(job.structure);
+                if (seen.fraction < 1.0f || seen.technique == job.building) {
+                    return false;
+                }
+            }
+            return true;
+        });
         std::string after;
         bool built_ok = true;
         for (const Job& job : jobs) {

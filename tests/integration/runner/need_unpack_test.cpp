@@ -21,6 +21,7 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -72,15 +73,12 @@ void test_need_unpack(TestContext& ctx) {
     if (!art || !unit(gen_id)) return;
     run_lua(ctx, "__osc_nu_tank:Destroy()");
 
-    bool deployed = false;
-    for (int i = 0; i < 400 && !deployed; ++i) {
-        ctx.sim.tick();
-        art = unit(art_id);
-        if (!art) break;
-        deployed = art->immobile() && target_of(*art) == gen_id;
+    if (!tick_until(ctx, "the artillery deploys against the generator 60 off", 400, [&] {
+            art = unit(art_id);
+            return art && art->immobile() && target_of(*art) == gen_id;
+        })) {
+        return;
     }
-    t.check(deployed, "the artillery deploys against the generator 60 off");
-    if (!deployed) return;
 
     const sim::Vector3 start = art->position();
     const f32 gx = sx + 40;
@@ -93,20 +91,34 @@ void test_need_unpack(TestContext& ctx) {
     t.check(art && target_of(*art) == 0, "Test 1: its weapon drops the target as the move begins");
 
     int packed_at = -1;
-    int arrived_at = -1;
     bool redeployed = false;
     bool targeted = false;
-    for (int i = 1; i < 900 && art && arrived_at < 0; ++i) {
-        ctx.sim.tick();
-        art = unit(art_id);
-        if (!art) break;
-        const bool moving = !art->command_queue().empty() &&
-                            art->command_queue().front().type == sim::CommandType::Move;
-        if (packed_at < 0 && !art->immobile()) packed_at = i;
-        if (packed_at >= 0 && moving && art->immobile()) redeployed = true;
-        if (moving && target_of(*art) != 0) targeted = true;
-        if (art->command_queue().empty()) arrived_at = i;
-    }
+    int ticked = 0;
+    const auto arrived = tick_until(
+        [&] {
+            ctx.sim.tick();
+            ++ticked;
+        },
+        "Test 4: it gets there", 900,
+        [&] {
+            art = unit(art_id);
+            if (!art) {
+                return false;
+            }
+            const bool moving = !art->command_queue().empty() &&
+                                art->command_queue().front().type == sim::CommandType::Move;
+            if (packed_at < 0 && !art->immobile()) {
+                packed_at = ticked;
+            }
+            if (packed_at >= 0 && moving && art->immobile()) {
+                redeployed = true;
+            }
+            if (moving && target_of(*art) != 0) {
+                targeted = true;
+            }
+            return art->command_queue().empty();
+        });
+    const int arrived_at = arrived.value_or(-1);
     const f32 moved =
         art ? std::hypot(art->position().x - start.x, art->position().z - start.z) : 0.0f;
     t.check(packed_at >= 0 && packed_at <= 150 && moved > 5.0f,
@@ -133,18 +145,19 @@ void test_need_unpack(TestContext& ctx) {
     run_lua(ctx, "__osc_nu_near:SetCanTakeDamage(false)\n"
                  "IssueAttack({__osc_nu_art}, __osc_nu_gen)");
     bool took_near = false;
-    bool on_gen = false;
-    for (int i = 0; i < 900 && art && !on_gen; ++i) {
-        ctx.sim.tick();
+    tick_until(ctx, "Test 5: sent at the generator, it deploys against it", 900, [&] {
         art = unit(art_id);
-        if (!art) break;
-        if (target_of(*art) == near_id) took_near = true;
-        on_gen = art->immobile() && target_of(*art) == gen_id;
-    }
-    t.check(!took_near && on_gen,
-            fmt::format("Test 5: sent at the generator, it never takes the one in range ({}) and "
-                        "deploys against its own ({})",
-                        took_near, on_gen));
+        if (!art) {
+            return false;
+        }
+        if (target_of(*art) == near_id) {
+            took_near = true;
+        }
+        return art->immobile() && target_of(*art) == gen_id;
+    });
+    t.check(!took_near,
+            fmt::format("Test 5: sent at the generator, it never takes the one in range ({})",
+                        took_near));
 
     spdlog::info("=== NEED UNPACK TEST: {} passed, {} failed ===", t.pass, t.fail);
 }

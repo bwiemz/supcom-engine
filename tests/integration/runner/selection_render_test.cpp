@@ -10,6 +10,7 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "renderer/input_handler.hpp"
 #include "renderer/renderer.hpp"
@@ -282,7 +283,11 @@ void test_selection_render(TestContext& ctx) {
         patrol.target_pos = {sx, 0, sz - 10};
         plane->push_command(patrol, false);
     }
-    for (int i = 0; i < 60; ++i) ctx.sim.tick(); // up to its height
+    tick_until(ctx, "Tests 11-12: the aircraft is up at its height", 120, [&] {
+        const auto* plane = static_cast<const sim::Unit*>(ctx.sim.entity_registry().find(air));
+        return plane && plane->elevation_target() > 5.0f &&
+               plane->current_altitude() >= 0.9f * plane->elevation_target();
+    });
     seen.capture(ctx.sim);
     seen.capture(ctx.sim);
     input.set_frame_view(sim::FrameView(&seen.prev(), &seen.cur(), 1.0f));

@@ -5,11 +5,14 @@
 #include "lua/lua_state.hpp"
 #include "render_probe.hpp"
 #include "sim/sim_state.hpp"
+#include "tick_until.hpp"
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
+#include <optional>
 #include <string>
+#include <string_view>
 
 namespace osc::test {
 
@@ -32,6 +35,26 @@ void run_sampled(TestContext& ctx, Tally& t, int ticks, const char* sample) {
             return;
         }
     }
+}
+
+std::optional<int> run_sampled_until(TestContext& ctx, Tally& t, std::string_view what,
+                                     const std::string& done, int limit, const char* sample) {
+    int i = 0;
+    bool failed = false;
+    const auto ticks = tick_until(
+        [&] {
+            ctx.sim.tick();
+            ++i;
+            if (const auto r = ctx.lua_state.do_string(fmt::format("{}({})", sample, i)); !r) {
+                t.check(false, fmt::format("sampling at tick {}: {}", i, r.error().message));
+                failed = true;
+            }
+        },
+        what, limit, [&] { return failed || lua_true(ctx.lua_state, done); });
+    if (!ticks) {
+        ++t.fail;
+    }
+    return ticks;
 }
 
 /// The map's other armies start with their commanders on it; one near a
@@ -90,7 +113,17 @@ void test_shore(TestContext& ctx) {
             end
         end
     )");
-    run_sampled(ctx, t, 1200, "__osc_shore_sample");
+    run_sampled_until(ctx, t, "Test 4: each one's move ends, and it stops", R"(
+        (function()
+            for _, s in __osc_shore do
+                if table.getn(s.unit:GetCommandQueue()) > 0 or s.unit:IsMoving() then
+                    return false
+                end
+            end
+            return true
+        end)()
+    )",
+                      2400, "__osc_shore_sample");
 
     lua_check(ctx, t, "Test 1: the hover tank crosses on the water's surface, and arrives", R"(
         local s = __osc_shore.hover
@@ -110,11 +143,6 @@ void test_shore(TestContext& ctx) {
             if layer ~= 'Land' then error('it was on the ' .. layer .. ' layer') end
         end
         if not s.arrived then error('it never arrived') end
-    )");
-    lua_check(ctx, t, "Test 4: each has stopped where it arrived", R"(
-        for name, s in __osc_shore do
-            if s.unit:IsMoving() then error('the ' .. name .. ' unit is still moving') end
-        end
     )");
     t.check(osc::test_status::failure_count() - t.fail == failures_before,
             "Test 5: no script errors");
@@ -309,7 +337,18 @@ void test_crowdgap(TestContext& ctx) {
             end
         end
     )");
-    run_sampled(ctx, t, 900, "__osc_crowdgap_sample");
+    const auto ended = run_sampled_until(ctx, t, "the crowd's moves end", R"(
+        (function()
+            for _, u in __osc_crowd do
+                if table.getn(u:GetCommandQueue()) > 0 then return false end
+            end
+            return true
+        end)()
+    )",
+                                         1800, "__osc_crowdgap_sample");
+    t.check(ended && *ended <= 900,
+            fmt::format("Test 1: their moves end by tick 900 (retail's all in by 300): on {}",
+                        ended.value_or(-1)));
     lua_check(ctx, t, "Test 1: every one arrives at its place, as in retail", R"(
         local short = ''
         for i, u in __osc_crowd do
