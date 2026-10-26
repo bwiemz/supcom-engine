@@ -15,12 +15,8 @@ DrawLinePop stub_noop
 EndLoggingStats l_EndLoggingStats
 EntityCategoryEmpty l_EntityCategoryEmpty
 FlushEvents l_FlushEvents
-GetAirUnitsEmphasis <lambda>
-GetBotUnitsEmphasis <lambda>
 GetOmni shield_GetOmni
 GetScreenPos worldview_GetScreenPos
-GetSeaUnitsEmphasis <lambda>
-GetTankUnitsEmphasis <lambda>
 InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService
 IsKnownFake blip_IsKnownFake
 IsRestricted <lambda>
