@@ -639,6 +639,9 @@ void StateIO::load(StateReader& r, SimState& sim) {
     // each map's dirty bits and scan cursor are game state (see
     // docs/plans/2026-10-07-per-class-pathing-design.md, 4c-2).
     sim.reset_path_tables();
+    // ai_personality_ is derived: /lua/aipersonality.lua's row, which the
+    // restored Lua state holds, read again as a brain's is next asked for.
+    sim.ai_personality_.reset();
     if (sim.pathfinding_grid_)
         sim.pathfinder_ = std::make_unique<map::Pathfinder>(*sim.pathfinding_grid_);
     sim.stored_to_destroy_.clear();
