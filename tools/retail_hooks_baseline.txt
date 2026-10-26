@@ -6,7 +6,6 @@ method OnIconsVisible
 method OnSpecialAction
 method OnStart
 method OnSubtitle
-module /lua/UserScriptCommand.lua:VerifyScriptCommand
 module /lua/ui/game/gamemain.lua:OnDetectAdjacencyBonus
 module /lua/ui/uimain.lua:StopCursorText
 module /lua/ui/uimain.lua:ToggleConsole
