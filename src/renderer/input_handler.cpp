@@ -253,6 +253,13 @@ std::optional<std::array<f32, 2>> screen_point(const std::array<f32, 16>& view_p
     return std::array<f32, 2>{(cx / cw + 1.0f) * 0.5f * width, (cy / cw + 1.0f) * 0.5f * height};
 }
 
+int drag_selection_priority(const sim::Unit& unit, bool faf_exe) {
+    if (faf_exe && unit.is_being_built() && unit.has_category("LOWSELECTPRIO")) {
+        return 6;
+    }
+    return unit.selection_priority();
+}
+
 std::vector<u32> highest_selection_priority(const std::vector<std::pair<u32, int>>& units) {
     int best = std::numeric_limits<int>::max();
     for (const auto& unit : units) {
@@ -1025,7 +1032,7 @@ void InputHandler::select_in_box(sim::SimState& sim, const std::array<f32, 16>& 
                 return;
             }
         }
-        boxed.emplace_back(e.entity_id(), unit.selection_priority());
+        boxed.emplace_back(e.entity_id(), drag_selection_priority(unit, sim.faf_exe()));
     });
     if (shift) {
         const bool all_selected = std::all_of(boxed.begin(), boxed.end(), [&](const auto& unit) {

@@ -93,6 +93,11 @@ u32 carrier_of(const sim::Entity& e);
 
 std::vector<u32> highest_selection_priority(const std::vector<std::pair<u32, int>>& units);
 
+/// A unit's priority in a drag box, the lowest number taken: its
+/// General.SelectionPriority. On FAF's data an unfinished LOWSELECTPRIO unit's
+/// is 6, after every other (FA-Binary-Patches section/selectionPriority.cpp).
+int drag_selection_priority(const sim::Unit& unit, bool faf_exe);
+
 struct CommandMode {
     std::string mode; ///< "build", "order", "ping"...; empty for none
     std::string name; ///< blueprint id (build) or order cap, e.g. RULEUCC_Attack
