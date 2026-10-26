@@ -653,7 +653,8 @@ public:
     /// Moho's Unit::SetConsumptionActive: each call that stops it banks the
     /// request's grant as `army`'s next income, and the request keeps it.
     void set_consumption_active(bool on, ArmyBrain* army);
-    /// Moho's CUnitReclaimTask banks what it reclaims in its army.
+    /// Moho's CUnitReclaimTask banks what it reclaims in its army (nothing
+    /// in a tick FAF's paused rule held it).
     void bank_reclaim(ArmyBrain* army);
 
     /// Lua callback helpers: call self:method() or self:method(entity)
@@ -1494,7 +1495,7 @@ public:
     /// Where target point `index` is in the world (Moho's
     /// Unit::GetTargetPoint): its bone, the last for an index past them;
     /// for -1, or one with no bone in the mesh, its centre, half its
-    /// height up.
+    /// height up. On FAF's data, -1's is its collision box's centre.
     Vector3 target_point(i32 index) const;
     /// One of its target points at random (Moho's Unit::PickTargetPoint):
     /// -1, drawing nothing, with none.
@@ -1928,6 +1929,7 @@ private:
     i32 reclaim_wait_ = 0;
     bool builder_on_target_ = true;
     bool arm_awaited_ = false;
+    bool reclaim_held_ = false;   // this tick's reclaim banks nothing (FAF's paused rule)
     u32 repair_target_id_ = 0;    // entity ID of unit being repaired
     f64 repair_build_time_ = 0;   // target's Economy.BuildTime
     f64 repair_cost_mass_ = 0;    // target's Economy.BuildCostMass

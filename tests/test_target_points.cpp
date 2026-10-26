@@ -124,6 +124,31 @@ TEST_CASE("A unit's target points are its TargetBones, else its centre", "[targe
     CHECK(same(plain.target_point(0), {10, 1, 20}));
 }
 
+TEST_CASE("On FAF's data a unit's centre target point is its collision box's, where it stands",
+          "[targetpoints]") {
+    // FA-Binary-Patches hooks/CollisionOffsetFix.hook: Moho's GetTargetPoint
+    // at a negative index is SizeY/2 above where the unit moves to this tick;
+    // FAF's exe gives Entity::GetBoneWorldTransform(-1), the blueprint's
+    // CollisionOffset with SizeY/2 up, turned with the unit where it stands
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    Unit& u = unit(sim, add_unit(sim, 0, {10, 0, 20}, nullptr));
+    osc::sim::CollisionShape box;
+    box.type = osc::sim::CollisionShapeType::BOX;
+    box.cx = 0.5f;
+    box.cy = 1.0f + 1.0f; // CollisionOffsetY 1, SizeY 2
+    box.sx = box.sy = box.sz = 1.0f;
+    u.set_default_collision_shape(box);
+    u.place_now();
+    u.set_position({12, 0, 20}); // moving on this tick
+    CHECK(same(u.target_point(-1), {12, 1, 20}));
+    sim.set_faf_exe(true);
+    CHECK(same(u.target_point(-1), {10.5f, 2, 20}));
+    CHECK(same(u.target_point(0), {12, 1, 20})); // an index past none: Moho's still
+    u.set_collision_shape({});                   // a script's shape doesn't matter
+    CHECK(same(u.target_point(-1), {10.5f, 2, 20}));
+}
+
 TEST_CASE("A target point is picked at random, drawing nothing on a unit with none",
           "[targetpoints]") {
     const BoneData bones = walker_bones(3.0f, 8.0f);

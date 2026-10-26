@@ -297,10 +297,15 @@ int uu_GetEconData(lua_State* L) {
     const auto* r = record(L);
     lua_newtable(L);
     if (!r) return 1;
-    // Whole units a second, as the original game's UserUnit:GetEconData reports them.
+    // Whole units a second, as the original game's UserUnit:GetEconData reports
+    // them. FAF's patched exe reports the float instead (FA-Binary-Patches
+    // hooks/GetEconDataAsFloats.cpp).
+    const auto* sim = get_sim(L);
+    const bool floats = sim && sim->faf_exe();
     const auto set = [&](const char* key, f32 value) {
         lua_pushstring(L, key);
-        lua_pushnumber(L, static_cast<int>(value));
+        lua_pushnumber(L, floats ? static_cast<lua_Number>(value)
+                                 : static_cast<lua_Number>(static_cast<int>(value)));
         lua_rawset(L, -3);
     };
     set("massProduced", r->mass_produced);

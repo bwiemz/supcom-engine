@@ -333,6 +333,8 @@ public:
         set_collision_shape(s);
     }
     void revert_collision_shape() { set_collision_shape(default_collision_shape_); }
+    /// Its blueprint's collision box (or none), whatever its scripts have set
+    const CollisionShape& default_collision_shape() const { return default_collision_shape_; }
 
     // Footprint, in whole cells: its blueprint's Footprint, else its size
     // rounded up (Moho's REntityBlueprint default). Structures block it on
