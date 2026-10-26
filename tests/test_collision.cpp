@@ -5,6 +5,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "lua/lua_state.hpp"
+#include "map/heightmap.hpp"
+#include "map/terrain.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
 #include "sim/collision_beam.hpp"
@@ -18,12 +20,14 @@
 #include "sim/weapon.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -771,4 +775,96 @@ TEST_CASE("a projectile spins at its blueprint's RotationalVelocity about a rand
     (void)shell.apply_blueprint_physics(lua.raw(), &rng);
     CHECK(rate(shell) == 0.0f);
     CHECK(rng.state() == before);
+}
+
+namespace {
+
+int script_of(lua_State* L, const std::string& source) {
+    const std::string code = "return " + source;
+    REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "script") == 0);
+    REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
+    return luaL_ref(L, LUA_REGISTRYINDEX);
+}
+
+void run_lua(lua_State* L, const std::string& code) {
+    REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "run") == 0);
+    REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+}
+
+lua_Number global_number(lua_State* L, const char* name) {
+    lua_getglobal(L, name);
+    const lua_Number n = lua_tonumber(L, -1);
+    lua_pop(L, 1);
+    return n;
+}
+
+} // namespace
+
+TEST_CASE("a shot an entity turned away is asked again the next tick, as Moho asks",
+          "[collision]") {
+    // CheckCollision keeps no memory of an OnCollisionCheck's answer: flares and redirects
+    // (defaultantiprojectile.lua) answer differently as they go
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    EntityRegistry reg;
+    reg.init_spatial_grid(512, 512);
+    const u32 wall = add_unit(reg, {100, 0, 110}, box(5, 1, 5, 1)); // z 105..115
+    run_lua(L, "asked = 0");
+    reg.find(wall)->set_lua_table_ref(
+        script_of(L, "{ OnCollisionCheck = function() asked = asked + 1 return asked > 1 end }"));
+    Projectile* shot = add_shot(reg, {100, 1, 104}, {0, 0, 10}); // a unit a tick
+    shot->set_lua_table_ref(script_of(L, "{}"));
+    shot->update(0.1, reg, L);
+    reg.advance_coords();
+    CHECK(global_number(L, "asked") == 1);
+    CHECK_FALSE(shot->impact_waiting());
+    shot->update(0.1, reg, L);
+    reg.advance_coords();
+    CHECK(global_number(L, "asked") == 2);
+    REQUIRE(shot->impact_waiting());
+    CHECK(shot->impact_entity_id == wall);
+}
+
+TEST_CASE("a shot passes an entity whose script has no OnCollisionCheck, as Moho's",
+          "[collision]") {
+    // Moho's RunScript (0x0069F6B0): no OnCollisionCheck is no collision, as for a bare Entity
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    EntityRegistry reg;
+    reg.init_spatial_grid(512, 512);
+    const u32 bare = add_unit(reg, {100, 0, 102}, box(1, 1, 1, 1));
+    reg.find(bare)->set_lua_table_ref(script_of(L, "{}"));
+    Projectile* shot = add_shot(reg, {100, 1, 100}, {0, 0, 40});
+    shot->set_lua_table_ref(script_of(L, "{}"));
+    shot->update(0.1, reg, L);
+    reg.advance_coords();
+    CHECK_FALSE(shot->impact_waiting());
+    CHECK(shot->position().z == Approx(104.0f));
+}
+
+TEST_CASE("a shot crossing into the water hears OnEnterWater first on retail's rule, and not "
+          "under FAF's if the ground came first",
+          "[collision]") {
+    // Retail's CheckCollision changes the layer before the ground test, whatever else the step
+    // meets; FAF's exe after it, and not when the ground is no farther than the water
+    // (FA-Binary-Patches hooks/FixCollisions.cpp). A beach: ground at 12, water at 10.
+    for (const bool faf : {false, true}) {
+        CAPTURE(faf);
+        osc::lua::LuaState state;
+        lua_State* L = state.raw();
+        const osc::map::Terrain terrain(
+            osc::map::Heightmap(64, 64, 1.0f / 128.0f, std::vector<osc::u16>(65 * 65, 1536)), 10.0f,
+            true);
+        EntityRegistry reg;
+        reg.init_spatial_grid(64, 64);
+        reg.set_faf_exe(faf);
+        run_lua(L, "entered = 0");
+        Projectile* shot = add_shot(reg, {20, 13, 20}, {0, -40, 0}); // 13 to 9 this tick
+        shot->set_lua_table_ref(
+            script_of(L, "{ OnEnterWater = function() entered = entered + 1 end }"));
+        shot->update(0.1, reg, L, &terrain, 1);
+        REQUIRE(shot->impact_waiting());
+        CHECK(shot->impact_kind == "Terrain");
+        CHECK(global_number(L, "entered") == (faf ? 0 : 1));
+    }
 }
