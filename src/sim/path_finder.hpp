@@ -65,6 +65,9 @@ struct PathWorld {
     /// The mobile units in the way, and the unit whose way it is (its id).
     const MobileBlockers* blockers = nullptr;
     u32 owner = 0;
+    /// How far along its path a navigator may pick a target, in cells
+    /// (SimState::navigator_personal_pos_max_distance).
+    f32 personal_pos_max_distance = 50.0f;
 };
 
 /// Who hears a finder's answer (Moho's Listener<const SNavPath&>).

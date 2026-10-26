@@ -315,6 +315,17 @@ TEST_CASE("GetDepositsAroundPoint lists the map's deposits about a point", "[faf
     CHECK(in_ui.empty());
 }
 
+TEST_CASE("SetNavigatorPersonalPosMaxDistance sets the navigators' distance, 50 without one",
+          "[faf][pathing]") {
+    // FA-Binary-Patches section/PathfindingTweaks.cpp: luaL_optnumber, 50
+    World w;
+    CHECK(w.sim.navigator_personal_pos_max_distance() == 50.0f);
+    CHECK(run(w.sim_lua, "SetNavigatorPersonalPosMaxDistance(9999)").empty());
+    CHECK(w.sim.navigator_personal_pos_max_distance() == 9999.0f);
+    CHECK(run(w.sim_lua, "SetNavigatorPersonalPosMaxDistance()").empty());
+    CHECK(w.sim.navigator_personal_pos_max_distance() == 50.0f);
+}
+
 TEST_CASE("GetHighlightCommand is the waypoint under the cursor's order", "[faf][orders]") {
     World w;
     CHECK(run(w.ui, "if GetHighlightCommand() ~= nil then error('none hovered') end").empty());
