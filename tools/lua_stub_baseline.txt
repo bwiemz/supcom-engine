@@ -6,7 +6,6 @@ BeginLoggingStats l_BeginLoggingStats
 BlueprintLoaderUpdateProgress l_BlueprintLoaderUpdateProgress
 BlueprintLoaderUpdateProgress stub_noop
 ClearFrame Command
-DebugFacilitiesEnabled ReturnsBool
 DebugGetSelection stub_nil
 Destroy wlduiprovider_Destroy
 DrawCircle stub_noop

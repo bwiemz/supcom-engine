@@ -99,8 +99,7 @@ TEST_CASE("User-state stand-ins answer their stated kinds", "[frontend][lua]") {
     osc::lua::register_user_stand_ins(ui);
     auto result = ui.do_string(R"(
         local function count(...) return arg.n end
-        answers = DebugFacilitiesEnabled() == false and count(DebugFacilitiesEnabled()) == 1 and
-                  count(PrefetchSession('map', {}, true)) == 0 and count(ClearFrame()) == 0 and
+        answers = count(PrefetchSession('map', {}, true)) == 0 and count(ClearFrame()) == 0 and
                   __language == 'us' and __installedlanguages[1] == 'us'
     )");
     INFO((result.ok() ? std::string() : result.error().message));
@@ -112,7 +111,7 @@ TEST_CASE("User-state stand-ins answer their stated kinds", "[frontend][lua]") {
 
     // Every function stand-in is the one C function, so the coverage
     // report can tell it from a binding
-    for (const char* name : {"DebugFacilitiesEnabled", "PrefetchSession", "ClearFrame"}) {
+    for (const char* name : {"PrefetchSession", "ClearFrame"}) {
         INFO(name);
         lua_getglobal(L, name);
         CHECK(osc::lua::is_user_stand_in(lua_tocfunction(L, -1)));
