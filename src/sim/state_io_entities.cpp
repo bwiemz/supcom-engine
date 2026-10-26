@@ -1997,6 +1997,11 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.u32v(p.launcher_id);
     w.i32v(p.impact_listener_weapon);
     w.u32v(p.impact_listener_target);
+    w.i32v(p.bounce_limit);
+    w.i32v(p.ground_hits);
+    w.f32v(p.bounce_damping);
+    w.b(p.bounce_pending);
+    w.vec3(p.bounce_velocity);
     w.f32v(p.damage_amount);
     w.f32v(p.damage_radius);
     w.str(p.damage_type);
@@ -2051,6 +2056,11 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.launcher_id = r.u32v();
     p.impact_listener_weapon = r.i32v();
     p.impact_listener_target = r.u32v();
+    p.bounce_limit = r.i32v();
+    p.ground_hits = r.i32v();
+    p.bounce_damping = r.f32v();
+    p.bounce_pending = r.b();
+    p.bounce_velocity = r.vec3();
     p.damage_amount = r.f32v();
     p.damage_radius = r.f32v();
     p.damage_type = r.str();

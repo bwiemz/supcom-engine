@@ -52,6 +52,18 @@ void report_impact(lua_State* L, EntityRegistry& registry, u32 launcher, i32 wea
         registry, get_sim(L));
 }
 
+/// Moho's CHeightField::GetNormal (faf-re STIMap.cpp, 0x0069A620): the gradient of the ground's
+/// height half a unit either side of (x, z), normalized.
+Vector3 ground_normal(const map::Terrain& terrain, f32 x, f32 z) {
+    const f32 top = terrain.get_terrain_height(x, z - 0.5f);
+    const f32 left = terrain.get_terrain_height(x - 0.5f, z);
+    const f32 right = terrain.get_terrain_height(x + 0.5f, z);
+    const f32 bottom = terrain.get_terrain_height(x, z + 0.5f);
+    Vector3 n{left - right, 1.0f, top - bottom};
+    const f32 length = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+    return {n.x / length, n.y / length, n.z / length};
+}
+
 } // namespace
 
 // Helper: push a Vector3 as {[1]=x, [2]=y, [3]=z}
@@ -96,6 +108,10 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
         launch_tick = tick;
         launch_position = pending_position();
         launch_orientation = pending_orientation();
+    }
+    if (bounce_pending) {
+        velocity = bounce_velocity;
+        bounce_pending = false;
     }
 
     // Moho's MotionTick (faf-re Projectile.cpp): a shot thrusts the way it
@@ -448,10 +464,28 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
 
 void Projectile::record_impact(const Vector3& at, f32 interpolation, const Entity* hit,
                                const char* type, const map::Terrain* terrain) {
+    const std::string kind = type ? type : impact_type(hit, terrain);
+    // Moho's MotionTick: a hit of the ground (IMPACT_Terrain) counts, and one within its bounce
+    // limit is no impact. Its velocity, damped, is reflected about the ground's normal there,
+    // taken up next step, and it is set a twentieth of a unit back along the way it came.
+    if (kind == "Terrain" && terrain && ground_hits++ < bounce_limit) {
+        const Vector3 n = ground_normal(*terrain, at.x, at.z);
+        const Vector3 d{velocity.x * bounce_damping, velocity.y * bounce_damping,
+                        velocity.z * bounce_damping};
+        const f32 two_dot = ((n.y * d.y + n.z * d.z) + n.x * d.x) * 2.0f;
+        bounce_velocity = {d.x - n.x * two_dot, d.y - n.y * two_dot, d.z - n.z * two_dot};
+        bounce_pending = true;
+        Vector3 back{-velocity.x, -velocity.y, -velocity.z};
+        const f32 length = std::sqrt(back.x * back.x + back.y * back.y + back.z * back.z);
+        if (length > 0.0f) back = {back.x / length, back.y / length, back.z / length};
+        else back = {};
+        set_position({at.x + back.x * 0.05f, at.y + back.y * 0.05f, at.z + back.z * 0.05f});
+        return;
+    }
     set_position(at);
     impact_interpolation = interpolation;
     impact_entity_id = hit ? hit->entity_id() : 0;
-    impact_kind = type ? type : impact_type(hit, terrain);
+    impact_kind = kind;
 }
 
 bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entity& other) {
@@ -570,6 +604,20 @@ Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L, S
         spread("MaxSpeedRange", max_speed);
         spread("AccelerationRange", acceleration);
         spread("LifetimeRange", found.lifetime);
+    }
+    // Its bounces (Moho's RProjectileBlueprintPhysics defaults 0, 0 and 0.5): a pick in
+    // [MinBounceCount, MaxBounceCount), as Moho scales one draw by the span. Moho draws for an
+    // empty span too; this only for one there is, as above.
+    f32 min_bounces = 0;
+    f32 max_bounces = 0;
+    number("MinBounceCount", min_bounces);
+    number("MaxBounceCount", max_bounces);
+    number("BounceVelDamp", bounce_damping);
+    const auto low = static_cast<i32>(min_bounces);
+    const auto span = static_cast<u32>(static_cast<i32>(max_bounces) - low);
+    bounce_limit = low;
+    if (rng && span != 0) {
+        bounce_limit += static_cast<i32>((static_cast<u64>(span) * rng->next_u32()) >> 32);
     }
     lua_settop(L, top);
     return found;
