@@ -150,46 +150,104 @@ static void build_mode_blueprint(lua_State* uiL, osc::renderer::CommandMode& m) 
     lua_pop(uiL, 2);
 }
 
+/// A point as a {x, y, z} table
+static void push_xyz(lua_State* L, const osc::sim::Vector3& p) {
+    lua_newtable(L);
+    lua_pushnumber(L, p.x);
+    lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, p.y);
+    lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, p.z);
+    lua_rawseti(L, -2, 3);
+}
+
+std::optional<osc::renderer::VerifiedScript>
+verify_script_command(lua_State* uiL, const std::vector<osc::u32>& units, osc::u32 target_id,
+                      const osc::sim::Vector3& at, bool clear) {
+    const int top = lua_gettop(uiL);
+    // The order as BuildUserScriptCommandObject (0x0083E150) describes it
+    lua_newtable(uiL);
+    const int data = lua_gettop(uiL);
+    lua_pushstring(uiL, "Units");
+    osc::lua::push_units_for_ui(uiL, units);
+    lua_rawset(uiL, data);
+    lua_pushstring(uiL, "Blueprint");
+    lua_pushstring(uiL, "");
+    lua_rawset(uiL, data);
+    lua_pushstring(uiL, "Target");
+    lua_newtable(uiL);
+    lua_pushstring(uiL, "Type");
+    lua_pushstring(uiL, target_id ? "Entity" : "Position");
+    lua_rawset(uiL, -3);
+    if (target_id) {
+        lua_pushstring(uiL, "EntityId");
+        osc::sim::push_entity_id(uiL, target_id);
+        lua_rawset(uiL, -3);
+    }
+    lua_pushstring(uiL, "Position");
+    push_xyz(uiL, at);
+    lua_rawset(uiL, -3);
+    lua_rawset(uiL, data); // Target
+    lua_pushstring(uiL, "CommandType");
+    lua_pushstring(uiL, "Script");
+    lua_rawset(uiL, data);
+    lua_pushstring(uiL, "Clear");
+    lua_pushboolean(uiL, clear ? 1 : 0);
+    lua_rawset(uiL, data);
+
+    // Its answer; on an error the order's own table, which lets nothing go
+    int answer = data;
+    osc::core::push_imported_function(uiL, "/lua/user/UserScriptCommand.lua",
+                                      "VerifyScriptCommand");
+    lua_pushvalue(uiL, data);
+    if (lua_pcall(uiL, 1, 1, 0) != 0) {
+        // The exe's own text, its module path and all
+        const char* err = lua_tostring(uiL, -1);
+        spdlog::warn("Error running '/lua/UserScriptCommand.lua:VerifyScriptCommand': {}",
+                     err ? err : "<unknown>");
+    } else {
+        answer = lua_gettop(uiL);
+    }
+
+    std::optional<osc::renderer::VerifiedScript> verdict;
+    if (lua_istable(uiL, answer)) {
+        lua_pushstring(uiL, "UserValidated");
+        lua_gettable(uiL, answer);
+        const bool validated = lua_toboolean(uiL, -1) != 0;
+        lua_pop(uiL, 1);
+        if (validated) {
+            osc::renderer::VerifiedScript v;
+            lua_pushstring(uiL, "AuthorizedUnits");
+            lua_gettable(uiL, answer);
+            if (lua_istable(uiL, -1)) {
+                lua_pushnil(uiL);
+                while (lua_next(uiL, -2) != 0) {
+                    if (lua_istable(uiL, -1)) {
+                        lua_pushstring(uiL, "_c_entity_id");
+                        lua_rawget(uiL, -2);
+                        if (lua_isnumber(uiL, -1))
+                            v.units.push_back(static_cast<osc::u32>(lua_tonumber(uiL, -1)));
+                        lua_pop(uiL, 1);
+                    }
+                    lua_pop(uiL, 1);
+                }
+            }
+            lua_pop(uiL, 1);
+            // The task gets the rest (the sim never sees AuthorizedUnits)
+            lua_pushstring(uiL, "AuthorizedUnits");
+            lua_pushnil(uiL);
+            lua_settable(uiL, answer);
+            if (auto bytes = osc::sim::lua_to_bytes(uiL, answer)) v.args = std::move(*bytes);
+            verdict = std::move(v);
+        }
+    }
+    lua_settop(uiL, top);
+    return verdict;
+}
+
 /// FA's current command mode: GetCommandMode() -> {mode, data}, once the
 /// game UI has loaded the module. Build mode carries the footprint (for
 /// the ghost and the snap).
-/// An ability's order at a point (M206w): the command mode's table as it
-/// is now, with the point as its Location, as bytes. Moho's click gives the
-/// task its target so (TargetLocation reads commandData.Location).
-static std::function<std::string(const osc::sim::Vector3&)> script_order_at(lua_State* uiL) {
-    std::string mode_data;
-    osc::core::push_loaded_module_function(uiL, kCommandModeModule, "GetCommandMode");
-    if (lua_isfunction(uiL, -1) && lua_pcall(uiL, 0, 1, 0) != 0) {
-        const char* err = lua_tostring(uiL, -1);
-        spdlog::warn("Error running '{}:GetCommandMode': {}", kCommandModeModule,
-                     err ? err : "(unknown error)");
-    } else if (lua_istable(uiL, -1)) {
-        lua_rawgeti(uiL, -1, 2);
-        if (lua_istable(uiL, -1))
-            if (auto bytes = osc::sim::lua_to_bytes(uiL, -1)) mode_data = std::move(*bytes);
-        lua_pop(uiL, 1);
-    }
-    lua_pop(uiL, 1); // the mode, the error or the non-function
-    return [uiL, mode_data](const osc::sim::Vector3& at) -> std::string {
-        const int top = lua_gettop(uiL);
-        if (!osc::sim::push_lua_bytes(uiL, mode_data) || !lua_istable(uiL, -1)) {
-            lua_settop(uiL, top);
-            return {};
-        }
-        lua_pushstring(uiL, "Location");
-        lua_newtable(uiL);
-        const float xyz[] = {at.x, at.y, at.z};
-        for (int i = 0; i < 3; ++i) {
-            lua_pushnumber(uiL, xyz[i]);
-            lua_rawseti(uiL, -2, i + 1);
-        }
-        lua_rawset(uiL, -3);
-        auto bytes = osc::sim::lua_to_bytes(uiL, -1);
-        lua_settop(uiL, top);
-        return bytes ? std::move(*bytes) : std::string();
-    };
-}
-
 osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
     osc::renderer::CommandMode m;
     osc::core::push_loaded_module_function(uiL, kCommandModeModule, "GetCommandMode");
@@ -219,7 +277,12 @@ osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
     if (m.mode == "build" && !m.name.empty()) {
         build_mode_blueprint(uiL, m);
     }
-    if (m.mode == "order" && m.name == "RULEUCC_Script") m.script_args_at = script_order_at(uiL);
+    if (m.mode == "order" && m.name == "RULEUCC_Script") {
+        m.verify_script = [uiL](const std::vector<osc::u32>& units, osc::u32 target_id,
+                                const osc::sim::Vector3& at, bool clear) {
+            return verify_script_command(uiL, units, target_id, at, clear);
+        };
+    }
     return m;
 }
 

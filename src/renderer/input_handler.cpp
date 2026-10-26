@@ -1402,16 +1402,30 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         out.type = "BuildMobile";
         out.blueprint = mode.name;
     } else if (mode.mode == "order" && mode.name == "RULEUCC_Script") {
-        // An ability (M206w): the orders panel's button names its task. The
-        // units it is for take it (ABILITYBUTTON, the category the panel
-        // shows abilities for; they have no RULEUCC_Script cap), the click
-        // as its Location.
-        if (!mode.script_args_at) return std::nullopt;
+        // An ability (M206w), as Moho's command mode issues one
+        // (IssueScriptCommandForDrag): the unit under the cursor, else the
+        // ground, its target. UserScriptCommand.lua's VerifyScriptCommand,
+        // given the selection, says whether it goes, to which units (its
+        // AuthorizedUnits) and with what for the task (UI_VerifyScriptCommand).
+        if (!mode.verify_script) return std::nullopt;
         cmd.type = sim::CommandType::Script;
-        cmd.script_args = mode.script_args_at({wx, surface_y(wx, wz), wz});
-        if (cmd.script_args.empty()) return std::nullopt;
+        cmd.target_id = target_under(sim, wx, wz, cmd.type);
+        const sim::Entity* target =
+            cmd.target_id ? sim.entity_registry().find(cmd.target_id) : nullptr;
+        const sim::Vector3 at =
+            target ? target->position() : sim::Vector3{wx, surface_y(wx, wz), wz};
+        std::vector<u32> selection(selected_.begin(), selected_.end());
+        std::sort(selection.begin(), selection.end());
+        const auto verdict = mode.verify_script(selection, cmd.target_id, at, !shift);
+        if (!verdict) return std::nullopt;
+        cmd.script_args = verdict->args;
         out.type = "Script";
-        live_selected([](const sim::Unit& u) { return u.has_category("ABILITYBUTTON"); });
+        for (u32 uid : verdict->units) {
+            const auto* e = sim.entity_registry().find(uid);
+            if (e && e->is_unit() && !e->destroyed()) ids.push_back(uid);
+        }
+        std::sort(ids.begin(), ids.end());
+        ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
     } else if (mode.mode == "order") {
         const OrderSpec* spec = nullptr;
         for (const auto& o : kOrders)

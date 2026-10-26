@@ -34,7 +34,10 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <cmath>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace osc::test {
 
@@ -157,8 +160,10 @@ void test_script_orders(TestContext& ctx) {
         spdlog::info("[PASS] script orders: the Eye of Rhianne scries through TargetLocation");
 
     // 4. As the orders panel's ability button gives it: a click in its
-    // command mode, the click the task's Location. The ACU, selected too,
-    // has no ability to take it.
+    // command mode, which UserScriptCommand.lua's VerifyScriptCommand lets
+    // go (the app's verifier calls it in the UI state; this one answers as
+    // retail's does, with the click as the Location). Its AuthorizedUnits
+    // decide who takes it: here the Eye, not the ACU selected beside it.
     if (!run(ctx, "the Eye's id", "__eye_id = tonumber(__eye:GetEntityId())")) return;
     lua_getglobal(ctx.L, "__eye_id");
     const auto eye_id = osc::sim::to_entity_id(ctx.L, -1);
@@ -174,30 +179,35 @@ void test_script_orders(TestContext& ctx) {
     renderer::CommandMode mode;
     mode.mode = "order";
     mode.name = "RULEUCC_Script";
-    // The mode's table as orders.lua makes it, plus the click (the app's
-    // builder reads it from commandmode.lua)
-    mode.script_args_at = [&](const sim::Vector3& p) -> std::string {
+    bool asked_right = false;
+    mode.verify_script = [&](const std::vector<u32>& units, u32 target_id, const sim::Vector3& p,
+                             bool clear) -> std::optional<renderer::VerifiedScript> {
+        asked_right = units.size() == 2 && target_id == 0 && clear && std::abs(p.x - cx) < 0.01f &&
+                      std::abs(p.z - cz) < 0.01f;
         lua_State* L = ctx.L;
-        const std::string code =
-            fmt::format("return {{ name = 'RULEUCC_Script', AbilityName = 'TargetLocation', "
-                        "TaskName = 'TargetLocation', Location = {{ {}, {}, {} }} }}",
-                        p.x, p.y, p.z);
-        if (luaL_loadbuffer(L, code.c_str(), code.size(), "=mode") != 0 ||
+        const std::string code = fmt::format("return {{ TaskName = 'TargetLocation', UserValidated "
+                                             "= true, Location = {{ {}, {}, {} }} }}",
+                                             p.x, p.y, p.z);
+        if (luaL_loadbuffer(L, code.c_str(), code.size(), "=verdict") != 0 ||
             lua_pcall(L, 0, 1, 0) != 0) {
             lua_pop(L, 1);
-            return {};
+            return std::nullopt;
         }
         auto bytes = sim::lua_to_bytes(L, -1);
         lua_pop(L, 1);
-        return bytes ? *bytes : std::string();
+        if (!bytes) return std::nullopt;
+        return renderer::VerifiedScript{{eye_id}, *bytes};
     };
     const auto issued = input.click_in_command_mode(ctx.sim, mode, cx, cz, false);
     for (int i = 0; i < 5; ++i) ctx.sim.tick();
     acu = acu_of(ctx.sim);
     if (!issued || issued->type != "Script") {
         test_status::fail("[FAIL] script orders: the ability's click issued no Script order");
+    } else if (!asked_right) {
+        test_status::fail("[FAIL] script orders: VerifyScriptCommand wasn't given the selection "
+                          "and the click");
     } else if (acu && !acu->command_queue().empty()) {
-        test_status::fail("[FAIL] script orders: the ACU took the Eye's ability order");
+        test_status::fail("[FAIL] script orders: the ACU took an order its verdict left out");
     } else if (run(ctx, "the clicked scry",
                    fmt::format(R"(
         local at = __eye.RemoteViewingData.VisibleLocation

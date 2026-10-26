@@ -6,6 +6,7 @@
 
 #include "log_capture.hpp"
 
+#include "app/app_internal.hpp"
 #include "app/support.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -22,24 +23,22 @@ extern "C" {
 
 using osc::test::LogCapture;
 
-TEST_CASE("An ability order's click reports an error in GetCommandMode", "[lua][ui]") {
+TEST_CASE("An ability order's click reports an error in VerifyScriptCommand", "[lua][ui]") {
+    // Moho's UI_VerifyScriptCommand logs it in the exe's own words (its
+    // module path without /user/), and lets nothing go
     osc::lua::LuaState state;
-    // The mode is read once for the click, and again for the ability's order
+    osc::sim::SimState sim{state.raw(), nullptr};
+    osc::lua::register_moho_bindings(state, sim);
     REQUIRE(state
                 .do_string(R"(
-        calls = 0
-        __modules = {['/lua/ui/game/commandmode.lua'] = {GetCommandMode = function()
-            calls = calls + 1
-            if calls > 1 then error('boom') end
-            return {'order', {name = 'RULEUCC_Script', TaskName = 'Probe'}}
-        end}}
+        function import(name)
+            return {VerifyScriptCommand = function() error('boom') end}
+        end
     )")
                 .ok());
     LogCapture log;
-    const auto mode = osc::app::read_command_mode(state.raw());
-    CHECK(mode.mode == "order");
-    CHECK(mode.name == "RULEUCC_Script");
-    CHECK(log.count("Error running '/lua/ui/game/commandmode.lua:GetCommandMode': ") == 1);
+    CHECK_FALSE(osc::app::verify_script_command(state.raw(), {}, 0, {1, 2, 3}, true));
+    CHECK(log.count("Error running '/lua/UserScriptCommand.lua:VerifyScriptCommand': ") == 1);
     CHECK(log.count("boom") == 1);
 }
 
