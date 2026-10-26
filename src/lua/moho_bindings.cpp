@@ -1900,6 +1900,20 @@ static int l_GetPreference(lua_State* L) {
     return 1;
 }
 
+/// DebugFacilitiesEnabled(): the preference debug.enable_debug_facilities,
+/// false unless it is set true (Moho's USER_DebugFacilitiesEnabled, faf-re
+/// StartupHelpers.cpp 0x008CAE20). Retail's key mapper adds the debug keys
+/// with it, and its uimain and lobby read it.
+static int l_DebugFacilitiesEnabled(lua_State* L) {
+    if (const int n = lua_gettop(L); n != 0)
+        return arg_count_error(
+            L, "bool DebugFacilitiesEnabled() - returns true if debug facilities are enabled.", 0,
+            n);
+    const auto* prefs = get_prefs(L);
+    lua_pushboolean(L, prefs && prefs->get_bool("debug.enable_debug_facilities", false) ? 1 : 0);
+    return 1;
+}
+
 /// SetPreference(key, value) -- stores a copy; nil removes the key.
 static int l_SetPreference(lua_State* L) {
     const char* key = luaL_checkstring(L, 1);
@@ -4925,6 +4939,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetPreference", l_GetPreference);
     state.register_function("SetPreference", l_SetPreference);
     state.register_function("SavePreferences", l_SavePreferences);
+    state.register_function("DebugFacilitiesEnabled", l_DebugFacilitiesEnabled);
     state.register_function("GetOptions", l_GetOptions);
 
     // UI thread/coroutine globals

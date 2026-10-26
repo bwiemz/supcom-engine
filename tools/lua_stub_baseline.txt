@@ -7,7 +7,6 @@ BlueprintLoaderUpdateProgress l_BlueprintLoaderUpdateProgress
 BlueprintLoaderUpdateProgress stub_noop
 CameraReset worldview_CameraReset
 ClearFrame Command
-DebugFacilitiesEnabled ReturnsBool
 DebugGetSelection stub_nil
 Destroy wlduiprovider_Destroy
 DrawCircle stub_noop
