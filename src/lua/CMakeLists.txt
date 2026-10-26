@@ -42,6 +42,7 @@ add_library(osc_lua STATIC
     match_records.cpp
     url_bindings.cpp
     user_stand_ins.cpp
+    engine_stats.cpp
     category_utils.cpp
     factory_queue.cpp
     order_helpers.cpp

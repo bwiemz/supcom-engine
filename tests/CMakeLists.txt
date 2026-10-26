@@ -83,6 +83,7 @@ add_executable(osc_tests
     test_user_unit.cpp
     test_verify_script_command.cpp
     test_faf_bindings.cpp
+    test_engine_stats.cpp
     test_external_factory.cpp
     test_damage_callbacks.cpp
     test_profiler_self_time.cpp
