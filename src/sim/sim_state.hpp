@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sim/ai_personality.hpp"
 #include "sim/armor_definition.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/bounded_props.hpp"
@@ -185,6 +186,13 @@ public:
     /// AI_RunOpponentAI, true by default, has no console here). The host's, not saved.
     bool run_opponent_ai() const { return run_opponent_ai_; }
     void set_run_opponent_ai(bool on) { run_opponent_ai_ = on; }
+    /// The AI brains' personality (CAiPersonality), the same for every
+    /// brain: read from /lua/aipersonality.lua as the first is asked for
+    /// (lua/bindings/sim/aipersonality.cpp); nullptr until then.
+    const AiPersonality* ai_personality() const {
+        return ai_personality_ ? &*ai_personality_ : nullptr;
+    }
+    void set_ai_personality(AiPersonality p) { ai_personality_ = std::move(p); }
     map::PathfindingGrid* pathfinding_grid() { return pathfinding_grid_.get(); }
     const map::PathfindingGrid* pathfinding_grid() const { return pathfinding_grid_.get(); }
 
@@ -1177,7 +1185,8 @@ private:
     UnitBlockers unit_blockers_{*this};
     bool moho_pathing_ = false;
     bool faf_exe_ = false; // see faf_exe
-    bool run_opponent_ai_ = true; // see run_opponent_ai
+    bool run_opponent_ai_ = true;                 // see run_opponent_ai
+    std::optional<AiPersonality> ai_personality_; // see ai_personality
     /// Stored units whose carrier is gone, destroyed at a safe point of the
     /// tick (destroy_orphaned_stored_units).
     std::vector<u32> stored_to_destroy_;

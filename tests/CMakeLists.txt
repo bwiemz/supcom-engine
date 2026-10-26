@@ -33,6 +33,7 @@ add_executable(osc_tests
     test_ground_attack.cpp
     test_primary_weapon_target.cpp
     test_retarget_on_miss.cpp
+    test_projectile_bounce.cpp
     test_weapon_intel.cpp
     test_command_feedback.cpp
     test_map_border.cpp
@@ -122,6 +123,8 @@ add_executable(osc_tests
     test_build_template.cpp
     test_command_graph.cpp
     test_utf8_substring.cpp
+    test_get_version.cpp
+    test_ai_personality.cpp
     test_overlay_footprint.cpp
     test_font_cache.cpp
     test_minimap_area.cpp

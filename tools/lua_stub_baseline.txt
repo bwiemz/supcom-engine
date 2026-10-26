@@ -5,7 +5,6 @@ allocatedsize <lambda>
 BeginLoggingStats l_BeginLoggingStats
 BlueprintLoaderUpdateProgress l_BlueprintLoaderUpdateProgress
 BlueprintLoaderUpdateProgress stub_noop
-CameraReset worldview_CameraReset
 ClearFrame Command
 DebugFacilitiesEnabled ReturnsBool
 DebugGetSelection stub_nil
@@ -16,13 +15,8 @@ DrawLinePop stub_noop
 EndLoggingStats l_EndLoggingStats
 EntityCategoryEmpty l_EntityCategoryEmpty
 FlushEvents l_FlushEvents
-GetAirUnitsEmphasis <lambda>
-GetBotUnitsEmphasis <lambda>
 GetOmni shield_GetOmni
 GetScreenPos worldview_GetScreenPos
-GetSeaUnitsEmphasis <lambda>
-GetTankUnitsEmphasis <lambda>
-GetVersion l_GetVersion
 InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService
 IsKnownFake blip_IsKnownFake
 IsRestricted <lambda>
