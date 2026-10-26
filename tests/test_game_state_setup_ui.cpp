@@ -90,3 +90,15 @@ TEST_CASE("GetCurrentUIState answers Moho's UI state from boot to the front end"
     CHECK(std::string(osc::ui_state_to_string(osc::UIState::Lobby)) == "lobby");
     osc::set_ui_state(osc::UIState::None);
 }
+
+TEST_CASE("A resized window tells uimain.OnApplicationResize its head and size", "[game_state]") {
+    // Moho's CUIManager::OnResize calls MAUI_OnApplicationResize once the head's frame has its
+    // new size; retail's uimain clears the selection there.
+    osc::lua::LuaState state;
+    REQUIRE(state
+                .do_string("function OnApplicationResize(head, width, height) "
+                           "heard = head .. ' ' .. width .. 'x' .. height end")
+                .ok());
+    osc::core::call_on_application_resize(state.raw(), 0, 1280, 720);
+    REQUIRE(state.do_string("assert(heard == '0 1280x720', tostring(heard))").ok());
+}

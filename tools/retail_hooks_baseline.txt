@@ -13,7 +13,6 @@ method OnSubtitle
 method OnTerrainTypeChange
 module /lua/UserScriptCommand.lua:VerifyScriptCommand
 module /lua/ui/game/gamemain.lua:OnDetectAdjacencyBonus
-module /lua/ui/uimain.lua:OnApplicationResize
 module /lua/ui/uimain.lua:StartHostLobbyUI
 module /lua/ui/uimain.lua:StartJoinLobbyUI
 module /lua/ui/uimain.lua:StopCursorText

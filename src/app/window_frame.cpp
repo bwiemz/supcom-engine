@@ -5,6 +5,7 @@
 #include "app/window_commands.hpp"
 #include "app/world_sounds.hpp"
 #include "core/fixed_step.hpp"
+#include "core/game_state.hpp"
 #include "core/fullscreen.hpp"
 #include "core/profiler.hpp"
 #include "core/test_status.hpp"
@@ -339,6 +340,7 @@ double App::Window::begin_frame() {
         root_width = renderer.ui_width();
         root_height = renderer.ui_height();
         size_root_frame(ui_lua_state.raw(), root_width, root_height);
+        osc::core::call_on_application_resize(ui_lua_state.raw(), 0, root_width, root_height);
     }
     if (!sim_busy && osc::core::kNativeFullscreen && !offscreen_capture && !adapter_overridden &&
         renderer.fullscreen() != shown_fullscreen) {
