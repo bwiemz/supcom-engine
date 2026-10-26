@@ -221,6 +221,7 @@ static void bind_world_view(lua_State* L, ui::WorldView* wv, const std::string& 
     if (r) {
         wv->set_renderer(r);
         renderer::Camera& own = r->add_camera(name);
+        wv->set_own_camera(name, &own);
         if (wv->is_minimap()) {
             wv->register_camera("WorldCamera", &r->camera());
         } else {
@@ -229,6 +230,7 @@ static void bind_world_view(lua_State* L, ui::WorldView* wv, const std::string& 
         size_world_view(L, wv);
     } else {
         wv->register_camera(name, nullptr);
+        wv->set_own_camera(name, nullptr);
     }
     auto* sim = get_sim(L);
     if (sim && sim->terrain()) wv->set_terrain(sim->terrain());
@@ -343,8 +345,10 @@ static int worldview_ProjectMultiple(lua_State* L) {
 static int worldview_Register(lua_State* L) {
     auto* wv = check_world_view(L);
     if (wv) {
+        // Without a name, its own camera's: a minimap's camera_name() is the
+        // WorldCamera it tracks
         bind_world_view(L, wv,
-                        lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : wv->camera_name());
+                        lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : wv->own_camera_name());
     }
     return 0;
 }
