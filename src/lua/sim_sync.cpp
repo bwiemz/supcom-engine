@@ -2,9 +2,14 @@
 
 #include "core/lua_copy.hpp"
 #include "core/test_status.hpp"
+#include "lua/engine_stats.hpp"
+#include "sim/army_brain.hpp"
+#include "sim/lua_sim.hpp"
+#include "sim/sim_state.hpp"
 
 #include <spdlog/spdlog.h>
 
+#include <map>
 #include <optional>
 #include <string>
 
@@ -110,6 +115,34 @@ void apply_focus_request(lua_State* sim_L, lua_State* ui_L, std::optional<int>& 
     lua_pop(sim_L, 1);
 }
 
+/// Moho's Sim::Sync (0x00747B8x): with an army set by SetArmyStatsSyncArmy,
+/// its stats as the sim's Sync.__ArmyStats (Stats<CArmyStatItem>'s tree, by
+/// STAT_GetLuaTable), the tick on it. The engine keeps an army's stats as
+/// numbers by name: each is a Float, made in the names' order (Moho's in the
+/// order the game made them).
+void sync_army_stats(lua_State* sim_L) {
+    sim::SimState* sim = sim::get_sim(sim_L);
+    const sim::ArmyBrain* brain = sim ? sim->get_army(sim->sync_army()) : nullptr;
+    if (!brain) return;
+    EngineStats tree;
+    const std::map<std::string, f64> stats(brain->stats().begin(), brain->stats().end());
+    for (const auto& [name, value] : stats) tree.set_float(name, static_cast<f32>(value));
+    const std::map<std::string, std::map<std::string, f64>> per_blueprint(
+        brain->all_blueprint_stats().begin(), brain->all_blueprint_stats().end());
+    for (const auto& [name, values] : per_blueprint) tree.item(name).blueprints = values;
+    lua_pushstring(sim_L, "Sync");
+    lua_rawget(sim_L, LUA_GLOBALSINDEX);
+    if (lua_istable(sim_L, -1)) {
+        lua_pushstring(sim_L, "__ArmyStats");
+        tree.push(sim_L);
+        lua_pushstring(sim_L, "Tick");
+        lua_pushnumber(sim_L, sim->tick_count());
+        lua_rawset(sim_L, -3);
+        lua_rawset(sim_L, -3);
+    }
+    lua_pop(sim_L, 1);
+}
+
 void push_sim_sync(lua_State* sim_L) {
     lua_pushstring(sim_L, "Sync");
     lua_rawget(sim_L, LUA_GLOBALSINDEX);
@@ -141,6 +174,7 @@ void SyncQueue::queue(lua_State* sim_L, lua_State* ui_L) {
         return;
     }
     apply_focus_request(sim_L, ui_L, ui_request_);
+    sync_army_stats(sim_L);
     push_sim_sync(sim_L);
     copy_lua_value(sim_L, -1, packets_state_);
     lua_pop(sim_L, 1);
@@ -174,6 +208,7 @@ void SyncQueue::deliver(lua_State* sim_L, lua_State* ui_L) {
         packets_.pop_front();
     } else {
         apply_focus_request(sim_L, ui_L, ui_request_);
+        sync_army_stats(sim_L);
         push_sim_sync(sim_L);
     }
 

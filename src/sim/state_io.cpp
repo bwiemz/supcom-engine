@@ -407,6 +407,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     // rng_trace_, rng_trace_from_, rng_trace_to_, rng_trace_draws_,
     // entity_trace_from_, entity_trace_to_, steer_log_, faf_exe_, run_opponent_ai_: the host's;
     // bone_cache_, anim_cache_: caches
+    // sync_army_: whose stats each beat's Sync carries, a debug window's (Moho's mSyncArmy isn't
+    // saved)
     {
         std::vector<std::string> armor;
         armor.reserve(sim.armor_def_.table_.size());

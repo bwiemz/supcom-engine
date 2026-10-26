@@ -16,6 +16,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
 #include "lua/order_helpers.hpp"
+#include "lua/sim_sync.hpp"
 #include "map/scmap_parser.hpp"
 #include "map/terrain.hpp"
 #include "renderer/command_feedback.hpp"
@@ -55,6 +56,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -1637,6 +1639,28 @@ static int l_AddSelectUnits(lua_State* L) {
     return 0;
 }
 
+/// ExecLuaInSim(name, args): the sim's global function `name` called with
+/// `args`, through the command stream (kExecLuaInSimCallback), as Moho's
+/// (cfunc_ExecLuaInSimL 0x008BA5C0); the sim runs it with cheats on. Without
+/// a session, nothing.
+static int l_ExecLuaInSim(lua_State* L) {
+    constexpr const char* kHelp = "Execute some lua code in the sim";
+    if (lua_gettop(L) != 2) return arg_count_error(L, kHelp, 2, lua_gettop(L));
+    if (!lua_isstring(L, 1)) return luaL_typerror(L, 1, "string");
+    auto* queue = get_callback_queue(L);
+    if (!queue || !session_active(L)) return 0;
+    sim::SimCallbackEntry entry;
+    entry.func_name = sim::kExecLuaInSimCallback;
+    entry.args["Func"] = std::string(lua_tostring(L, 1));
+    entry.lua_args = sim::lua_to_bytes(L, 2);
+    if (!entry.lua_args) {
+        spdlog::warn("ExecLuaInSim: '{}' args can't be carried", lua_tostring(L, 1));
+        return 0;
+    }
+    queue->push(std::move(entry));
+    return 0;
+}
+
 // SimCallback({Func="name", Args={...} or a value}, addUnitSelection)
 // Serializes the Lua table into a C++ SimCallbackEntry and queues it.
 static int l_SimCallback(lua_State* L) {
@@ -2125,6 +2149,7 @@ void register_user_bindings(LuaState& state) {
     state.register_function("SelectUnits", l_SelectUnits);
     state.register_function("AddSelectUnits", l_AddSelectUnits);
     state.register_function("SimCallback", l_SimCallback);
+    state.register_function("ExecLuaInSim", l_ExecLuaInSim);
     state.register_function("GetUnitCommandFromCommandCap", l_GetUnitCommandFromCommandCap);
     state.register_function("IssueCommand", l_IssueCommand);
     state.register_function("IssueDockCommand", l_IssueDockCommand);
@@ -2697,6 +2722,44 @@ void update_cursor_stats(lua_State* L, const sim::Vector3& at) {
     engine_stats().publish(L);
 }
 
+namespace {
+
+/// ShowArmyStats [army] [section]: retail's army statistics window for the
+/// army (0-based; the focus army's when not given), the section given (or
+/// all) open, as Moho's ShowArmyStats (0x00835160) calls ArmyStats.lua's
+/// Show(army, section). Nothing for an observer, or without a session.
+void show_army_stats(lua_State* L, const std::vector<std::string>& args) {
+    if (!get_sim(L)) return;
+    const int focus = focus_army(L);
+    if (focus < 0) return;
+    // Moho's atoi: the leading digits, else 0
+    int army = focus;
+    if (args.size() > 1) {
+        int given = 0;
+        const auto [end, error] =
+            std::from_chars(args[1].data(), args[1].data() + args[1].size(), given);
+        army = error == std::errc{} ? given : 0;
+    }
+    const std::string section = args.size() > 2 ? args[2] : "all";
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, "/lua/debug/ArmyStats.lua");
+    if (!lua_isfunction(L, -2) || lua_pcall(L, 1, 1, 0) != 0 || !lua_istable(L, -1)) {
+        spdlog::warn("ShowArmyStats: failed to load \"/lua/debug/ArmyStats.lua\" module");
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushstring(L, "Show");
+    lua_gettable(L, -2);
+    lua_pushnumber(L, army);
+    lua_pushlstring(L, section.data(), section.size());
+    if (lua_pcall(L, 2, 0, 0) != 0) spdlog::warn("ShowArmyStats: {}", lua_tostring(L, -1));
+    lua_settop(L, top);
+}
+
+} // namespace
+
 void register_session_console_commands(ui::Console& console) {
     console.add("StartCommandMode", start_command_mode);
     console.add("UI_SelectByCategory", select_by_category);
@@ -2705,6 +2768,7 @@ void register_session_console_commands(ui::Console& console) {
     console.add("UI_ShowRenameDialog", show_rename_dialog);
     console.add("RenameUnit", rename_unit);
     console.add("UI_TrackUnit", track_unit);
+    console.add("ShowArmyStats", show_army_stats);
 }
 
 } // namespace osc::lua

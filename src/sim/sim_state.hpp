@@ -440,6 +440,12 @@ public:
     bool cheats_enabled();
     /// Whether cheats are on, unlogged (the user session's copy of it).
     bool cheats_option() const { return cheats_enabled_; }
+    /// The army (0-based, -1 none) whose stats each beat's Sync carries as
+    /// __ArmyStats: Moho's Sim::mSyncArmy, which SetArmyStatsSyncArmy sets
+    /// (retail's ArmyStats.lua, through ExecLuaInSim). Not saved, as Moho's
+    /// isn't.
+    i32 sync_army() const { return sync_army_; }
+    void set_sync_army(i32 army) { sync_army_ = army; }
     // --- The sim's own thread (OE-134) ---
     /// A tick runs on the sim's thread: until it is collected, nothing else
     /// may read the live sim (the UI reads its last published snapshot).
@@ -1169,6 +1175,7 @@ private:
     std::map<i32, std::set<u32>> army_sources_;  // army -> its command sources
     u32 current_command_source_ = kEngineSource; // see current_command_source
     bool cheats_enabled_ = false;
+    i32 sync_army_ = -1;
     i32 paused_by_ = -1;               // see request_pause
     u32 pause_serial_ = 0;
     bool single_step_ = false;
