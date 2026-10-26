@@ -161,6 +161,11 @@ TEST_CASE("A transport's lift is KLift over its load", "[air_lift]") {
     transport->add_cargo(tank->entity_id());
     transport->add_cargo(bot->entity_id());
     CHECK(transport->transport_load_factor(registry) == Approx(1.25f));
+    // FAF's patched exe answers 1 whatever it carries
+    // (FA-Binary-Patches hooks/RemoveTransportLoadFactor.cpp)
+    registry.set_faf_exe(true);
+    CHECK(transport->transport_load_factor(registry) == Approx(1.0f));
+    registry.set_faf_exe(false);
 
     const osc::sim::LiftStep light = osc::sim::lift_step(0.0f, 8.0f, 3.0f, 2.5f, 1.0f, 0.1f);
     const osc::sim::LiftStep laden = osc::sim::lift_step(0.0f, 8.0f, 3.0f, 2.5f, 2.0f, 0.1f);

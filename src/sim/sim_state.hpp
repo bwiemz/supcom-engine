@@ -181,7 +181,10 @@ public:
     /// ChangeUnitArmy gives commanders and units being built
     /// (hooks/HTransferACUs.cpp). The host's, as the executable is.
     bool faf_exe() const { return faf_exe_; }
-    void set_faf_exe(bool on) { faf_exe_ = on; }
+    void set_faf_exe(bool on) {
+        faf_exe_ = on;
+        entity_registry_.set_faf_exe(on);
+    }
     /// Moho's CAiBrain::IsOpponentAIRunning: off with the process's /noai (its sim variable
     /// AI_RunOpponentAI, true by default, has no console here). The host's, not saved.
     bool run_opponent_ai() const { return run_opponent_ai_; }

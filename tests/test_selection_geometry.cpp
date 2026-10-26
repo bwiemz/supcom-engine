@@ -3,6 +3,8 @@
 
 #include "renderer/input_handler.hpp"
 #include "renderer/selection_renderer.hpp"
+#include "sim/manipulator.hpp"
+#include "sim/unit.hpp"
 
 using osc::renderer::bracket_quads;
 using osc::renderer::inside_ground_quad;
@@ -91,6 +93,23 @@ TEST_CASE("A drag box keeps the units of the highest selection priority", "[sele
     CHECK(highest_selection_priority({{1, 3}, {3, 5}, {4, 3}}) == Ids{1, 4});
     CHECK(highest_selection_priority({{3, 5}}) == Ids{3});
     CHECK(highest_selection_priority({}).empty());
+}
+
+TEST_CASE("On FAF's data an unfinished LOWSELECTPRIO unit is last in a drag box", "[selection]") {
+    // FA-Binary-Patches section/selectionPriority.cpp: priority 6 for it,
+    // its blueprint's SelectionPriority for the rest and on retail's data
+    osc::sim::Unit mex;
+    mex.set_selection_priority(3);
+    mex.add_category("LOWSELECTPRIO");
+    mex.set_is_being_built(true);
+    CHECK(osc::renderer::drag_selection_priority(mex, false) == 3);
+    CHECK(osc::renderer::drag_selection_priority(mex, true) == 6);
+    mex.set_is_being_built(false);
+    CHECK(osc::renderer::drag_selection_priority(mex, true) == 3);
+    osc::sim::Unit tank;
+    tank.set_selection_priority(3);
+    tank.set_is_being_built(true);
+    CHECK(osc::renderer::drag_selection_priority(tank, true) == 3);
 }
 
 TEST_CASE("A ray meets a turned box where it enters, or not at all", "[selection]") {

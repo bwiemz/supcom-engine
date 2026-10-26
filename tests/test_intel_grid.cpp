@@ -280,6 +280,31 @@ TEST_CASE("A moving source repaints as Moho's handles do", "[intel]") {
     CHECK_FALSE(g.visible(45, 64));
 }
 
+TEST_CASE("A creeping source repaints after 30 ticks, after 5 in FAF's patched exe", "[intel]") {
+    // CIntelPosHandle::UpdatePos repaints a moving source after 30 ticks of
+    // moving short of a third of its radius; FAF's exe makes it 5
+    // (FA-Binary-Patches hooks/IntelUpdate.cpp), so a slow unit's radar
+    // trails it by at most half a second
+    const auto creep = [](bool faf) {
+        World w;
+        w.sim.set_faf_exe(faf);
+        Unit* radar = w.unit(0, 30, 64, "Land");
+        World::give(radar, "Radar", 30); // columns 1 to 13 about cell 7
+        w.sim.tick();
+        for (int i = 1; i <= 18; ++i) { // 5.4 in all: short of a third of 30
+            radar->set_position({30.0f + 0.3f * static_cast<f32>(i), 6, 64});
+            radar->place_now();
+            w.sim.tick();
+        }
+        const map::IntelGrid& g = w.sim.intel_grids()->grid(0, map::IntelLayer::Radar);
+        return std::pair{g.visible(5, 64), g.visible(57, 64)};
+    };
+    // Retail: still painted where it started
+    CHECK(creep(false) == std::pair{true, false});
+    // FAF: repainted at least twice on the way, a cell on
+    CHECK(creep(true) == std::pair{false, true});
+}
+
 TEST_CASE("Without fog of war every army is in sight of everything but a cloak", "[intel][fow]") {
     World w;
     w.sim.set_fog_of_war("none");

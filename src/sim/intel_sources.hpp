@@ -69,7 +69,7 @@ constexpr bool intel_source_is_field(IntelSource s) {
 /// One kind of an entity's intel as painted (CIntelPosHandle). While off it
 /// follows its entity unpainted; on, it is painted at `pos` and repainted
 /// there when its entity moves a third of its radius, or after 30 ticks of
-/// moving, or when it stops.
+/// moving (5 on FAF's data, as FAF's exe), or when it stops.
 struct IntelHandle {
     u32 radius = 0; ///< whole units (SetIntelRadius truncates)
     bool enabled = false;

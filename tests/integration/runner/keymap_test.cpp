@@ -180,6 +180,10 @@ void test_session_commands(TestContext& ctx, ui::UIControlRegistry& registry,
             ConExecute('UI_SelectByCategory ' .. expr)
             return selection_text()
         end
+        function ui_select(expr, add, in_view, nearest, idle)
+            UISelectionByCategory(expr, add, in_view, nearest, idle)
+            return selection_text()
+        end
         function mode_text()
             local m = import('/lua/ui/game/commandmode.lua').GetCommandMode()
             if not m or not m[1] then return 'none' end
@@ -219,6 +223,18 @@ void test_session_commands(TestContext& ctx, ui::UIControlRegistry& registry,
             fmt::format("Test 3: ALLUNITS takes every unit of the army ({}), a comma unites ({}), "
                         "+nearest takes one ({})",
                         all, union_of, one));
+
+    // The Lua function selects the same way (FAF's key actions and avatars):
+    // five arguments, as Moho's cfunc_UISelectionByCategoryL
+    const std::string by_lua = text("ui_select('ENGINEER TECH1', false, false, false, false)");
+    const std::string lua_added = text("ui_select('COMMAND', true, false, false, false)");
+    const std::string lua_one = text("ui_select('ENGINEER', false, false, true, false)");
+    const std::string short_of = text("tostring(pcall(UISelectionByCategory, 'COMMAND'))");
+    t.check(by_lua == "uel0105,uel0105" && lua_added == "acu,uel0105,uel0105" &&
+                (lua_one == "acu" || lua_one == "uel0105") && short_of == "false",
+            fmt::format("Test 3b: UISelectionByCategory(expression, add, inView, nearest, idle) "
+                        "selects so ({}; {}; {}), and needs its five arguments ({})",
+                        by_lua, lua_added, lua_one, short_of));
 
     // A busy engineer isn't idle; an unselectable one isn't selected.
     sim_lua(R"(

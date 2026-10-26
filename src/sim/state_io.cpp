@@ -211,6 +211,7 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
     // and their order; gather_ only tells one gather's finds apart
     w.u64v(reg.cells_.link_count());
     // default_random_, sim_random_: the sim's generator (SimState's); tick_: its tick count;
+    // faf_exe_: the host's, as SimState's;
     // walking_: no walk is under way between ticks; unregister_hook_: the
     // sim's; grid_initialized_, grid_width_, grid_height_, prop_grid_width_,
     // prop_grid_height_: the map's

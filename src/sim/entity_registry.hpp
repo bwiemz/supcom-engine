@@ -226,6 +226,11 @@ public:
     void set_sim_random(SimRandom* r) { sim_random_ = r ? r : &default_random_; }
     SimRandom& sim_random() { return *sim_random_; }
 
+    /// SimState::faf_exe, which SimState hands on: FAF's patched exe's rules
+    /// the entities apply themselves.
+    void set_faf_exe(bool on) { faf_exe_ = on; }
+    bool faf_exe() const { return faf_exe_; }
+
     void set_tick_source(const u32* tick) { tick_ = tick; }
     u32 tick() const { return tick_ ? *tick_ : 0; }
 
@@ -278,6 +283,7 @@ private:
 
     // Spatial hash grid
     bool grid_initialized_ = false;
+    bool faf_exe_ = false; // see faf_exe
     u32 grid_width_ = 0;
     u32 grid_height_ = 0;
     std::vector<std::vector<u32>> grid_cells_;

@@ -95,6 +95,8 @@ void add_class_methods(lua_State* L, const char* cls,
     spdlog::error("register_user_bindings: moho.{} is missing (register_moho_bindings first)", cls);
 }
 
+int l_UISelectionByCategory(lua_State* L); // with the console's UI_SelectByCategory, below
+
 } // namespace
 
 static renderer::Renderer* get_renderer(lua_State* L) {
@@ -2130,6 +2132,7 @@ void register_user_bindings(LuaState& state) {
     state.register_function("IsKeyDown", l_IsKeyDown);
     state.register_function("UIZoomTo", l_UIZoomTo);
     state.register_function("UISelectAndZoomTo", l_UISelectAndZoomTo);
+    state.register_function("UISelectionByCategory", l_UISelectionByCategory);
     state.register_function("GetValidAttackingUnits", l_GetValidAttackingUnits);
     state.register_function("_c_CreateDecal", l_c_CreateDecal);
     state.register_function("GetRolloverInfo", l_GetRolloverInfo);
@@ -2361,39 +2364,34 @@ void start_command_mode(lua_State* L, const std::vector<std::string>& args) {
     lua_settop(L, top);
 }
 
-/// UI_SelectByCategory [+add] [+nearest] [+idle] [+inview] [+goto]
-/// [+excludeengineers] expression (Moho's SelectUnitsByCategory): the focus
-/// army's selectable units in the category expression ("A B, C": spaces
-/// intersect, commas unite), filtered, as the selection.
-void select_by_category(lua_State* L, const std::vector<std::string>& args) {
+/// How SelectUnitsByCategory picks: the options the console's modifiers and
+/// UISelectionByCategory's arguments give.
+struct CategorySelection {
+    bool add = false;               ///< to the selection, not in its place
+    bool in_view = false;           ///< only units in the world camera's view
+    bool nearest = false;           ///< only the one nearest the cursor
+    bool idle = false;              ///< only units not busy and with no orders
+    bool go_to = false;             ///< the camera goes to them
+    bool exclude_engineers = false; ///< no ENGINEER or COMMAND unit
+};
+
+/// Moho's SelectUnitsByCategory (faf-re CCommandLuaFunctionRegistrations.cpp,
+/// 0x008662B0): the focus army's selectable units in the category expression
+/// ("A B, C": spaces intersect, commas unite), filtered, as the selection.
+void select_units_by_category(lua_State* L, const std::string& expression,
+                              const CategorySelection& how) {
     auto* sim = get_sim(L);
     auto* ih = get_input_handler(L);
     if (!sim || !ih) {
         spdlog::info("No session");
         return;
     }
-    if (args.size() < 2) {
-        spdlog::info("UI_SelectByCategory [+add] [+nearest] [+idle] [+goto] categoryExpression");
-        return;
-    }
-    bool add = false, in_view = false, nearest = false, idle = false, go_to = false,
-         exclude_engineers = false;
-    std::string expression;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& token = args[i];
-        if (!token.empty() && token[0] == '+') {
-            if (iequal(token, "+add")) add = true;
-            else if (iequal(token, "+nearest")) nearest = true;
-            else if (iequal(token, "+idle")) idle = true;
-            else if (iequal(token, "+inview")) in_view = true;
-            else if (iequal(token, "+goto")) go_to = true;
-            else if (iequal(token, "+excludeengineers")) exclude_engineers = true;
-            else spdlog::info("Unknown modifier {}", token);
-            continue;
-        }
-        if (!expression.empty()) expression += ' ';
-        expression += token;
-    }
+    const bool add = how.add;
+    const bool in_view = how.in_view;
+    const bool nearest = how.nearest;
+    const bool idle = how.idle;
+    const bool go_to = how.go_to;
+    const bool exclude_engineers = how.exclude_engineers;
     const sim::CategoryExpr category = sim::parse_category_list(expression);
     auto* r = get_renderer(L);
     std::optional<renderer::Frustum> view;
@@ -2447,6 +2445,63 @@ void select_by_category(lua_State* L, const std::vector<std::string>& args) {
         if (x0 <= x1) r->camera().set_target((x0 + x1) * 0.5f, (z0 + z1) * 0.5f);
     }
     ih->set_selected(result);
+}
+
+/// UI_SelectByCategory [+add] [+nearest] [+idle] [+inview] [+goto]
+/// [+excludeengineers] expression: SelectUnitsByCategory.
+void select_by_category(lua_State* L, const std::vector<std::string>& args) {
+    if (!get_sim(L) || !get_input_handler(L)) {
+        spdlog::info("No session");
+        return;
+    }
+    if (args.size() < 2) {
+        spdlog::info("UI_SelectByCategory [+add] [+nearest] [+idle] [+goto] categoryExpression");
+        return;
+    }
+    CategorySelection how;
+    std::string expression;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& token = args[i];
+        if (!token.empty() && token[0] == '+') {
+            if (iequal(token, "+add")) how.add = true;
+            else if (iequal(token, "+nearest")) how.nearest = true;
+            else if (iequal(token, "+idle")) how.idle = true;
+            else if (iequal(token, "+inview")) how.in_view = true;
+            else if (iequal(token, "+goto")) how.go_to = true;
+            else if (iequal(token, "+excludeengineers")) how.exclude_engineers = true;
+            else spdlog::info("Unknown modifier {}", token);
+            continue;
+        }
+        if (!expression.empty()) expression += ' ';
+        expression += token;
+    }
+    select_units_by_category(L, expression, how);
+}
+
+/// UISelectionByCategory(expression, addToCurSel, inViewFrustum,
+/// nearestToMouse, mustBeIdle): Moho's (cfunc_UISelectionByCategoryL,
+/// 0x00866DB0), SelectUnitsByCategory with no camera move and no engineer
+/// exclusion. FAF's key actions, avatars and enhancement queue select so.
+int l_UISelectionByCategory(lua_State* L) {
+    if (const int n = lua_gettop(L); n != 5)
+        return arg_count_error(L,
+                               "UISelectionByCategory(expression, addToCurSel, inViewFrustum, "
+                               "nearestToMouse, mustBeIdle) - selects units based on a category "
+                               "expression",
+                               5, n);
+    if (!get_sim(L) || !get_input_handler(L)) {
+        spdlog::info("No session");
+        return 0;
+    }
+    const char* expression = lua_tostring(L, 1);
+    if (!expression) return luaL_typerror(L, 1, "string");
+    CategorySelection how;
+    how.add = lua_toboolean(L, 2) != 0;
+    how.in_view = lua_toboolean(L, 3) != 0;
+    how.nearest = lua_toboolean(L, 4) != 0;
+    how.idle = lua_toboolean(L, 5) != 0;
+    select_units_by_category(L, expression, how);
+    return 0;
 }
 
 /// CON_IssueCommand: `IssueCommand Stop|Dive|SiloBuildTactical|
