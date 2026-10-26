@@ -108,3 +108,15 @@ TEST_CASE("gamemain.IsNISMode answers once FA's game interface is up", "[game_st
     REQUIRE(lua.do_string("nis = false").ok());
     CHECK_FALSE(osc::core::ui_nis_mode(L));
 }
+
+TEST_CASE("A resized window tells uimain.OnApplicationResize its head and size", "[game_state]") {
+    // Moho's CUIManager::OnResize calls MAUI_OnApplicationResize once the head's frame has its
+    // new size; retail's uimain clears the selection there.
+    osc::lua::LuaState state;
+    REQUIRE(state
+                .do_string("function OnApplicationResize(head, width, height) "
+                           "heard = head .. ' ' .. width .. 'x' .. height end")
+                .ok());
+    osc::core::call_on_application_resize(state.raw(), 0, 1280, 720);
+    REQUIRE(state.do_string("assert(heard == '0 1280x720', tostring(heard))").ok());
+}
