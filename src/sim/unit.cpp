@@ -16,6 +16,7 @@
 #include "sim/occupancy.hpp"
 #include "sim/prop.hpp"
 #include "sim/script_warning.hpp"
+#include "sim/terrain_types.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/thread_manager.hpp"
 #include "map/pathfinding_grid.hpp"
@@ -1055,6 +1056,7 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
     drove_ = false;
     const Vector3 from = pending_position();
     const u32 snaps = snap_serial();
+    const f32 crossing = layer_transition_ticks_;
     const bool goes_on = motion_tick(dt, ctx);
     if (!in_registry()) {
         return;
@@ -1062,7 +1064,9 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
     if (goes_on && ctx.sim) {
         tick_hover(ctx.terrain, ctx.sim->tick_count(), ctx.sim->random(), ctx.sim->moho_pathing());
     }
-    if (snap_serial() == snaps) {
+    if (crossing != 0.0f || in_layer_transition()) {
+        motion_step_ = layer_transition_step_; // its velocity, kept while it crosses
+    } else if (snap_serial() == snaps) {
         const Vector3& to = pending_position();
         motion_step_ = {to.x - from.x, to.y - from.y, to.z - from.z};
     }
@@ -1202,6 +1206,23 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     update_current_layer(ctx.terrain, L);
     if (!in_registry()) {
         return false;
+    }
+    // ...and, on the same terms, the terrain type under it (Moho's Unit::UpdateTerrainType, after
+    // UpdateCurrentLayer, for a unit that can't fly)
+    if (!dying_ && !can_fly() && !immobile_ && !is_stunned() &&
+        (velocity_.x * velocity_.x + velocity_.y * velocity_.y + velocity_.z * velocity_.z) *
+                0.01f >
+            1e-6f) {
+        update_terrain_type(ctx.terrain, position(), L);
+        if (!in_registry()) {
+            return false;
+        }
+    }
+    // Crossing the shore, the tick is the blend's alone: Moho's CalcMoveCommon runs it before
+    // anything else and returns, so the unit takes no step, coasts no way, and doesn't drown.
+    if (in_layer_transition()) {
+        transition_between_layers();
+        return true;
     }
     // Moho's CUnitMotion::CalcMoveCommon: a unit on a layer its motion type can't be on loses 1%
     // of its health a tick, moving or not, unless being built, carried, falling or flying.
@@ -1482,6 +1503,7 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
 
     lua_pop(L, 2); // pop entity_id + target_tbl from create_building_unit
     work_progress_ = frame ? frame->fraction_complete() : 0.0f;
+    build_progress_seen_ = 0.0f;
     return BuildStart::Started;
 }
 
@@ -1509,7 +1531,14 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
     }
     if (paused_ || idle_helper) {
         work_progress_ = target->fraction_complete();
-        return true;
+        if (paused_) {
+            seen_while_paused(L, target->fraction_complete());
+            return true;
+        }
+        // A helper with no build rate isn't paused: Moho's UpdateWorkProgress runs on with
+        // nothing consumed, and so still looks at the build
+        report_build_progress(L, registry, target->entity_id());
+        return !destroyed() && in_registry();
     }
 
     if (build_time_ <= 0 || build_rate_ <= 0) {
@@ -1520,6 +1549,14 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
     f32 progress_rate = build_rate_ / static_cast<f32>(build_time_);
     static_cast<Unit*>(target)->materialize(progress_rate * static_cast<f32>(dt) * efficiency);
     work_progress_ = target->fraction_complete();
+    const u32 target_id = target->entity_id();
+    report_build_progress(L, registry, target_id);
+    if (destroyed() || !in_registry()) return false;
+    target = registry.find(target_id);
+    if (!target || target->destroyed()) {
+        fail_build(registry, L);
+        return false;
+    }
 
     if (work_progress_ >= 1.0f) {
         if (built) *built = true;
@@ -1722,6 +1759,58 @@ void Unit::fail_build(EntityRegistry& registry, lua_State* L) {
     tell_build_failed(*this, L, frame_ref, order.c_str());
 }
 
+namespace {
+
+/// self:method(other, was, now) on a unit's script, an error logged (Moho's
+/// CScriptObject::RunScript_OnBuildProgress and RunScript_OnBeingBuiltProgress).
+void run_progress_script(lua_State* L, EntityRegistry& registry, u32 self_id, const char* method,
+                         u32 other_id, f32 was, f32 now) {
+    const Entity* self = registry.find(self_id);
+    if (!self || self->lua_table_ref() < 0) return;
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, self->lua_table_ref());
+    const int t = lua_gettop(L);
+    lua_pushstring(L, method);
+    lua_gettable(L, t);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, t);
+        const Entity* other = registry.find(other_id);
+        if (other && other->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, other->lua_table_ref());
+        } else {
+            lua_pushnil(L);
+        }
+        lua_pushnumber(L, was);
+        lua_pushnumber(L, now);
+        if (lua_pcall(L, 4, 0, 0) != 0) {
+            log_script_warning(registry.find(self_id), method, lua_tostring(L, -1));
+        }
+    }
+    lua_settop(L, top);
+}
+
+} // namespace
+
+void Unit::report_build_progress(lua_State* L, EntityRegistry& registry, u32 target_id) {
+    const Entity* target = registry.find(target_id);
+    if (!target) return;
+    const f32 was = build_progress_seen_;
+    const f32 now = target->fraction_complete();
+    build_progress_seen_ = now;
+    // DidCrossBuildProgressBand
+    const auto crossed = [&](f32 band) { return was < band && now >= band; };
+    if (!L || !(crossed(0.25f) || crossed(0.5f) || crossed(0.75f))) return;
+    const u32 self_id = entity_id();
+    run_progress_script(L, registry, self_id, "OnBuildProgress", target_id, was, now);
+    run_progress_script(L, registry, target_id, "OnBeingBuiltProgress", self_id, was, now);
+}
+
+void Unit::seen_while_paused(lua_State* L, f32 fraction) {
+    if (const SimState* sim = L ? get_sim(L) : nullptr; sim && sim->faf_exe()) {
+        build_progress_seen_ = fraction;
+    }
+}
+
 void Unit::release_build(lua_State* L, EntityRegistry& registry) {
     const bool mobile = build_order_ == "MobileBuild";
     stop_assisting(L, &registry);
@@ -1730,8 +1819,7 @@ void Unit::release_build(lua_State* L, EntityRegistry& registry) {
     }
 }
 
-bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
-                                  f32 efficiency) {
+bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry, lua_State* L, f32 efficiency) {
     auto* target = registry.find(build_target_id_);
     if (!target || target->destroyed() || !target->is_unit()) return false;
 
@@ -1742,12 +1830,18 @@ bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
 
     if (paused_ || build_rate_ <= 0) {
         work_progress_ = target->fraction_complete();
+        if (paused_) {
+            seen_while_paused(L, target->fraction_complete());
+        } else {
+            report_build_progress(L, registry, target->entity_id()); // nothing consumed
+        }
         return true;
     }
 
     f32 progress_rate = build_rate_ / static_cast<f32>(build_time_);
     static_cast<Unit*>(target)->materialize(progress_rate * static_cast<f32>(dt) * efficiency);
     work_progress_ = target->fraction_complete();
+    report_build_progress(L, registry, target->entity_id());
 
     return work_progress_ < 1.0f;
 }
@@ -2840,7 +2934,7 @@ i32 Unit::transport_attach_bone() const {
     return bone;
 }
 
-void Unit::warp(const map::Terrain* terrain, const Vector3& at) {
+void Unit::warp(const map::Terrain* terrain, const Vector3& at, lua_State* L) {
     Vector3 p = at;
     if (terrain) {
         const char* layer = starting_layer(footprint().caps, has_category("EXPERIMENTAL"), *terrain,
@@ -2884,6 +2978,8 @@ void Unit::warp(const map::Terrain* terrain, const Vector3& at) {
     warp_aborted_command_ = !command_queue_.empty() && command_queue_.front().begun
                                 ? command_queue_.front().command_id
                                 : 0;
+    // Unit::Warp then looks at the terrain type where it now is
+    update_terrain_type(terrain, p, L);
 }
 
 f32 Unit::air_floor(const map::Terrain* terrain, f32 x, f32 z) const {
@@ -3453,13 +3549,19 @@ Unit::GroundStance Unit::ground_stance(const map::Terrain* terrain, f32 x, f32 z
     if (!terrain) {
         return {pending_position().y, facing};
     }
-    const Unit* platform = raised_platform();
-    const bool hover = is_hover();
     if (!snaps_to_ground()) {
+        const Unit* platform = raised_platform();
         const f32 ground =
             walks_seabed() ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
         return {platform ? ground + platform->raised_platform_height(x, z) : ground, facing};
     }
+    return snap_stance(terrain, x, z, facing, normalize);
+}
+
+Unit::GroundStance Unit::snap_stance(const map::Terrain* terrain, f32 x, f32 z,
+                                     const Quaternion& facing, bool normalize) const {
+    const Unit* platform = raised_platform();
+    const bool hover = is_hover();
     // Moho's MultQuadVec: QuatToMatrix's rows (products pre-doubled), each dotted with the
     // offset from zero up, x then y then z.
     const f32 x2 = facing.x * 2.0f, y2 = facing.y * 2.0f, z2 = facing.z * 2.0f;
@@ -3681,16 +3783,90 @@ void Unit::update_current_layer(const map::Terrain* terrain, lua_State* L) {
     if (walks_seabed() || floats) surface += layer_change_offset_;
     if (ground <= surface) {
         if (surface > ground && layer_ == "Land") {
-            if (walks_seabed()) set_layer_with_callback("Seabed", L);
-            else if (floats) set_layer_with_callback("Water", L);
+            if (walks_seabed()) {
+                set_layer_with_callback("Seabed", L);
+            } else if (floats) {
+                // It settles onto the water where it is (SnapToWater: the water's surface, or
+                // just over the ground, upright)
+                if (layer_transition_duration_ != 0.0f) {
+                    const Vector3& at = position();
+                    const f32 water = terrain->has_water() ? terrain->water_elevation() : -10000.0f;
+                    begin_layer_transition({at.x, std::max(ground + 0.25f, water), at.z},
+                                           tilt_to(orientation(), {0.0f, 1.0f, 0.0f}));
+                }
+                set_layer_with_callback("Water", L);
+            }
         }
         return;
     }
     if (layer_ == "Seabed") {
         if (walks_seabed()) set_layer_with_callback("Land", L);
     } else if (layer_ == "Water" && (floats || motion_type_ == "RULEUMT_Water")) {
+        // It climbs onto the ground it is heading for: ten ticks of its velocity on, so the
+        // blend doesn't drag it back down the shore (SnapToGround there)
+        if (layer_transition_duration_ != 0.0f) {
+            const f32 lead = 10.0f * static_cast<f32>(SimState::SECONDS_PER_TICK);
+            const Vector3& at = position();
+            const f32 x = at.x + v.x * lead;
+            const f32 z = at.z + v.z * lead;
+            const GroundStance stance = snap_stance(terrain, x, z, orientation());
+            begin_layer_transition({x, stance.y, z}, stance.orientation);
+        }
         set_layer_with_callback("Land", L);
     }
+}
+
+void Unit::begin_layer_transition(const Vector3& to, const Quaternion& to_facing) {
+    layer_transition_ticks_ = 1.0f;
+    layer_transition_from_ = position();
+    layer_transition_from_facing_ = orientation();
+    layer_transition_to_ = to;
+    layer_transition_to_facing_ = to_facing;
+    // Its motion's velocity is kept while it crosses (CalcMoveCommon returns before the move).
+    const auto per_tick = static_cast<f32>(SimState::SECONDS_PER_TICK);
+    layer_transition_step_ = {velocity_.x * per_tick, velocity_.y * per_tick,
+                              velocity_.z * per_tick};
+}
+
+void Unit::transition_between_layers() {
+    // Linear in its place, the short way round in its facing, a tick at a time over the
+    // duration's ticks, ending on the tick before the last.
+    const f32 span = layer_transition_duration_ * 10.0f;
+    const f32 progress = layer_transition_ticks_ / span;
+    set_position(vec3_lerp(layer_transition_from_, layer_transition_to_, progress));
+    set_orientation(
+        quat_nlerp(layer_transition_from_facing_, layer_transition_to_facing_, progress));
+    layer_transition_ticks_ += 1.0f;
+    surface_collision_ = false;
+    if (layer_transition_ticks_ >= span) layer_transition_ticks_ = 0.0f;
+}
+
+void Unit::update_terrain_type(const map::Terrain* terrain, const Vector3& at, lua_State* L) {
+    if (!terrain) return;
+    // The cell at its footprint's corner, to the nearest, as a short; off the map, 'Default' (1)
+    const auto cell = [](f32 v) {
+        return static_cast<f32>(static_cast<i16>(static_cast<i32>(std::lrint(v))));
+    };
+    const u8 was = terrain_type_;
+    terrain_type_ = terrain->terrain_type(cell(at.x - footprint().size_x * 0.5f),
+                                          cell(at.z - footprint().size_z * 0.5f));
+    if (terrain_type_ == was || !L || lua_table_ref() < 0) return;
+    // Its script's OnTerrainTypeChange(self, new, old) (CScriptObject's
+    // RunScript_OnTerrainTypeChange), an error logged, not raised
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    const int self = lua_gettop(L);
+    lua_pushstring(L, "OnTerrainTypeChange");
+    lua_gettable(L, self);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, self);
+        push_terrain_type(L, terrain_type_);
+        push_terrain_type(L, was);
+        if (lua_pcall(L, 3, 0, 0) != 0) {
+            log_script_warning(this, "OnTerrainTypeChange", lua_tostring(L, -1));
+        }
+    }
+    lua_settop(L, top);
 }
 
 void Unit::free_landing_reservation(SimState& sim) {
@@ -4309,6 +4485,17 @@ f32 Unit::anim_motion_scale(f32 dt) const {
     return scale;
 }
 
+namespace {
+
+/// A disabled aim controller whose weapon AimsStraightOnDisable still runs,
+/// and turns its bones back ahead (Moho's CAimManipulator::ManipulatorUpdate).
+bool aims_straight_while_disabled(const Manipulator& m) {
+    const auto* aim = dynamic_cast<const AimManipulator*>(&m);
+    return aim && aim->aims_straight_on_disable();
+}
+
+} // namespace
+
 void Unit::tick_manipulators(f32 dt, lua_State* L) {
     // Reset bone matrices to identity before manipulators write their bones.
     // Each animator/rotator/slider writes only the bones it owns; unowned bones
@@ -4323,7 +4510,7 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
     // the vector is left untouched.
     for (size_t i = 0; i < manipulators_.size(); ++i) {
         Manipulator* m = manipulators_[i].get();
-        if (m->is_destroyed() || !m->enabled()) continue;
+        if (m->is_destroyed() || !(m->enabled() || aims_straight_while_disabled(*m))) continue;
         const auto* arm = dynamic_cast<const AimManipulator*>(m);
         const bool was_tracking = arm && arm->tracking();
         m->tick(dt);
@@ -4451,7 +4638,8 @@ void Unit::update_pose() {
     std::vector<Manipulator*>& order = pose_order_;
     order.clear();
     for (const auto& m : manipulators_) {
-        if (!m->is_destroyed() && m->enabled()) order.push_back(m.get());
+        if (!m->is_destroyed() && (m->enabled() || aims_straight_while_disabled(*m)))
+            order.push_back(m.get());
     }
     std::stable_sort(order.begin(), order.end(), [](const Manipulator* a, const Manipulator* b) {
         return a->precedence() < b->precedence();
@@ -4751,13 +4939,14 @@ void Unit::update_silo(f64 dt, f32 efficiency, lua_State* L) {
         if (!is_building() && !enhancing_) work_progress_ = static_cast<f32>(silo_build_.progress);
         // Done, allowing for the rounding of its blocks' sum.
         if (silo_build_.progress >= 1.0 - 1e-9) {
-            // Done: into storage, and the order it was for is met.
+            // Done (Moho's SiloTick, SBS_Finish): its script hears OnSiloBuildEnd and OnNukeArmed,
+            // then the missile goes into storage and the order it was for is met.
             const bool nuke = silo_build_.nuke;
+            end_silo_build(L);
             give_silo_ammo(nuke, 1);
             spdlog::info("Silo: {} #{} built a {} missile ({} stored)", unit_id_, entity_id(),
                          nuke ? "nuclear" : "tactical", silo_ammo(nuke));
             if (!silo_orders_.empty() && silo_orders_.front() == nuke) silo_orders_.pop_front();
-            end_silo_build(L);
             return;
         }
     }
@@ -4785,7 +4974,11 @@ void Unit::end_silo_build(lua_State* L) {
     if (!silo_building()) return;
     const auto index = static_cast<size_t>(silo_build_.weapon);
     abandon_silo_build();
-    if (index < weapons_.size()) call_with_weapon(L, *this, "OnSiloBuildEnd", *weapons_[index]);
+    if (index >= weapons_.size()) return;
+    // For a missile of either kind (DispatchWeaponCallback): retail's OnNukeArmed has its brain
+    // announce it when the blueprint's Audio names a NukeArmed sound
+    call_with_weapon(L, *this, "OnSiloBuildEnd", *weapons_[index]);
+    call_with_weapon(L, *this, "OnNukeArmed", *weapons_[index]);
 }
 
 void Unit::stop_silo_build() {

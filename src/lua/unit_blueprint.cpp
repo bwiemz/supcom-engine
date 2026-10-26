@@ -290,7 +290,9 @@ static std::unique_ptr<sim::Weapon> read_weapon(lua_State* L, int we, i32 index)
           std::pair{"AlwaysRecheckTarget", &weapon->always_recheck_target},
           std::pair{"PrefersPrimaryWeaponTarget", &weapon->prefers_primary_weapon_target},
           std::pair{"StopOnPrimaryWeaponBusy", &weapon->stop_on_primary_weapon_busy},
+          std::pair{"ReTargetOnMiss", &weapon->retarget_on_miss},
           std::pair{"YawOnlyOnTarget", &weapon->yaw_only_on_target},
+          std::pair{"AimsStraightOnDisable", &weapon->aims_straight_on_disable},
           std::pair{"CannotAttackGround", &weapon->cannot_attack_ground},
           std::pair{"SlavedToBody", &weapon->slaved_to_body}}) {
         lua_pushstring(L, field);
@@ -406,6 +408,12 @@ static std::unique_ptr<sim::Weapon> read_weapon(lua_State* L, int we, i32 index)
     lua_pushstring(L, "AutoInitiateAttackCommand");
     lua_gettable(L, we);
     weapon->auto_initiate_attack_command = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+
+    // NeedPrep: an order's target readies it at once (OnGotTarget)
+    lua_pushstring(L, "NeedPrep");
+    lua_gettable(L, we);
+    weapon->need_prep = lua_toboolean(L, -1) != 0;
     lua_pop(L, 1);
 
     // BombDropThreshold (distance threshold for overhead check)
@@ -890,6 +898,11 @@ static void read_motion(lua_State* L, const BlueprintStore& store, const Bluepri
         if (lua_isnumber(L, -1))
             unit.set_layer_change_offset(static_cast<f32>(lua_tonumber(L, -1)));
         lua_pop(L, 1);
+        lua_pushstring(L, "LayerTransitionDuration");
+        lua_gettable(L, -2);
+        if (lua_isnumber(L, -1))
+            unit.set_layer_transition_duration(static_cast<f32>(lua_tonumber(L, -1)));
+        lua_pop(L, 1);
         lua_pushstring(L, "RaisedPlatforms");
         lua_gettable(L, -2);
         if (lua_istable(L, -1)) {
@@ -987,6 +1000,9 @@ static void resolve_footprints(lua_State* L, const sim::SimState& sim, const Blu
         unit.set_layer(sim::starting_layer(unit.footprint().caps, unit.has_category("EXPERIMENTAL"),
                                            *sim.terrain(), x, z, unit.has_category("FERRYBEACON")));
     }
+    // ...and the terrain type under it (Moho's Unit ctor: UpdateTerrainType after
+    // SetCurrentLayer), its script not yet there to hear it
+    unit.update_terrain_type(sim.terrain(), {x, 0.0f, z}, nullptr);
 }
 
 /// A ship's or sub's Physics.Elevation (negative: its draft below the

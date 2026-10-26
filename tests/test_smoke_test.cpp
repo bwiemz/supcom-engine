@@ -2,6 +2,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include "blueprints/blueprint_store.hpp"
+#include "map/heightmap.hpp"
+#include "map/terrain.hpp"
 #include "lua/smoke_test.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -21,7 +23,10 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <cmath>
+#include <memory>
 #include <tuple>
+#include <vector>
 
 TEST_CASE("SmokeTestHarness records and deduplicates entries", "[smoke]") {
     osc::lua::SmokeTestHarness harness;
@@ -1086,7 +1091,7 @@ TEST_CASE("Teleport destination validates bounds and occupancy", "[teleport]") {
 
 TEST_CASE("GetTerrainTypeOffset is a height offset, not a terrain type", "[sim][terrain]") {
     // Retail's CreateWreckageProp adds it to a terrain height; a table there
-    // failed every wreck. No FA terrain type defines an offset.
+    // failed every wreck.
     osc::lua::LuaState state;
     osc::blueprints::BlueprintStore store(state.raw());
     osc::sim::SimState sim(state.raw(), &store);
@@ -1100,6 +1105,48 @@ TEST_CASE("GetTerrainTypeOffset is a height offset, not a terrain type", "[sim][
     result = state.do_string("return GetTerrainType(10, 10).Name");
     REQUIRE(result.ok());
     CHECK(std::string(lua_tostring(state.raw(), -1)) == "Default");
+    lua_pop(state.raw(), 1);
+}
+
+TEST_CASE("GetTerrainTypeOffset answers the terrain type's HeightOffset", "[sim][terrain]") {
+    // Moho's STIMap::GetTerrainTypeOffset: the type's HeightOffset, 0 for one
+    // without. Retail's Lava01 has -0.15, so a wreck on lava sits in it.
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store(state.raw());
+    osc::sim::SimState sim(state.raw(), &store);
+    osc::map::Heightmap hm(64, 64, 1.0f / 128.0f, std::vector<osc::u16>(65 * 65, 0));
+    auto terrain = std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false);
+    std::vector<osc::u8> types(64 * 64, 1);
+    for (size_t z = 0; z < 64; ++z) {
+        types[z * 64] = 7;
+        for (size_t x = 32; x < 64; ++x) types[z * 64 + x] = 7;
+    }
+    terrain->set_terrain_types(std::move(types));
+    sim.set_terrain(std::move(terrain));
+    osc::lua::register_sim_bindings(state, sim);
+    osc::lua::register_moho_bindings(state, sim); // the bindings' sim, and with it its terrain
+    REQUIRE(state
+                .do_string("function import(path) return {TerrainTypes = {"
+                           "{TypeCode = 1, Name = 'Default'},"
+                           "{TypeCode = 7, Name = 'Lava01', HeightOffset = -0.15}}} end")
+                .ok());
+
+    auto result = state.do_string("return GetTerrainTypeOffset(40, 10)");
+    REQUIRE(result.ok());
+    CHECK(std::abs(lua_tonumber(state.raw(), -1) - -0.15) < 1e-6);
+    lua_pop(state.raw(), 1);
+    result = state.do_string("return GetTerrainTypeOffset(10, 10)");
+    REQUIRE(result.ok());
+    CHECK(lua_tonumber(state.raw(), -1) == 0.0);
+    lua_pop(state.raw(), 1);
+    // Truncated: -0.5 is column 0's lava, -1.5 is off the map (Default).
+    result = state.do_string("return GetTerrainTypeOffset(-0.5, 10)");
+    REQUIRE(result.ok());
+    CHECK(std::abs(lua_tonumber(state.raw(), -1) - -0.15) < 1e-6);
+    lua_pop(state.raw(), 1);
+    result = state.do_string("return GetTerrainTypeOffset(-1.5, 10)");
+    REQUIRE(result.ok());
+    CHECK(lua_tonumber(state.raw(), -1) == 0.0);
     lua_pop(state.raw(), 1);
 }
 

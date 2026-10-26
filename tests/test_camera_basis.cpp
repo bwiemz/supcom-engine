@@ -399,6 +399,32 @@ TEST_CASE("The middle button drags the ground; let go, a rotation reverts (M217f
     CHECK_FALSE(cam.rotated());
 }
 
+TEST_CASE("In a campaign's cinematic the middle button's drag doesn't pan", "[camera]") {
+    // Moho's CameraImpl::CameraPan, its drag's pan, does nothing while
+    // gamemain.IsNISMode() says a scripted cinematic (an NIS) runs
+    const map::Heightmap ground = flat();
+    Camera cam = camera_over(ground);
+    cam.set_zoom(64.0f);
+    cam.set_target(128.0f, 128.0f);
+    CameraInput in;
+    in.mouse_x = 500.0f;
+    in.mouse_y = 400.0f;
+    in.nis = true;
+    cam.apply(in, 0.0);
+    in.middle = true;
+    cam.apply(in, 0.0);
+    in.mouse_x = 532.0f;
+    in.mouse_y = 416.0f;
+    cam.apply(in, 0.0);
+    CHECK_THAT(cam.target_x(), WithinAbs(128.0, 1e-4));
+    CHECK_THAT(cam.target_z(), WithinAbs(128.0, 1e-4));
+    // The cinematic over, the same drag pans on
+    in.nis = false;
+    in.mouse_x = 564.0f;
+    cam.apply(in, 0.0);
+    CHECK_THAT(cam.target_x(), WithinAbs(128.0 - 32.0 * 64.0 / kW, 1e-3));
+}
+
 TEST_CASE("Space spins the view by the pointer's relative motion, not its position", "[camera]") {
     // Moho pins the pointer from the spin's second motion (mouse scrubbing)
     // and turns by its motion away from the pin, with no bound

@@ -238,6 +238,7 @@ void test_mobile_build_start(TestContext& ctx);
 void test_assist_beam(TestContext& ctx);
 void test_build_site_join(TestContext& ctx);
 void test_drown(TestContext& ctx);
+void test_layer_transition(TestContext& ctx);
 void test_spawn_layer(TestContext& ctx);
 void test_warp(TestContext& ctx);
 void test_attack_move(TestContext& ctx);

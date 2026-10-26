@@ -657,6 +657,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.str(wp.fire_control_label);
     w.b(wp.need_compute_bomb_drop);
     w.b(wp.auto_initiate_attack_command);
+    w.b(wp.need_prep);
     w.f32v(wp.bomb_drop_threshold);
     w.size(wp.target_priorities.size());
     for (const CategoryExpr& c : wp.target_priorities) save(w, c);
@@ -665,10 +666,12 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.b(wp.above_water_targets_only);
     w.b(wp.below_water_targets_only);
     w.b(wp.yaw_only_on_target);
+    w.b(wp.aims_straight_on_disable);
     w.b(wp.above_water_fire_only);
     w.b(wp.always_recheck_target);
     w.b(wp.prefers_primary_weapon_target);
     w.b(wp.stop_on_primary_weapon_busy);
+    w.b(wp.retarget_on_miss);
     w.u32v(wp.target_check_period);
     w.b(wp.cannot_attack_ground);
     w.i32v(wp.attack_ground_tries);
@@ -690,6 +693,14 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.b(wp.enabled);
     w.u32v(wp.fire_clock);
     w.u32v(wp.target_check_clock);
+    w.i32v(wp.retarget_misses);
+    w.i32v(wp.retarget_cooldown);
+    w.size(wp.blacklist.size());
+    for (const auto& [id, changes] : wp.blacklist) {
+        w.u32v(id);
+        w.i32v(changes);
+    }
+    w.b(wp.target_held);
 }
 
 void StateIO::load(StateReader& r, Weapon& wp) {
@@ -742,6 +753,7 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.fire_control_label = r.str();
     wp.need_compute_bomb_drop = r.b();
     wp.auto_initiate_attack_command = r.b();
+    wp.need_prep = r.b();
     wp.bomb_drop_threshold = r.f32v();
     wp.target_priorities.resize(r.size(5));
     for (CategoryExpr& c : wp.target_priorities) load(r, c);
@@ -750,10 +762,12 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.above_water_targets_only = r.b();
     wp.below_water_targets_only = r.b();
     wp.yaw_only_on_target = r.b();
+    wp.aims_straight_on_disable = r.b();
     wp.above_water_fire_only = r.b();
     wp.always_recheck_target = r.b();
     wp.prefers_primary_weapon_target = r.b();
     wp.stop_on_primary_weapon_busy = r.b();
+    wp.retarget_on_miss = r.b();
     wp.target_check_period = r.u32v();
     wp.cannot_attack_ground = r.b();
     wp.attack_ground_tries = r.i32v();
@@ -776,6 +790,14 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.enabled = r.b();
     wp.fire_clock = r.u32v();
     wp.target_check_clock = r.u32v();
+    wp.retarget_misses = r.i32v();
+    wp.retarget_cooldown = r.i32v();
+    wp.blacklist.resize(r.size(8));
+    for (auto& [id, changes] : wp.blacklist) {
+        id = r.u32v();
+        changes = r.i32v();
+    }
+    wp.target_held = r.b();
 }
 
 // ----------------------------------------------------------- Manipulators
@@ -878,6 +900,7 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         w.b(x.builder_arm_);
         w.b(x.tracking_);
         w.b(x.yaw_only_on_target_);
+        w.b(x.aims_straight_on_disable_);
         break;
     }
     case ManipKind::Slaver: {
@@ -1031,6 +1054,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         x->builder_arm_ = r.b();
         x->tracking_ = r.b();
         x->yaw_only_on_target_ = r.b();
+        x->aims_straight_on_disable_ = r.b();
         m = std::move(x);
         break;
     }
@@ -1130,6 +1154,14 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.str(u.layer_);
     w.str(u.motion_type_);
     w.f32v(u.layer_change_offset_);
+    w.f32v(u.layer_transition_duration_);
+    w.f32v(u.layer_transition_ticks_);
+    w.vec3(u.layer_transition_from_);
+    w.quat(u.layer_transition_from_facing_);
+    w.vec3(u.layer_transition_to_);
+    w.quat(u.layer_transition_to_facing_);
+    w.vec3(u.layer_transition_step_);
+    w.u8v(u.terrain_type_);
     w.size(u.raised_platforms_.size());
     for (f32 v : u.raised_platforms_) {
         w.f32v(v);
@@ -1209,6 +1241,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(u.build_cost_mass_);
     w.f64v(u.build_cost_energy_);
     w.f32v(u.work_progress_);
+    w.f32v(u.build_progress_seen_);
     w.u32v(u.reclaim_target_id_);
     w.f32v(u.reclaim_rate_);
     w.i32v(u.reclaim_wait_);
@@ -1538,6 +1571,14 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.layer_ = r.str();
     u.motion_type_ = r.str();
     u.layer_change_offset_ = r.f32v();
+    u.layer_transition_duration_ = r.f32v();
+    u.layer_transition_ticks_ = r.f32v();
+    u.layer_transition_from_ = r.vec3();
+    u.layer_transition_from_facing_ = r.quat();
+    u.layer_transition_to_ = r.vec3();
+    u.layer_transition_to_facing_ = r.quat();
+    u.layer_transition_step_ = r.vec3();
+    u.terrain_type_ = r.u8v();
     u.raised_platforms_.resize(r.size(4));
     for (f32& v : u.raised_platforms_) {
         v = r.f32v();
@@ -1622,6 +1663,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.build_cost_mass_ = r.f64v();
     u.build_cost_energy_ = r.f64v();
     u.work_progress_ = r.f32v();
+    u.build_progress_seen_ = r.f32v();
     u.reclaim_target_id_ = r.u32v();
     u.reclaim_rate_ = r.f32v();
     u.reclaim_wait_ = r.i32v();
@@ -1953,6 +1995,13 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.vec3(p.target_position);
     w.b(p.has_target_position);
     w.u32v(p.launcher_id);
+    w.i32v(p.impact_listener_weapon);
+    w.u32v(p.impact_listener_target);
+    w.i32v(p.bounce_limit);
+    w.i32v(p.ground_hits);
+    w.f32v(p.bounce_damping);
+    w.b(p.bounce_pending);
+    w.vec3(p.bounce_velocity);
     w.f32v(p.damage_amount);
     w.f32v(p.damage_radius);
     w.str(p.damage_type);
@@ -2005,6 +2054,13 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.target_position = r.vec3();
     p.has_target_position = r.b();
     p.launcher_id = r.u32v();
+    p.impact_listener_weapon = r.i32v();
+    p.impact_listener_target = r.u32v();
+    p.bounce_limit = r.i32v();
+    p.ground_hits = r.i32v();
+    p.bounce_damping = r.f32v();
+    p.bounce_pending = r.b();
+    p.bounce_velocity = r.vec3();
     p.damage_amount = r.f32v();
     p.damage_radius = r.f32v();
     p.damage_type = r.str();

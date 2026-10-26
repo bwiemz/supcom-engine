@@ -340,6 +340,45 @@ TEST_CASE("A yaw-only aim controller is on target by its heading, whatever its p
     }
 }
 
+TEST_CASE("A disabled aim controller of an AimsStraightOnDisable weapon turns back ahead",
+          "[pose][aim]") {
+    // Moho's CAimManipulator::ManipulatorUpdate: disabled, a controller runs
+    // on only if its weapon AimsStraightOnDisable, and then takes no target:
+    // its reset time over, it turns back to straight ahead (and is never on
+    // target, so its weapon doesn't fire). Without, a disabled one isn't run.
+    for (const bool straight : {false, true}) {
+        BoneData bd = make_two_bones();
+        Unit unit;
+        unit.set_bone_data(&bd);
+        unit.init_animated_bones();
+        auto& aim =
+            static_cast<AimManipulator&>(*unit.add_manipulator(std::make_unique<AimManipulator>()));
+        aim.set_yaw_bone(0);
+        aim.set_pitch_bone(1);
+        aim.set_firing_arc(-180.0f, 180.0f, 90.0f, -90.0f, 90.0f, 90.0f);
+        aim.set_reset_pose_time(0.5f);
+        aim.set_aims_straight_on_disable(straight);
+        const f32 side = 100.0f * std::sin(0.5235988f);
+        const f32 ahead = 100.0f * std::cos(0.5235988f);
+        aim.set_target({side, 1.0f, ahead}, 2.0f * 0.0174533f);
+        for (int t = 0; t < 10; ++t) unit.tick_manipulators(0.1f, nullptr);
+        REQUIRE_THAT(aim.heading(), WithinAbs(0.5235988, 2.0 * 0.0174533));
+        REQUIRE(aim.on_target());
+
+        aim.set_enabled(false);
+        // Its reset time: held where it was
+        for (int t = 0; t < 4; ++t) unit.tick_manipulators(0.1f, nullptr);
+        CHECK_THAT(aim.heading(), WithinAbs(0.5235988, 2.0 * 0.0174533));
+        for (int t = 0; t < 10; ++t) unit.tick_manipulators(0.1f, nullptr);
+        if (straight) {
+            CHECK_THAT(aim.heading(), WithinAbs(0.0, 1e-4));
+            CHECK_FALSE(aim.on_target());
+        } else {
+            CHECK_THAT(aim.heading(), WithinAbs(0.5235988, 2.0 * 0.0174533));
+        }
+    }
+}
+
 TEST_CASE("An aim controller's pitch arc is measured from its barrel as the animation left it",
           "[pose][aim]") {
     constexpr f32 kDeg = 0.0174533f;

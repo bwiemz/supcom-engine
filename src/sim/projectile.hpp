@@ -62,6 +62,12 @@ public:
     /// target, where its target was): a tracking shot flies there.
     bool has_target_position = false;
     u32 launcher_id = 0;
+    /// ReTargetOnMiss: the launcher's weapon that hears where it lands, and
+    /// the target unit it was fired at (Moho binds its impact broadcaster to
+    /// the weapon's acquire task when the weapon has a target entity); -1 for
+    /// none.
+    i32 impact_listener_weapon = -1;
+    u32 impact_listener_target = 0;
     f32 damage_amount = 0;
     f32 damage_radius = 0;
     std::string damage_type = "Normal";
@@ -119,6 +125,17 @@ public:
     bool in_water = false;
     /// Risen above its DetonateBelowHeight: it bursts on coming back down.
     bool burst_armed = false;
+    /// Terrain bounces (Moho's mBounceLimit, mGroundTick, mBounceVelocityDamping): its blueprint's
+    /// MinBounceCount to MaxBounceCount, picked as it is made, of its ground hits send it back up
+    /// instead of ending it, its velocity damped by BounceVelDamp each time. Every ground hit
+    /// counts. A nuke's shockwave effects bounce.
+    i32 bounce_limit = 0;
+    i32 ground_hits = 0;
+    f32 bounce_damping = 0.5f;
+    /// A bounce its last step found: the velocity it leaves with as its next step starts (Moho's
+    /// mDirectAwayFromGround, mGroundDirection).
+    bool bounce_pending = false;
+    Vector3 bounce_velocity;
 
     /// Entities an OnCollisionCheck turned it away from: it passes them.
     std::vector<u32> passed;

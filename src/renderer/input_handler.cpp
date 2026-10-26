@@ -1264,6 +1264,11 @@ void InputHandler::right_drag(std::optional<std::array<f32, 2>> cursor, f64 dt) 
     if (!far(drag.mouse) || !far(drag.at)) {
         return;
     }
+    // In a cinematic the formation goes (CFormation::UpdateOrientation resets it)
+    if (mode_hooks_.nis_mode && mode_hooks_.nis_mode()) {
+        formation_.reset();
+        return;
+    }
     drag.mouse = {x, drag.mouse.y, z};
     drag.facing = std::atan2(x - drag.at.x, z - drag.at.z);
 }

@@ -387,6 +387,16 @@ void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
     }
 }
 
+bool Unit::ready_prep_weapons(lua_State* L) {
+    // UnitWeapon::NotifyOnGotTarget: a NeedPrep weapon hears OnGotTarget before it takes the
+    // target, so its script readies it
+    for (size_t i = 0; i < weapons_.size(); ++i) {
+        if (destroyed() || is_dying()) return false;
+        if (weapons_[i]->need_prep) weapons_[i]->call_script(L, "OnGotTarget");
+    }
+    return !destroyed() && !is_dying();
+}
+
 bool Unit::engage(UnitCommand& cmd, lua_State* L) {
     cmd.engaged = true;
     const UnitCommand* const order = &cmd;
@@ -396,6 +406,11 @@ bool Unit::engage(UnitCommand& cmd, lua_State* L) {
         }
         weapons_[i]->drop_target(L);
         weapons_[i]->target_check_clock = 0;
+        // A weapon that needs readying hears of the order's target at once
+        // (UnitWeapon::NotifyOnGotTarget), before it takes it
+        if (weapons_[i]->need_prep && !destroyed() && !is_dying()) {
+            weapons_[i]->call_script(L, "OnGotTarget");
+        }
     }
     return !destroyed() && !is_dying() && !command_queue_.empty() &&
            &command_queue_.front() == order;
@@ -618,7 +633,15 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
         // In reach, the formation is dropped: from now on the unit attacks
         // as a plain attack does (TaskTick's Processing: mFormation = null).
         cmd.has_slot = false;
-        cmd.engaged = true;
+        // ...and its attacker is handed the target (UpdateAttacker's
+        // SetDesiredTarget), which a weapon that needs prep hears of
+        if (!cmd.engaged) {
+            cmd.engaged = true;
+            const UnitCommand* const order = &cmd;
+            if (!ready_prep_weapons(ctx.L)) return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+            // (a script there that changed the unit's orders took this one)
+            if (command_queue_.empty() || &command_queue_.front() != order) return OrderStep::Hold;
+        }
         // CUnitAttackTargetTask::TaskTick, Complete: AbortNavigation unless Air.CanFly.
         if (can_fly()) {
             close_in();
@@ -1433,6 +1456,7 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
         build_cost_mass_ = costs.mass;
         build_cost_energy_ = costs.energy;
         work_progress_ = target.fraction_complete();
+        build_progress_seen_ = 0.0f;
         economy_.consumption_mass = costs.mass * static_cast<f64>(build_rate_) / costs.time;
         economy_.consumption_energy = costs.energy * static_cast<f64>(build_rate_) / costs.time;
         economy_.consumption_active = true;
@@ -1864,6 +1888,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                     build_cost_mass_ = target_unit->build_cost_mass();
                     build_cost_energy_ = target_unit->build_cost_energy();
                     work_progress_ = guarded_build->fraction_complete();
+                    build_progress_seen_ = 0.0f;
 
                     if (build_time_ > 0 && build_rate_ > 0) {
                         economy_.consumption_mass =
@@ -1886,7 +1911,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
 
             // Progress the build with our own build rate
             if (build_target_id_ != 0) {
-                if (!progress_build_assist(dt, registry, econ_eff)) {
+                const bool building_on = progress_build_assist(dt, registry, ctx.L, econ_eff);
+                if (destroyed() || !in_registry()) return OrderStep::Gone;
+                if (!building_on) {
                     stop_assisting(ctx.L, &ctx.registry);
                 }
             }

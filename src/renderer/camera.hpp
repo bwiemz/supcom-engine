@@ -22,6 +22,9 @@ struct CameraInput {
     bool insert = false, del = false, space = false;
     bool control = false, alt = false;
     bool middle = false; ///< the middle button
+    /// A campaign's cinematic (gamemain.IsNISMode): a middle-button drag
+    /// doesn't pan (CameraImpl::CameraPan)
+    bool nis = false;
     /// The cursor on the screen's edges (windowed, focused and over it).
     bool at_left = false, at_right = false, at_top = false, at_bottom = false;
     f32 mouse_x = 0.0f, mouse_y = 0.0f;

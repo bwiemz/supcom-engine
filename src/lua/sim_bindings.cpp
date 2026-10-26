@@ -26,12 +26,12 @@
 #include "sim/ieffect.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/terrain_types.hpp"
 #include "sim/script_class.hpp"
 #include "sim/projectile.hpp"
 #include "sim/prop.hpp"
 #include "sim/prop_script.hpp"
 #include "core/test_status.hpp"
-#include "core/version.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -975,7 +975,7 @@ static int l_Warp(lua_State* L) {
         }
         entity->set_orientation(facing);
         if (entity->is_unit()) {
-            static_cast<sim::Unit*>(entity)->warp(sim->terrain(), v);
+            static_cast<sim::Unit*>(entity)->warp(sim->terrain(), v, L);
         } else {
             entity->set_position(v);
             entity->note_snap();
@@ -1104,65 +1104,6 @@ static int l_GetSurfaceHeight(lua_State* L) {
     return 1;
 }
 
-/// Push /lua/TerrainTypes.lua's entries indexed by TypeCode (loaded once),
-/// or nil without FA's scripts.
-static void push_terrain_types(lua_State* L) {
-    constexpr const char* kKey = "__osc_terrain_types";
-    lua_pushstring(L, kKey);
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (lua_istable(L, -1)) return;
-    const bool tried = !lua_isnil(L, -1);
-    lua_pop(L, 1);
-    if (tried) {
-        lua_pushnil(L);
-        return;
-    }
-    const int top = lua_gettop(L);
-    lua_newtable(L); // TypeCode -> entry
-    const int by_code = lua_gettop(L);
-    bool loaded = false;
-    lua_pushstring(L, "import");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_isfunction(L, -1)) {
-        lua_pushstring(L, "/lua/terraintypes.lua");
-        if (lua_pcall(L, 1, 1, 0) == 0 && lua_istable(L, -1)) {
-            lua_pushstring(L, "TerrainTypes");
-            lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                const int list = lua_gettop(L);
-                for (int i = 1;; ++i) {
-                    lua_rawgeti(L, list, i);
-                    if (lua_isnil(L, -1)) {
-                        lua_pop(L, 1);
-                        break;
-                    }
-                    if (lua_istable(L, -1)) {
-                        lua_pushstring(L, "TypeCode");
-                        lua_rawget(L, -2);
-                        if (lua_isnumber(L, -1)) {
-                            const int code = static_cast<int>(lua_tonumber(L, -1));
-                            lua_pushvalue(L, -2);
-                            lua_rawseti(L, by_code, code);
-                            loaded = true;
-                        }
-                        lua_pop(L, 1);
-                    }
-                    lua_pop(L, 1);
-                }
-            }
-        }
-    }
-    lua_settop(L, by_code);
-    lua_pushstring(L, kKey);
-    if (loaded) lua_pushvalue(L, by_code);
-    else lua_pushboolean(L, 0); // not there (tests without FA's scripts): don't retry
-    lua_rawset(L, LUA_REGISTRYINDEX);
-    if (!loaded) {
-        lua_settop(L, top);
-        lua_pushnil(L);
-    }
-}
-
 /// GetTerrainType(x, z): the /lua/TerrainTypes.lua entry for the map's
 /// terrain at a point -- 'Default' off the map, as at (-1, -1). Retail
 /// picks impact, movement and layer-change effects from it (FXImpact and
@@ -1171,33 +1112,25 @@ static int l_GetTerrainType(lua_State* L) {
     auto* sim = get_sim(L);
     const auto x = static_cast<f32>(luaL_optnumber(L, 1, -1));
     const auto z = static_cast<f32>(luaL_optnumber(L, 2, -1));
-    const u8 code = sim && sim->terrain() ? sim->terrain()->terrain_type(x, z) : 1;
-    push_terrain_types(L);
-    if (lua_istable(L, -1)) {
-        lua_rawgeti(L, -1, code);
-        if (!lua_istable(L, -1)) { // a code the scripts don't define
-            lua_pop(L, 1);
-            lua_rawgeti(L, -1, 1);
-        }
-        if (lua_istable(L, -1)) {
-            lua_remove(L, -2);
-            return 1;
-        }
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
-    lua_newtable(L);
-    lua_pushstring(L, "Name");
-    lua_pushstring(L, "Default");
-    lua_rawset(L, -3);
+    sim::push_terrain_type(L, sim && sim->terrain() ? sim->terrain()->terrain_type(x, z) : 1);
     return 1;
 }
 
-/// GetTerrainTypeOffset(x, z) -- the terrain type's height offset at a point,
-/// which retail's CreateWreckageProp adds to the terrain height. No FA
-/// terrain type (/lua/TerrainTypes.lua) defines one, so it is 0.
+/// GetTerrainTypeOffset(x, z) -- the terrain type's HeightOffset at a point, 0
+/// for one without (Moho's STIMap::GetTerrainTypeOffset). Retail's
+/// CreateWreckageProp adds it to the ground's height: a wreck on lava
+/// (Lava01, -0.15) sinks into it. Moho truncates each coordinate first, so
+/// -0.5 reads cell 0 and -1.5 is off the map.
 static int l_GetTerrainTypeOffset(lua_State* L) {
-    lua_pushnumber(L, 0);
+    auto* sim = get_sim(L);
+    const auto x = std::trunc(static_cast<f32>(luaL_optnumber(L, 1, -1)));
+    const auto z = std::trunc(static_cast<f32>(luaL_optnumber(L, 2, -1)));
+    sim::push_terrain_type(L, sim && sim->terrain() ? sim->terrain()->terrain_type(x, z) : 1);
+    lua_pushstring(L, "HeightOffset");
+    lua_gettable(L, -2);
+    const lua_Number offset = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 0;
+    lua_pop(L, 2);
+    lua_pushnumber(L, offset);
     return 1;
 }
 
@@ -2765,6 +2698,7 @@ static int l_CreateAimController(lua_State* L) {
         manip->set_weapon(weapon->weapon_index,
                           lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "");
         manip->set_yaw_only_on_target(weapon->yaw_only_on_target);
+        manip->set_aims_straight_on_disable(weapon->aims_straight_on_disable);
     }
     // arg 3 = yawBone
     if (lua_gettop(L) >= 3) {
@@ -5871,10 +5805,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
         }
         return 0;
     });
-    state.register_function("GetVersion", [](lua_State* L) -> int {
-        lua_pushstring(L, (std::string("OpenSupCom ") + core::version()).c_str());
-        return 1;
-    });
+    state.register_function("GetVersion", l_GetVersion);
     state.register_function("GetMapSize", [](lua_State* L) -> int {
         auto* sim = get_sim(L);
         if (sim && sim->terrain()) {

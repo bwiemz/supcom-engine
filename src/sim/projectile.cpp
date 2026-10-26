@@ -6,7 +6,9 @@
 #include "sim/collision.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/flight_math.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/unit.hpp"
+#include "sim/weapon.hpp"
 #include "map/terrain.hpp"
 
 #include <algorithm>
@@ -31,6 +33,35 @@ constexpr f32 kDegToRad = 0.017453292f;
 /// The water's height, or Moho's -10000 on a map without
 f32 water_line(const map::Terrain* terrain) {
     return terrain && terrain->has_water() ? terrain->water_elevation() : -10000.0f;
+}
+
+/// ReTargetOnMiss (Moho's Projectile::Impact, after OnImpact): while the target unit it was fired
+/// at is still there, the weapon of `launcher` (`weapon`, -1 for none) hears whether the impact on
+/// `hit_id` (0: the ground, the water, the air) of `type` struck it.
+void report_impact(lua_State* L, EntityRegistry& registry, u32 launcher, i32 weapon, u32 fired_at,
+                   u32 hit_id, const char* type) {
+    if (weapon < 0 || !registry.find(fired_at)) return;
+    Entity* e = registry.find(launcher);
+    if (!e || e->destroyed() || !e->is_unit()) return;
+    auto& owner = static_cast<Unit&>(*e);
+    if (static_cast<size_t>(weapon) >= owner.weapons().size()) return;
+    Weapon::TargetMark target;
+    target.entity = fired_at;
+    owner.weapons()[static_cast<size_t>(weapon)]->note_impact(
+        owner, impact_missed(target, hit_id ? registry.find(hit_id) : nullptr, type, true),
+        registry, get_sim(L));
+}
+
+/// Moho's CHeightField::GetNormal (faf-re STIMap.cpp, 0x0069A620): the gradient of the ground's
+/// height half a unit either side of (x, z), normalized.
+Vector3 ground_normal(const map::Terrain& terrain, f32 x, f32 z) {
+    const f32 top = terrain.get_terrain_height(x, z - 0.5f);
+    const f32 left = terrain.get_terrain_height(x - 0.5f, z);
+    const f32 right = terrain.get_terrain_height(x + 0.5f, z);
+    const f32 bottom = terrain.get_terrain_height(x, z + 0.5f);
+    Vector3 n{left - right, 1.0f, top - bottom};
+    const f32 length = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+    return {n.x / length, n.y / length, n.z / length};
 }
 
 } // namespace
@@ -77,6 +108,10 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
         launch_tick = tick;
         launch_position = pending_position();
         launch_orientation = pending_orientation();
+    }
+    if (bounce_pending) {
+        velocity = bounce_velocity;
+        bounce_pending = false;
     }
 
     // Moho's MotionTick (faf-re Projectile.cpp): a shot thrusts the way it
@@ -429,10 +464,28 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
 
 void Projectile::record_impact(const Vector3& at, f32 interpolation, const Entity* hit,
                                const char* type, const map::Terrain* terrain) {
+    const std::string kind = type ? type : impact_type(hit, terrain);
+    // Moho's MotionTick: a hit of the ground (IMPACT_Terrain) counts, and one within its bounce
+    // limit is no impact. Its velocity, damped, is reflected about the ground's normal there,
+    // taken up next step, and it is set a twentieth of a unit back along the way it came.
+    if (kind == "Terrain" && terrain && ground_hits++ < bounce_limit) {
+        const Vector3 n = ground_normal(*terrain, at.x, at.z);
+        const Vector3 d{velocity.x * bounce_damping, velocity.y * bounce_damping,
+                        velocity.z * bounce_damping};
+        const f32 two_dot = ((n.y * d.y + n.z * d.z) + n.x * d.x) * 2.0f;
+        bounce_velocity = {d.x - n.x * two_dot, d.y - n.y * two_dot, d.z - n.z * two_dot};
+        bounce_pending = true;
+        Vector3 back{-velocity.x, -velocity.y, -velocity.z};
+        const f32 length = std::sqrt(back.x * back.x + back.y * back.y + back.z * back.z);
+        if (length > 0.0f) back = {back.x / length, back.y / length, back.z / length};
+        else back = {};
+        set_position({at.x + back.x * 0.05f, at.y + back.y * 0.05f, at.z + back.z * 0.05f});
+        return;
+    }
     set_position(at);
     impact_interpolation = interpolation;
     impact_entity_id = hit ? hit->entity_id() : 0;
-    impact_kind = type ? type : impact_type(hit, terrain);
+    impact_kind = kind;
 }
 
 bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entity& other) {
@@ -552,6 +605,20 @@ Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L, S
         spread("AccelerationRange", acceleration);
         spread("LifetimeRange", found.lifetime);
     }
+    // Its bounces (Moho's RProjectileBlueprintPhysics defaults 0, 0 and 0.5): a pick in
+    // [MinBounceCount, MaxBounceCount), as Moho scales one draw by the span. Moho draws for an
+    // empty span too; this only for one there is, as above.
+    f32 min_bounces = 0;
+    f32 max_bounces = 0;
+    number("MinBounceCount", min_bounces);
+    number("MaxBounceCount", max_bounces);
+    number("BounceVelDamp", bounce_damping);
+    const auto low = static_cast<i32>(min_bounces);
+    const auto span = static_cast<u32>(static_cast<i32>(max_bounces) - low);
+    bounce_limit = low;
+    if (rng && span != 0) {
+        bounce_limit += static_cast<i32>((static_cast<u64>(span) * rng->next_u32()) >> 32);
+    }
     lua_settop(L, top);
     return found;
 }
@@ -614,6 +681,12 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
     const u32 id = entity_id();
     const u32 target_id = target ? target->entity_id() : 0;
     const char* type = type_override ? type_override : impact_type(target, terrain);
+    // Its scripts may destroy it: what ReTargetOnMiss's report needs, first. Moho reads the
+    // shot's target as it lands (a script may have changed it); a bomb, which the engine sends at
+    // no unit, keeps the one it was fired at.
+    const u32 launcher = launcher_id;
+    const i32 listener = impact_listener_weapon;
+    const u32 fired_at = target_entity_id != 0 ? target_entity_id : impact_listener_target;
 
     bool scripted = false;
     if (lua_table_ref() >= 0) {
@@ -628,6 +701,7 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
     if (!scripted || engine_damage) {
         deal_engine_damage(L, target, registry);
     }
+    if (!scripted) report_impact(L, registry, launcher, listener, fired_at, target_id, type);
 
     if (scripted) {
         Entity* self = registry.find(id);
@@ -653,6 +727,7 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
             if (test_status::count_lua_failures()) test_status::record_failure(message);
         }
         lua_settop(L, top);
+        report_impact(L, registry, launcher, listener, fired_at, target_id, type);
         if (ok) return; // the script destroys it, now or after its ImpactTimeout
     }
 

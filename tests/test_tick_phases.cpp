@@ -291,6 +291,36 @@ TEST_CASE("A unit's weapon takes its attack order's target on the tick after the
         w.run("assert(table.getn(heard) == 1 and heard[1] == " + std::to_string(issued + 1) + ")"));
 }
 
+TEST_CASE("A weapon that needs prep hears its attack order's target as the order runs",
+          "[tick-phases]") {
+    // Moho's CAiAttackerImpl::SetDesiredTarget: handed the order's target, a weapon whose
+    // blueprint says NeedPrep is told OnGotTarget at once (UnitWeapon::NotifyOnGotTarget), so
+    // its script readies it before it takes the target; it takes it on the next tick, as any
+    // weapon does, and hears OnGotTarget again.
+    Phases w;
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    const Unit& rival = w.make("rival", "tank", 2, 115.0f, 100.0f);
+    REQUIRE(w.run(
+        "heard = {} gun = {OnGotTarget = function() table.insert(heard, GetGameTick()) end}"));
+    Weapon& gun = w.arm(tank, "gun");
+    gun.need_prep = true;
+    gun.target_check_clock = 1000000;
+    w.sim.tick();
+
+    UnitCommand attack;
+    attack.type = CommandType::Attack;
+    attack.target_id = rival.entity_id();
+    w.sim.route_command({tank.entity_id()}, attack, true);
+    const osc::u32 issued = w.sim.tick_count() + 1;
+    w.sim.tick();
+    CHECK(gun.target_entity_id == 0);
+    CHECK(w.run("assert(table.getn(heard) == 1 and heard[1] == " + std::to_string(issued) + ")"));
+    w.sim.tick();
+    CHECK(gun.target_entity_id == rival.entity_id());
+    CHECK(
+        w.run("assert(table.getn(heard) == 2 and heard[2] == " + std::to_string(issued + 1) + ")"));
+}
+
 TEST_CASE("A weapon doesn't shoot a target in the tick it picks it", "[tick-phases]") {
     Phases w;
     Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);

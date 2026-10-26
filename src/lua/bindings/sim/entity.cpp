@@ -27,6 +27,7 @@
 #include "sim/prop.hpp"
 #include "sim/prop_script.hpp"
 #include "sim/script_class.hpp"
+#include "sim/script_warning.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/collision_beam.hpp"
 #include "sim/projectile_script.hpp"
@@ -436,6 +437,64 @@ static void credit_kill(lua_State* L, u32 instigator_id) {
     }
 }
 
+namespace {
+
+/// target:method(arg) on an entity's script, an error logged (Moho's RunScriptEntity).
+void call_with_entity(lua_State* L, sim::EntityRegistry& registry, u32 target_id,
+                      const char* method, u32 arg_id) {
+    const sim::Entity* target = registry.find(target_id);
+    if (!target || target->lua_table_ref() < 0) return;
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+    const int self = lua_gettop(L);
+    lua_pushstring(L, method);
+    lua_gettable(L, self);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, self);
+        const sim::Entity* arg = registry.find(arg_id);
+        if (arg && arg->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, arg->lua_table_ref());
+        } else {
+            lua_pushnil(L);
+        }
+        if (lua_pcall(L, 2, 0, 0) != 0) {
+            sim::log_script_warning(registry.find(target_id), method, lua_tostring(L, -1));
+        }
+    }
+    lua_settop(L, top);
+}
+
+/// What `e` holds: what is attached to it, then the cargo it carries.
+std::vector<u32> held_by(const sim::Entity& e) {
+    std::vector<u32> ids;
+    for (const auto& c : e.children()) ids.push_back(c.entity_id);
+    if (e.is_unit()) {
+        for (const u32 id : static_cast<const sim::Unit&>(e).cargo_ids()) ids.push_back(id);
+    }
+    return ids;
+}
+
+/// Moho's Entity::Kill (faf-re Entity.cpp, 0x00679A80): what `id` is attached to hears
+/// OnAttachedKilled(it), then each thing attached to it OnParentKilled(it), the list read again
+/// at each step (a script may detach one). A transport still holding a unit counts as what it is
+/// attached to, and a transport's cargo as attached to it.
+void notify_kill(lua_State* L, sim::EntityRegistry& registry, u32 id) {
+    const sim::Entity* e = registry.find(id);
+    if (!e) return;
+    u32 parent = e->parent_entity_id();
+    if (parent == 0 && e->is_unit()) parent = static_cast<const sim::Unit*>(e)->transport_id();
+    if (parent != 0) call_with_entity(L, registry, parent, "OnAttachedKilled", id);
+    for (size_t i = 0;; ++i) {
+        e = registry.find(id);
+        if (!e) return;
+        const std::vector<u32> held = held_by(*e);
+        if (i >= held.size()) return;
+        call_with_entity(L, registry, held[i], "OnParentKilled", id);
+    }
+}
+
+} // namespace
+
 // entity:Kill([instigator, damageType, excessDamageRatio]). Moho hands the
 // death to the script's OnKilled, which plays the death sequence (death
 // weapon, animation, wreckage) and calls Destroy() when it ends. A unit is
@@ -475,14 +534,20 @@ int entity_Kill(lua_State* L) {
                                    ? sim->entity_registry().find(unit->transport_id())
                                    : nullptr;
         if (carrier && carrier->is_unit()) {
-            static_cast<sim::Unit*>(carrier)->detach_cargo({unit->entity_id()},
-                                                           sim->entity_registry(), L);
+            // CAiTransportImpl::TransportDetachUnit: an aircraft keeps a unit whose footprint
+            // can't stand where it hangs; it hears OnAttachedKilled below.
+            auto* transport = static_cast<sim::Unit*>(carrier);
+            const bool held = transport->layer() == "Air" &&
+                              sim->footprint_fits_at(unit->footprint(), unit->position().x,
+                                                     unit->position().z) == 0;
+            if (!held) transport->detach_cargo({unit->entity_id()}, sim->entity_registry(), L);
         }
         if (carrier || (unit->is_being_built() && unit->fraction_complete() < 0.5f)) {
             lua_pushnumber(L, 10);
             lua_replace(L, 4);
         }
         unit->call_lua_method(L, "SetDead");
+        if (sim) notify_kill(L, sim->entity_registry(), unit->entity_id());
         unit->begin_dying();
         if (sim) {
             sim->drop_adjacency(*unit);
@@ -939,6 +1004,16 @@ static int entity_DetachFrom(lua_State* L) {
         self->clear_parent();
         set_attached(*self, false);
         released(*self, L);
+    } else if (self->is_unit() && static_cast<sim::Unit*>(self)->transport_id() != 0) {
+        // Cargo is attached to its transport (Moho's Entity::DetachFrom): it lets go, as retail's
+        // transports' OnAttachedKilled has one let go of a unit killed where it couldn't stand.
+        auto* sim = get_sim(L);
+        auto* unit = static_cast<sim::Unit*>(self);
+        sim::Entity* transport = sim ? sim->entity_registry().find(unit->transport_id()) : nullptr;
+        if (transport && transport->is_unit()) {
+            static_cast<sim::Unit*>(transport)->detach_cargo(
+                {unit->entity_id()}, sim->entity_registry(), L, sim->terrain());
+        }
     }
     return 0;
 }
