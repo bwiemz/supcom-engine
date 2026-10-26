@@ -1364,7 +1364,9 @@ void IntegrationModes::headless(Engine& e) {
              {},
              {},
              {},
-             [&] { return osc::core::ui_nis_mode(uL); }});
+             [&] { return osc::core::ui_nis_mode(uL); },
+             {},
+             {}});
         // A world click as the input handler makes it under FA's command mode.
         auto click = [&](osc::f32 x, osc::f32 z, bool shift) {
             const auto mode = read_command_mode(uL);
