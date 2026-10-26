@@ -830,6 +830,20 @@ static int l_GetGameTimeSeconds(lua_State* L) {
     return 1;
 }
 
+/// SetArmyStatsSyncArmy(army): the army (0-based, -1 none) whose stats each
+/// beat's Sync carries as __ArmyStats, as Moho's (cfunc_SetArmyStatsSyncArmyL
+/// 0x0075D9F0). Retail's ArmyStats.lua calls it through ExecLuaInSim.
+static int l_SetArmyStatsSyncArmy(lua_State* L) {
+    constexpr const char* kHelp = "Set the army index for which to sync army stats (-1 for none)";
+    if (lua_gettop(L) != 1) return arg_count_error(L, kHelp, 1, lua_gettop(L));
+    if (lua_type(L, 1) != LUA_TNUMBER) return luaL_typerror(L, 1, "integer");
+    // (a NaN or a number past an int is no army)
+    const lua_Number army = lua_tonumber(L, 1);
+    if (auto* sim = get_sim(L))
+        sim->set_sync_army(army > -1e9 && army < 1e9 ? static_cast<i32>(army) : -1);
+    return 0;
+}
+
 static int l_GetGameTick(lua_State* L) {
     auto* sim = get_sim(L);
     lua_pushnumber(L, sim ? sim->tick_count() : 0);
@@ -5590,6 +5604,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     // (GPGNet). Offline there is nowhere to send them, so this is faithfully
     // a no-op; retail victory.lua calls it on every defeat.
     state.register_function("SubmitXMLArmyStats", stub_noop);
+    state.register_function("SetArmyStatsSyncArmy", l_SetArmyStatsSyncArmy);
 
     // Game state
     state.register_function("GetGameTimeSeconds", l_GetGameTimeSeconds);

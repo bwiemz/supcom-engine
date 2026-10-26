@@ -414,6 +414,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     // its OnPostLoad sets again;
     // bone_cache_, anim_cache_: caches; debug_canvas_, debug_lines_: the scripts' debug
     // drawing, which no save holds (Moho's canvases aren't saved either)
+    // sync_army_: whose stats each beat's Sync carries, a debug window's (Moho's mSyncArmy isn't
+    // saved)
     {
         std::vector<std::string> armor;
         armor.reserve(sim.armor_def_.table_.size());

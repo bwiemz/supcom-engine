@@ -79,6 +79,18 @@ void push_item(lua_State* L, const EngineStats::Item& item) {
         lua_pushstring(L, type);
         lua_rawset(L, -3);
     }
+    // CArmyStatItem::ToLua (0x0070B430): the values per blueprint
+    if (!item.blueprints.empty()) {
+        lua_pushstring(L, "Blueprints");
+        lua_newtable(L);
+        for (const auto& [id, value] : item.blueprints) {
+            const std::string text = fmt::format("{:.2f}", static_cast<f32>(value));
+            lua_pushlstring(L, id.data(), id.size());
+            lua_pushlstring(L, text.data(), text.size());
+            lua_rawset(L, -3);
+        }
+        lua_rawset(L, -3);
+    }
     if (item.children.empty()) return;
     // The children as table.insert appends them
     lua_pushstring(L, "Children");

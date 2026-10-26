@@ -10,6 +10,7 @@
 
 #include "core/types.hpp"
 
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -36,6 +37,9 @@ public:
         i32 integer = 0;
         f32 number = 0.0f;
         std::string text;
+        /// An army stat's values per blueprint (CArmyStatItem's), as its
+        /// Blueprints table: each blueprint's "%.2f"
+        std::map<std::string, f64> blueprints;
         std::vector<std::unique_ptr<Item>> children; ///< in the order they were made
     };
 
@@ -51,8 +55,9 @@ public:
 
     /// STAT_GetLuaTable: the tree as a new table on L's stack. Each item has
     /// its Name, its Value and Type ("Integer", "Float" or "String"; an empty
-    /// string's Value left out) once it has one, and the list of its
-    /// Children if it has any (the root an empty one before any stat).
+    /// string's Value left out) once it has one, its Blueprints if it has
+    /// any, and the list of its Children if it has any (the root an empty one
+    /// before any stat).
     void push(lua_State* L) const;
     /// PublishEngineStatsToLua: that table as L's __EngineStats
     void publish(lua_State* L) const;
