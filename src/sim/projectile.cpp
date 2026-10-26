@@ -194,11 +194,12 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
                   grown(scale_z(), scale_velocity.z));
     }
 
-    if (collide(from, registry, L, terrain)) return;
+    std::optional<PathImpact> impact = collide(from, registry, L, terrain);
+    if (destroyed() || !in_registry()) return;
 
     // Crossing the water's surface tells the script: a torpedo dropped from
     // the air starts tracking as it enters.
-    if (terrain && terrain->has_water()) {
+    if (!impact && terrain && terrain->has_water()) {
         const bool wet = pos.y < terrain->water_elevation() &&
                          terrain->get_terrain_height(pos.x, pos.z) < terrain->water_elevation();
         if (wet != in_water) {
@@ -207,17 +208,13 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
         }
     }
 
-    // Air bursts: flak detonates on reaching its target's height above the
-    // surface (DetonatesAtTargetHeight sets it); an artillery shell, once it
-    // has risen above its burst height, on coming back down past it.
-    {
-        const f32 height = pos.y - (terrain ? terrain->get_surface_height(pos.x, pos.z) : 0.0f);
-        if (detonate_below_height > 0 && height > detonate_below_height) burst_armed = true;
-        if ((detonate_above_height > 0 && height >= detonate_above_height) ||
-            (burst_armed && height <= detonate_below_height)) {
-            record_impact(pos, 1.0f, nullptr, "Air", terrain);
-            return;
-        }
+    // Air bursts (Moho's detonate band, which CheckCollision tests last and which
+    // stands in place of anything else this tick met): flak on reaching its target's
+    // height (DetonatesAtTargetHeight sets it), a shell coming down to its burst height.
+    if (auto burst = detonate_band(from, terrain)) impact = burst;
+    if (impact) {
+        record_impact(impact->at, impact->interpolation, impact->hit, impact->type, terrain);
+        return;
     }
 
     // Its time up, it bursts where this tick's move took it, an 'Air' (or
@@ -366,9 +363,10 @@ Vector3 lerp(const Vector3& a, const Vector3& b, f32 t) {
 
 } // namespace
 
-bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_State* L,
-                         const map::Terrain* terrain) {
-    if (!collision_enabled) return false;
+std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
+                                                          EntityRegistry& registry, lua_State* L,
+                                                          const map::Terrain* terrain) {
+    if (!collision_enabled) return std::nullopt;
     const Vector3 to = pending_position();
 
     // The surface: the ground, or for a shell that ends there, the water.
@@ -446,20 +444,46 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
             }
             e = registry.find(id);
             if (!e || e->destroyed()) continue;
-            record_impact(lerp(start, end, t), t * kSweepLength, e, nullptr, terrain);
-            return true;
+            return PathImpact{lerp(start, end, t), t * kSweepLength, e, nullptr};
         }
     }
 
     if (surface_t > 1.0f) {
-        return false;
+        return std::nullopt;
     }
     Vector3 at = lerp(from, to, surface_t);
     if (surface_type && terrain) {
         at.y = terrain->water_elevation();
     }
-    record_impact(at, surface_t, nullptr, surface_type, terrain);
-    return true;
+    return PathImpact{at, surface_t, nullptr, surface_type};
+}
+
+std::optional<Projectile::PathImpact> Projectile::detonate_band(const Vector3& from,
+                                                                const map::Terrain* terrain) const {
+    // CheckCollision's tail (Steam's exe 0x006A476E, faf-re Projectile.cpp): its height over
+    // the ground or the water where the step ends (-10000 for no water); the burst point then
+    // solved from the ground's height alone, a tenth of the step at the least, all of it at
+    // the most.
+    const Vector3 to = pending_position();
+    const f32 ground = terrain ? terrain->get_terrain_height(to.x, to.z) : 0.0f;
+    const f32 water = terrain && terrain->has_water() ? terrain->water_elevation() : -10000.0f;
+    const f32 height = to.y - std::max(ground, water);
+    const f32 above =
+        detonate_above_override < 0.0f ? detonate_above_height : detonate_above_override;
+    const f32 below =
+        detonate_below_override < 0.0f ? detonate_below_height : detonate_below_override;
+    const f32 dy = to.y - from.y;
+    f32 f = 0.0f;
+    if (below > 0.0f && below > height && dy < 0.0f) {
+        f = (below + ground - from.y) / dy;
+    } else if (above > 0.0f && height > above && dy > 0.0f) {
+        f = (above + ground - from.y) / dy;
+    } else {
+        return std::nullopt;
+    }
+    f = f < 1.0f ? f : 1.0f; // NaN too
+    f = std::max(f, 0.1f);
+    return PathImpact{lerp(from, to, f), f, nullptr, "Air"};
 }
 
 void Projectile::record_impact(const Vector3& at, f32 interpolation, const Entity* hit,
