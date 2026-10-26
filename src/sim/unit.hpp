@@ -995,7 +995,8 @@ public:
     /// under `floor_after`.
     f32 lift_toward(f32 want, bool winged, f32 floor_after, const map::Terrain* terrain,
                     const EntityRegistry* registry, f32 dt);
-    /// Moho's CalcTransportLoadFactor: its mass with its cargo's over its own.
+    /// Moho's CalcTransportLoadFactor: its mass with its cargo's over its own
+    /// (1 on FAF's data, as FAF's exe answers).
     f32 transport_load_factor(const EntityRegistry& registry) const;
     void reset_lift_ground() { lift_ground_set_ = false; }
     const Vector3& air_velocity() const { return air_velocity_; }

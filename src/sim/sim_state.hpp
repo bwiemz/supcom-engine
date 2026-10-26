@@ -180,7 +180,10 @@ public:
     /// ChangeUnitArmy gives commanders and units being built
     /// (hooks/HTransferACUs.cpp). The host's, as the executable is.
     bool faf_exe() const { return faf_exe_; }
-    void set_faf_exe(bool on) { faf_exe_ = on; }
+    void set_faf_exe(bool on) {
+        faf_exe_ = on;
+        entity_registry_.set_faf_exe(on);
+    }
     map::PathfindingGrid* pathfinding_grid() { return pathfinding_grid_.get(); }
     const map::PathfindingGrid* pathfinding_grid() const { return pathfinding_grid_.get(); }
 

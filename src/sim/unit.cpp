@@ -2952,7 +2952,10 @@ void Unit::set_air_turn_rate(f32 rate) {
 
 f32 Unit::transport_load_factor(const EntityRegistry& registry) const {
     const f32 own = load_metric();
-    if (cargo_ids_.empty() || own <= 0.0f) {
+    // FAF's patched exe has CalcTransportLoadFactor answer 1: a loaded
+    // transport flies as an empty one (FA-Binary-Patches
+    // hooks/RemoveTransportLoadFactor.cpp)
+    if (registry.faf_exe() || cargo_ids_.empty() || own <= 0.0f) {
         return 1.0f;
     }
     f32 carried = 0.0f;
