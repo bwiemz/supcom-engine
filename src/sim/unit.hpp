@@ -1128,7 +1128,7 @@ public:
     u8 current_terrain_type() const { return terrain_type_; }
     /// Moho's Unit::UpdateTerrainType: the terrain type under it at `at`. A
     /// change calls its script's OnTerrainTypeChange(new, old), the two
-    /// TerrainTypes.lua entries (none with `L` null: a unit being made).
+    /// TerrainTypes.lua entries, old nil as it is made (none with `L` null).
     void update_terrain_type(const map::Terrain* terrain, const Vector3& at, lua_State* L);
     /// Moho's Unit::IsMobile: a blueprint that moves (a structure's
     /// MotionType is RULEUMT_None).

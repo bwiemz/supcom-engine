@@ -3871,7 +3871,11 @@ void Unit::update_terrain_type(const map::Terrain* terrain, const Vector3& at, l
     if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, self);
         push_terrain_type(L, terrain_type_);
-        push_terrain_type(L, was);
+        if (was == 0) {
+            lua_pushnil(L);
+        } else {
+            push_terrain_type(L, was);
+        }
         if (lua_pcall(L, 3, 0, 0) != 0) {
             log_script_warning(this, "OnTerrainTypeChange", lua_tostring(L, -1));
         }

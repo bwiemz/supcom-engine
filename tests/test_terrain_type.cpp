@@ -7,7 +7,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "blueprints/blueprint_store.hpp"
 #include "blueprints/footprint.hpp"
+#include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
+#include "lua/sim_bindings.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "sim/manipulator.hpp"
@@ -82,7 +86,6 @@ Unit* tank(SimState& sim, lua_State* L, f32 x) {
     REQUIRE(luaL_loadbuffer(L, code, std::strlen(code), "tank") == 0);
     REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
     u->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
-    // As it is made: the type under it, no script yet to hear it
     u->update_terrain_type(sim.terrain(), u->position(), nullptr);
     auto* raw = u.get();
     sim.entity_registry().register_entity(std::move(u));
@@ -162,4 +165,46 @@ TEST_CASE("A unit's terrain type is the cell at its footprint's corner", "[terra
     // Off the map: Default
     u->update_terrain_type(sim.terrain(), {-5.0f, 0.0f, 64.0f}, nullptr);
     CHECK(u->current_terrain_type() == 1);
+}
+
+TEST_CASE("A unit's script hears the terrain type it is made on, after OnPreCreate",
+          "[terrain-type]") {
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store{state.raw()};
+    SimState sim{state.raw(), &store};
+    osc::lua::register_moho_bindings(state, sim);
+    osc::lua::register_sim_bindings(state, sim);
+    lua_State* L = state.raw();
+    sands(sim, L);
+    REQUIRE(state
+                .do_string("return {BlueprintId = 'tank', Categories = {'LAND'},"
+                           " Defense = {MaxHealth = 100}}")
+                .ok());
+    store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+    lua_pop(L, 1);
+    store.expose_to_lua(L);
+    REQUIRE(state
+                .do_string(R"(
+        Tank = setmetatable({
+            OnPreCreate = function(self) table.insert(heard, 'pre') end,
+            OnTerrainTypeChange = function(self, new, old)
+                table.insert(heard, new.Name .. '<' .. tostring(old))
+            end,
+            OnCreate = function(self) table.insert(heard, 'create') end,
+        }, {__index = moho.unit_methods})
+        Tank.__index = Tank
+    )")
+                .ok());
+    lua_pushstring(L, "__osc_unit_script_classes");
+    lua_newtable(L);
+    lua_pushstring(L, "tank");
+    lua_getglobal(L, "Tank");
+    lua_rawset(L, -3);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    REQUIRE(state.do_string("CreateUnit('tank', 1, 100, 0, 64)").ok());
+    const auto told = state.do_string(
+        "assert(table.concat(heard, ', ') == 'pre, Sand<nil, create', table.concat(heard, ', '))");
+    INFO((told.ok() ? std::string() : told.error().message));
+    CHECK(told.ok());
 }

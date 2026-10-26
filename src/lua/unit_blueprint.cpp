@@ -1000,9 +1000,6 @@ static void resolve_footprints(lua_State* L, const sim::SimState& sim, const Blu
         unit.set_layer(sim::starting_layer(unit.footprint().caps, unit.has_category("EXPERIMENTAL"),
                                            *sim.terrain(), x, z, unit.has_category("FERRYBEACON")));
     }
-    // ...and the terrain type under it (Moho's Unit ctor: UpdateTerrainType after
-    // SetCurrentLayer), its script not yet there to hear it
-    unit.update_terrain_type(sim.terrain(), {x, 0.0f, z}, nullptr);
 }
 
 /// A ship's or sub's Physics.Elevation (negative: its draft below the
