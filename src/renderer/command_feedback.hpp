@@ -4,6 +4,7 @@
 #include "sim/entity.hpp" // Vector3
 
 #include <array>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -57,7 +58,23 @@ struct WorldMeshDraw {
     f32 created_tick = 0.0f;
     f32 lifetime = 0.0f;
     f32 lod_cutoff = 0.0f;
+    /// SetScale's, in place of the uniform scale on each axis
+    std::optional<std::array<f32, 3>> scale;
+    u32 color = 0xFFFFFFFFu; ///< packed ARGB, its vertex colour
+    f32 fraction_complete = 1.0f;
+    f32 fraction_health = 1.0f;
 };
+
+/// What a world mesh's shader reads as material.y, as its technique's
+/// `parameter` annotation names it (mesh.fx): the lifetime in a command
+/// feedback or rally point technique (PARAM_LIFETIME), the fraction of health
+/// in a shield's (PARAM_FRACTIONHEALTH), else the fraction complete.
+inline f32 world_mesh_parameter(const WorldMeshDraw& draw, bool lifetime_technique,
+                                bool health_technique) {
+    return lifetime_technique ? draw.lifetime
+           : health_technique ? draw.fraction_health
+                              : draw.fraction_complete;
+}
 
 std::vector<WorldMeshDraw> shown_world_meshes(const ui::UIControlRegistry& registry);
 
@@ -80,5 +97,7 @@ constexpr f32 kFeedbackLodCutoff = 1000.0f;
 /// Its mesh instance's model matrix, column-major: at its position,
 /// unrotated, `scale` its mesh's size.
 std::array<f32, 16> feedback_model(const sim::Vector3& position, f32 scale);
+/// The same with a scale for each axis (a WorldMesh's SetScale).
+std::array<f32, 16> feedback_model(const sim::Vector3& position, const std::array<f32, 3>& scale);
 
 } // namespace osc::renderer

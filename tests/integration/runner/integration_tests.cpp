@@ -18449,24 +18449,29 @@ void test_controls(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 15: WorldMesh creation + SetHidden/IsHidden"); }
     }
 
-    // --- Test 16: WorldMesh SetStance/SetColor/SetScale (no-op stubs) ---
+    // --- Test 16: WorldMesh SetStance/SetColor/SetScale and the parameters, before a mesh ---
     {
-        auto r = ctx.lua_state.do_string(
-            "local wm = {}\n"
-            "setmetatable(wm, {__index = moho.world_mesh_methods})\n"
-            "InternalCreateWorldMesh(wm)\n"
-            "wm:SetStance({0,0,0})\n"
-            "wm:SetColor(true)\n"
-            "wm:SetScale({1,1,1})\n"
-            "wm:SetAuxiliaryParameter(0.5)\n"
-            "wm:SetFractionCompleteParameter(1.0)\n"
-            "wm:SetFractionHealthParameter(1.0)\n"
-            "wm:SetLifetimeParameter(0.0)\n"
-            "return true\n");
+        // SetColor takes a colour, as Moho's SCR_DecodeColor reads one
+        auto r = ctx.lua_state.do_string("local wm = {}\n"
+                                         "setmetatable(wm, {__index = moho.world_mesh_methods})\n"
+                                         "InternalCreateWorldMesh(wm)\n"
+                                         "wm:SetStance({0,0,0})\n"
+                                         "wm:SetColor('ffffffff')\n"
+                                         "wm:SetScale({1,1,1})\n"
+                                         "wm:SetAuxiliaryParameter(0.5)\n"
+                                         "wm:SetFractionCompleteParameter(1.0)\n"
+                                         "wm:SetFractionHealthParameter(1.0)\n"
+                                         "wm:SetLifetimeParameter(0.0)\n"
+                                         "return true\n");
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
-        if (ok) { pass++; spdlog::info("[PASS] Test 16: WorldMesh setter stubs (no crash)"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 16: WorldMesh setter stubs"); }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 16: WorldMesh setters before a mesh");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 16: WorldMesh setters before a mesh");
+        }
     }
 
     // --- Test 17: WorldMesh GetInterpolated* return tables ---

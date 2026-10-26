@@ -1519,8 +1519,10 @@ void Renderer::inject_feedback_blips(lua_State* L, const std::vector<WorldMeshDr
         return;
     }
     forward = {forward.x / length, forward.y / length, forward.z / length};
+    // A world mesh (`world`, else a blip) takes its SetScale, SetColor and
+    // parameters (Moho's MeshInstance), its parameter as its technique reads it
     const auto inject = [&](const FeedbackBlipSpec& spec, f32 created_tick, f32 parameter,
-                            f32 lod_cutoff) {
+                            f32 lod_cutoff, const WorldMeshDraw* world = nullptr) {
         // MeshName at its UniformScale, else the blueprint's LOD 0 mesh at
         // the blueprint's; the albedo and shader are the blip's either way.
         const GPUMesh* mesh = nullptr;
@@ -1543,15 +1545,26 @@ void Renderer::inject_feedback_blips(lua_State* L, const std::vector<WorldMeshDr
         if (lod > lod_cutoff) {
             return;
         }
+        std::array<f32, 3> axes{scale, scale, scale};
+        if (world && world->scale) axes = *world->scale;
         if (is_feedback_technique(mesh->technique)) {
-            scale *= feedback_distance_scale(lod);
+            const f32 grow = feedback_distance_scale(lod);
+            for (f32& a : axes) a *= grow;
         }
         MeshInstance inst{};
-        const auto model = feedback_model(spec.position, scale);
+        const auto model = feedback_model(spec.position, axes);
         std::copy(model.begin(), model.end(), inst.model);
-        inst.r = inst.g = inst.b = inst.a = 1.0f;
+        const u32 color = world ? world->color : 0xFFFFFFFFu;
+        inst.a = static_cast<f32>((color >> 24) & 0xFFu) / 255.0f;
+        inst.r = static_cast<f32>((color >> 16) & 0xFFu) / 255.0f;
+        inst.g = static_cast<f32>((color >> 8) & 0xFFu) / 255.0f;
+        inst.b = static_cast<f32>(color & 0xFFu) / 255.0f;
         inst.shader_time = created_tick;
-        inst.parameter = parameter;
+        inst.parameter = world
+                             ? world_mesh_parameter(*world, is_feedback_technique(mesh->technique),
+                                                    mesh_parameter(mesh->technique) ==
+                                                        MeshParameter::FractionHealth)
+                             : parameter;
         unit_renderer_.inject_mesh(mesh, inst, &texture_cache_);
     };
     for (const FeedbackBlip& blip : feedback_blips_.blips()) {
@@ -1559,8 +1572,8 @@ void Renderer::inject_feedback_blips(lua_State* L, const std::vector<WorldMeshDr
         inject(blip.spec, blip.created_tick, blip.spec.duration * 10.0f, kFeedbackLodCutoff);
     }
     for (const WorldMeshDraw& world_mesh : world_meshes) {
-        inject(world_mesh.spec, world_mesh.created_tick, world_mesh.lifetime,
-               world_mesh.lod_cutoff);
+        inject(world_mesh.spec, world_mesh.created_tick, world_mesh.lifetime, world_mesh.lod_cutoff,
+               &world_mesh);
     }
 }
 

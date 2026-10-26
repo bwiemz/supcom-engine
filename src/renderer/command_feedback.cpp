@@ -40,6 +40,10 @@ std::vector<WorldMeshDraw> shown_world_meshes(const ui::UIControlRegistry& regis
         draw.created_tick = mesh.created_tick;
         draw.lifetime = mesh.lifetime;
         draw.lod_cutoff = mesh.lod_cutoff;
+        draw.scale = mesh.scale;
+        draw.color = mesh.color;
+        draw.fraction_complete = mesh.fraction_complete;
+        draw.fraction_health = mesh.fraction_health;
         out.push_back(std::move(draw));
     }
     return out;
@@ -53,10 +57,14 @@ f32 lod_metric(const sim::Vector3& p, const sim::Vector3& eye, const sim::Vector
 }
 
 std::array<f32, 16> feedback_model(const sim::Vector3& position, f32 scale) {
+    return feedback_model(position, {scale, scale, scale});
+}
+
+std::array<f32, 16> feedback_model(const sim::Vector3& position, const std::array<f32, 3>& scale) {
     std::array<f32, 16> m{};
-    m[0] = scale;
-    m[5] = scale;
-    m[10] = scale;
+    m[0] = scale[0];
+    m[5] = scale[1];
+    m[10] = scale[2];
     m[12] = position.x;
     m[13] = position.y;
     m[14] = position.z;

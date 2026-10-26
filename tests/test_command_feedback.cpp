@@ -87,3 +87,23 @@ TEST_CASE("A mark's model matrix: at its point, unrotated, scaled", "[feedback]"
     CHECK(m[14] == 3.0f);
     CHECK(m[15] == 1.0f);
 }
+
+TEST_CASE("A world mesh's model takes its scale per axis; its technique picks its parameter",
+          "[feedback]") {
+    const auto m = osc::renderer::feedback_model({1.0f, 2.0f, 3.0f}, {2.0f, 1.0f, 3.0f});
+    CHECK(m[0] == 2.0f);
+    CHECK(m[5] == 1.0f);
+    CHECK(m[10] == 3.0f);
+    CHECK(m[12] == 1.0f);
+
+    // mesh.fx's parameter annotations: PARAM_LIFETIME for the command
+    // feedback and rally point techniques, PARAM_FRACTIONHEALTH for the
+    // shields', else PARAM_FRACTIONCOMPLETE
+    osc::renderer::WorldMeshDraw draw;
+    draw.lifetime = 10.0f;
+    draw.fraction_complete = 0.25f;
+    draw.fraction_health = 0.5f;
+    CHECK(osc::renderer::world_mesh_parameter(draw, true, false) == 10.0f);
+    CHECK(osc::renderer::world_mesh_parameter(draw, false, true) == 0.5f);
+    CHECK(osc::renderer::world_mesh_parameter(draw, false, false) == 0.25f);
+}

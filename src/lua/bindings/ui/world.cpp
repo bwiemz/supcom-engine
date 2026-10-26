@@ -4,6 +4,8 @@
 
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
+#include "lua/arg_count.hpp"
+#include "core/color.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/input_handler.hpp"
 #include "lua/lua_stubs.hpp"
@@ -64,6 +66,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <array>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -176,6 +179,9 @@ static int worldmesh_SetMesh(lua_State* L) {
     if (const auto cutoff = worldmesh_number(L, "LODCutoff")) {
         mesh.lod_cutoff = *cutoff;
     }
+    if (const auto color = worldmesh_field(L, "Color")) {
+        mesh.color = decode_color(*color).value_or(0xFFFFFFFFu);
+    }
     if (const auto name = worldmesh_field(L, "MeshName")) {
         const auto shader = worldmesh_field(L, "ShaderName");
         const auto texture = worldmesh_field(L, "TextureName");
@@ -227,29 +233,57 @@ static int worldmesh_IsHidden(lua_State* L) {
     return 1;
 }
 
+// SetColor, SetScale and the parameter setters write the WorldMesh's mesh
+// instance, as Moho's (faf-re UiRuntimeTypes.cpp, cfunc_CUIWorldMesh*L):
+// two arguments, the second a colour, a vector or a number.
+
 static int worldmesh_SetColor(lua_State* L) {
-    (void)L;
+    if (const int n = lua_gettop(L); n != 2)
+        return arg_count_error(L, "WorldMesh:SetColor(bool hidden)", 2, n);
+    auto* ctrl = check_control(L);
+    const u32 color = check_color(L, 2);
+    if (ctrl && ctrl->world_mesh()) ctrl->world_mesh()->color = color;
     return 0;
 }
 
 static int worldmesh_SetScale(lua_State* L) {
-    (void)L;
+    if (const int n = lua_gettop(L); n != 2)
+        return arg_count_error(L, "WorldMesh:SetScale(vector scale)", 2, n);
+    auto* ctrl = check_control(L);
+    if (!lua_istable(L, 2)) return luaL_typerror(L, 2, "vector");
+    std::array<f32, 3> scale{};
+    for (int i = 0; i < 3; ++i) {
+        lua_rawgeti(L, 2, i + 1);
+        scale[static_cast<size_t>(i)] = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+    if (ctrl && ctrl->world_mesh()) ctrl->world_mesh()->scale = scale;
+    return 0;
+}
+
+static int worldmesh_set_parameter(lua_State* L, const char* help,
+                                   f32 ui::UIControl::WorldMesh::* parameter) {
+    if (const int n = lua_gettop(L); n != 2) return arg_count_error(L, help, 2, n);
+    auto* ctrl = check_control(L);
+    if (lua_type(L, 2) != LUA_TNUMBER) return luaL_typerror(L, 2, "number");
+    if (ctrl && ctrl->world_mesh())
+        (*ctrl->world_mesh()).*parameter = static_cast<f32>(lua_tonumber(L, 2));
     return 0;
 }
 
 static int worldmesh_SetAuxiliaryParameter(lua_State* L) {
-    (void)L;
-    return 0;
+    return worldmesh_set_parameter(L, "WorldMesh:SetAuxiliaryParameter(float param)",
+                                   &ui::UIControl::WorldMesh::auxiliary);
 }
 
 static int worldmesh_SetFractionCompleteParameter(lua_State* L) {
-    (void)L;
-    return 0;
+    return worldmesh_set_parameter(L, "WorldMesh:SetFractionCompleteParameter(float param)",
+                                   &ui::UIControl::WorldMesh::fraction_complete);
 }
 
 static int worldmesh_SetFractionHealthParameter(lua_State* L) {
-    (void)L;
-    return 0;
+    return worldmesh_set_parameter(L, "WorldMesh:SetFractionHealthParameter(float param)",
+                                   &ui::UIControl::WorldMesh::fraction_health);
 }
 
 static int worldmesh_SetLifetimeParameter(lua_State* L) {

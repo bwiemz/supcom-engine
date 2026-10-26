@@ -554,6 +554,68 @@ struct InputFixture {
 
 } // namespace
 
+TEST_CASE("A WorldMesh's SetScale, SetColor and parameters set its mesh instance, as Moho's",
+          "[ui][lua]") {
+    // faf-re cfunc_CUIWorldMesh*L: SetMesh makes the instance at its
+    // UniformScale and Color; SetScale and SetColor replace them, and the
+    // parameter setters write theirs. FAF's cursor scripts set a hovered
+    // mesh's scale and its fraction complete.
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+    auto result = lua.do_string(R"(
+        ring = setmetatable({}, { __index = moho.world_mesh_methods })
+        InternalCreateWorldMesh(ring)
+        ring:SetMesh({
+            MeshName = '/meshes/game/Rally_lod0.scm',
+            TextureName = '/meshes/game/Rally_albedo.dds',
+            ShaderName = 'FakeRings',
+            UniformScale = 0.3,
+            Color = 'red',
+        })
+        ring:SetHidden(false)
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    auto shown = osc::renderer::shown_world_meshes(registry);
+    REQUIRE(shown.size() == 1);
+    CHECK_FALSE(shown[0].scale);
+    CHECK(shown[0].color == 0xFFFF0000u);
+    CHECK(shown[0].fraction_complete == 1.0f);
+    CHECK(shown[0].fraction_health == 1.0f);
+
+    REQUIRE(lua.do_string("ring:SetScale({2, 1, 3}) ring:SetColor('8000ff00')"
+                          " ring:SetFractionCompleteParameter(0.25)"
+                          " ring:SetFractionHealthParameter(0.5) ring:SetAuxiliaryParameter(7)")
+                .ok());
+    shown = osc::renderer::shown_world_meshes(registry);
+    REQUIRE(shown.size() == 1);
+    REQUIRE(shown[0].scale);
+    CHECK(*shown[0].scale == std::array<float, 3>{2.0f, 1.0f, 3.0f});
+    CHECK(shown[0].color == 0x8000FF00u);
+    CHECK(shown[0].fraction_complete == 0.25f);
+    CHECK(shown[0].fraction_health == 0.5f);
+    auto* mesh = control_of(lua.raw(), "ring");
+    REQUIRE(mesh);
+    CHECK(mesh->world_mesh()->auxiliary == 7.0f);
+
+    // Moho's checks: two arguments, a number, a colour it knows
+    CHECK_FALSE(lua.do_string("ring:SetFractionCompleteParameter()").ok());
+    CHECK_FALSE(lua.do_string("ring:SetFractionCompleteParameter('half')").ok());
+    CHECK_FALSE(lua.do_string("ring:SetColor('no such colour')").ok());
+    CHECK_FALSE(lua.do_string("ring:SetScale(2)").ok());
+
+    // A new mesh is a new instance, at its own scale and white
+    REQUIRE(lua.do_string("ring:SetMesh({BlueprintID = 'uel0001'}) ring:SetHidden(false)").ok());
+    shown = osc::renderer::shown_world_meshes(registry);
+    REQUIRE(shown.size() == 1);
+    CHECK_FALSE(shown[0].scale);
+    CHECK(shown[0].color == 0xFFFFFFFFu);
+    CHECK(shown[0].fraction_complete == 1.0f);
+}
+
 TEST_CASE("UI events reach Lua with Moho's codes and modifiers", "[ui][lua][input]") {
     InputFixture f;
     f.run("target = box('target', GetFrame(0), 0, 0, 100, 100, 1) target.eats = true");
