@@ -1065,7 +1065,8 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
     if (goes_on && ctx.sim) {
         tick_hover(ctx.terrain, ctx.sim->tick_count(), ctx.sim->random(), ctx.sim->moho_pathing());
     }
-    if (crossing != 0.0f || in_layer_transition()) {
+    const bool crossed = crossing != 0.0f || in_layer_transition();
+    if (crossed) {
         motion_step_ = layer_transition_step_; // its velocity, kept while it crosses
     } else if (snap_serial() == snaps) {
         const Vector3& to = pending_position();
@@ -1073,7 +1074,7 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
     }
     // Moho raises the motion events at the end of CalcMove*, before UpdateManipulators.
     if (goes_on && !is_being_built()) {
-        update_motion_horz(ctx.L);
+        update_motion_horz(ctx.L, crossed);
         update_motion_turn(ctx.L);
         if (!in_registry()) {
             return;
@@ -3281,7 +3282,7 @@ const char* motion_horz_name(Unit::MotionHorz motion) {
 /// and passes it to every weapon (FiringRandomnessWhileMoving, packing to
 /// move). Ground units here reach full speed at once, so a start is Cruise
 /// then TopSpeed a tick later, and a stop is Stopping then Stopped.
-void Unit::update_motion_horz(lua_State* L) {
+void Unit::update_motion_horz(lua_State* L, bool crossing) {
     MotionHorz next = motion_horz_;
     if (is_air_unit()) {
         const bool moving = current_airspeed_ > 0.01f;
@@ -3309,6 +3310,10 @@ void Unit::update_motion_horz(lua_State* L) {
         else if (target_speed_ <= 1e-3f) next = MotionHorz::Stopping;
         else if (speed >= 0.99f * top_speed_) next = MotionHorz::TopSpeed;
         else next = MotionHorz::Cruise;
+        // TransitionBetweenLayers fails Moho's CalcMoveCommon: ProcessCommonMotionState(false)
+        if (crossing) {
+            next = MotionHorz::Stopped;
+        }
     }
     if (next == motion_horz_) return;
     const MotionHorz old = motion_horz_;

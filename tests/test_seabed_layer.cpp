@@ -333,3 +333,52 @@ TEST_CASE("Without a LayerTransitionDuration a floating unit crosses the shore a
     CHECK_FALSE(u->in_layer_transition());
     CHECK(u->position().x != from.x); // it moved on the same tick
 }
+
+TEST_CASE("A floating unit is stopped while it crosses the shore", "[seabed][layer-transition]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    lake(sim);
+    // (a bare lua_open state has no table library)
+    const char* code = "heard = {} "
+                       "return { OnMotionHorzEventChange = function(self, new, old) "
+                       "local n = 1 while heard[n] do n = n + 1 end heard[n] = new .. '<' .. old "
+                       "end }";
+    REQUIRE(luaL_loadbuffer(g.L, code, std::strlen(code), "mover") == 0);
+    REQUIRE(lua_pcall(g.L, 0, 1, 0) == 0);
+    Unit* u = mover(sim, "RULEUMT_AmphibiousFloating", 70.0f, 64.0f);
+    u->set_lua_table_ref(luaL_ref(g.L, LUA_REGISTRYINDEX));
+    u->set_layer_transition_duration(4.0f);
+    const auto heard = [&] {
+        std::vector<std::string> out;
+        lua_getglobal(g.L, "heard");
+        for (int i = 1;; ++i) {
+            lua_rawgeti(g.L, -1, i);
+            if (lua_isnil(g.L, -1)) {
+                lua_pop(g.L, 1);
+                break;
+            }
+            out.emplace_back(lua_tostring(g.L, -1));
+            lua_pop(g.L, 1);
+        }
+        lua_pop(g.L, 1);
+        return out;
+    };
+    u->push_command(move_to({30.0f, 0.0f, 64.0f}), true);
+    tick_until([&] { sim.tick(); }, "the unit's layer becomes Water", 200,
+               [&] { return u->layer() == "Water"; });
+    REQUIRE(u->in_layer_transition());
+    std::vector<std::string> events = heard();
+    REQUIRE_FALSE(events.empty());
+    CHECK(events.back().rfind("Stopped<", 0) == 0);
+    const size_t at_crossing = events.size();
+
+    for (int k = 1; k < 39; ++k) {
+        sim.tick();
+    }
+    REQUIRE_FALSE(u->in_layer_transition());
+    CHECK(heard().size() == at_crossing);
+    sim.tick();
+    events = heard();
+    REQUIRE(events.size() == at_crossing + 1);
+    CHECK((events.back() == "Cruise<Stopped" || events.back() == "TopSpeed<Stopped"));
+}
