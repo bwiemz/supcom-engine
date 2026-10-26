@@ -26,6 +26,15 @@ public:
     void register_camera(const std::string& name, renderer::Camera* cam);
     renderer::Camera* camera() const { return camera_; }
     const std::string& camera_name() const { return camera_name_; }
+    /// The camera of its name, its own (CUIWorldView's mCamera): a minimap's
+    /// camera() is instead the WorldCamera it tracks, and its camera_name()
+    /// that one's name.
+    renderer::Camera* own_camera() const { return own_camera_; }
+    const std::string& own_camera_name() const { return own_camera_name_; }
+    void set_own_camera(const std::string& name, renderer::Camera* cam) {
+        own_camera_name_ = name;
+        own_camera_ = cam;
+    }
 
     // --- Terrain ---
     void set_terrain(const map::Terrain* t) { terrain_ = t; }
@@ -95,9 +104,11 @@ public:
 
 private:
     renderer::Camera* camera_ = nullptr;
+    renderer::Camera* own_camera_ = nullptr;
     const map::Terrain* terrain_ = nullptr;
     renderer::Renderer* renderer_ = nullptr;
     std::string camera_name_;
+    std::string own_camera_name_;
     u32 viewport_w_ = 0;
     u32 viewport_h_ = 0;
     bool cartographic_ = false;

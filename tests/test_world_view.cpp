@@ -87,6 +87,51 @@ TEST_CASE("WorldView:Project takes a Moho vector and gives a Vector2", "[ui][wor
     lua_pop(L, 1);
 }
 
+TEST_CASE("WorldView:CameraReset resets its own camera, a minimap's not the one it tracks",
+          "[ui][worldview][lua]") {
+    // CUIWorldView:CameraReset resets the view's own camera (its mCamera, the
+    // one of its name) and answers the view. minimap.lua's, on its first
+    // frame, leaves the WorldCamera it tracks where the player has it.
+    osc::renderer::Camera world;
+    world.init(512.0f, 512.0f);
+    world.set_target(200.0f, 300.0f);
+    world.set_zoom(150.0f);
+    osc::renderer::Camera mini;
+    mini.init(512.0f, 512.0f);
+    mini.set_target(100.0f, 120.0f);
+    mini.set_zoom(150.0f);
+    osc::ui::WorldView view;
+    view.set_minimap(true);
+    view.register_camera("WorldCamera", &world);
+    view.set_own_camera("MiniMap", &mini);
+
+    osc::lua::LuaState sim_lua;
+    osc::sim::SimState sim{sim_lua.raw(), nullptr};
+    osc::lua::LuaState ui;
+    osc::lua::register_blueprint_bindings(ui);
+    osc::lua::register_moho_bindings(ui, sim);
+    osc::lua::register_user_bindings(ui);
+    lua_State* L = ui.raw();
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, &view);
+    lua_rawset(L, -3);
+    lua_setglobal(L, "view");
+    REQUIRE(ui.do_string("answered = moho.UIWorldView.CameraReset(view) == view").ok());
+    lua_getglobal(L, "answered");
+    CHECK(lua_toboolean(L, -1) != 0);
+    lua_pop(L, 1);
+
+    // Its own camera: the whole map from above
+    CHECK(mini.target_x() == Approx(256.0f));
+    CHECK(mini.target_z() == Approx(256.0f));
+    CHECK(mini.zoom() == Approx(mini.max_zoom()));
+    // The tracked one untouched
+    CHECK(world.target_x() == Approx(200.0f));
+    CHECK(world.target_z() == Approx(300.0f));
+    CHECK(world.zoom() == Approx(150.0f));
+}
+
 TEST_CASE("GetMouseScreenPos and GetAntiAliasingOptions answer Moho's types", "[ui][lua]") {
     // GetMouseScreenPos answers a Vector2 (Moho's CursorScreenPos), and
     // raises "No session started." without a session; GetAntiAliasingOptions
