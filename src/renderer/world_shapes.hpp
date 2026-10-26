@@ -34,10 +34,11 @@ public:
     /// The world's size of a pixel at a point
     using PixelSize = std::function<f32(const sim::Vector3&)>;
 
-    /// A new frame's shapes, none yet, at the view's pixel size.
-    void begin(PixelSize pixel) {
+    /// A new frame's shapes, none yet, at the view's pixel size, seen from `eye`.
+    void begin(PixelSize pixel, const sim::Vector3& eye = {}) {
         quads_.clear();
         pixel_ = std::move(pixel);
+        eye_ = eye;
     }
 
     /// UI_DrawLine(pos1, pos2, color, thickness): a band from `a` to `b`, as
@@ -47,6 +48,9 @@ public:
     /// level with the ground, the thickness (at least two pixels) either side
     /// of the radius (HDraw's THICKNESS for DRAW_Oval's band).
     void circle(const sim::Vector3& centre, f32 radius, u32 color, f32 thickness);
+    /// A line a pixel wide, facing the eye, as Moho's primitive batcher draws the sim's debug
+    /// canvas (TAlphaBlendLinearSampleNoDepth lines).
+    void hairline(const sim::Vector3& a, const sim::Vector3& b, u32 color);
     /// UI_DrawRect(pos, size, color, thickness): DRAW_Rect's border round the
     /// square from `corner` to corner + (size, 0, size), the thickness (at
     /// least two pixels) wide across its edges, mitred at its corners.
@@ -72,6 +76,7 @@ private:
     void add(const ShapeQuad& q);
 
     PixelSize pixel_;
+    sim::Vector3 eye_;
     std::vector<ShapeQuad> quads_;
 };
 

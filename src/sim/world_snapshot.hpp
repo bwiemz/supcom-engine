@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 #include "core/interned_string.hpp"
+#include "sim/debug_canvas.hpp"
 #include "sim/entity.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/resource_deposit.hpp"
@@ -296,6 +297,9 @@ struct WorldSnapshot {
     /// army's start.
     f32 no_rush_radius = 0;
     std::vector<FakeBlipRecord> fake_blips; ///< in jammer, army, fake order
+    /// The sim's debug drawing, both canvases (Sim::Sync ships them): the last tick's, then
+    /// what has been drawn since
+    std::vector<DebugLine> debug_lines;
     std::vector<ResourceDeposit> deposits;
     std::vector<CommandRecord> pending_commands;
     std::vector<PendingQueue> pending_queues; ///< ascending id

@@ -406,7 +406,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     // sound_manager_, beat_observer_, checksum_trace_, entity_trace_,
     // rng_trace_, rng_trace_from_, rng_trace_to_, rng_trace_draws_,
     // entity_trace_from_, entity_trace_to_, steer_log_, faf_exe_, run_opponent_ai_: the host's;
-    // bone_cache_, anim_cache_: caches
+    // bone_cache_, anim_cache_: caches; debug_canvas_, debug_lines_: the scripts' debug
+    // drawing, which no save holds (Moho's canvases aren't saved either)
     {
         std::vector<std::string> armor;
         armor.reserve(sim.armor_def_.table_.size());

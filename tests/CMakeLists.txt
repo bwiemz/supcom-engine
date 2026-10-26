@@ -91,6 +91,7 @@ add_executable(osc_tests
     test_binding_coverage.cpp
     test_lua_persist.cpp
     test_lua_state.cpp
+    test_sim_debug_draw.cpp
     test_sim_sync.cpp
     test_init_loader.cpp
     test_blueprint_loading.cpp

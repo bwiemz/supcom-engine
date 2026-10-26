@@ -1,5 +1,6 @@
 #include "lua/sim_bindings.hpp"
 #include "lua/arg_count.hpp"
+#include "core/color.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/unit_blueprint.hpp"
 #include "lua/engine_bindings.hpp"
@@ -3544,6 +3545,54 @@ static void read_vec3(lua_State* L, int idx, f32& x, f32& y, f32& z) {
     lua_rawgeti(L, idx, 3); z = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
 }
 
+// The sim's debug drawing (faf-re Sim.cpp: cfunc_DrawLineL 0x0075DC00, cfunc_DrawLinePopL
+// 0x0075DE20, cfunc_DrawCircleL 0x0075E130): into the sim's debug canvas, which the UI draws
+// for a beat. Three arguments each; the colour as SCR_DecodeColor reads it.
+static u32 debug_color(lua_State* L, int idx) {
+    const char* text = luaL_checkstring(L, idx);
+    const std::optional<u32> color = decode_color(text);
+    if (!color) luaL_error(L, "Unknown color: %s", text);
+    return color.value_or(0u);
+}
+
+static sim::Vector3 debug_point(lua_State* L, int idx) {
+    sim::Vector3 v;
+    read_vec3(L, idx, v.x, v.y, v.z);
+    return v;
+}
+
+static int l_DrawLine(lua_State* L) {
+    if (const int n = lua_gettop(L); n != 3)
+        return arg_count_error(L, "Draw a 3d line from a to b with color c", 3, n);
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    sim->debug_canvas().line(debug_point(L, 1), debug_point(L, 2), debug_color(L, 3));
+    return 0;
+}
+
+static int l_DrawLinePop(lua_State* L) {
+    if (const int n = lua_gettop(L); n != 3)
+        return arg_count_error(
+            L,
+            "Draw a 3d line from a to b with color c with a circle at the end of the target line",
+            3, n);
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    sim->debug_canvas().line_pop(debug_point(L, 1), debug_point(L, 2), debug_color(L, 3));
+    return 0;
+}
+
+static int l_DrawCircle(lua_State* L) {
+    if (const int n = lua_gettop(L); n != 3)
+        return arg_count_error(L, "Draw a 3d circle at a with size s and color c", 3, n);
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    const sim::Vector3 at = debug_point(L, 1);
+    const auto size = static_cast<f32>(luaL_checknumber(L, 2));
+    sim->debug_canvas().circle(at, size, debug_color(L, 3));
+    return 0;
+}
+
 static int l_Vector(lua_State* L) {
     f32 x = static_cast<f32>(lua_tonumber(L, 1));
     f32 y = static_cast<f32>(lua_tonumber(L, 2));
@@ -5644,11 +5693,11 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     // Debug/trace
     state.register_function("Trace", l_Trace);
 
-    // Visual debug drawing (no-op in headless engine — navutils.lua and
-    // debug.lua cache these as upvalues at file scope)
-    state.register_function("DrawCircle", stub_noop);
-    state.register_function("DrawLinePop", stub_noop);
-    state.register_function("DrawLine", stub_noop);
+    // The sim's debug drawing (navutils.lua and debug.lua cache these as
+    // upvalues at file scope)
+    state.register_function("DrawCircle", l_DrawCircle);
+    state.register_function("DrawLinePop", l_DrawLinePop);
+    state.register_function("DrawLine", l_DrawLine);
     state.register_function("DebugGetSelection", stub_nil);
 
     // Effects — real IEffect creation (state tracking, rendering deferred)

@@ -8,9 +8,6 @@ BlueprintLoaderUpdateProgress stub_noop
 ClearFrame Command
 DebugGetSelection stub_nil
 Destroy wlduiprovider_Destroy
-DrawCircle stub_noop
-DrawLine stub_noop
-DrawLinePop stub_noop
 EndLoggingStats l_EndLoggingStats
 EntityCategoryEmpty l_EntityCategoryEmpty
 GetOmni shield_GetOmni
