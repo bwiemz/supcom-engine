@@ -14,7 +14,6 @@ DrawLine stub_noop
 DrawLinePop stub_noop
 EndLoggingStats l_EndLoggingStats
 EntityCategoryEmpty l_EntityCategoryEmpty
-FlushEvents l_FlushEvents
 GetOmni shield_GetOmni
 GetScreenPos worldview_GetScreenPos
 InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService

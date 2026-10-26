@@ -126,8 +126,9 @@ MeshVertexInput mesh_vertex_input() {
 
 void Renderer::on_scroll(f64 y_offset) {
     // A wheel notch over the world zooms about the cursor (CUIWorldView's
-    // HandleEvent): the pivot, then CameraZoom, of the view under it
-    if (!window_) {
+    // HandleEvent): the pivot, then CameraZoom, of the view under it. Not
+    // while FlushEvents drops the queued input.
+    if (!window_ || flushing_input_) {
         return;
     }
     f64 mx = 0;
@@ -4511,6 +4512,15 @@ bool Renderer::is_mouse_pressed(int glfw_button) const {
                (scripted_pointer_->buttons & (1u << glfw_button)) != 0;
     }
     return window_ && glfwGetMouseButton(window_.get(), glfw_button) == GLFW_PRESS;
+}
+
+void Renderer::flush_events() {
+    if (window_) {
+        flushing_input_ = true;
+        glfwPollEvents();
+        flushing_input_ = false;
+    }
+    ui_dispatch_.drop_pending_events();
 }
 
 void Renderer::poll_events(f64 dt) {
