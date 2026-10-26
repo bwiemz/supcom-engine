@@ -10,6 +10,7 @@
 #include "platform/game_install.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 
 #include <cstdlib>
@@ -17,7 +18,9 @@
 #include <iostream>
 #include <iterator>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 #include <spdlog/spdlog.h>
 
 namespace osc::app {
@@ -64,6 +67,24 @@ constexpr std::string_view kValueOptions[] = {
     "--mp-drop-at", "--mp-slow"
 };
 // clang-format on
+
+/// Moho's CFG_GetArgOption(option, count): the `count` arguments after the
+/// first `option`, in any case, that has as many after it; none if no
+/// `option` has.
+std::vector<std::string> arg_option_values(int argc, char* argv[], std::string_view option,
+                                           int count) {
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        const bool same = arg.size() == option.size() &&
+                          std::equal(arg.begin(), arg.end(), option.begin(), [](char a, char b) {
+                              return std::tolower(static_cast<unsigned char>(a)) ==
+                                     std::tolower(static_cast<unsigned char>(b));
+                          });
+        if (!same || argc - i - 1 < count) continue;
+        return {argv + i + 1, argv + i + 1 + count};
+    }
+    return {};
+}
 
 /// A value option given last is refused, logged with its name (true).
 bool refuse_missing_value(int argc, char* argv[]) {
@@ -464,6 +485,9 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     if (const auto at = parse_string_arg(argc, argv, "--lan-game-self-destruct-at", "");
         !at.empty() && at.size() <= 6 && at.find_first_not_of("0123456789") == std::string::npos)
         o.lan_game_self_destruct_at = static_cast<u32>(std::stoi(at));
+    // /hostgame and /joingame (Moho's): a lobby at once
+    o.host_game = arg_option_values(argc, argv, "/hostgame", 5);
+    o.join_game = arg_option_values(argc, argv, "/joingame", 3);
     // /gpgnet host:port (Moho's spelling, as FAF's client passes it)
     o.gpgnet_endpoint = parse_string_arg(argc, argv, "/gpgnet", "");
     if (o.gpgnet_endpoint.empty()) o.gpgnet_endpoint = parse_string_arg(argc, argv, "--gpgnet", "");
