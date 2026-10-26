@@ -267,3 +267,24 @@ TEST_CASE("GetRolloverInfo reports whole units a second, as Moho's does", "[ui][
                   " assert(e.massProduced == 0 and e.energyProduced == 9, e.energyProduced)"
                   " assert(e.massRequested == 2 and e.energyRequested == 30, e.energyRequested)"));
 }
+
+TEST_CASE("On FAF's data GetRolloverInfo reports the float, as FAF's exe does", "[ui][economy]") {
+    KillWorld w;
+    osc::lua::register_user_bindings(w.state);
+    osc::renderer::InputHandler input;
+    lua_State* L = w.state.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    w.sim.set_faf_exe(true);
+    REQUIRE(w.check("worker = CreateUnit('tank', 1, 0, 0, 0)"));
+    auto* worker = w.unit("worker");
+    REQUIRE(worker);
+    // A T2 extractor's 6 beside storage, and a fraction of a unit
+    worker->economy().produced_mass = 6.75;
+    worker->economy().spent_energy = 14.4;
+    input.set_selected({worker->entity_id()});
+    CHECK(w.check("local e = GetRolloverInfo()"
+                  " assert(e.massProduced == 6.75, e.massProduced)"
+                  " assert(math.abs(e.energyConsumed - 14.4) < 1e-5, e.energyConsumed)"));
+}

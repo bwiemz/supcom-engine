@@ -1991,14 +1991,20 @@ static int l_GetRolloverInfo(lua_State* L) {
     set_num("fuelRatio", static_cast<lua_Number>(unit->fuel_ratio()));
 
     // Moho's rollover reports whole units a second (an int cast of each).
+    // FAF's patched exe reports Moho's float instead (FA-Binary-Patches
+    // hooks/GetRolloverInfoFix.cpp).
     const auto& econ = unit->economy();
-    const auto whole = [](f64 v) { return static_cast<lua_Number>(static_cast<int>(v)); };
-    set_num("massProduced", whole(econ.mass_produced()));
-    set_num("massConsumed", whole(econ.mass_consumed()));
-    set_num("energyProduced", whole(econ.energy_produced()));
-    set_num("energyConsumed", whole(econ.energy_consumed()));
-    set_num("massRequested", whole(econ.mass_requested()));
-    set_num("energyRequested", whole(econ.energy_requested()));
+    const bool floats = sim->faf_exe();
+    const auto rate = [floats](f64 v) {
+        return floats ? static_cast<lua_Number>(static_cast<f32>(v))
+                      : static_cast<lua_Number>(static_cast<int>(v));
+    };
+    set_num("massProduced", rate(econ.mass_produced()));
+    set_num("massConsumed", rate(econ.mass_consumed()));
+    set_num("energyProduced", rate(econ.energy_produced()));
+    set_num("energyConsumed", rate(econ.energy_consumed()));
+    set_num("massRequested", rate(econ.mass_requested()));
+    set_num("energyRequested", rate(econ.energy_requested()));
 
     set_num("tacticalSiloStorageCount", static_cast<lua_Number>(unit->silo_ammo(false)));
     set_num("tacticalSiloMaxStorageCount", static_cast<lua_Number>(unit->silo_max_storage(false)));
