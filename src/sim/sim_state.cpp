@@ -2772,7 +2772,8 @@ void SimState::sync_intel() {
                 h.radius = radius;
                 paint_intel(army, source, h.pos, h.radius, 1);
             }
-            // Moving, a third of its radius or 30 ticks on (UpdatePos);
+            // Moving, a third of its radius or 30 ticks on (UpdatePos; FAF's
+            // patched exe makes it 5, FA-Binary-Patches hooks/IntelUpdate.cpp);
             // stopping, at once (the motion's Stopped event).
             bool update = false;
             if (moved) {
@@ -2780,8 +2781,9 @@ void SimState::sync_intel() {
                 const f32 dy = pos.y - h.pos.y;
                 const f32 dz = pos.z - h.pos.z;
                 const auto range = static_cast<f32>(static_cast<f64>(h.radius) * 0.333);
+                const i64 interval = faf_exe_ ? 5 : 30;
                 update = dx * dx + dy * dy + dz * dz >= range * range ||
-                         static_cast<i64>(tick) - static_cast<i64>(h.last_tick) > 30;
+                         static_cast<i64>(tick) - static_cast<i64>(h.last_tick) > interval;
             }
             if (update || stopped) {
                 h.last_tick = tick;
