@@ -148,9 +148,13 @@ TEST_CASE("A direction a script gives points the projectile, at its spread Initi
     const Projectile& plain = w.shot("EM.CreateProjectile(tank, '/plain', 0, 0, 0, nil, nil, nil)");
     CHECK(plain.velocity.y > 0.0f);
     CHECK(length(plain.velocity) == Approx(4.0f));
-    // One that comes to nothing leaves it as made
+    // One that comes to nothing faces as the identity does, and leaves along +z
     const Projectile& still = w.shot("EM.CreateProjectile(tank, '/still', 0, 0, 0, nil, nil, nil)");
-    CHECK(length(still.velocity) == Approx(0.0f));
+    CHECK(still.velocity.x == Approx(0.0f).margin(1e-5));
+    CHECK(still.velocity.y == Approx(0.0f).margin(1e-5));
+    CHECK(still.velocity.z == Approx(4.0f));
+    const Projectile& zero = w.shot("EM.CreateProjectile(tank, '/plain', 0, 0, 0, 0, 0, 0)");
+    CHECK(zero.velocity.z == Approx(4.0f));
     // And one with no blueprint (Moho's "Invalid blueprint") isn't launched
     const Projectile& none = w.shot("EM.CreateProjectile(tank, '/none', 0, 0, 0, nil, nil, nil)");
     CHECK(length(none.velocity) == Approx(0.0f));
