@@ -290,6 +290,7 @@ static std::unique_ptr<sim::Weapon> read_weapon(lua_State* L, int we, i32 index)
           std::pair{"AlwaysRecheckTarget", &weapon->always_recheck_target},
           std::pair{"PrefersPrimaryWeaponTarget", &weapon->prefers_primary_weapon_target},
           std::pair{"StopOnPrimaryWeaponBusy", &weapon->stop_on_primary_weapon_busy},
+          std::pair{"ReTargetOnMiss", &weapon->retarget_on_miss},
           std::pair{"YawOnlyOnTarget", &weapon->yaw_only_on_target},
           std::pair{"CannotAttackGround", &weapon->cannot_attack_ground},
           std::pair{"SlavedToBody", &weapon->slaved_to_body}}) {

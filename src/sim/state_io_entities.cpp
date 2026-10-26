@@ -669,6 +669,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.b(wp.always_recheck_target);
     w.b(wp.prefers_primary_weapon_target);
     w.b(wp.stop_on_primary_weapon_busy);
+    w.b(wp.retarget_on_miss);
     w.u32v(wp.target_check_period);
     w.b(wp.cannot_attack_ground);
     w.i32v(wp.attack_ground_tries);
@@ -690,6 +691,14 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.b(wp.enabled);
     w.u32v(wp.fire_clock);
     w.u32v(wp.target_check_clock);
+    w.i32v(wp.retarget_misses);
+    w.i32v(wp.retarget_cooldown);
+    w.size(wp.blacklist.size());
+    for (const auto& [id, changes] : wp.blacklist) {
+        w.u32v(id);
+        w.i32v(changes);
+    }
+    w.b(wp.target_held);
 }
 
 void StateIO::load(StateReader& r, Weapon& wp) {
@@ -754,6 +763,7 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.always_recheck_target = r.b();
     wp.prefers_primary_weapon_target = r.b();
     wp.stop_on_primary_weapon_busy = r.b();
+    wp.retarget_on_miss = r.b();
     wp.target_check_period = r.u32v();
     wp.cannot_attack_ground = r.b();
     wp.attack_ground_tries = r.i32v();
@@ -776,6 +786,14 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.enabled = r.b();
     wp.fire_clock = r.u32v();
     wp.target_check_clock = r.u32v();
+    wp.retarget_misses = r.i32v();
+    wp.retarget_cooldown = r.i32v();
+    wp.blacklist.resize(r.size(8));
+    for (auto& [id, changes] : wp.blacklist) {
+        id = r.u32v();
+        changes = r.i32v();
+    }
+    wp.target_held = r.b();
 }
 
 // ----------------------------------------------------------- Manipulators
@@ -1953,6 +1971,8 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.vec3(p.target_position);
     w.b(p.has_target_position);
     w.u32v(p.launcher_id);
+    w.i32v(p.impact_listener_weapon);
+    w.u32v(p.impact_listener_target);
     w.f32v(p.damage_amount);
     w.f32v(p.damage_radius);
     w.str(p.damage_type);
@@ -2005,6 +2025,8 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.target_position = r.vec3();
     p.has_target_position = r.b();
     p.launcher_id = r.u32v();
+    p.impact_listener_weapon = r.i32v();
+    p.impact_listener_target = r.u32v();
     p.damage_amount = r.f32v();
     p.damage_radius = r.f32v();
     p.damage_type = r.str();

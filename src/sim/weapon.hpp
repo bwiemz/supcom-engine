@@ -129,6 +129,11 @@ public:
     bool always_recheck_target = true;     // AlwaysRecheckTarget
     bool prefers_primary_weapon_target = false; // PrefersPrimaryWeaponTarget
     bool stop_on_primary_weapon_busy = false;   // StopOnPrimaryWeaponBusy
+    /// ReTargetOnMiss: its shots and beam checks report where they land
+    /// (Moho's CAcquireTargetTask listens), and misses of a target that,
+    /// like its unit, stands still turn it to another spot and then away
+    /// (see note_impact).
+    bool retarget_on_miss = false;
     u32 target_check_period = 30;          // TargetCheckInterval, in ticks
     bool cannot_attack_ground = false;     // CannotAttackGround
     /// AttackGroundTries: shots at a ground attack's point before the order
@@ -166,6 +171,19 @@ public:
     bool enabled = true;
     u32 fire_clock = 0; // ticks until the fire clock is ready again
     u32 target_check_clock = 0; // ticks until the next target scan
+    /// ReTargetOnMiss's state (Moho's UnitWeapon mUnknown170 and mBlacklist,
+    /// its CAcquireTargetTask's mTargetCooldown): misses in a row of a
+    /// target standing still, since a hit or a change of target; ticks its
+    /// attack order's target is passed over; and the targets it gave up, each
+    /// with the target changes it stays given up for, unless it or its unit
+    /// moves first.
+    i32 retarget_misses = 0;
+    i32 retarget_cooldown = 0;
+    std::vector<std::pair<u32, i32>> blacklist;
+    /// Moho's target of the ReTargetOnMiss probe: an entity target with no
+    /// entity. It has nothing to aim or fire at, but its script wasn't told
+    /// it lost its target (see report_target_change).
+    bool target_held = false;
 
     /// Ticks between shots: 1/RateOfFire, rounded to whole ticks as Moho
     /// does (at least one).
@@ -196,20 +214,42 @@ public:
     /// target starts its shot count again, as Moho's SetTarget does.
     void set_target_ground(const Vector3& at) {
         if (target_entity_id != 0 || !has_ground_target || ground_target.x != at.x ||
-            ground_target.y != at.y || ground_target.z != at.z)
+            ground_target.y != at.y || ground_target.z != at.z) {
             shots_at_target = 0;
+            retarget_misses = 0;
+        }
         target_entity_id = 0;
         has_ground_target = true;
         ground_target = at;
         ground_from_order = false;
+        target_held = false;
     }
     /// Aim at a unit (0: at nothing), dropping any ground target.
     void set_target_entity(u32 id) {
-        if (id != target_entity_id || has_ground_target) shots_at_target = 0;
+        if (id != target_entity_id || has_ground_target) {
+            shots_at_target = 0;
+            retarget_misses = 0;
+        }
         target_entity_id = id;
         has_ground_target = false;
         ground_from_order = false;
+        target_held = false;
     }
+    /// ReTargetOnMiss (Moho's CAcquireTargetTask::OnEvent): one of its shots,
+    /// or a check of its beam, landed, `missed` or not (see impact_missed).
+    /// Anything but a miss starts the count again. A miss while its unit and
+    /// target both stand still, the target off the air, makes it aim at
+    /// another spot on the target (Moho's HandleRetargetProbeOnListenerTick):
+    /// - its first weapon, with an attack order's target: the sixth miss in a
+    ///   row passes over that target for 30 ticks instead (its unit mobile);
+    /// - otherwise, of its own target: the eleventh gives the target up for
+    ///   ten target changes, its script told nothing.
+    void note_impact(Unit& owner, bool missed, EntityRegistry& registry, const SimState* sim);
+    /// Moho's UnitWeapon::AgeBlacklist, on a change to a new target: each
+    /// given-up target counts one change, and goes once its count is out or
+    /// once it is gone or has moved.
+    void age_blacklist(const EntityRegistry& registry);
+    bool blacklisted(u32 id) const;
     /// Moho's UnitWeapon::CanAttackTarget for a ground target: not
     /// CannotAttackGround, and the weapon hits the layer there (Land where
     /// the terrain is above the water, Water where it is under; neither
@@ -303,20 +343,24 @@ public:
     bool try_fire(Unit& owner, EntityRegistry& registry, lua_State* L,
                   const SimState* sim = nullptr);
 
-private:
-    void update_targeting(Unit& owner, EntityRegistry& registry, const SimState* sim);
     /// What it was aiming at: the script hears when that changes.
     struct TargetMark {
         u32 entity = 0;
         bool ground = false;
         Vector3 point;
+        bool held = false;
         bool operator==(const TargetMark& o) const {
-            return entity == o.entity && ground == o.ground &&
+            return entity == o.entity && ground == o.ground && held == o.held &&
                    (!ground ||
                     (point.x == o.point.x && point.y == o.point.y && point.z == o.point.z));
         }
     };
-    TargetMark target_mark() const { return {target_entity_id, has_ground_target, ground_target}; }
+    TargetMark target_mark() const {
+        return {target_entity_id, has_ground_target, ground_target, target_held};
+    }
+
+private:
+    void update_targeting(Unit& owner, EntityRegistry& registry, const SimState* sim);
     void fire_step(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
     void acquire_step(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
     bool report_target_change(const Unit& owner, lua_State* L, const TargetMark& previous);
@@ -335,6 +379,20 @@ private:
 
 /// Moho's UserUnit::CanAttackTarget
 bool can_attack_target(const Unit& unit, const Unit& target, bool range_check);
+
+/// Whether a shot or beam check at a target missed it, as ReTargetOnMiss
+/// hears it (Moho's Projectile::Impact and CollisionBeamEntity::CheckCollision
+/// with CAiTarget::ImpactDidHitEntity): `hit` is what it struck (null: the
+/// ground, the water or the air), `kind` the impact type its OnImpact hears.
+/// - An entity target is struck only by hitting it, or something attached to
+///   it (a held one, with no entity, by anything attached to nothing).
+/// - A ground target is struck only by landing on the ground, the water or in
+///   the air.
+/// - With neither, nothing misses.
+/// What isn't struck is a miss unless it was a shield, or, for a shot
+/// (`projectile`), another projectile.
+bool impact_missed(const Weapon::TargetMark& target, const Entity* hit, const char* kind,
+                   bool projectile);
 
 /// Parse pipe-separated layer string ("Land|Water|Air") into bitmask.
 inline uint8_t parse_layer_caps(const std::string& caps) {
