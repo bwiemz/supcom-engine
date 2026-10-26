@@ -5,7 +5,6 @@
 #include "app/window_commands.hpp"
 #include "app/world_sounds.hpp"
 #include "core/fixed_step.hpp"
-#include "core/game_state.hpp"
 #include "core/fullscreen.hpp"
 #include "core/profiler.hpp"
 #include "core/test_status.hpp"
@@ -340,7 +339,6 @@ double App::Window::begin_frame() {
         root_width = renderer.ui_width();
         root_height = renderer.ui_height();
         size_root_frame(ui_lua_state.raw(), root_width, root_height);
-        osc::core::call_on_application_resize(ui_lua_state.raw(), 0, root_width, root_height);
     }
     if (!sim_busy && osc::core::kNativeFullscreen && !offscreen_capture && !adapter_overridden &&
         renderer.fullscreen() != shown_fullscreen) {
@@ -776,7 +774,6 @@ void App::Window::update_ui(double dt) {
         renderer.camera().set_playable_rect(sim_state->playable_x0(), sim_state->playable_z0(),
                                             sim_state->playable_x1(), sim_state->playable_z1());
     }
-    renderer.set_nis_mode(osc::core::ui_nis_mode(ui_lua_state.raw()));
     renderer.poll_events(dt);
     // While the pointer is pinned FA's cursor is hidden, every frame
     // (func_ProcessMouseScrubbing), and let go, it is shown again

@@ -310,16 +310,7 @@ const MethodEntry ui_world_mesh_methods[] = {
 // --- UIWorldView methods (M76) ---
 
 
-/// CameraReset(): its own camera, the one of its name, goes back to the
-/// whole map from above, and it answers itself (CUIWorldView:CameraReset
-/// calls CameraImpl::CameraReset on its mCamera). A minimap's is its own,
-/// not the WorldCamera it tracks: minimap.lua resets it on its first frame.
-static int worldview_CameraReset(lua_State* L) {
-    auto* wv = check_world_view(L);
-    if (wv && wv->own_camera()) wv->own_camera()->reset();
-    lua_settop(L, 1);
-    return 1;
-}
+static int worldview_CameraReset(lua_State* /*L*/) { return 0; }
 
 static int worldview_EnableResourceRendering(lua_State* L) {
     auto* wv = check_world_view(L);

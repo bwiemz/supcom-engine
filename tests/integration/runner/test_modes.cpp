@@ -234,7 +234,6 @@ constexpr Mode kModesBefore[] = {
     {"--assist-beam-test", test_assist_beam, false},
     {"--build-site-join-test", test_build_site_join, false},
     {"--drown-test", test_drown, false},
-    {"--layer-transition-test", test_layer_transition, false},
     {"--spawn-layer-test", test_spawn_layer, false},
     {"--warp-test", test_warp, false},
     {"--attack-move-test", test_attack_move, false},
@@ -340,7 +339,6 @@ void IntegrationModes::print_usage() const {
               << "  --assist-beam-test A commander's build effects end with its assist\n"
               << "  --build-site-join-test Builders sent to one site build one structure there\n"
               << "  --drown-test       Units made in water: a land tank drowns, as the original\n"
-              << "  --layer-transition-test The Salem crossing the shore over its 4 s\n"
               << "  --spawn-layer-test Where a unit made by script stands: subs, ships, aircraft\n"
               << "  --warp-test        Where Warp puts a unit: its layer, height and move\n"
               << "  --chain-test       Full build chain: ACU -> factory -> engineer -> pgen\n"
@@ -1363,8 +1361,7 @@ void IntegrationModes::headless(Engine& e) {
              [&](const std::string& bp) { return osc::app::ui_blueprint_footprint(uL, bp); },
              {},
              {},
-             {},
-             [&] { return osc::core::ui_nis_mode(uL); }});
+             {}});
         // A world click as the input handler makes it under FA's command mode.
         auto click = [&](osc::f32 x, osc::f32 z, bool shift) {
             const auto mode = read_command_mode(uL);

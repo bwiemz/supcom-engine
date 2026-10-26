@@ -586,16 +586,13 @@ void AimManipulator::tick(f32 dt) {
     const bool pitches = bones && unit->bone_data()->is_valid(pitch_bone_);
     const bool full_circle = yaw_max_ - yaw_min_ >= 2.0f * kPi - 1e-4f;
 
-    // Disabled (run only for AimsStraightOnDisable), it takes no target
-    const bool tracks = has_target_ && enabled();
-
     // No bones to turn: nothing to wait for.
     if (!bones) {
-        on_target_ = tracks;
+        on_target_ = has_target_;
         tracking_ = false;
         return;
     }
-    if (tracks && unsolved_) {
+    if (has_target_ && unsolved_) {
         idle_time_ = 0;
         on_target_ = false;
         return;
@@ -604,7 +601,7 @@ void AimManipulator::tick(f32 dt) {
     f32 want_heading = 0;
     f32 want_pitch = 0;
     bool reachable = true;
-    if (tracks) {
+    if (has_target_) {
         idle_time_ = 0;
         // The target in the yaw bone's rest frame: heading about its Y axis
         // from its forward (+Z); pitch from the pitch bone, once turned.
@@ -673,7 +670,7 @@ void AimManipulator::tick(f32 dt) {
         want_pitch = std::clamp(0.0f, pitch_min_, pitch_max_);
     }
 
-    const f32 slew = builder_arm_ && !tracks ? 0.25f * dt : dt;
+    const f32 slew = builder_arm_ && !has_target_ ? 0.25f * dt : dt;
     const f32 heading_left =
         full_circle ? wrap_angle(want_heading - heading_) : want_heading - heading_;
     tracking_ = builder_arm_ && std::fabs(heading_left) > 1e-5f;
@@ -686,7 +683,7 @@ void AimManipulator::tick(f32 dt) {
         pitch_ = approach(pitch_, want_pitch, pitch_speed_ * slew);
     }
 
-    if (!tracks) return;
+    if (!has_target_) return;
     const f32 heading_error =
         std::fabs(full_circle ? wrap_angle(want_heading - heading_) : want_heading - heading_);
     const f32 pitch_error = pitches && !yaw_only_on_target_ ? std::fabs(want_pitch - pitch_) : 0.0f;

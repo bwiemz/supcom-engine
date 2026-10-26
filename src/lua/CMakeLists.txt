@@ -6,7 +6,6 @@ add_library(osc_lua STATIC
     moho_bindings.cpp
     # moho.* by class (M191 step 2)
     bindings/sim/aibrain.cpp
-    bindings/sim/aipersonality.cpp
     bindings/sim/blip.cpp
     bindings/sim/effects.cpp
     bindings/sim/entity.cpp

@@ -31,13 +31,6 @@ struct Resolution {
     bool operator==(const Resolution&) const = default;
 };
 
-/// CFG_GetArgOption: an argument that is one of `aliases` behind one of
-/// Moho's prefixes (/, -, +, \; the engine's -- too), and the `count`
-/// arguments after it.
-std::optional<std::vector<std::string>> arg_option(const std::vector<std::string>& args,
-                                                   std::initializer_list<std::string_view> aliases,
-                                                   size_t count);
-
 /// CFG_ParseResolutionTriple: "w,h,fps" (the rate may be left out), or
 /// nothing for anything else ("windowed", "overridden", junk).
 std::optional<Resolution> parse_resolution(std::string_view text);

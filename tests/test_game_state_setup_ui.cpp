@@ -90,33 +90,3 @@ TEST_CASE("GetCurrentUIState answers Moho's UI state from boot to the front end"
     CHECK(std::string(osc::ui_state_to_string(osc::UIState::Lobby)) == "lobby");
     osc::set_ui_state(osc::UIState::None);
 }
-
-TEST_CASE("gamemain.IsNISMode answers once FA's game interface is up", "[game_state][nis]") {
-    // What the camera's and the formation's drags ask each frame (Moho's
-    // CameraImpl::CameraPan, CFormation::UpdateOrientation); at the front end
-    // gamemain isn't there to ask
-    osc::lua::LuaState lua;
-    lua_State* L = lua.raw();
-    REQUIRE(lua.do_string("nis = true __modules = {['/lua/ui/game/gamemain.lua'] = "
-                          "{IsNISMode = function() return nis end}}")
-                .ok());
-    CHECK_FALSE(osc::core::ui_nis_mode(L));
-    lua_pushstring(L, osc::core::kWorldUiActiveKey);
-    lua_pushboolean(L, 1);
-    lua_rawset(L, LUA_REGISTRYINDEX);
-    CHECK(osc::core::ui_nis_mode(L));
-    REQUIRE(lua.do_string("nis = false").ok());
-    CHECK_FALSE(osc::core::ui_nis_mode(L));
-}
-
-TEST_CASE("A resized window tells uimain.OnApplicationResize its head and size", "[game_state]") {
-    // Moho's CUIManager::OnResize calls MAUI_OnApplicationResize once the head's frame has its
-    // new size; retail's uimain clears the selection there.
-    osc::lua::LuaState state;
-    REQUIRE(state
-                .do_string("function OnApplicationResize(head, width, height) "
-                           "heard = head .. ' ' .. width .. 'x' .. height end")
-                .ok());
-    osc::core::call_on_application_resize(state.raw(), 0, 1280, 720);
-    REQUIRE(state.do_string("assert(heard == '0 1280x720', tostring(heard))").ok());
-}

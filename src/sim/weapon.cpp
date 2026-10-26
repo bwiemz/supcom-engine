@@ -15,8 +15,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
-#include <string_view>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -203,64 +201,7 @@ u32 attack_order_target(const Unit& owner) {
     return order.target_id;
 }
 
-// ReTargetOnMiss (Moho's CAcquireTargetTask): the misses in a row before its first weapon passes
-// over the attack order's target, and the ticks it does; before a weapon gives its own target up,
-// and the target changes it stays given up for.
-constexpr i32 kRetargetCooldownMisses = 5;
-constexpr i32 kRetargetCooldownTicks = 30;
-constexpr i32 kRetargetBlacklistMisses = 10;
-constexpr i32 kRetargetBlacklistChanges = 10;
-
-/// A unit that unpacks to fire looks for nothing while a move takes it somewhere, or while it
-/// boards a transport (Moho's CAcquireTargetTask: the Moving, TransportLoading and
-/// WaitingForTransport states).
-bool unpack_search_paused(const Unit& owner) {
-    const auto& queue = owner.command_queue();
-    const CommandType head = queue.empty() ? CommandType::Stop : queue.front().type;
-    return owner.need_unpack() &&
-           (head == CommandType::Move || head == CommandType::TransportLoad ||
-            head == CommandType::WaitForFerry);
-}
-
-bool same_bits(f32 a, f32 b) {
-    u32 x = 0;
-    u32 y = 0;
-    std::memcpy(&x, &a, sizeof(x));
-    std::memcpy(&y, &b, sizeof(y));
-    return x == y;
-}
-
-/// Moho's PositionUnchanged (a memcmp): its committed position is its last, to the bit.
-bool stood_still(const Entity& e) {
-    const Vector3& p = e.position();
-    const Vector3& last = e.last_position();
-    return same_bits(p.x, last.x) && same_bits(p.y, last.y) && same_bits(p.z, last.z);
-}
-
-/// Not in the air (Moho's LAYER_Air); only units have a layer.
-bool off_air(const Entity& e) {
-    return !e.is_unit() || static_cast<const Unit&>(e).layer() != "Air";
-}
-
 } // namespace
-
-bool impact_missed(const Weapon::TargetMark& target, const Entity* hit, const char* kind,
-                   bool projectile) {
-    const std::string_view k = kind ? kind : "";
-    // CAiTarget::ImpactDidHitEntity. An entity target with no entity (`held`) is struck by
-    // anything not attached to something.
-    bool struck = true;
-    if (target.entity != 0 || target.held) {
-        struck =
-            hit && (hit->entity_id() == target.entity || hit->parent_entity_id() == target.entity);
-    } else if (target.ground) {
-        struck = !hit && (k == "Terrain" || k == "Water" || k == "Air" || k == "Underwater");
-    }
-    if (struck) return false;
-    // Moho's id class 0x4 (a shield): irrelevant, as is a shot's meeting another shot.
-    if (hit && hit->is_shield()) return false;
-    return !(projectile && (k == "Projectile" || k == "ProjectileUnderwater"));
-}
 
 u32 Weapon::fire_period() const {
     if (rate_of_fire <= 0) return 10;
@@ -397,23 +338,12 @@ void Weapon::fire_step(Unit& owner, EntityRegistry& registry, lua_State* L, cons
 
 void Weapon::acquire_step(Unit& owner, EntityRegistry& registry, lua_State* L,
                           const SimState* sim) {
-    // Moho's CAcquireTargetTask forgets the targets ReTargetOnMiss gave up on a tick its unit
-    // moved, ahead of its weapon's own checks
-    if (!blacklist.empty() && owner.moved_last_tick() && !unpack_search_paused(owner)) {
-        blacklist.clear();
-    }
-    if (!enabled || fire_on_death || manual_fire || max_range <= 0 || damage <= 0) return;
-    if (owner.fire_state() == 1) {
-        // Moho's acquire task counts ReTargetOnMiss's cooldown down ahead of its hold-fire check
-        if (retarget_cooldown > 0 && !unpack_search_paused(owner)) --retarget_cooldown;
+    if (!enabled || fire_on_death || manual_fire || max_range <= 0 || damage <= 0 ||
+        owner.fire_state() == 1) {
         return;
     }
     const TargetMark previous = target_mark();
     update_targeting(owner, registry, sim);
-    // A change to a new target ages them (Moho's UnitWeapon::SetTarget)
-    if (!blacklist.empty() && !(target_mark() == previous) && (has_target() || target_held)) {
-        age_blacklist(registry);
-    }
     if (L && fires_through_script()) {
         report_target_change(owner, L, previous);
         if (owner.destroyed() || owner.is_dying()) {
@@ -506,68 +436,6 @@ void Weapon::drop_target(lua_State* L) {
     if (had && fires_through_script()) call_script(L, "OnLostTarget");
 }
 
-void Weapon::note_impact(Unit& owner, bool missed, EntityRegistry& registry, const SimState* sim) {
-    if (!retarget_on_miss || manual_fire) return;
-    if (!missed) {
-        retarget_cooldown = 0;
-        retarget_misses = 0;
-        return;
-    }
-    // Moho's HandleRetargetProbeOnListenerTick asks of the attacker's desired target first, for
-    // its first weapon
-    if (weapon_index == 0) {
-        const u32 ordered = attack_order_target(owner);
-        const Entity* desired = ordered != 0 ? registry.find(ordered) : nullptr;
-        if (desired && !desired->destroyed() && owner.is_mobile() && stood_still(owner) &&
-            off_air(*desired) && stood_still(*desired)) {
-            if (++retarget_misses > kRetargetCooldownMisses) {
-                retarget_cooldown = kRetargetCooldownTicks;
-                return;
-            }
-            pick_aim_spot(registry, sim);
-            return;
-        }
-    }
-    const Entity* target = target_entity_id != 0 ? registry.find(target_entity_id) : nullptr;
-    if (!target || target->destroyed() || !stood_still(owner) || !off_air(*target) ||
-        !stood_still(*target)) {
-        return;
-    }
-    if (++retarget_misses <= kRetargetBlacklistMisses) {
-        pick_aim_spot(registry, sim);
-        return;
-    }
-    // AddWeaponBlacklistEntry, then SetTarget with an entity target holding no entity: a change
-    // to a target, so the given-up ones age (this one too) and no script hears of it.
-    const auto entry = std::find_if(blacklist.begin(), blacklist.end(),
-                                    [&](const auto& e) { return e.first == target_entity_id; });
-    if (entry != blacklist.end()) {
-        entry->second = kRetargetBlacklistChanges;
-    } else {
-        blacklist.emplace_back(target_entity_id, kRetargetBlacklistChanges);
-    }
-    set_target_entity(0);
-    target_held = true;
-    age_blacklist(registry);
-}
-
-void Weapon::age_blacklist(const EntityRegistry& registry) {
-    for (auto it = blacklist.begin(); it != blacklist.end();) {
-        --it->second;
-        const Entity* e = registry.find(it->first);
-        const bool gone = !e || e->destroyed();
-        const bool moved = !gone && (e->position().x != e->last_position().x ||
-                                     e->position().y != e->last_position().y ||
-                                     e->position().z != e->last_position().z);
-        it = gone || moved || it->second <= 0 ? blacklist.erase(it) : it + 1;
-    }
-}
-
-bool Weapon::blacklisted(u32 id) const {
-    return std::any_of(blacklist.begin(), blacklist.end(),
-                       [id](const auto& e) { return e.first == id; });
-}
-
 bool Weapon::report_target_change(const Unit& owner, lua_State* L, const TargetMark& previous) {
     const auto still_firing = [&] {
         return !owner.destroyed() && !owner.is_dying() && fires_through_script();
@@ -575,8 +443,7 @@ bool Weapon::report_target_change(const Unit& owner, lua_State* L, const TargetM
     if (target_mark() == previous) {
         return true;
     }
-    // A held target (ReTargetOnMiss gave its target up) was never reported lost.
-    if (previous.entity != 0 || previous.ground || previous.held) {
+    if (previous.entity != 0 || previous.ground) {
         // Moho's OnHaltFire: a manual weapon whose order went must not fire on.
         if (manual_fire) {
             call_script(L, "OnHaltFire");
@@ -700,9 +567,14 @@ int Weapon::priority_of(const Entity& target) const {
 }
 
 void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimState* sim) {
-    if (unpack_search_paused(owner)) return;
+    // A unit that unpacks to fire looks for nothing while a move takes it
+    // somewhere, or while it boards a transport (Moho's CAcquireTargetTask:
+    // the Moving, TransportLoading and WaitingForTransport states).
     const auto& queue = owner.command_queue();
     const CommandType head = queue.empty() ? CommandType::Stop : queue.front().type;
+    if (owner.need_unpack() && (head == CommandType::Move || head == CommandType::TransportLoad ||
+                                head == CommandType::WaitForFerry))
+        return;
     // Moho's CAcquireTargetTask checks these before the attacker's desired target.
     if (const Weapon* primary = primary_weapon(owner);
         primary && primary != this && primary->has_target()) {
@@ -727,17 +599,13 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         }
     }
     const bool flier = owner.layer() == "Air";
-    // While ReTargetOnMiss passes over the attack order's target, the attacker's desired target is
-    // left alone (Moho's mTargetCooldown, AAS_6); it counts down a tick at a time.
-    const bool passing_over = retarget_cooldown != 0;
-    if (retarget_cooldown > 0) --retarget_cooldown;
     // A ground attack order, once its unit is in reach (Moho's attack task
     // has set the attacker's desired target): each weapon that can hit the
     // ground there takes the point within its own range, or at any range on
     // an aircraft (CAcquireTargetTask), and keeps it while the order lasts.
     const UnitCommand* order = queue.empty() ? nullptr : &queue.front();
-    if (!passing_over && order && order->type == CommandType::Attack && order->target_id == 0 &&
-        order->engaged && attacks_on_order() &&
+    if (order && order->type == CommandType::Attack && order->target_id == 0 && order->engaged &&
+        attacks_on_order() &&
         can_attack_ground(order->target_pos, sim ? sim->terrain() : nullptr) &&
         (flier || in_firing_range(owner, order->target_pos))) {
         set_target_ground(order->target_pos);
@@ -763,7 +631,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
 
     // An attack order's target comes first, for every weapon that can hit
     // it, whatever the priorities say.
-    if (ordered != 0 && !passing_over) {
+    if (ordered != 0) {
         if (ordered == target_entity_id) return;
         const Entity* target = registry.find(ordered);
         if (target && can_target(owner, *target, sim, !flier)) {
@@ -811,7 +679,6 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         if (e->is_unit() && static_cast<const Unit&>(*e).has_category(kBenign)) {
             continue;
         }
-        if (blacklisted(id)) continue;
         if (!known_to_army(owner, *e, sim)) continue;
         // A missile already held by as many weapons as it wants shooting at
         // it (a nuke's DesiredShooterCap is 1) is left to them.
@@ -838,8 +705,6 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     if (current_priority >= 0 && (best_id == 0 || best_priority >= current_priority)) return;
     if (best_id == 0) return;
     target_entity_id = best_id;
-    retarget_misses = 0;
-    target_held = false;
     // An idle aircraft's weapon with AutoInitiateAttackCommand makes the pick
     // its unit's attack order (Moho's CAcquireTargetTask, CheckAutoInitiate).
     if (auto_initiate_attack_command && owner.is_mobile() && owner.auto_initiate_allowed(registry))
@@ -1207,12 +1072,6 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     proj->has_target_position =
         target != nullptr || has_ground_target || (manual_fire && last_order_point);
     proj->launcher_id = owner.entity_id();
-    // ReTargetOnMiss: its weapon hears where it lands, if the weapon has a target unit (Moho's
-    // UnitWeapon::CreateProjectile, TransmitProjectileImpactEvent)
-    if (retarget_on_miss && !manual_fire && target_entity_id != 0) {
-        proj->impact_listener_weapon = weapon_index;
-        proj->impact_listener_target = target_entity_id;
-    }
     proj->damage_amount = damage;
     proj->damage_radius = damage_radius;
     proj->damage_type = damage_type;

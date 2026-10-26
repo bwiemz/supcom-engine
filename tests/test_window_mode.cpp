@@ -190,18 +190,3 @@ TEST_CASE("A Retina window's UI is its size in points, drawn at the framebuffer'
     CHECK(core::ui_extent(1600, 900, 1.0f) == std::array<u32, 2>{1600, 900});
     CHECK(core::ui_to_pixels(100.0, 200.0, 1.0f) == std::array<f64, 2>{100.0, 200.0});
 }
-
-TEST_CASE("CFG_GetArgOption finds an option behind any of Moho's prefixes, and its arguments",
-          "[window]") {
-    using osc::app::arg_option;
-    for (const char* a : {"/noai", "-NoAI", "+noai", "\\noai", "--noai"}) {
-        CAPTURE(a);
-        CHECK(arg_option({"/init", "x.lua", a}, {"noai"}, 0));
-    }
-    CHECK_FALSE(arg_option({"noai"}, {"noai"}, 0));
-    CHECK_FALSE(arg_option({"/noaix"}, {"noai"}, 0));
-    const auto size = arg_option({"/windowed", "800", "600"}, {"windowed"}, 2);
-    REQUIRE(size);
-    CHECK(*size == std::vector<std::string>{"800", "600"});
-    CHECK_FALSE(arg_option({"/windowed", "800"}, {"windowed"}, 2)); // too few after it
-}

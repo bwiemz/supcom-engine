@@ -214,7 +214,6 @@ extern std::ofstream* g_steer_log;
 extern u32 g_rng_trace_from;
 extern u32 g_rng_trace_to;
 extern bool g_moho_pathing;
-extern bool g_no_ai;
 extern bool g_moho_random;
 bool recorded_moho_pathing(const sim::Replay& recording);
 extern std::string g_record_path;

@@ -351,40 +351,6 @@ void test_prop_materials(TestContext& ctx) {
                             swayed, stayed, phase()));
     }
 
-    // Test 5: BloatingNormalMappedVS: each vertex moves 2 |dir.xz| sin(0.1 time + |p.xz|) along
-    // its direction from the mesh's origin. A plate's corners, on its diagonals, move 1.41 in
-    // x and z: 8 across, it is 10.83 at the swell's top and 5.17 at its bottom.
-    {
-        Look bloating;
-        bloating.shader = "BloatingNormalMappedAlpha";
-        stand(bloating, 100.0f, 230.0f);
-        Look still;
-        stand(still, 140.0f, 230.0f);
-        const f32 at_place = std::sqrt(100.0f * 100.0f + 230.0f * 230.0f);
-        const auto swell = [&] {
-            const f32 time = static_cast<f32>(ctx.sim.tick_count()) + 1.0f;
-            return std::sin(0.1f * time + at_place);
-        };
-        const auto widths = [&] {
-            return std::array<int, 2>{plate_width(frame(100.0f, 230.0f, fill), sky),
-                                      plate_width(frame(140.0f, 230.0f, fill), sky)};
-        };
-        for (int i = 0; i < 70 && swell() < 0.99f; ++i) {
-            ctx.sim.tick();
-        }
-        const auto big = widths();
-        for (int i = 0; i < 70 && swell() > -0.99f; ++i) {
-            ctx.sim.tick();
-        }
-        const auto small = widths();
-        const f32 ratio = small[0] > 0 ? static_cast<f32>(big[0]) / static_cast<f32>(small[0]) : 0;
-        t.check(ratio > 1.9f && ratio < 2.3f && std::abs(big[1] - small[1]) <= 1,
-                fmt::format("Test 5: a Bloating plate is {} pixels across at the swell's top, {} "
-                            "at its bottom ({:.2f} times; 2.09 expected); a NormalMappedAlpha "
-                            "plate {} and {}",
-                            big[0], small[0], ratio, big[1], small[1]));
-    }
-
     spdlog::info("Prop material test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

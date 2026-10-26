@@ -491,20 +491,3 @@ TEST_CASE("Attack vectors score the candidate's units within 32, by cost or nonz
         CHECK(result.ok());
     }
 }
-
-TEST_CASE("IsOpponentAIRunning answers false under /noai, as Moho's", "[brain][noai]") {
-    // CAiBrain::IsOpponentAIRunning: not CFG_GetArgOption("/noai"), and the sim variable
-    // AI_RunOpponentAI, true by default. Retail's brain and platoon scripts skip their AI on false.
-    World w;
-    lua_State* L = w.sim_lua.raw();
-    lua_newtable(L);
-    lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, w.sim.get_army(0));
-    lua_rawset(L, -3);
-    lua_setglobal(L, "brain");
-    CHECK(w.sim_lua.do_string("assert(moho.aibrain_methods.IsOpponentAIRunning(brain) == true)")
-              .ok());
-    w.sim.set_run_opponent_ai(false);
-    CHECK(w.sim_lua.do_string("assert(moho.aibrain_methods.IsOpponentAIRunning(brain) == false)")
-              .ok());
-}

@@ -2,7 +2,6 @@
 // (M192 step 2b, moved from run()).
 
 #include "app/app_internal.hpp"
-#include "app/window_mode.hpp"
 #include "core/profiler.hpp"
 #include "core/worker_pool.hpp"
 #include "lua/match_records.hpp"
@@ -123,8 +122,6 @@ std::optional<int> App::boot_engine() {
     }
     g_moho_pathing = parse_flag(argc, argv, "--moho-pathing");
     if (g_moho_pathing) spdlog::info("Moho pathing on (--moho-pathing)");
-    g_no_ai = arg_option(std::vector<std::string>(argv + 1, argv + argc), {"noai"}, 0).has_value();
-    if (g_no_ai) spdlog::info("No opponent AI (/noai)");
     g_moho_random = parse_flag(argc, argv, "--moho-random");
     sound.set_sim_clocked(opt.headless);
     return std::nullopt;
@@ -168,7 +165,6 @@ std::optional<int> App::boot_game() {
         sim_state->set_moho_pathing(game_setup.moho_pathing);
         sim_state->set_moho_random(game_setup.moho_random);
         sim_state->set_faf_exe(!config.faf_data_path.empty());
-        sim_state->set_run_opponent_ai(!g_no_ai);
         spdlog::info("Game seed {:#018x}{}", game_setup.seed,
                      game_setup.moho_random ? ", Moho's random stream" : "");
 

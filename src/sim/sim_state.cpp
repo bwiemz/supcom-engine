@@ -220,18 +220,6 @@ void SimState::on_destroy(Entity& entity) {
         if (!unit.is_dying()) {
             drop_adjacency(unit);
             detach_all_units(unit, false);
-        } else {
-            // A dying transport set down or killed what it carried as it died; what it still
-            // holds are dead units it kept (killed where they couldn't stand). Moho's link to a
-            // destroyed parent goes with it: they are held no longer.
-            for (const u32 id : unit.cargo_ids()) {
-                Entity* e = entity_registry_.find(id);
-                if (!e || !e->is_unit()) continue;
-                auto& cargo = static_cast<Unit&>(*e);
-                if (cargo.transport_id() != unit.entity_id()) continue;
-                cargo.set_transport_id(0);
-                cargo.set_unit_state("Attached", false);
-            }
         }
         if (!unit.transferred()) {
             const Vector3 pos = unit.position();
