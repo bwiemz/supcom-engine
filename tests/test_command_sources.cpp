@@ -443,6 +443,20 @@ TEST_CASE("A player may watch only an army it commands, as Moho's session allows
     REQUIRE(run("SetFocusArmy(2)").empty());
     CHECK(take_focus_request(L) == "1");
 
+    // FAF's exe (FA-Binary-Patches hooks/ObserverFix.cpp): not while any
+    // army takes their commands, out of the game or not, until FAF's victory
+    // script takes the sources away
+    w.sim.set_faf_exe(true);
+    REQUIRE(run("SetFocusArmy(2)").empty());
+    CHECK(take_focus_request(L) == "nil");
+    w.sim.set_command_source(0, 0, false);
+    w.sim.set_command_source(2, 0, false);
+    REQUIRE(run("SetFocusArmy(2)").empty());
+    CHECK(take_focus_request(L) == "1");
+    w.sim.set_command_source(0, 0, true);
+    w.sim.set_command_source(2, 0, true);
+    w.sim.set_faf_exe(false);
+
     // Cheats, or the game over: any
     w.sim.get_army(0)->set_state(BrainState::InProgress);
     REQUIRE(run("SetFocusArmy(2)").empty());
