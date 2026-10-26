@@ -4742,6 +4742,19 @@ i32 Unit::target_point_count() const {
 }
 
 Vector3 Unit::target_point(i32 index) const {
+    // FAF's patched exe aims a negative index at the collision box's centre
+    // (FA-Binary-Patches hooks/CollisionOffsetFix.hook: Moho's
+    // Entity::GetBoneWorldTransform(-1)): the blueprint's CollisionOffset,
+    // SizeY/2 up, turned with the unit where it stands. Moho's own is SizeY/2
+    // above where the unit moves to this tick, as below.
+    if (index < 0 && registry() && registry()->faf_exe()) {
+        const CollisionShape& bp = default_collision_shape();
+        const Vector3 anchor = bp.type == CollisionShapeType::BOX
+                                   ? Vector3{bp.cx, bp.cy, bp.cz}
+                                   : Vector3{0.0f, size_y_ * 0.5f, 0.0f};
+        const Vector3 c = quat_rotate(orientation(), anchor);
+        return {position().x + c.x, position().y + c.y, position().z + c.z};
+    }
     const BoneData* bd = bone_data();
     i32 bone = -1;
     if (index >= 0 && bd && !bd->target_bones.empty()) {
