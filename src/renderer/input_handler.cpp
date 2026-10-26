@@ -799,6 +799,14 @@ void InputHandler::snap_to_deposit(const sim::SimState& sim, const CommandMode& 
     }
 }
 
+bool InputHandler::snaps_to_deposit(const sim::SimState& sim, const CommandMode& mode) const {
+    // FAF's patched exe drops Moho's no-snap rule for a template whose lead
+    // goes on a mass deposit; a hydrocarbon's still doesn't snap
+    // (FA-Binary-Patches hooks/BuildTemplateSnap.cpp)
+    return !placing_template(mode) ||
+           (sim.faf_exe() && mode.deposit == sim::PlacementRules::Deposit::Mass);
+}
+
 void InputHandler::measure_snap_radius(const Renderer& renderer, const sim::SimState& sim, f32 mx,
                                        f32 my) {
     f32 wx = 0;
@@ -1529,7 +1537,7 @@ std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const Co
     if (mode.mode != "build" || mode.name.empty()) {
         return issued;
     }
-    if (!placing_template(mode)) { // a template's structures don't snap
+    if (snaps_to_deposit(sim, mode)) {
         snap_to_deposit(sim, mode, x0, z0);
         snap_to_deposit(sim, mode, x1, z1);
     }
@@ -1839,6 +1847,10 @@ BuildGhost InputHandler::ghost_at(const sim::SimState& sim, const std::string& b
 std::optional<BuildGhost> InputHandler::template_ghost(const sim::SimState& sim,
                                                        const CommandMode& mode, f32 x0, f32 z0,
                                                        f32 x1, f32 z1) const {
+    if (snaps_to_deposit(sim, mode)) {
+        snap_to_deposit(sim, mode, x0, z0);
+        snap_to_deposit(sim, mode, x1, z1);
+    }
     std::optional<BuildGhost> ghost;
     for (const TemplateSite& site : template_sites_for(mode, x0, z0, x1, z1)) {
         if (sim.has_playable_rect() && (site.x < sim.playable_x0() || site.x > sim.playable_x1() ||
@@ -1866,7 +1878,8 @@ std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
         world_at(renderer, sim, static_cast<f32>(mx), static_cast<f32>(my), wx, wz);
     // A build template: a ghost of each of its structures, each green or red
     // on its own, none for one off the playable area (Moho's
-    // CBuildDragPreview), and no deposit snap.
+    // CBuildDragPreview), and no deposit snap but on FAF's data
+    // (snaps_to_deposit).
     const CommandMode mode = mode_hooks_.current ? mode_hooks_.current() : CommandMode{};
     if (placing_template(mode) && (build_line_ || on_ground)) {
         const auto line = build_line_ ? *build_line_ : std::array<f32, 4>{wx, wz, wx, wz};

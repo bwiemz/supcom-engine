@@ -403,6 +403,43 @@ TEST_CASE("placement: a build template shows a ghost of each structure, its own 
     CHECK_FALSE(input.placing_template(mode));
 }
 
+TEST_CASE("placement: on FAF's data a template led by an extractor snaps to a mass deposit",
+          "[placement][build_template]") {
+    // FA-Binary-Patches hooks/BuildTemplateSnap.cpp: Moho's template doesn't
+    // snap; FAF's exe snaps one whose lead goes on a mass deposit, though
+    // still not one whose lead goes on a hydrocarbon
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_coast_world(sim);
+    sim.add_resource_deposit({30.5f, 0, 40.5f, 1.0f, osc::sim::ResourceDeposit::Mass});
+    sim.add_resource_deposit({34.5f, 0, 39.5f, 3.0f, osc::sim::ResourceDeposit::Hydrocarbon});
+    osc::renderer::InputHandler input;
+    osc::renderer::CommandModeHooks hooks;
+    hooks.footprint = [](const std::string&) { return std::array<osc::f32, 2>{1, 1}; };
+    input.set_command_mode_hooks(std::move(hooks));
+    // An extractor and a storage beside it
+    auto& t = input.build_template();
+    t.span_x = 3;
+    t.span_z = 1;
+    t.entries = {{"mex", 1, 0, 0}, {"storage", 2, 2, 0}};
+    osc::renderer::CommandMode mode;
+    mode.mode = "build";
+    mode.name = "mex";
+    mode.deposit = PlacementRules::Deposit::Mass;
+    const auto lead = [&] {
+        auto ghost = input.template_ghost(sim, mode, 31.8f, 39.6f, 31.8f, 39.6f);
+        REQUIRE(ghost);
+        REQUIRE(ghost->line.size() == 1);
+        CHECK(ghost->line[0].x == ghost->x + 2.0f);
+        return std::array<osc::f32, 2>{ghost->x, ghost->z};
+    };
+    CHECK(lead() == std::array<osc::f32, 2>{31.5f, 39.5f}); // where the cursor is
+    sim.set_faf_exe(true);
+    CHECK(lead() == std::array<osc::f32, 2>{30.5f, 40.5f}); // on the deposit
+    mode.deposit = PlacementRules::Deposit::Hydrocarbon;
+    CHECK(lead() == std::array<osc::f32, 2>{31.5f, 39.5f});
+}
+
 TEST_CASE("Structure placement snaps to the build grid", "[placement]") {
     float x = 10.3f, z = 20.8f;
     osc::sim::snap_structure_center(x, z, 1.0f, 1.0f);

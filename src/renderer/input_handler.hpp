@@ -426,6 +426,9 @@ public:
     /// Where the cursor at (mx, my) points on the ground: the terrain, or
     /// the water over it (M217a). Every click and drag resolves through it.
     void snap_to_deposit(const sim::SimState& sim, const CommandMode& mode, f32& x, f32& z) const;
+    /// Whether a build's cursor snaps to a deposit: a structure's always, a
+    /// build template's only on FAF's data, with its lead on a mass deposit
+    bool snaps_to_deposit(const sim::SimState& sim, const CommandMode& mode) const;
     /// Blueprint `bp`'s footprint for a template's structure: the hook's,
     /// else 1x1
     std::array<f32, 2> footprint_of(const std::string& bp) const;
