@@ -125,18 +125,17 @@ std::vector<std::array<f32, 4>> convex_rows(const std::array<f32, 4>& xs,
     return rows;
 }
 
-std::vector<std::pair<sim::StructureSite, f32>> structure_pads(const sim::FrameView& view,
-                                                               const ReconView* recon) {
-    std::vector<std::pair<sim::StructureSite, f32>> pads;
+std::vector<StructurePad> structure_pads(const sim::FrameView& view, i32 army) {
+    std::vector<StructurePad> pads;
     for (const sim::EntityRecord& e : view.entities()) {
-        if (!e.is_unit || !e.is_structure || (recon && recon->sight(e) != Sight::Seen)) {
+        if (!e.is_unit || !e.is_structure || e.army != army || e.is_dying) {
             continue;
         }
         const sim::Vector3 pos = view.position(e);
-        pads.emplace_back(sim::StructureSite::of(pos.x, pos.z, e.footprint_size_x,
-                                                 e.footprint_size_z, e.skirt_size_x, e.skirt_size_z,
-                                                 e.skirt_offset_x, e.skirt_offset_z),
-                          pos.y);
+        pads.push_back({sim::StructureSite::of(pos.x, pos.z, e.footprint_size_x, e.footprint_size_z,
+                                               e.skirt_size_x, e.skirt_size_z, e.skirt_offset_x,
+                                               e.skirt_offset_z),
+                        pos.x, pos.y, pos.z, e.id});
     }
     return pads;
 }
@@ -159,33 +158,24 @@ void OverlayRenderer::emit_line(f32 x0, f32 y0, f32 x1, f32 y1, f32 thick, f32 r
     }
 }
 
-std::vector<bool> adjacency_lit(const std::vector<sim::StructureSite>& pads,
-                                const sim::StructureSite& ghost) {
-    std::vector<bool> lit(pads.size(), false);
-    for (size_t i = 0; i < pads.size(); ++i) {
-        lit[i] = pads[i].touches(ghost);
-    }
-    return lit;
-}
-
-std::vector<PadOutline> build_outlines(const std::vector<std::pair<sim::StructureSite, f32>>& pads,
-                                       const BuildGhost& ghost) {
-    std::vector<sim::StructureSite> pad_sites;
-    pad_sites.reserve(pads.size());
-    for (const auto& pad : pads) pad_sites.push_back(pad.first);
+std::vector<PadOutline> build_outlines(const std::vector<StructurePad>& pads,
+                                       const BuildGhost& ghost, const AdjacencyBonus& bonus) {
     std::vector<const BuildGhost*> sites{&ghost};
     for (const BuildGhost& site : ghost.line) sites.push_back(&site);
 
-    std::vector<bool> lit(pad_sites.size(), false);
+    // A site lit is a mesh no longer dim, which Moho's scan passes over
+    std::vector<bool> lit(pads.size(), false);
     std::vector<bool> site_lit(sites.size(), false);
-    for (size_t g = 0; g < sites.size(); ++g) {
-        const BuildGhost& site = *sites[g];
-        if (!site.valid) continue;
-        const sim::StructureSite site_pad{site.pad_x0, site.pad_z0, site.pad_x1, site.pad_z1};
-        const auto touched = adjacency_lit(pad_sites, site_pad);
-        for (size_t i = 0; i < touched.size(); ++i) {
-            lit[i] = lit[i] || touched[i];
-            site_lit[g] = site_lit[g] || touched[i];
+    for (size_t i = 0; i < pads.size(); ++i) {
+        for (size_t g = 0; g < sites.size(); ++g) {
+            const BuildGhost& site = *sites[g];
+            if (!site.valid || site_lit[g]) continue;
+            const sim::StructureSite site_pad{site.pad_x0, site.pad_z0, site.pad_x1, site.pad_z1};
+            if (pads[i].site.touches(site_pad) && bonus && bonus(pads[i].id, site.blueprint_id)) {
+                lit[i] = true;
+                site_lit[g] = true;
+                break;
+            }
         }
     }
     std::vector<PadOutline> out;
@@ -199,7 +189,7 @@ std::vector<PadOutline> build_outlines(const std::vector<std::pair<sim::Structur
                                      : kOutlineDim});
     }
     for (size_t i = 0; i < pads.size(); ++i)
-        out.push_back({pads[i].first, pads[i].second, lit[i] ? kOutlineLit : kOutlineDim});
+        out.push_back({pads[i].site, pads[i].y, lit[i] ? kOutlineLit : kOutlineDim});
     return out;
 }
 

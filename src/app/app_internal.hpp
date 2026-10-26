@@ -371,6 +371,11 @@ std::optional<renderer::VerifiedScript> verify_script_command(lua_State* uiL,
                                                               const std::vector<u32>& units,
                                                               u32 target_id, const sim::Vector3& at,
                                                               bool clear);
+/// Moho's UserUnit::DoOnDetectAdjacencyBonusFor (faf-re UserUnit.cpp,
+/// 0x0083EEC0): /lua/ui/game/gamemain.lua's OnDetectAdjacencyBonus(unit,
+/// blueprint), whether `unit` gives a structure of `blueprint` placed beside
+/// it a bonus. An error is logged, and gives none.
+bool detect_adjacency_bonus(lua_State* uiL, u32 unit, const std::string& blueprint);
 
 // ui_globals.cpp
 /// Register the session's UI globals (FlushEvents, SessionIsReplay, ...) on
