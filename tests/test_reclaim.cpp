@@ -220,3 +220,27 @@ TEST_CASE("A paused engineer reclaims a prop as an unpaused one", "[reclaim][pau
     w.sim.tick();
     CHECK(w.wreck->fraction_complete() < 1.0f);
 }
+
+TEST_CASE("On FAF's data a paused engineer's reclaim of a prop holds, as FAF's exe",
+          "[reclaim][pause]") {
+    // FA-Binary-Patches section/StopReclaimWhenPaused.cpp: no progress and
+    // nothing banked while paused; the order is kept, and goes on unpaused
+    ReclaimSim w;
+    w.sim.set_faf_exe(true);
+    w.sim.add_army("ARMY_1", "ARMY_1"); // an army to bank in
+    Unit* eng = w.engineer(10.0f);
+    eng->set_army(0);
+    eng->set_paused(true);
+    eng->push_command(order(CommandType::Reclaim, w.wreck->entity_id()), true);
+    for (int i = 0; i < 5; ++i) {
+        w.sim.tick();
+        CHECK(eng->reclaim_target_id() == w.wreck->entity_id());
+        CHECK(w.wreck->fraction_complete() == 1.0f);
+        CHECK(eng->economy().reclaimed_mass == 0.0);
+    }
+    REQUIRE_FALSE(eng->command_queue().empty());
+    eng->set_paused(false);
+    w.sim.tick();
+    CHECK(w.wreck->fraction_complete() < 1.0f);
+    CHECK(eng->economy().reclaimed_mass == 30.0);
+}
