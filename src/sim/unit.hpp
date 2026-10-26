@@ -2122,7 +2122,8 @@ private:
     /// state. The script hears nothing: it was not finished (the Yolona
     /// Oss's tells a cancel by the state going without OnSiloBuildEnd).
     void abandon_silo_build();
-    /// A finished missile: taken off the silo, and OnSiloBuildEnd.
+    /// A finished missile: taken off the silo, then OnSiloBuildEnd and OnNukeArmed (before it
+    /// is stored, as in Moho's SiloTick).
     void end_silo_build(lua_State* L);
     f64 silo_blocks_progress(i32 blocks) const;
     // Adjacency system

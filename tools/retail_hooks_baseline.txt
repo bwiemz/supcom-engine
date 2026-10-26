@@ -4,7 +4,6 @@ method OnAnimationFrame
 method OnAssignedFocusEntity
 method OnAttachedKilled
 method OnIconsVisible
-method OnNukeArmed
 method OnSpecialAction
 method OnStart
 method OnSubtitle
