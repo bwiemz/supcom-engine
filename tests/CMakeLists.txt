@@ -125,6 +125,7 @@ add_executable(osc_tests
     test_utf8_substring.cpp
     test_get_version.cpp
     test_ai_personality.cpp
+    test_projectile_launch.cpp
     test_overlay_footprint.cpp
     test_font_cache.cpp
     test_minimap_area.cpp

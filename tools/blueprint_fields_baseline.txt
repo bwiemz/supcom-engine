@@ -1,17 +1,9 @@
 # Engine-only blueprint fields src/ doesn't read yet (tools/check_blueprint_fields.py)
 CatchUpAcc
-DirectionX
-DirectionY
-DirectionZ
-DirectionXRange
-DirectionYRange
-DirectionZRange
 GroundCollisionOffset
 IgnoreIfDisabled
-InitialSpeedRange
 LAYER_Air
 PlaceholderMeshName
-PositionY
 QuickSelectPriority
 RepairRate
 ShowAssistRangeOnSelect
