@@ -2,7 +2,6 @@
 method OnAnimationFinished
 method OnAnimationFrame
 method OnAssignedFocusEntity
-method OnAttachedKilled
 method OnBeingBuiltProgress
 method OnBuildProgress
 method OnIconsVisible

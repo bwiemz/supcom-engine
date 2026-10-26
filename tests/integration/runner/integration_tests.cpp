@@ -12795,6 +12795,132 @@ void test_transport_slots(TestContext& ctx) {
     lua("__osc_room = __osc_xport:TransportHasSpaceFor(__osc_large[4]) and 1 or 0");
     check(number("__osc_room") == 1, "a bot destroyed aboard frees its slot");
 
+    // A unit killed aboard (Moho's Unit::Kill): the transport lets go of it, but an aircraft
+    // keeps one whose footprint can't stand where it hangs (CAiTransportImpl::TransportDetachUnit),
+    // and then hears OnAttachedKilled (Entity::Kill). Retail's UEF transport lets go of it there.
+    if (!lua(R"(
+        __osc_heard = {}
+        local heard = __osc_xport.OnAttachedKilled
+        __osc_xport.OnAttachedKilled = function(self, unit)
+            table.insert(__osc_heard, unit)
+            return heard(self, unit)
+        end
+        function __osc_aboard()
+            for _, list in {__osc_small, __osc_large} do
+                for _, u in list do
+                    if not u:IsDead() and u:IsUnitState('Attached') then return u end
+                end
+            end
+        end
+        IssueMove({__osc_xport}, {660, GetTerrainHeight(660, 100), 100})
+    )"))
+        return;
+    run(40);
+    lua(R"(
+        __osc_land_kill = __osc_aboard()
+        __osc_land_layer = __osc_xport:GetCurrentLayer()
+        __osc_land_kill:Kill()
+    )");
+    run(2);
+    lua("__osc_n = table.getn(__osc_heard)");
+    lua("__osc_set_down = __osc_land_kill:IsUnitState('Attached') and 0 or 1");
+    lua("__osc_in_air = __osc_land_layer == 'Air' and 1 or 0");
+    check(number("__osc_in_air") == 1 && number("__osc_n") == 0 && number("__osc_set_down") == 1,
+          fmt::format("killed over land, a unit is let go and its flying transport hears nothing "
+                      "({} heard, {} set down, in the air {})",
+                      number("__osc_n"), number("__osc_set_down"), number("__osc_in_air")));
+    if (!lua(R"(
+        local function wet(x, z) return GetSurfaceHeight(x, z) - GetTerrainHeight(x, z) end
+        local at
+        for tz = 100, 950, 10 do
+            for tx = 20, 960, 4 do
+                if wet(tx, tz) > 4 and wet(tx - 8, tz) > 4 and wet(tx + 8, tz) > 4 then
+                    at = {tx, tz}
+                    break
+                end
+            end
+            if at then break end
+        end
+        if not at then error('no deep water') end
+        __osc_sea = at
+        IssueMove({__osc_xport}, {at[1], GetSurfaceHeight(at[1], at[2]), at[2]})
+    )"))
+        return;
+    lua(R"(
+        function __osc_over_sea()
+            local p = __osc_xport:GetPosition()
+            return math.abs(p[1] - __osc_sea[1]) < 3 and math.abs(p[3] - __osc_sea[2]) < 3
+        end
+    )");
+    for (int t = 0; t < 1500; ++t) {
+        lua("__osc_there = __osc_over_sea() and 1 or 0");
+        if (number("__osc_there") == 1) break;
+        run(1);
+    }
+    lua("__osc_there = __osc_over_sea() and 1 or 0");
+    lua(R"(
+        __osc_sea_kill = __osc_aboard()
+        __osc_sea_kill:Kill()
+    )");
+    run(2);
+    lua("__osc_n = table.getn(__osc_heard)");
+    lua("__osc_was_it = __osc_heard[1] == __osc_sea_kill and 1 or 0");
+    lua("__osc_set_down = __osc_sea_kill:IsUnitState('Attached') and 0 or 1");
+    check(number("__osc_there") == 1 && number("__osc_n") == 1 && number("__osc_was_it") == 1 &&
+              number("__osc_set_down") == 1,
+          fmt::format("killed over the sea, a unit is kept; its transport hears OnAttachedKilled "
+                      "and lets it go (over the sea {}, {} heard, it {}, let go {})",
+                      number("__osc_there"), number("__osc_n"), number("__osc_was_it"),
+                      number("__osc_set_down")));
+
+    // A transport without the handler (Aeon's, Seraphim's) carries such a dead unit on.
+    lua(R"(
+        __osc_xport.OnAttachedKilled = function(self, unit) end
+        __osc_kept = __osc_aboard()
+        __osc_kept:Kill()
+        __osc_kept_id = __osc_kept:GetEntityId()
+    )");
+    run(2);
+    lua("__osc_n = __osc_kept:IsUnitState('Attached') and 1 or 0");
+    check(number("__osc_n") == 1, "without the handler, the transport carries the dead unit on");
+
+    // The transport killed: what it still carries hears OnParentKilled first (Entity::Kill, ahead
+    // of TransportDetachAllUnits).
+    lua(R"(
+        __osc_rider = __osc_aboard()
+        __osc_rider_heard = 0
+        if __osc_rider then
+            __osc_rider.OnParentKilled = function(self, parent)
+                if parent == __osc_xport and not self:IsDead() then
+                    __osc_rider_heard = __osc_rider_heard + 1
+                end
+            end
+        end
+        __osc_xport:Kill()
+    )");
+    run(2);
+    lua("__osc_n = __osc_rider_heard");
+    check(number("__osc_n") == 1,
+          fmt::format("a unit aboard hears OnParentKilled as its transport dies, still alive ({})",
+                      number("__osc_n")));
+
+    // Destroyed, the transport holds the dead unit it kept no longer.
+    for (int t = 0; t < 900; ++t) {
+        lua("__osc_gone = __osc_xport:BeenDestroyed() and 1 or 0");
+        if (number("__osc_gone") == 1) break;
+        run(1);
+    }
+    {
+        const auto* kept = ctx.sim.entity_registry().find(
+            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_kept_id"))));
+        const bool there = kept && kept->is_unit() && !kept->destroyed();
+        const bool held = there && static_cast<const osc::sim::Unit*>(kept)->transport_id() != 0;
+        check(number("__osc_gone") == 1 && there && !held,
+              fmt::format("destroyed, the transport holds its kept dead unit no longer (destroyed "
+                          "{}, the unit there {}, held {})",
+                          number("__osc_gone"), there, held));
+    }
+
     spdlog::info("Transport slots test: {} passed, {} failed", pass, fail);
 }
 
