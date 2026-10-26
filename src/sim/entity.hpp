@@ -79,7 +79,7 @@ inline Quaternion euler_to_quat(f32 heading, f32 pitch, f32 roll) {
 /// The heading (yaw about Y) of an orientation: atan2 of its forward vector's
 /// x and z, the inverse of euler_to_quat's heading.
 inline f32 quat_yaw(const Quaternion& q) {
-    return osc::dmath::atan2(2.0f * (q.w * q.y + q.x * q.z), 1.0f - 2.0f * (q.y * q.y + q.z * q.z));
+    return osc::dmath::atan2(2.0f * (q.w * q.y + q.x * q.z), 1.0f - 2.0f * (q.y * q.y + q.x * q.x));
 }
 
 /// Convert 3x3 rotation matrix (row-major: [row0][row1][row2]) to quaternion.

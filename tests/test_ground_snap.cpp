@@ -1,5 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "map/heightmap.hpp"
 #include "sim/bone_data.hpp"
@@ -119,6 +120,27 @@ TEST_CASE("A land unit on a slope tilts to the plane of its box's corners", "[gr
     tilted->stand_on_ground(&terrain, {64.0f, 0.0f, 20.0f}, tilted->orientation());
     check_vec(up(*tilted), 0.0f, 1.0f, 0.0f);
     check_vec(ahead(*tilted), 0.0f, 0.0f, 1.0f);
+}
+
+TEST_CASE("An orientation's heading is where its nose points, level or tilted", "[ground_snap]") {
+    const f32 heading = GENERATE(0.6f, 2.5f, -1.9f);
+    const f32 pitch = GENERATE(0.0f, 0.3f);
+    const f32 roll = GENERATE(0.0f, 0.3f, -0.4f);
+    CAPTURE(heading, pitch, roll);
+    const osc::sim::Quaternion q = osc::sim::euler_to_quat(heading, pitch, roll);
+    const Vector3 nose = osc::sim::quat_rotate(q, {0.0f, 0.0f, 1.0f});
+    CHECK(osc::sim::quat_yaw(q) == Approx(std::atan2(nose.x, nose.z)).margin(1e-5));
+    CHECK(osc::sim::quat_yaw(q) == Approx(heading).margin(1e-5));
+}
+
+TEST_CASE("A unit standing across a slope heads where its nose points", "[ground_snap]") {
+    const auto terrain = ridge(0.0f, false);
+    const auto u = unit("RULEUMT_Land", 0.0f);
+    u->stand_on_ground(&terrain, {70.0f, 0.0f, 64.0f}, osc::sim::euler_to_quat(0.6f, 0, 0));
+    const Vector3 nose = ahead(*u);
+    const f32 nose_heading = std::atan2(nose.x, nose.z);
+    REQUIRE(std::abs(nose_heading - 0.6f) > 0.1f);
+    CHECK(osc::sim::quat_yaw(u->orientation()) == Approx(nose_heading).margin(1e-5));
 }
 
 TEST_CASE("A StandUpright unit, a hover unit on the water and a ship stay level on a slope",
