@@ -1,7 +1,11 @@
 # Retail ShaderName values with no technique yet (tools/check_shader_names.py)
+BloatingNormalMappedAlpha
 Clutter
 EditorMarker
 Explosion
+Flat
+GlassAlpha
+NormalMappedAlphaNoShadow
 Shield
 UnderwaterClutter
 UndulatingClutter

@@ -808,7 +808,7 @@ void Camera::apply(const CameraInput& in, f64 dt) {
     if (in.middle && (dragging_ || mouse_enabled_)) {
         // (pinned, the scrub's sign is in dx already)
         const f32 sign = !in.pinned && invert_middle_ ? -1.0f : 1.0f;
-        if (dragging_ && !in.nis) pan(sign * dx, sign * dy);
+        if (dragging_) pan(sign * dx, sign * dy);
         dragging_ = true;
     } else if (dragging_) {
         dragging_ = false;

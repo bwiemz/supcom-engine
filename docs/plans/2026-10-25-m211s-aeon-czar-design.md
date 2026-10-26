@@ -54,5 +54,3 @@ flat), and the highlight's exponent.
 
 `Explosion`, `GlassAlpha`, `Flat` and the rest of
 `tools/shader_names_baseline.txt`.
-
-*Done (2026-10-25) — M211t: `Flat`.*

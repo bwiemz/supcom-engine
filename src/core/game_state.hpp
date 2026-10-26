@@ -169,23 +169,6 @@ inline void call_start_game_ui(lua_State* L) {
     }
 }
 inline void call_on_first_update(lua_State* L) { call_lua_global(L, "OnFirstUpdate"); }
-/// uimain.OnApplicationResize(head, width, height): Moho's MAUI_OnApplicationResize (faf-re
-/// 0x0083D9C0), which CUIManager::OnResize calls once a head's frame has its new size. Retail's
-/// clears the selection ("resize can cause odd ui behavior in construction manager").
-inline void call_on_application_resize(lua_State* L, int head, u32 width, u32 height) {
-    push_uimain_function(L, "OnApplicationResize");
-    if (!lua_isfunction(L, -1)) {
-        lua_pop(L, 1);
-        return;
-    }
-    lua_pushnumber(L, head);
-    lua_pushnumber(L, width);
-    lua_pushnumber(L, height);
-    if (lua_pcall(L, 3, 0, 0) != 0) {
-        spdlog::warn("OnApplicationResize error: {}", lua_tostring(L, -1));
-        lua_pop(L, 1);
-    }
-}
 
 /// Engine -> game UI callbacks. Moho calls them in UI modules:
 inline constexpr const char* kGameMainModule = "/lua/ui/game/gamemain.lua";
@@ -300,31 +283,6 @@ inline void call_on_command_graph_show(lua_State* L, bool show) {
 inline void call_on_beat(lua_State* L, f64 dt) {
     lua_pushnumber(L, dt);
     call_ui_callback(L, nullptr, "OnBeat", 1);
-}
-
-/// gamemain.IsNISMode(): a campaign's scripted cinematic (an NIS) runs. Moho's
-/// camera drag doesn't pan then, and its formation drag ends (faf-re
-/// CameraImpl::CameraPan, CFormation::UpdateOrientation). False without FA's
-/// game interface (gamemain isn't loaded at the front end).
-inline bool ui_nis_mode(lua_State* L) {
-    lua_pushstring(L, kWorldUiActiveKey);
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    const bool world_ui = lua_toboolean(L, -1) != 0;
-    lua_pop(L, 1);
-    if (!world_ui) return false;
-    push_loaded_module_function(L, kGameMainModule, "IsNISMode");
-    if (!lua_isfunction(L, -1)) {
-        lua_pop(L, 1);
-        return false;
-    }
-    if (lua_pcall(L, 0, 1, 0) != 0) {
-        spdlog::warn("gamemain.IsNISMode error: {}", lua_tostring(L, -1));
-        lua_pop(L, 1);
-        return false;
-    }
-    const bool nis = lua_toboolean(L, -1) != 0;
-    lua_pop(L, 1);
-    return nis;
 }
 
 /// gamemain.OnBeat(), once per sim beat while FA's game interface exists:

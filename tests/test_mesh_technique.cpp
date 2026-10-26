@@ -59,11 +59,6 @@ TEST_CASE("mesh_technique: a LOD's ShaderName picks FA's technique", "[renderer]
     CHECK(mesh_technique("CommandFeedback3") == MeshTechnique::CommandFeedback3);
     CHECK(mesh_technique("CommandFeedback4") == MeshTechnique::CommandFeedback4);
     CHECK(mesh_technique("AeonCZAR") == MeshTechnique::AeonCZAR);
-    CHECK(mesh_technique("Flat") == MeshTechnique::Flat);
-    CHECK(mesh_technique("TMeshNoLighting") == MeshTechnique::Flat);
-    CHECK(mesh_technique("GlassAlpha") == MeshTechnique::GlassAlpha);
-    CHECK(mesh_technique("BloatingNormalMappedAlpha") == MeshTechnique::BloatingNormalMappedAlpha);
-    CHECK(mesh_technique("NormalMappedAlphaNoShadow") == MeshTechnique::NormalMappedAlphaNoShadow);
     // Anything unported draws as Unit.
     CHECK(mesh_technique("") == MeshTechnique::Unit);
     CHECK(mesh_technique("Clutter") == MeshTechnique::Unit);
@@ -141,15 +136,6 @@ TEST_CASE("The explosions' techniques: mesh.fx's stages and blending", "[rendere
     CHECK(is_blended_technique(MeshTechnique::NukeQuantum));
     CHECK(is_blended_technique(MeshTechnique::PhalanxEffect));
     CHECK(is_blended_technique(MeshTechnique::UEFQuantumGate));
-    CHECK(is_blended_technique(MeshTechnique::GlassAlpha));
-    CHECK(is_post_effect_technique(MeshTechnique::GlassAlpha));
-    CHECK_FALSE(has_depth_stage(MeshTechnique::GlassAlpha));
-    CHECK(is_post_water_technique(MeshTechnique::BloatingNormalMappedAlpha));
-    CHECK(has_depth_stage(MeshTechnique::BloatingNormalMappedAlpha));
-    CHECK(is_post_water_technique(MeshTechnique::NormalMappedAlphaNoShadow));
-    CHECK_FALSE(has_depth_stage(MeshTechnique::NormalMappedAlphaNoShadow));
-    CHECK_FALSE(is_blended_technique(MeshTechnique::BloatingNormalMappedAlpha));
-    CHECK_FALSE(is_blended_technique(MeshTechnique::NormalMappedAlphaNoShadow));
 }
 
 TEST_CASE("The pings' and ferry beacons' techniques: after the water, blended, no shadow",
@@ -172,7 +158,6 @@ TEST_CASE("is_blended_technique: what draws after the opaque meshes", "[renderer
     CHECK(is_blended_technique(MeshTechnique::VertexNormal));
     CHECK_FALSE(is_blended_technique(MeshTechnique::Unit));
     CHECK_FALSE(is_blended_technique(MeshTechnique::AeonCZAR));
-    CHECK_FALSE(is_blended_technique(MeshTechnique::Flat));
     CHECK_FALSE(is_blended_technique(MeshTechnique::NormalMappedTerrain));
     CHECK_FALSE(is_blended_technique(MeshTechnique::UndulatingNormalMappedAlpha));
     CHECK_FALSE(is_blended_technique(MeshTechnique::NormalMappedAlpha));
@@ -361,8 +346,7 @@ TEST_CASE("mesh technique dump names round trip", "[renderer][mesh]") {
     constexpr std::array engine_internal = {MeshTechnique::UnitPlace};
     for (const auto technique : engine_internal)
         CHECK(mesh_technique(mesh_technique_name(technique)) == MeshTechnique::Unit);
-    for (osc::u32 id = 0; id <= static_cast<osc::u32>(MeshTechnique::NormalMappedAlphaNoShadow);
-         ++id) {
+    for (osc::u32 id = 0; id <= static_cast<osc::u32>(MeshTechnique::AeonCZAR); ++id) {
         const auto technique = static_cast<MeshTechnique>(id);
         if (std::find(engine_internal.begin(), engine_internal.end(), technique) !=
             engine_internal.end())

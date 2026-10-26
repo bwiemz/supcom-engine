@@ -20,7 +20,6 @@ class SoundManager;
 }
 
 namespace osc::sim {
-class ArmyBrain;
 class Entity;
 class Manipulator;
 class Platoon;
@@ -146,11 +145,6 @@ int entity_SetDoNotTarget(lua_State* L);
 int entity_SetReclaimable(lua_State* L);
 bool sound_arg(lua_State* L, int idx, std::string& bank, std::string& cue);
 
-// lua/bindings/sim/aipersonality.cpp
-/// Push a brain's personality object (brain:GetPersonality()), made as it
-/// is first asked for.
-void push_brain_personality(lua_State* L, const sim::ArmyBrain& brain);
-
 // lua/bindings/sim/manipulators.cpp
 void aim_projectile(lua_State* L, sim::SimState* sim, sim::Projectile& p, const sim::Vector3& dir);
 int sequence_count(lua_State* L, int table_idx);
@@ -161,7 +155,6 @@ bool unit_is_idle_but_orders(const sim::Unit& u);
 
 /// The classes' method tables (register_moho_bindings makes moho.* of them).
 extern const MethodEntry aibrain_methods[];
-extern const MethodEntry aipersonality_methods[];
 extern const MethodEntry aim_manipulator_methods[];
 extern const MethodEntry animation_manipulator_methods[];
 extern const MethodEntry blip_methods[];

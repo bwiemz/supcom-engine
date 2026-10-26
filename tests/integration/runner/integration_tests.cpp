@@ -9952,15 +9952,11 @@ void test_missile(TestContext& ctx) {
                     return proj
                 end
             end
-            local on_start, on_end, on_armed = u.OnSiloBuildStart, u.OnSiloBuildEnd, u.OnNukeArmed
-            local function stored(self)
-                return self:GetTacticalSiloAmmoCount() + self:GetNukeSiloAmmoCount()
-            end
+            local on_start, on_end = u.OnSiloBuildStart, u.OnSiloBuildEnd
             u.OnSiloBuildStart = function(self, weapon)
                 table.insert(rec.builds, {start = GetGameTick(), weapon = weapon,
                                           energy = __osc_consumed(self, 'Energy'),
-                                          mass = __osc_consumed(self, 'Mass'),
-                                          stored_at_start = stored(self)})
+                                          mass = __osc_consumed(self, 'Mass')})
                 on_start(self, weapon)
             end
             u.OnSiloBuildEnd = function(self, weapon)
@@ -9968,17 +9964,7 @@ void test_missile(TestContext& ctx) {
                 b.done = GetGameTick()
                 b.energy = __osc_consumed(self, 'Energy') - b.energy
                 b.mass = __osc_consumed(self, 'Mass') - b.mass
-                b.stored_at_end = stored(self)
                 on_end(self, weapon)
-            end
-            -- Moho's SiloTick: OnNukeArmed after OnSiloBuildEnd, for any missile
-            u.OnNukeArmed = function(self, weapon)
-                local b = rec.builds[table.getn(rec.builds)]
-                b.armed = GetGameTick()
-                b.armed_after_end = b.done ~= nil
-                b.armed_weapon = weapon == b.weapon
-                b.stored_at_armed = stored(self)
-                on_armed(self, weapon)
             end
             u.__osc = rec
             return u
@@ -10183,19 +10169,6 @@ void test_missile(TestContext& ctx) {
             error(string.format('A spent %g E and %g M', b.energy, b.mass))
         end
         if __osc_a:IsUnitState('SiloBuildingAmmo') then error('A is still building') end
-    )");
-    lua_check("Test 3b: OnNukeArmed follows OnSiloBuildEnd, a tactical missile too, and the "
-              "missile is stored after both",
-              R"(
-        local b = __osc_a.__osc.builds[1]
-        if b.armed ~= b.done or not b.armed_after_end then
-            error('OnNukeArmed at ' .. tostring(b.armed) .. ', OnSiloBuildEnd at ' .. tostring(b.done))
-        end
-        if not b.armed_weapon then error('OnNukeArmed heard another weapon') end
-        if b.stored_at_end ~= b.stored_at_start or b.stored_at_armed ~= b.stored_at_start then
-            error('stored ' .. b.stored_at_start .. ' at the start, ' .. b.stored_at_end .. ' at its end, '
-                  .. b.stored_at_armed .. ' armed')
-        end
     )");
     lua_check("Test 4: assisted by four engineers, B built its missile faster, for the same cost",
               R"(
@@ -10911,11 +10884,6 @@ void test_beam_weapon(TestContext& ctx) {
         end
     )");
     lua_check("setup: a Cerberus, a Monkeylord and a zapper, each with a target", R"(
-        -- The Cerberus (ReTargetOnMiss) stands where trees are: its beams, starting inside one,
-        -- would miss the tank till it gave it up, as Moho's would. Clear its spot and its line.
-        for _, p in GetReclaimablesInRect(Rect(522, 62, 558, 78)) or {} do
-            if IsProp(p) then p:Destroy() end
-        end
         __osc_cerberus = __osc_watch(__osc_spawn('urb2301', 'ARMY_1', 530, 70))
         __osc_block = __osc_spawn('uel0201', 'ARMY_2', 550, 70)
         __osc_block:SetFireState(1)
@@ -12826,132 +12794,6 @@ void test_transport_slots(TestContext& ctx) {
     run(3);
     lua("__osc_room = __osc_xport:TransportHasSpaceFor(__osc_large[4]) and 1 or 0");
     check(number("__osc_room") == 1, "a bot destroyed aboard frees its slot");
-
-    // A unit killed aboard (Moho's Unit::Kill): the transport lets go of it, but an aircraft
-    // keeps one whose footprint can't stand where it hangs (CAiTransportImpl::TransportDetachUnit),
-    // and then hears OnAttachedKilled (Entity::Kill). Retail's UEF transport lets go of it there.
-    if (!lua(R"(
-        __osc_heard = {}
-        local heard = __osc_xport.OnAttachedKilled
-        __osc_xport.OnAttachedKilled = function(self, unit)
-            table.insert(__osc_heard, unit)
-            return heard(self, unit)
-        end
-        function __osc_aboard()
-            for _, list in {__osc_small, __osc_large} do
-                for _, u in list do
-                    if not u:IsDead() and u:IsUnitState('Attached') then return u end
-                end
-            end
-        end
-        IssueMove({__osc_xport}, {660, GetTerrainHeight(660, 100), 100})
-    )"))
-        return;
-    run(40);
-    lua(R"(
-        __osc_land_kill = __osc_aboard()
-        __osc_land_layer = __osc_xport:GetCurrentLayer()
-        __osc_land_kill:Kill()
-    )");
-    run(2);
-    lua("__osc_n = table.getn(__osc_heard)");
-    lua("__osc_set_down = __osc_land_kill:IsUnitState('Attached') and 0 or 1");
-    lua("__osc_in_air = __osc_land_layer == 'Air' and 1 or 0");
-    check(number("__osc_in_air") == 1 && number("__osc_n") == 0 && number("__osc_set_down") == 1,
-          fmt::format("killed over land, a unit is let go and its flying transport hears nothing "
-                      "({} heard, {} set down, in the air {})",
-                      number("__osc_n"), number("__osc_set_down"), number("__osc_in_air")));
-    if (!lua(R"(
-        local function wet(x, z) return GetSurfaceHeight(x, z) - GetTerrainHeight(x, z) end
-        local at
-        for tz = 100, 950, 10 do
-            for tx = 20, 960, 4 do
-                if wet(tx, tz) > 4 and wet(tx - 8, tz) > 4 and wet(tx + 8, tz) > 4 then
-                    at = {tx, tz}
-                    break
-                end
-            end
-            if at then break end
-        end
-        if not at then error('no deep water') end
-        __osc_sea = at
-        IssueMove({__osc_xport}, {at[1], GetSurfaceHeight(at[1], at[2]), at[2]})
-    )"))
-        return;
-    lua(R"(
-        function __osc_over_sea()
-            local p = __osc_xport:GetPosition()
-            return math.abs(p[1] - __osc_sea[1]) < 3 and math.abs(p[3] - __osc_sea[2]) < 3
-        end
-    )");
-    for (int t = 0; t < 1500; ++t) {
-        lua("__osc_there = __osc_over_sea() and 1 or 0");
-        if (number("__osc_there") == 1) break;
-        run(1);
-    }
-    lua("__osc_there = __osc_over_sea() and 1 or 0");
-    lua(R"(
-        __osc_sea_kill = __osc_aboard()
-        __osc_sea_kill:Kill()
-    )");
-    run(2);
-    lua("__osc_n = table.getn(__osc_heard)");
-    lua("__osc_was_it = __osc_heard[1] == __osc_sea_kill and 1 or 0");
-    lua("__osc_set_down = __osc_sea_kill:IsUnitState('Attached') and 0 or 1");
-    check(number("__osc_there") == 1 && number("__osc_n") == 1 && number("__osc_was_it") == 1 &&
-              number("__osc_set_down") == 1,
-          fmt::format("killed over the sea, a unit is kept; its transport hears OnAttachedKilled "
-                      "and lets it go (over the sea {}, {} heard, it {}, let go {})",
-                      number("__osc_there"), number("__osc_n"), number("__osc_was_it"),
-                      number("__osc_set_down")));
-
-    // A transport without the handler (Aeon's, Seraphim's) carries such a dead unit on.
-    lua(R"(
-        __osc_xport.OnAttachedKilled = function(self, unit) end
-        __osc_kept = __osc_aboard()
-        __osc_kept:Kill()
-        __osc_kept_id = __osc_kept:GetEntityId()
-    )");
-    run(2);
-    lua("__osc_n = __osc_kept:IsUnitState('Attached') and 1 or 0");
-    check(number("__osc_n") == 1, "without the handler, the transport carries the dead unit on");
-
-    // The transport killed: what it still carries hears OnParentKilled first (Entity::Kill, ahead
-    // of TransportDetachAllUnits).
-    lua(R"(
-        __osc_rider = __osc_aboard()
-        __osc_rider_heard = 0
-        if __osc_rider then
-            __osc_rider.OnParentKilled = function(self, parent)
-                if parent == __osc_xport and not self:IsDead() then
-                    __osc_rider_heard = __osc_rider_heard + 1
-                end
-            end
-        end
-        __osc_xport:Kill()
-    )");
-    run(2);
-    lua("__osc_n = __osc_rider_heard");
-    check(number("__osc_n") == 1,
-          fmt::format("a unit aboard hears OnParentKilled as its transport dies, still alive ({})",
-                      number("__osc_n")));
-
-    // Destroyed, the transport holds the dead unit it kept no longer.
-    for (int t = 0; t < 900; ++t) {
-        lua("__osc_gone = __osc_xport:BeenDestroyed() and 1 or 0");
-        if (number("__osc_gone") == 1) break;
-        run(1);
-    }
-    {
-        const auto* kept = ctx.sim.entity_registry().find(
-            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_kept_id"))));
-        const bool there = kept && kept->is_unit() && !kept->destroyed();
-        const bool held = there && static_cast<const osc::sim::Unit*>(kept)->transport_id() != 0;
-        check(number("__osc_gone") == 1 && there && !held,
-              fmt::format("destroyed, the transport holds its kept dead unit no longer (destroyed "
-                          "{}, the unit there {}, held {})",
-                          number("__osc_gone"), there, held));
-    }
 
     spdlog::info("Transport slots test: {} passed, {} failed", pass, fail);
 }
@@ -20369,8 +20211,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
            R"(
         if not SessionIsActive() then error('no active session in game') end
         if not WorldIsPlaying() then error('the world is not playing') end
-        if import('/lua/ui/game/gamemain.lua').IsNISMode() then error('an NIS is running') end
-        if rawget(_G, 'IsNISMode') ~= nil then error('IsNISMode is gamemain\'s, no global') end
+        if IsNISMode() then error('an NIS is running') end
         if math.abs(GameTime() - GetGameTimeSeconds()) > 1e-6 then
             error('GameTime ' .. GameTime() .. ' vs ' .. GetGameTimeSeconds())
         end

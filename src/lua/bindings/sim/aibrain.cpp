@@ -200,11 +200,11 @@ static int brain_GetNoRushTicks(lua_State* L) {
     return 1;
 }
 
-// brain:IsOpponentAIRunning(): Moho's, not /noai and AI_RunOpponentAI (see
-// SimState::run_opponent_ai). Retail's brain and platoon scripts skip their AI when it is false.
+/// brain:IsOpponentAIRunning() — Moho reports its `ai_RunOpponentAI` debug
+/// toggle, which is on by default. Retail aibrain.lua gates plan evaluation
+/// and execution on it; there is no toggle here, so the AI always runs.
 static int brain_IsOpponentAIRunning(lua_State* L) {
-    const auto* sim = get_sim(L);
-    lua_pushboolean(L, !sim || sim->run_opponent_ai() ? 1 : 0);
+    lua_pushboolean(L, 1);
     return 1;
 }
 
@@ -682,16 +682,89 @@ static int brain_ForkThread(lua_State* L) {
     return sim->thread_manager().fork_thread(L);
 }
 
-// brain:GetPersonality(): the brain's personality (CAiBrain's mPersonality),
-// as Moho's: lua/bindings/sim/aipersonality.cpp
+// brain:GetPersonality() — returns a personality table with methods used by AI.
+// In the original engine this reads .aip personality files; we return a default
+// personality with balanced emphasis values and identity delay adjustment.
 static int brain_GetPersonality(lua_State* L) {
-    auto* brain = check_brain(L);
-    if (!brain) {
-        lua_pushnil(L);
-        return 1;
+    // Check if we already cached the personality table in the registry
+    lua_pushstring(L, "__osc_default_personality");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1)) {
+        return 1; // return cached table
     }
-    push_brain_personality(L, *brain);
-    return 1;
+    lua_pop(L, 1);
+
+    // Create a personality table with closures for the required methods
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+
+    // AdjustDelay(self, base, divisor) → base (no adjustment for default)
+    lua_pushstring(L, "AdjustDelay");
+    lua_pushcfunction(L, [](lua_State* Ls) -> int {
+        // personality:AdjustDelay(base, divisor) → return base
+        f64 base_val = lua_tonumber(Ls, 2);
+        lua_pushnumber(Ls, base_val);
+        return 1;
+    });
+    lua_rawset(L, tbl);
+
+    // GetAirUnitsEmphasis() → 0.5 (balanced)
+    lua_pushstring(L, "GetAirUnitsEmphasis");
+    lua_pushcfunction(L, [](lua_State* Ls) -> int {
+        lua_pushnumber(Ls, 0.5);
+        return 1;
+    });
+    lua_rawset(L, tbl);
+
+    // GetTankUnitsEmphasis() → 0.5
+    lua_pushstring(L, "GetTankUnitsEmphasis");
+    lua_pushcfunction(L, [](lua_State* Ls) -> int {
+        lua_pushnumber(Ls, 0.5);
+        return 1;
+    });
+    lua_rawset(L, tbl);
+
+    // GetBotUnitsEmphasis() → 0.5
+    lua_pushstring(L, "GetBotUnitsEmphasis");
+    lua_pushcfunction(L, [](lua_State* Ls) -> int {
+        lua_pushnumber(Ls, 0.5);
+        return 1;
+    });
+    lua_rawset(L, tbl);
+
+    // GetSeaUnitsEmphasis() → 0.5
+    lua_pushstring(L, "GetSeaUnitsEmphasis");
+    lua_pushcfunction(L, [](lua_State* Ls) -> int {
+        lua_pushnumber(Ls, 0.5);
+        return 1;
+    });
+    lua_rawset(L, tbl);
+
+    // GetPlatoonSize() → {1.0, 1.0} (platoon size multiplier {min, max})
+    lua_pushstring(L, "GetPlatoonSize");
+    lua_pushcfunction(L, [](lua_State* Ls) -> int {
+        lua_newtable(Ls);
+        lua_pushnumber(Ls, 1.0);
+        lua_rawseti(Ls, -2, 1);
+        lua_pushnumber(Ls, 1.0);
+        lua_rawseti(Ls, -2, 2);
+        return 1;
+    });
+    lua_rawset(L, tbl);
+
+    // Make methods callable via : syntax (self-referencing __index)
+    lua_pushvalue(L, tbl);
+    lua_pushstring(L, "__index");
+    lua_pushvalue(L, tbl);
+    lua_rawset(L, -3);
+    lua_setmetatable(L, tbl);
+
+    // Cache in registry for reuse
+    lua_pushstring(L, "__osc_default_personality");
+    lua_pushvalue(L, tbl);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    return 1; // return the personality table
 }
 
 // brain:ExecutePlan(planPath) — import the plan file, call its ExecutePlan(brain)

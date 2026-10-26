@@ -242,9 +242,6 @@ public:
     SceneView ui_view_at(f32 x, f32 y) const;
     SceneView ui_view_of(const Camera* camera) const;
     void set_mouse_over_ui(bool over) { mouse_over_ui_ = over; }
-    /// A campaign's cinematic runs (gamemain.IsNISMode): the cameras' drag
-    /// doesn't pan while it does.
-    void set_nis_mode(bool on) { nis_mode_ = on; }
     /// The player's army (0-based), whose fog of war and intel the view
     /// shows; -1 for an observer, who sees everything.
     void set_player_army(i32 army) { player_army_ = army; }
@@ -947,8 +944,7 @@ private:
     std::array<VkPipeline, kCartographicMeshStates> cartographic_mesh_pipelines_{};
     std::array<VkPipelineLayout, kCartographicMeshStates> cartographic_mesh_layouts_{};
     /// This frame's mesh draw calls by technique (mesh_draws).
-    std::array<u32, static_cast<size_t>(MeshTechnique::NormalMappedAlphaNoShadow) + 1>
-        mesh_draws_{};
+    std::array<u32, static_cast<size_t>(MeshTechnique::AeonCZAR) + 1> mesh_draws_{};
     /// And a cartographic view's, by CartographicTechnique, a pass each
     std::array<u32, 7> cartographic_mesh_draws_{};
     /// The cartographic minimap's mesh pipelines (its output's pass), and
@@ -1104,7 +1100,6 @@ private:
     bool split_ = false;
     bool split_last_frame_ = false;
     bool mouse_over_ui_ = false;
-    bool nis_mode_ = false; // gamemain.IsNISMode, this frame
     /// A scrub's pointer, in the window's units: where it was (put back
     /// after), the view's centre it is pinned to, and where it landed when
     /// last put there (func_StartMouseScrubbing's sMouseMoveStart,

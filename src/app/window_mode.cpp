@@ -32,14 +32,6 @@ bool same_no_case(std::string_view a, std::string_view b) {
            });
 }
 
-/// ClampAtLeast of a parsed argument (atoi: junk is 0).
-u32 at_least(u32 least, const std::string& text) {
-    const auto v = integer(text);
-    return static_cast<u32>(std::max<i64>(least, v.value_or(0)));
-}
-
-} // namespace
-
 /// CFG_GetArgOption: an argument that is one of `aliases` behind one of
 /// Moho's prefixes (/, -, +, \; the engine's -- too), and the `count`
 /// arguments after it.
@@ -60,6 +52,14 @@ std::optional<std::vector<std::string>> arg_option(const std::vector<std::string
     }
     return std::nullopt;
 }
+
+/// ClampAtLeast of a parsed argument (atoi: junk is 0).
+u32 at_least(u32 least, const std::string& text) {
+    const auto v = integer(text);
+    return static_cast<u32>(std::max<i64>(least, v.value_or(0)));
+}
+
+} // namespace
 
 std::optional<Resolution> parse_resolution(std::string_view text) {
     std::array<std::string_view, 3> parts{};

@@ -209,7 +209,6 @@ void load_world(WorldLoad& load, osc::vfs::VirtualFileSystem& vfs,
     sim.set_moho_pathing(setup.moho_pathing);
     sim.set_moho_random(setup.moho_random);
     sim.set_faf_exe(!config.faf_data_path.empty());
-    sim.set_run_opponent_ai(!g_no_ai);
     spdlog::info("Game seed {:#018x}{}", load.seed,
                  setup.moho_random ? ", Moho's random stream" : "");
 
