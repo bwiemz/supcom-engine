@@ -1,5 +1,4 @@
 # Engine-only blueprint fields src/ doesn't read yet (tools/check_blueprint_fields.py)
-BounceVelDamp
 CatchUpAcc
 DirectionX
 DirectionY
@@ -11,8 +10,6 @@ GroundCollisionOffset
 IgnoreIfDisabled
 InitialSpeedRange
 LAYER_Air
-MaxBounceCount
-MinBounceCount
 PlaceholderMeshName
 PositionY
 QuickSelectPriority
