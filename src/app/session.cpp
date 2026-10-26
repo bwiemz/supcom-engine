@@ -78,6 +78,10 @@ osc::u32 g_rng_trace_to = 0xFFFFFFFFu;
 /// its setup records it, so its replays and saves play back with it.
 bool g_moho_pathing = false;
 
+/// /noai: no army's opponent AI runs (Moho's CAiBrain::IsOpponentAIRunning reads
+/// CFG_GetArgOption("/noai")).
+bool g_no_ai = false;
+
 /// The pathing a recorded game (a replay, or a save's history) plays with:
 /// the one it records (replay format 16 on), whatever the switch says; an
 /// older recording doesn't say, so the switch decides, as it had to then.

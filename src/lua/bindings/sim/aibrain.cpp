@@ -200,11 +200,11 @@ static int brain_GetNoRushTicks(lua_State* L) {
     return 1;
 }
 
-/// brain:IsOpponentAIRunning() — Moho reports its `ai_RunOpponentAI` debug
-/// toggle, which is on by default. Retail aibrain.lua gates plan evaluation
-/// and execution on it; there is no toggle here, so the AI always runs.
+// brain:IsOpponentAIRunning(): Moho's, not /noai and AI_RunOpponentAI (see
+// SimState::run_opponent_ai). Retail's brain and platoon scripts skip their AI when it is false.
 static int brain_IsOpponentAIRunning(lua_State* L) {
-    lua_pushboolean(L, 1);
+    const auto* sim = get_sim(L);
+    lua_pushboolean(L, !sim || sim->run_opponent_ai() ? 1 : 0);
     return 1;
 }
 

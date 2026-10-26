@@ -688,8 +688,16 @@ public:
     /// ~CUnitRepairTask): OnStopBuild, then OnFailedToBuild for a mobile build.
     void release_build(lua_State* L, EntityRegistry& registry);
     void call_build_callback(lua_State* L, const char* method, Entity* target, const char* order);
-    bool progress_build_assist(f64 dt, EntityRegistry& registry,
-                                f32 efficiency = 1.0f);
+    bool progress_build_assist(f64 dt, EntityRegistry& registry, lua_State* L,
+                               f32 efficiency = 1.0f);
+    /// Moho's CBuildTaskHelper::UpdateWorkProgress, after a step of the build: when its fraction
+    /// crosses a quarter, a half or three quarters since this builder last saw it (0 as its work
+    /// on it begins), its script hears OnBuildProgress(unit, old, new) and the unit's
+    /// OnBeingBuiltProgress(builder, old, new), errors logged.
+    void report_build_progress(lua_State* L, EntityRegistry& registry, u32 target_id);
+    /// Paused, retail's build task leaves what its builder last saw; FAF's executable copies the
+    /// build's fraction in (FA-Binary-Patches, CBuildTaskHelper::UpdateWorkProgress).
+    void seen_while_paused(lua_State* L, f32 fraction);
 
     /// Reclaim helpers
     u32 reclaim_target_id() const { return reclaim_target_id_; }
@@ -1913,6 +1921,7 @@ private:
     f64 build_cost_mass_ = 0;     // target's Economy.BuildCostMass
     f64 build_cost_energy_ = 0;   // target's Economy.BuildCostEnergy
     f32 work_progress_ = 0.0f;
+    f32 build_progress_seen_ = 0.0f; // Moho's CBuildTaskHelper mFractionComplete
     u32 reclaim_target_id_ = 0;   // entity ID being reclaimed
     f32 reclaim_rate_ = 0;        // fraction_complete decrease per second
     i32 reclaim_wait_ = 0;
@@ -2113,7 +2122,8 @@ private:
     /// state. The script hears nothing: it was not finished (the Yolona
     /// Oss's tells a cancel by the state going without OnSiloBuildEnd).
     void abandon_silo_build();
-    /// A finished missile: taken off the silo, and OnSiloBuildEnd.
+    /// A finished missile: taken off the silo, then OnSiloBuildEnd and OnNukeArmed (before it
+    /// is stored, as in Moho's SiloTick).
     void end_silo_build(lua_State* L);
     f64 silo_blocks_progress(i32 blocks) const;
     // Adjacency system

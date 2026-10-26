@@ -205,6 +205,19 @@ void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_
     beam->set_beam_endpoint(end);
     beam->beam_setup().reached = hit_t * length;
 
+    // ReTargetOnMiss: its weapon hears whether the check struck the weapon's target (Moho's
+    // CheckCollision, ahead of OnImpact). It runs no script.
+    if (Entity* e = registry.find(launcher_id); e && !e->destroyed() && e->is_unit()) {
+        auto& owner = static_cast<Unit&>(*e);
+        const i32 index = setup.weapon;
+        if (index >= 0 && static_cast<size_t>(index) < owner.weapons().size()) {
+            Weapon& weapon = *owner.weapons()[static_cast<size_t>(index)];
+            const Entity* hit = hit_id != 0 ? registry.find(hit_id) : nullptr;
+            weapon.note_impact(owner, impact_missed(weapon.target_mark(), hit, type, false),
+                               registry, &sim);
+        }
+    }
+
     // OnImpact(type, target): its script deals the damage.
     if (!L || beam->lua_table_ref() < 0) return;
     const int top = lua_gettop(L);

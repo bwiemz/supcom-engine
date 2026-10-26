@@ -26,6 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
+constexpr u32 kVersion = 92; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
 constexpr u32 kVersion = 90; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
@@ -400,8 +401,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.u32v(sim.intel_pass_);
     // sound_manager_, beat_observer_, checksum_trace_, entity_trace_,
     // rng_trace_, rng_trace_from_, rng_trace_to_, rng_trace_draws_,
-    // entity_trace_from_, entity_trace_to_, steer_log_, faf_exe_: the host's; bone_cache_,
-    // anim_cache_: caches
+    // entity_trace_from_, entity_trace_to_, steer_log_, faf_exe_, run_opponent_ai_: the host's;
+    // bone_cache_, anim_cache_: caches
     {
         std::vector<std::string> armor;
         armor.reserve(sim.armor_def_.table_.size());
