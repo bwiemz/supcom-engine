@@ -7,6 +7,7 @@
 #include "sim/build_placement.hpp"
 
 #include <array>
+#include <functional>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -47,16 +48,23 @@ std::vector<std::array<f32, 4>> line_runs(f32 x0, f32 y0, f32 x1, f32 y1, f32 th
 std::vector<std::array<f32, 4>> convex_rows(const std::array<f32, 4>& xs,
                                             const std::array<f32, 4>& ys, f32 row);
 
-/// The pads (skirts) of the structures standing or under way that the
-/// player sees, each with its height, outlined while a structure is placed
-std::vector<std::pair<sim::StructureSite, f32>> structure_pads(const sim::FrameView& view,
-                                                               const ReconView* recon);
+/// A structure's pad (skirt), outlined while a structure is placed: the
+/// structure, and where it stands
+struct StructurePad {
+    sim::StructureSite site;
+    f32 x = 0, y = 0, z = 0; ///< where it stands
+    u32 id = 0;
+};
 
-/// Which of `pads` a valid ghost on `ghost` lights up: those it touches
-std::vector<bool> adjacency_lit(const std::vector<sim::StructureSite>& pads,
-                                const sim::StructureSite& ghost);
+/// The pads of `army`'s live structures, standing or under way: those
+/// Moho outlines while a structure is placed (its camera's list of the
+/// focus army's units, GetArmyUnitsInFrustum)
+std::vector<StructurePad> structure_pads(const sim::FrameView& view, i32 army);
 
-/// The outline of a quad on screen (corners in order), `thickness` wide, as
+/// Whether structure `unit` gives a structure of `blueprint` placed beside
+/// it an adjacency bonus (gamemain.OnDetectAdjacencyBonus)
+using AdjacencyBonus = std::function<bool(u32 unit, const std::string& blueprint)>;
+
 /// A pad outlined while a structure is placed: on the ground at `y`, in a
 /// packed ARGB colour
 struct PadOutline {
@@ -71,12 +79,15 @@ inline constexpr u32 kOutlineDim = 0xD800D800u;
 inline constexpr u32 kOutlineInvalid = 0xD8D80000u;
 
 /// The adjacency outlines while placing a build (`ghost` and its line): each
-/// site's pad, then the `pads` of the structures standing or under way
-/// (structure_pads). Drawn as world shapes, four quads each: the
-/// screen-space overlay had spent a quad per pixel row of every pad in the
-/// world, and ran out of its budget in a built-up base.
-std::vector<PadOutline> build_outlines(const std::vector<std::pair<sim::StructureSite, f32>>& pads,
-                                       const BuildGhost& ghost);
+/// site's pad, then the `pads` (structure_pads). Drawn as world shapes, four
+/// quads each: the screen-space overlay had spent a quad per pixel row of
+/// every pad in the world, and ran out of its budget in a built-up base.
+/// Lit as Moho's CUIWorldView lights them (DrawBuildDragAdjacencyHighlights,
+/// 0x00854B70): each pad by the first site, in order, that it touches, that
+/// can be built, that no pad before it has lit and that its `bonus` allows;
+/// that site is lit with it.
+std::vector<PadOutline> build_outlines(const std::vector<StructurePad>& pads,
+                                       const BuildGhost& ghost, const AdjacencyBonus& bonus);
 
 /// Renders game overlays: health bars, selection rings, command lines.
 /// Uses the same UI pipeline (UIInstance quads, pixel coords, fallback white texture).

@@ -150,6 +150,25 @@ static void build_mode_blueprint(lua_State* uiL, osc::renderer::CommandMode& m) 
     lua_pop(uiL, 2);
 }
 
+bool detect_adjacency_bonus(lua_State* uiL, osc::u32 unit, const std::string& blueprint) {
+    const int top = lua_gettop(uiL);
+    osc::core::push_imported_function(uiL, osc::core::kGameMainModule, "OnDetectAdjacencyBonus");
+    osc::lua::push_units_for_ui(uiL, {unit});
+    lua_rawgeti(uiL, -1, 1);
+    lua_remove(uiL, -2); // the list
+    if (!osc::blueprints::push_blueprint(uiL, blueprint)) lua_pushnil(uiL);
+    bool bonus = false;
+    if (lua_pcall(uiL, 2, 1, 0) != 0) {
+        const char* err = lua_tostring(uiL, -1);
+        spdlog::warn("Error running '/lua/ui/game/gamemain.lua:OnDetectAdjacencyBonus': {}",
+                     err ? err : "<unknown>");
+    } else {
+        bonus = lua_toboolean(uiL, -1) != 0;
+    }
+    lua_settop(uiL, top);
+    return bonus;
+}
+
 /// FA's current command mode: GetCommandMode() -> {mode, data}, once the
 /// game UI has loaded the module. Build mode carries the footprint (for
 /// the ghost and the snap).
