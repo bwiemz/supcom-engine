@@ -569,10 +569,84 @@ static u32 launcher_of(const sim::Entity& e) {
     return e.entity_id();
 }
 
+/// What a projectile blueprint's Physics launches a projectile a script makes with (faf-re
+/// Entity.cpp's CreateProjectile, RProjectileBlueprint.cpp): its offset from its maker
+/// (Position{X,Y,Z}) and its direction (Direction{X,Y,Z}) where the script gives none, and its
+/// speed (InitialSpeed), each moved by up to its *Range either way. A field the blueprint leaves
+/// out is RProjectileBlueprintPhysics's default (0x0051B650): up, spread 1.5 either way across,
+/// at 1.
+struct ProjectileLaunch {
+    sim::Vector3 offset{};
+    sim::Vector3 offset_range{};
+    sim::Vector3 direction{0, 1, 0};
+    sim::Vector3 direction_range{1.5f, 0, 1.5f};
+    f32 speed = 1;
+    f32 speed_range = 0;
+};
+
+/// Nothing for an id with no blueprint (Moho's "Invalid blueprint" error): the
+/// projectile is made unlaunched.
+static std::optional<ProjectileLaunch> projectile_launch(lua_State* L, const std::string& bp_id) {
+    const int top = lua_gettop(L);
+    if (bp_id.empty() || !blueprints::push_blueprint(L, bp_id)) return std::nullopt;
+    ProjectileLaunch launch;
+    lua_pushstring(L, "Physics");
+    lua_rawget(L, -2);
+    if (lua_istable(L, -1)) {
+        const int physics = lua_gettop(L);
+        const auto number = [&](const char* key, f32 absent = 0.0f) {
+            lua_pushstring(L, key);
+            lua_rawget(L, physics);
+            const f32 value = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : absent;
+            lua_pop(L, 1);
+            return value;
+        };
+        launch.offset = {number("PositionX"), number("PositionY"), number("PositionZ")};
+        launch.offset_range = {number("PositionXRange"), number("PositionYRange"),
+                               number("PositionZRange")};
+        launch.direction = {number("DirectionX"), number("DirectionY", 1.0f), number("DirectionZ")};
+        launch.direction_range = {number("DirectionXRange", 1.5f), number("DirectionYRange"),
+                                  number("DirectionZRange", 1.5f)};
+        launch.speed = number("InitialSpeed", 1.0f);
+        launch.speed_range = number("InitialSpeedRange");
+    }
+    lua_settop(L, top);
+    return launch;
+}
+
+/// `base` moved by up to `range` either way, uniformly (Moho's FRand(-range, range) + base): a
+/// draw only for a range there is, as the engine's other spreads take
+static f32 spread(f32 base, f32 range, sim::SimRandom* rng) {
+    return rng && range != 0.0f ? base + rng->range(-range, range) : base;
+}
+
+/// Per axis, x then y then z
+static sim::Vector3 spread(const sim::Vector3& base, const sim::Vector3& range,
+                           sim::SimRandom* rng) {
+    const f32 x = spread(base.x, range.x, rng);
+    const f32 y = spread(base.y, range.y, rng);
+    return {x, y, spread(base.z, range.z, rng)};
+}
+
+/// Point a new projectile along `dir`, at `speed` (Moho's COORDS_Orient of its launch direction,
+/// its velocity forward); a zero direction leaves it as it was.
+static void aim_projectile(sim::Projectile& p, const sim::Vector3& dir, f32 speed) {
+    const f32 len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+    if (len < 1e-6f) return;
+    const sim::Vector3 d{dir.x / len, dir.y / len, dir.z / len};
+    p.set_orientation(sim::euler_to_quat(osc::dmath::atan2(d.x, d.z),
+                                         osc::dmath::atan2(-d.y, std::sqrt(d.x * d.x + d.z * d.z)),
+                                         0.0f));
+    p.velocity = {d.x * speed, d.y * speed, d.z * speed};
+}
+
 // entity:CreateProjectile(bp, offX, offY, offZ, dirX, dirY, dirZ): a
-// projectile at the entity's centre plus the offset (each may be nil),
-// launched by it, or by its launcher if it is a projectile (faf-re
-// Projectile::Projectile). A direction points it, at its blueprint's InitialSpeed.
+// projectile at the entity's centre plus the offset, launched by it, or by
+// its launcher if it is a projectile (faf-re Projectile::Projectile). An offset
+// or a direction left nil (or out) is its blueprint's, each axis spread by its
+// range (Moho's BuildRandomProjectileOffset, BuildRandomDirectionVector), and
+// it leaves along the direction at InitialSpeed spread by InitialSpeedRange
+// (GetRandomInitialSpeed): retail's death sparks, fire and plumes fly up and out.
 static int entity_CreateProjectile(lua_State* L) {
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushnil(L); return 1; }
@@ -582,18 +656,27 @@ static int entity_CreateProjectile(lua_State* L) {
 
     auto proj = std::make_unique<sim::Projectile>();
     proj->set_blueprint_id(lowercase_arg(L, 2));
+    sim::SimRandom* rng = &sim->entity_registry().sim_random();
+    const auto launch = projectile_launch(L, proj->blueprint_id());
+    const auto given = [&](int idx) {
+        return sim::Vector3{static_cast<f32>(luaL_optnumber(L, idx, 0)),
+                            static_cast<f32>(luaL_optnumber(L, idx + 1, 0)),
+                            static_cast<f32>(luaL_optnumber(L, idx + 2, 0))};
+    };
+    const sim::Vector3 offset = !lua_isnoneornil(L, 3) ? given(3)
+                                : launch ? spread(launch->offset, launch->offset_range, rng)
+                                         : sim::Vector3{};
+    const sim::Vector3 direction = !lua_isnoneornil(L, 6) ? given(6)
+                                   : launch
+                                       ? spread(launch->direction, launch->direction_range, rng)
+                                       : sim::Vector3{};
+    const f32 speed = launch ? spread(launch->speed, launch->speed_range, rng) : 0.0f;
     const sim::Vector3 at = e->position();
-    proj->set_position({at.x + static_cast<f32>(luaL_optnumber(L, 3, 0)),
-                        at.y + static_cast<f32>(luaL_optnumber(L, 4, 0)),
-                        at.z + static_cast<f32>(luaL_optnumber(L, 5, 0))});
+    proj->set_position({at.x + offset.x, at.y + offset.y, at.z + offset.z});
     proj->set_army(e->army());
     proj->launcher_id = launcher_of(*e);
     apply_script_projectile_physics(L, *proj);
-    if (lua_isnumber(L, 6) && lua_isnumber(L, 7) && lua_isnumber(L, 8)) {
-        aim_projectile(L, sim, *proj,
-                       {static_cast<f32>(lua_tonumber(L, 6)), static_cast<f32>(lua_tonumber(L, 7)),
-                        static_cast<f32>(lua_tonumber(L, 8))});
-    }
+    aim_projectile(*proj, direction, speed);
 
     u32 proj_id = sim->entity_registry().register_entity(std::move(proj));
     auto* proj_ptr = static_cast<sim::Projectile*>(
@@ -605,8 +688,11 @@ static int entity_CreateProjectile(lua_State* L) {
 }
 
 // entity:CreateProjectileAtBone(bp, bone): a projectile at the bone, facing
-// as it does (a unit's as posed), launched along it at its blueprint's
-// InitialSpeed. Retail tosses a destroyed unit's parts this way.
+// as it does (a unit's as posed), launched by its blueprint's direction, each
+// axis spread by its range, or along the bone where that comes to nothing, at
+// InitialSpeed spread by InitialSpeedRange. As Moho's, the velocity is the
+// direction times the speed, not made a unit first. Retail tosses a destroyed
+// unit's parts this way, up and out (DebrisBoneAttach*).
 static int entity_CreateProjectileAtBone(lua_State* L) {
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushnil(L); return 1; }
@@ -617,6 +703,11 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
     const i32 bone_idx = resolve_bone_index(e, L, 3);
     auto proj = std::make_unique<sim::Projectile>();
     proj->set_blueprint_id(lowercase_arg(L, 2));
+    sim::SimRandom* rng = &sim->entity_registry().sim_random();
+    const auto launch = projectile_launch(L, proj->blueprint_id());
+    sim::Vector3 direction =
+        launch ? spread(launch->direction, launch->direction_range, rng) : sim::Vector3{};
+    const f32 speed = launch ? spread(launch->speed, launch->speed_range, rng) : 0.0f;
     proj->set_position(bone_world_position(e, bone_idx));
     proj->set_army(e->army());
     proj->launcher_id = launcher_of(*e);
@@ -628,7 +719,10 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
             ? sim::quat_multiply(e->orientation(),
                                  bd->bones[static_cast<size_t>(bone_idx)].world_rotation)
             : e->orientation();
-    aim_projectile(L, sim, *proj, sim::quat_rotate(bone_world_rot, {0, 0, 1}));
+    proj->set_orientation(bone_world_rot);
+    if (direction.x == 0.0f && direction.y == 0.0f && direction.z == 0.0f)
+        direction = sim::quat_rotate(bone_world_rot, {0, 0, 1});
+    proj->velocity = {direction.x * speed, direction.y * speed, direction.z * speed};
 
     u32 proj_id = sim->entity_registry().register_entity(std::move(proj));
     auto* proj_ptr = static_cast<sim::Projectile*>(
