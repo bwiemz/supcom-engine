@@ -46,7 +46,7 @@ How to read it:
 
 | Retail behaviour kept | FAF's exe | Evidence | Status |
 |---|---|---|---|
-| A moving unit's intel is repainted once it has moved a third of its radius, or after 30 ticks | Also after 5 ticks: a slow unit's vision and radar trail it by at most 0.5 s instead of 3 s | faf-re `CIntelPosHandle::UpdatePos`; FA-Binary-Patches `hooks/IntelUpdate.cpp`; engine `intel_sources.hpp` | Open |
+| A moving unit's intel is repainted once it has moved a third of its radius, or after 30 ticks | Also after 5 ticks: a slow unit's vision and radar trail it by at most 0.5 s instead of 3 s | faf-re `CIntelPosHandle::UpdatePos`; FA-Binary-Patches `hooks/IntelUpdate.cpp`; engine `intel_sources.hpp`, `SimState::sync_intel` | Done on FAF's data (`SimState::faf_exe`); retail's keeps 30 |
 | Double-clicking a wall selects nothing more | Selects the walls of that type on screen | faf-re `HandleDoubleClickSelection`; FA-Binary-Patches `hooks/WallSelection.cpp`; engine `input_handler.cpp` | Open |
 
 ## Closed since the audits
