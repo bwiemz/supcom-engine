@@ -1494,7 +1494,7 @@ public:
     /// Where target point `index` is in the world (Moho's
     /// Unit::GetTargetPoint): its bone, the last for an index past them;
     /// for -1, or one with no bone in the mesh, its centre, half its
-    /// height up.
+    /// height up. On FAF's data, -1's is its collision box's centre.
     Vector3 target_point(i32 index) const;
     /// One of its target points at random (Moho's Unit::PickTargetPoint):
     /// -1, drawing nothing, with none.
