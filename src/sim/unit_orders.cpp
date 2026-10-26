@@ -56,6 +56,13 @@ f32 blueprint_economy_number(lua_State* L, const std::string& bp_id, const char*
 /// on the 10th), the brain hearing OnUnitCapLimitReached at each try at the cap.
 constexpr i32 kTaskRetryTicks = 10;
 
+/// FAF's StopReclaimWhenPaused: on FAF's data a paused unit's reclaim of a
+/// prop holds. Retail's paused reclaimer goes on, and a unit target (a wreck
+/// to be, or a unit being built) is reclaimed either way.
+bool reclaim_held_by_pause(const Unit& unit, const Entity* target, const SimContext& ctx) {
+    return unit.is_paused() && target && target->is_prop() && ctx.sim && ctx.sim->faf_exe();
+}
+
 bool build_blocked_by_lobby_rules(const Unit& builder, const UnitCommand& cmd,
                                   const SimContext& ctx) {
     if (!ctx.sim) return false;
@@ -1244,6 +1251,10 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
                      entity_id(), cmd.target_id, costs.mass, costs.energy, reclaim_time);
     }
 
+    // FAF's patched exe holds a paused unit's reclaim of a prop: no progress
+    // and nothing banked, the order kept (FA-Binary-Patches
+    // section/StopReclaimWhenPaused.cpp, in CUnitReclaimTask::TaskTick).
+    reclaim_held_ = reclaim_held_by_pause(*this, registry.find(cmd.target_id), ctx);
     if (reclaim_wait_ > 0) {
         const auto* reclaimed = registry.find(cmd.target_id);
         if (reclaim_wait_ == 1 && reclaimed && !reclaim_arm_ready(*reclaimed)) {
@@ -1288,7 +1299,7 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     }
 
     // Progress reclaim
-    if (!progress_reclaim(dt, registry, L)) {
+    if (!progress_reclaim(reclaim_held_ ? 0.0 : dt, registry, L)) {
         return OrderStep::Next;
     }
     return OrderStep::Hold;
@@ -1927,7 +1938,8 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             }
 
             if (reclaim_target_id_ != 0) {
-                if (!progress_reclaim_assist(dt, registry)) {
+                const bool held = reclaim_held_by_pause(*this, guarded_reclaim, ctx);
+                if (!progress_reclaim_assist(held ? 0.0 : dt, registry)) {
                     stop_reclaiming(ctx.L, &ctx.registry);
                 }
             }

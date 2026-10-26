@@ -1214,6 +1214,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.i32v(u.reclaim_wait_);
     w.b(u.builder_on_target_);
     w.b(u.arm_awaited_);
+    // reclaim_held_: set by the tick's orders and taken by its bank, false between ticks
     w.u32v(u.repair_target_id_);
     w.f64v(u.repair_build_time_);
     w.f64v(u.repair_cost_mass_);

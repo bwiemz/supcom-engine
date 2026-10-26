@@ -1016,8 +1016,9 @@ void Unit::set_consumption_active(bool on, ArmyBrain* army) {
 }
 
 void Unit::bank_reclaim(ArmyBrain* army) {
-    economy_.reclaimed_mass = army ? economy_.reclaim_mass : 0;
-    economy_.reclaimed_energy = army ? economy_.reclaim_energy : 0;
+    const bool banks = !std::exchange(reclaim_held_, false) && army;
+    economy_.reclaimed_mass = banks ? economy_.reclaim_mass : 0;
+    economy_.reclaimed_energy = banks ? economy_.reclaim_energy : 0;
     if (army && (economy_.reclaimed_mass != 0.0 || economy_.reclaimed_energy != 0.0)) {
         army->bank_reclaim(economy_.reclaimed_mass, economy_.reclaimed_energy);
     }
