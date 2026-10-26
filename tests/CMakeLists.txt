@@ -123,6 +123,7 @@ add_executable(osc_tests
     test_build_template.cpp
     test_command_graph.cpp
     test_utf8_substring.cpp
+    test_get_version.cpp
     test_overlay_footprint.cpp
     test_font_cache.cpp
     test_minimap_area.cpp
