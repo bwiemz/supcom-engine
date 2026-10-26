@@ -6,7 +6,6 @@ method OnAttachedKilled
 method OnBeingBuiltProgress
 method OnBuildProgress
 method OnIconsVisible
-method OnNukeArmed
 method OnSpecialAction
 method OnStart
 method OnSubtitle

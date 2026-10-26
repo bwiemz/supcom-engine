@@ -9952,11 +9952,15 @@ void test_missile(TestContext& ctx) {
                     return proj
                 end
             end
-            local on_start, on_end = u.OnSiloBuildStart, u.OnSiloBuildEnd
+            local on_start, on_end, on_armed = u.OnSiloBuildStart, u.OnSiloBuildEnd, u.OnNukeArmed
+            local function stored(self)
+                return self:GetTacticalSiloAmmoCount() + self:GetNukeSiloAmmoCount()
+            end
             u.OnSiloBuildStart = function(self, weapon)
                 table.insert(rec.builds, {start = GetGameTick(), weapon = weapon,
                                           energy = __osc_consumed(self, 'Energy'),
-                                          mass = __osc_consumed(self, 'Mass')})
+                                          mass = __osc_consumed(self, 'Mass'),
+                                          stored_at_start = stored(self)})
                 on_start(self, weapon)
             end
             u.OnSiloBuildEnd = function(self, weapon)
@@ -9964,7 +9968,17 @@ void test_missile(TestContext& ctx) {
                 b.done = GetGameTick()
                 b.energy = __osc_consumed(self, 'Energy') - b.energy
                 b.mass = __osc_consumed(self, 'Mass') - b.mass
+                b.stored_at_end = stored(self)
                 on_end(self, weapon)
+            end
+            -- Moho's SiloTick: OnNukeArmed after OnSiloBuildEnd, for any missile
+            u.OnNukeArmed = function(self, weapon)
+                local b = rec.builds[table.getn(rec.builds)]
+                b.armed = GetGameTick()
+                b.armed_after_end = b.done ~= nil
+                b.armed_weapon = weapon == b.weapon
+                b.stored_at_armed = stored(self)
+                on_armed(self, weapon)
             end
             u.__osc = rec
             return u
@@ -10169,6 +10183,19 @@ void test_missile(TestContext& ctx) {
             error(string.format('A spent %g E and %g M', b.energy, b.mass))
         end
         if __osc_a:IsUnitState('SiloBuildingAmmo') then error('A is still building') end
+    )");
+    lua_check("Test 3b: OnNukeArmed follows OnSiloBuildEnd, a tactical missile too, and the "
+              "missile is stored after both",
+              R"(
+        local b = __osc_a.__osc.builds[1]
+        if b.armed ~= b.done or not b.armed_after_end then
+            error('OnNukeArmed at ' .. tostring(b.armed) .. ', OnSiloBuildEnd at ' .. tostring(b.done))
+        end
+        if not b.armed_weapon then error('OnNukeArmed heard another weapon') end
+        if b.stored_at_end ~= b.stored_at_start or b.stored_at_armed ~= b.stored_at_start then
+            error('stored ' .. b.stored_at_start .. ' at the start, ' .. b.stored_at_end .. ' at its end, '
+                  .. b.stored_at_armed .. ' armed')
+        end
     )");
     lua_check("Test 4: assisted by four engineers, B built its missile faster, for the same cost",
               R"(

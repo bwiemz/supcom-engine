@@ -4751,13 +4751,14 @@ void Unit::update_silo(f64 dt, f32 efficiency, lua_State* L) {
         if (!is_building() && !enhancing_) work_progress_ = static_cast<f32>(silo_build_.progress);
         // Done, allowing for the rounding of its blocks' sum.
         if (silo_build_.progress >= 1.0 - 1e-9) {
-            // Done: into storage, and the order it was for is met.
+            // Done (Moho's SiloTick, SBS_Finish): its script hears OnSiloBuildEnd and OnNukeArmed,
+            // then the missile goes into storage and the order it was for is met.
             const bool nuke = silo_build_.nuke;
+            end_silo_build(L);
             give_silo_ammo(nuke, 1);
             spdlog::info("Silo: {} #{} built a {} missile ({} stored)", unit_id_, entity_id(),
                          nuke ? "nuclear" : "tactical", silo_ammo(nuke));
             if (!silo_orders_.empty() && silo_orders_.front() == nuke) silo_orders_.pop_front();
-            end_silo_build(L);
             return;
         }
     }
@@ -4785,7 +4786,11 @@ void Unit::end_silo_build(lua_State* L) {
     if (!silo_building()) return;
     const auto index = static_cast<size_t>(silo_build_.weapon);
     abandon_silo_build();
-    if (index < weapons_.size()) call_with_weapon(L, *this, "OnSiloBuildEnd", *weapons_[index]);
+    if (index >= weapons_.size()) return;
+    // For a missile of either kind (DispatchWeaponCallback): retail's OnNukeArmed has its brain
+    // announce it when the blueprint's Audio names a NukeArmed sound
+    call_with_weapon(L, *this, "OnSiloBuildEnd", *weapons_[index]);
+    call_with_weapon(L, *this, "OnNukeArmed", *weapons_[index]);
 }
 
 void Unit::stop_silo_build() {
