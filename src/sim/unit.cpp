@@ -1245,12 +1245,16 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     if (turned_in_place_ && ctx.terrain && snaps_to_ground()) {
         stand_on_ground(ctx.terrain, pending_position(), pending_orientation());
     }
+    const bool moho = ctx.sim && ctx.sim->moho_pathing();
+    bool moved = drove_;
     if (!drove_ && !is_air_unit()) {
         const Vector3 was = pending_position();
         const Quaternion facing = pending_orientation();
-        const bool moho = ctx.sim && ctx.sim->moho_pathing();
-        if (moho) coast_moho(ctx.terrain);
-        else coast(dt, ctx.terrain);
+        if (moho) {
+            moved = coast_moho(ctx.terrain);
+        } else {
+            moved = coast(dt, ctx.terrain) || turned_in_place_;
+        }
         // With Moho's pathing, a unit stopping is braked by its motion
         // (CUnitMotion::Stop, then CalcMoveCommon), which puts a step onto
         // ground it won't fit back, as the drive does: it stops there, and
@@ -1272,17 +1276,17 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
         }
     }
     surface_collision_ = false; // CalcMoveLand has met what it touched
+    // A sub dives or surfaces, moving or not (M206o).
+    tick_dive(ctx.terrain, L, moved, !moho);
+    if (!in_registry()) {
+        return false;
+    }
     // Moho's motion task ends a ground unit's tick in MoveTo, which normalizes its
     // orientation, standing or not (CUnitMotion::MoveTo, 0x006B92E0).
     // (A hover's comes after its hover tick, which tilts it.)
-    if (ctx.sim && ctx.sim->moho_pathing() && is_mobile() && !can_fly() && !immobile() &&
-        parent_entity_id() == 0 && !crashing_ && !is_hover())
+    if (moho && is_mobile() && !can_fly() && !immobile() && parent_entity_id() == 0 && !crashing_ &&
+        !is_hover()) {
         set_orientation(quat_normalized_moho(pending_orientation()));
-
-    // A sub dives or surfaces, moving or not (M206o).
-    tick_dive(ctx.terrain, L);
-    if (!in_registry()) {
-        return false;
     }
 
     // A hovering aircraft circles its work (item 6).
@@ -3398,12 +3402,12 @@ void Unit::add_impulse(const Vector3& impulse, bool moving) {
     pushed_ = true;
 }
 
-void Unit::coast_moho(const map::Terrain* terrain) {
+bool Unit::coast_moho(const map::Terrain* terrain) {
     target_speed_ = 0;
     if (immobile_ || parent_entity_id() != 0) {
         ground_speed_ = 0;
         motion_velocity_ = {};
-        return;
+        return false;
     }
     Vector3 v = motion_velocity_;
     if (v.x * v.x + v.y * v.y + v.z * v.z < 0.000001f && !turned_in_place_) {
@@ -3414,7 +3418,7 @@ void Unit::coast_moho(const map::Terrain* terrain) {
         // mProcessSurfaceCollision, set as it is made and as it is pushed).
         if (surface_collision_ && terrain)
             stand_on_ground(terrain, pending_position(), pending_orientation(), false);
-        return;
+        return false;
     }
     const f32 rate = drive_.max_brake > 0 ? drive_.max_brake : drive_.max_accel;
     const f32 brake = rate * accel_mult_ * 0.0099999998f;
@@ -3439,14 +3443,17 @@ void Unit::coast_moho(const map::Terrain* terrain) {
     } else {
         set_position(p);
     }
+    return true;
 }
 
-void Unit::coast(f64 dt, const map::Terrain* terrain) {
+bool Unit::coast(f64 dt, const map::Terrain* terrain) {
     target_speed_ = 0;
-    if (ground_speed_ == 0) return;
+    if (ground_speed_ == 0) {
+        return false;
+    }
     if (immobile_ || parent_entity_id() != 0) {
         ground_speed_ = 0;
-        return;
+        return false;
     }
     const f32 step = static_cast<f32>(dt);
     // Moho's CUnitMotion::CalcMoveCommon with no spline node (faf-re): under
@@ -3458,7 +3465,7 @@ void Unit::coast(f64 dt, const map::Terrain* terrain) {
     const f32 old_speed = ground_speed_;
     if (std::abs(old_speed) * step < 0.001f) {
         ground_speed_ = 0;
-        return;
+        return false;
     }
     const f32 rate = drive_.max_brake > 0 ? drive_.max_brake : drive_.max_accel;
     const f32 brake = rate > 0 ? rate * accel_mult_ * step : std::abs(old_speed);
@@ -3484,6 +3491,7 @@ void Unit::coast(f64 dt, const map::Terrain* terrain) {
     } else {
         set_position(p);
     }
+    return true;
 }
 
 namespace {
@@ -4129,9 +4137,11 @@ void Unit::start_surfacing(lua_State* L) {
     set_vert_event("Up", L);
 }
 
-void Unit::tick_dive(const map::Terrain* terrain, lua_State* L) {
+void Unit::tick_dive(const map::Terrain* terrain, lua_State* L, bool moved, bool normalize) {
     if (!terrain) return;
     const f32 water = terrain->water_elevation();
+    bool dived = false;
+    f32 speed = 0.0f;
     if (vert_motion_ != VertMotion::None) {
         // Down to its Physics.Elevation, but no deeper than a quarter over
         // the seabed; at DiveSurfaceSpeed/10 a tick, eased along a sine
@@ -4142,6 +4152,7 @@ void Unit::tick_dive(const map::Terrain* terrain, lua_State* L) {
             set_unit_state("MovingDown", false);
             set_unit_state("MovingUp", false);
         } else {
+            dived = true;
             const Vector3& at = pending_position();
             const f32 floor =
                 std::min(0.0f, terrain->get_terrain_height(at.x, at.z) + 0.25f - water);
@@ -4149,7 +4160,7 @@ void Unit::tick_dive(const map::Terrain* terrain, lua_State* L) {
             f32 phase = std::abs(sub_elevation_ / limit);
             if (phase > 0.5f) phase = 1.0f - phase;
             const f32 base = dive_surface_speed_ * 0.1f;
-            const f32 speed = std::max(base * 0.1f, osc::dmath::sin(phase * 3.1415927f) * base);
+            speed = std::max(base * 0.1f, osc::dmath::sin(phase * 3.1415927f) * base);
             if (vert_motion_ == VertMotion::Up) {
                 sub_elevation_ = std::min(0.0f, sub_elevation_ + speed);
                 if (sub_elevation_ == 0.0f) {
@@ -4187,6 +4198,27 @@ void Unit::tick_dive(const map::Terrain* terrain, lua_State* L) {
         at.y = water + sub_elevation_;
         set_position(at);
     }
+    if (!can_fly() && !snaps_to_ground() &&
+        (moved || dived || dive_lean_.x * dive_lean_.x + dive_lean_.z * dive_lean_.z > 0.000001f)) {
+        const Quaternion tilted = tilt_to(pending_orientation(), dive_lean_normal(speed));
+        set_orientation(normalize ? quat_normalized(tilted) : tilted);
+    }
+}
+
+Vector3 Unit::dive_lean_normal(f32 diving_speed) {
+    Vector3 target;
+    if (vert_motion_ != VertMotion::None) {
+        const Quaternion& q = orientation();
+        const f32 w2 = q.w * 2.0f;
+        const f32 x2 = q.x * 2.0f;
+        const f32 y2 = q.y * 2.0f;
+        const f32 scale = vert_motion_ == VertMotion::Down ? 4.0f : -4.0f;
+        target.x = (w2 * q.y + x2 * q.z) * diving_speed * scale;
+        target.z = (1.0f - (y2 * q.y + x2 * q.x)) * diving_speed * scale;
+    }
+    dive_lean_.x = target.x * 0.25f + dive_lean_.x * 0.75f;
+    dive_lean_.z = target.z * 0.25f + dive_lean_.z * 0.75f;
+    return normalized({dive_lean_.x, 1.0f, dive_lean_.z});
 }
 
 void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {
