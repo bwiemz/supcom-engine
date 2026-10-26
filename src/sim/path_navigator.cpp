@@ -219,13 +219,15 @@ bool PathNavigator::try_advance_target_point() {
     const auto size = static_cast<i32>(path_.size());
     if (size <= 0) return false;
     // The farthest of the next ten (or the straight run) under 50 cells off
-    // it can slide straight to; with no forward probe, only the next one.
+    // it can slide straight to (FAF's exe makes the 50 a setting); with no
+    // forward probe, only the next one.
     const i32 furthest =
         forward_probe_ ? std::min(size - 1, std::max(10, first)) : std::min(size - 1, 1);
     i32 selected = -1;
     for (i32 i = furthest; i >= first; --i) {
         const Cell cand = path_[static_cast<size_t>(i)];
-        if (i != first && cell_distance(current_, cand) >= 50.0f) continue;
+        if (i != first && cell_distance(current_, cand) >= world_.personal_pos_max_distance)
+            continue;
         const bool occupy = can_occupy(current_, cand);
         const bool clear = manhattan(current_, cand) > 1 ? can_reach_from_current(cand)
                                                          : can_transition(cand, cand);

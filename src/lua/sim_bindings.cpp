@@ -5555,6 +5555,14 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
         lua_pushboolean(L, sim && sim->game_ended());
         return 1;
     });
+    // FAF's patched exe's (FA-Binary-Patches section/PathfindingTweaks.cpp):
+    // FAF's simInit sets 9999, so that a long move takes no hidden waypoints
+    state.register_function("SetNavigatorPersonalPosMaxDistance", [](lua_State* L) -> int {
+        if (auto* sim = get_sim(L))
+            sim->set_navigator_personal_pos_max_distance(
+                static_cast<f32>(luaL_optnumber(L, 1, 50.0)));
+        return 0;
+    });
 
     // Entity queries
     state.register_function("GetEntityById", l_GetEntityById);

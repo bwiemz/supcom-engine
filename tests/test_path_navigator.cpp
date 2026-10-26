@@ -106,6 +106,8 @@ struct Walk {
     int ticks = 0;
     bool moved = false;
     const path::MobileBlockers* blockers = nullptr;
+    /// SetNavigatorPersonalPosMaxDistance's cells (Moho's 50)
+    f32 personal = 50.0f;
 
     PathWorld world() const {
         PathWorld w{terrain.get(),
@@ -115,6 +117,7 @@ struct Walk {
                     100000};
         w.blockers = blockers;
         w.owner = 1;
+        w.personal_pos_max_distance = personal;
         return w;
     }
     void start(i32 c, f32 sx, f32 sz, Cell goal) {
@@ -404,4 +407,29 @@ TEST_CASE("A wall put across its way: within 7 ticks it asks the way again, befo
     CHECK(asked_at - put_at <= 7);
     CHECK_FALSE(w.bumped);
     CHECK(w.nav.current() == Cell{110, 64});
+}
+
+TEST_CASE("Under FAF's SetNavigatorPersonalPosMaxDistance a navigator picks targets past 50 "
+          "cells",
+          "[path_navigator]") {
+    // Moho's TryAdvanceTargetPoint takes no next target 50 cells or more off;
+    // FAF's patched exe makes the 50 a setting, which FAF's simInit puts at
+    // 9999 (FA-Binary-Patches PathfindingTweaks)
+    for (const f32 personal : {50.0f, 9999.0f}) {
+        INFO("distance " << personal);
+        Walk w;
+        w.personal = personal;
+        w.start(0, 5.5f, 5.5f, {120, 120});
+        f32 farthest = 0;
+        while (w.ticks < 400 && w.step()) {
+            if (w.nav.state() != State::HasPath) continue;
+            const Cell a = w.nav.current();
+            const Cell b = w.nav.target();
+            farthest = std::max(
+                farthest, std::hypot(static_cast<f32>(a.x - b.x), static_cast<f32>(a.z - b.z)));
+        }
+        CHECK(w.nav.current() == Cell{120, 120});
+        if (personal < 100.0f) CHECK(farthest < 50.0f);
+        else CHECK(farthest > 100.0f);
+    }
 }

@@ -113,6 +113,8 @@ path::PathWorld load_world(StateReader& r, const SimState& sim) {
     // The mobile units are the sim's, asked for the unit it was saved for.
     world.blockers = r.b() ? &sim.unit_blockers() : nullptr;
     world.owner = r.u32v();
+    // The sim's, which isn't saved either
+    world.personal_pos_max_distance = sim.navigator_personal_pos_max_distance();
     return world;
 }
 
