@@ -2535,7 +2535,8 @@ bool observing_allowed(const sim::SimState& sim) {
 /// Moho's CWldSession::ValidateFocusArmyRequest: a player may watch an army
 /// that takes their commands; anyone, with cheats on or the game over; a
 /// replay's watcher, any; and, where observing is allowed, a player with no
-/// army left in the game, any.
+/// army left in the game, any. On FAF's data, a player with no army taking
+/// their commands at all, in the game or out.
 bool focus_request_allowed(sim::SimState& sim, int army) {
     if (!sim.command_sources_known()) return true; // nothing numbers the players
     const auto& mp = mp_net_state();
@@ -2543,9 +2544,13 @@ bool focus_request_allowed(sim::SimState& sim, int army) {
     const u32 local = mp.active() ? mp.local_source : 0;
     if (army >= 0 && sim.army_has_command_source(army, local)) return true;
     if (!observing_allowed(sim)) return false;
+    // FAF's patched exe refuses while an army out of the game takes them
+    // too (FA-Binary-Patches hooks/ObserverFix.cpp: the out-of-game test's
+    // `je` made a `jmp`); FAF's victory scripts take a defeated player's
+    // command sources away once their allies are out as well.
     for (size_t i = 0; i < sim.army_count(); ++i) {
         const auto* brain = sim.army_at(i);
-        if (brain && !brain->is_defeated() &&
+        if (brain && (sim.faf_exe() || !brain->is_defeated()) &&
             sim.army_has_command_source(static_cast<i32>(i), local))
             return false;
     }
