@@ -249,9 +249,10 @@ static int l_EntityCategoryGetUnitList(lua_State* L) {
     return 1;
 }
 
-/// GetVersion() — return a version string.
-static int l_GetVersion(lua_State* L) {
-    lua_pushstring(L, "1.0.0");
+int l_GetVersion(lua_State* L) {
+    if (const int n = lua_gettop(L); n != 0)
+        return arg_count_error(L, "GetVersion() -> string", 0, n);
+    lua_pushstring(L, kEngineVersion);
     return 1;
 }
 

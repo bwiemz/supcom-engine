@@ -23,7 +23,6 @@ GetScreenPos worldview_GetScreenPos
 GetSeaUnitsEmphasis <lambda>
 GetTankUnitsEmphasis <lambda>
 GetTerrainTypeOffset l_GetTerrainTypeOffset
-GetVersion l_GetVersion
 InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService
 IsKnownFake blip_IsKnownFake
 IsNISMode l_IsNISMode
