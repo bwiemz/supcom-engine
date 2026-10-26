@@ -243,6 +243,8 @@ public:
     void drop_adjacency(Unit& unit);
     /// Moho's CAiTransportImpl::TransportDetachAllUnits (ai/CAiTransportImpl.cpp:1533).
     void detach_all_units(Unit& transport, bool destroy_some);
+    /// Moho's CAiTransportImpl::TransportDetachUnit.
+    void transport_detach_unit(Unit& transport, Unit& unit, const map::Terrain* terrain = nullptr);
     /// A killed unit: its army's loss, and the kill for the killer's army if
     /// it is an enemy (Moho's Unit::Kill)
     void record_unit_death(Unit& unit, i32 killer_army);

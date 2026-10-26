@@ -222,16 +222,9 @@ void SimState::on_destroy(Entity& entity) {
             detach_all_units(unit, false);
         } else {
             // A dying transport set down or killed what it carried as it died; what it still
-            // holds are dead units it kept (killed where they couldn't stand). Moho's link to a
-            // destroyed parent goes with it: they are held no longer.
-            for (const u32 id : unit.cargo_ids()) {
-                Entity* e = entity_registry_.find(id);
-                if (!e || !e->is_unit()) continue;
-                auto& cargo = static_cast<Unit&>(*e);
-                if (cargo.transport_id() != unit.entity_id()) continue;
-                cargo.set_transport_id(0);
-                cargo.set_unit_state("Attached", false);
-            }
+            // holds are units it kept where they couldn't stand. Moho's link to a destroyed
+            // parent goes with it: they are held no longer.
+            unit.detach_cargo(unit.cargo_ids(), entity_registry_, L_, terrain_.get(), false);
         }
         if (!unit.transferred()) {
             const Vector3 pos = unit.position();
@@ -327,7 +320,11 @@ void SimState::detach_all_units(Unit& transport, bool destroy_some) {
         }
         set_down.push_back(id);
     }
-    transport.detach_cargo(set_down, entity_registry_, L_, terrain_.get());
+    for (const u32 id : set_down) {
+        if (Entity* e = entity_registry_.find(id); e && !e->destroyed()) {
+            transport_detach_unit(transport, static_cast<Unit&>(*e), terrain_.get());
+        }
+    }
     const std::vector<u32> stored = transport.stored_ids();
     for (const u32 id : stored) {
         Entity* e = entity_registry_.find(id);
@@ -345,6 +342,20 @@ void SimState::detach_all_units(Unit& transport, bool destroy_some) {
             entity_registry_.destroy(unit);
         }
     }
+}
+
+void SimState::transport_detach_unit(Unit& transport, Unit& unit, const map::Terrain* terrain) {
+    if (transport.is_air_unit() &&
+        footprint_fits_at(unit.footprint(), unit.position().x, unit.position().z) == 0) {
+        return;
+    }
+    if (transport.is_stored_unit(unit.entity_id())) {
+        transport.forget_stored(unit.entity_id());
+        unit.set_transport_id(0);
+        unit.set_unit_state("Attached", false);
+        return;
+    }
+    transport.detach_cargo({unit.entity_id()}, entity_registry_, L_, terrain);
 }
 
 void SimState::record_unit_death(Unit& unit, i32 killer_army) {

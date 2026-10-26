@@ -534,13 +534,7 @@ int entity_Kill(lua_State* L) {
                                    ? sim->entity_registry().find(unit->transport_id())
                                    : nullptr;
         if (carrier && carrier->is_unit()) {
-            // CAiTransportImpl::TransportDetachUnit: an aircraft keeps a unit whose footprint
-            // can't stand where it hangs; it hears OnAttachedKilled below.
-            auto* transport = static_cast<sim::Unit*>(carrier);
-            const bool held = transport->layer() == "Air" &&
-                              sim->footprint_fits_at(unit->footprint(), unit->position().x,
-                                                     unit->position().z) == 0;
-            if (!held) transport->detach_cargo({unit->entity_id()}, sim->entity_registry(), L);
+            sim->transport_detach_unit(static_cast<sim::Unit&>(*carrier), *unit);
         }
         if (carrier || (unit->is_being_built() && unit->fraction_complete() < 0.5f)) {
             lua_pushnumber(L, 10);
@@ -1106,7 +1100,7 @@ static int entity_DetachFrom(lua_State* L) {
         sim::Entity* transport = sim ? sim->entity_registry().find(unit->transport_id()) : nullptr;
         if (transport && transport->is_unit()) {
             static_cast<sim::Unit*>(transport)->detach_cargo(
-                {unit->entity_id()}, sim->entity_registry(), L, sim->terrain());
+                {unit->entity_id()}, sim->entity_registry(), L, sim->terrain(), false);
         }
     }
     return 0;
