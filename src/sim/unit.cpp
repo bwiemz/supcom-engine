@@ -1482,6 +1482,7 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
 
     lua_pop(L, 2); // pop entity_id + target_tbl from create_building_unit
     work_progress_ = frame ? frame->fraction_complete() : 0.0f;
+    build_progress_seen_ = 0.0f;
     return BuildStart::Started;
 }
 
@@ -1509,7 +1510,14 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
     }
     if (paused_ || idle_helper) {
         work_progress_ = target->fraction_complete();
-        return true;
+        if (paused_) {
+            seen_while_paused(L, target->fraction_complete());
+            return true;
+        }
+        // A helper with no build rate isn't paused: Moho's UpdateWorkProgress runs on with
+        // nothing consumed, and so still looks at the build
+        report_build_progress(L, registry, target->entity_id());
+        return !destroyed() && in_registry();
     }
 
     if (build_time_ <= 0 || build_rate_ <= 0) {
@@ -1520,6 +1528,14 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
     f32 progress_rate = build_rate_ / static_cast<f32>(build_time_);
     static_cast<Unit*>(target)->materialize(progress_rate * static_cast<f32>(dt) * efficiency);
     work_progress_ = target->fraction_complete();
+    const u32 target_id = target->entity_id();
+    report_build_progress(L, registry, target_id);
+    if (destroyed() || !in_registry()) return false;
+    target = registry.find(target_id);
+    if (!target || target->destroyed()) {
+        fail_build(registry, L);
+        return false;
+    }
 
     if (work_progress_ >= 1.0f) {
         if (built) *built = true;
@@ -1722,6 +1738,58 @@ void Unit::fail_build(EntityRegistry& registry, lua_State* L) {
     tell_build_failed(*this, L, frame_ref, order.c_str());
 }
 
+namespace {
+
+/// self:method(other, was, now) on a unit's script, an error logged (Moho's
+/// CScriptObject::RunScript_OnBuildProgress and RunScript_OnBeingBuiltProgress).
+void run_progress_script(lua_State* L, EntityRegistry& registry, u32 self_id, const char* method,
+                         u32 other_id, f32 was, f32 now) {
+    const Entity* self = registry.find(self_id);
+    if (!self || self->lua_table_ref() < 0) return;
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, self->lua_table_ref());
+    const int t = lua_gettop(L);
+    lua_pushstring(L, method);
+    lua_gettable(L, t);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, t);
+        const Entity* other = registry.find(other_id);
+        if (other && other->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, other->lua_table_ref());
+        } else {
+            lua_pushnil(L);
+        }
+        lua_pushnumber(L, was);
+        lua_pushnumber(L, now);
+        if (lua_pcall(L, 4, 0, 0) != 0) {
+            log_script_warning(registry.find(self_id), method, lua_tostring(L, -1));
+        }
+    }
+    lua_settop(L, top);
+}
+
+} // namespace
+
+void Unit::report_build_progress(lua_State* L, EntityRegistry& registry, u32 target_id) {
+    const Entity* target = registry.find(target_id);
+    if (!target) return;
+    const f32 was = build_progress_seen_;
+    const f32 now = target->fraction_complete();
+    build_progress_seen_ = now;
+    // DidCrossBuildProgressBand
+    const auto crossed = [&](f32 band) { return was < band && now >= band; };
+    if (!L || !(crossed(0.25f) || crossed(0.5f) || crossed(0.75f))) return;
+    const u32 self_id = entity_id();
+    run_progress_script(L, registry, self_id, "OnBuildProgress", target_id, was, now);
+    run_progress_script(L, registry, target_id, "OnBeingBuiltProgress", self_id, was, now);
+}
+
+void Unit::seen_while_paused(lua_State* L, f32 fraction) {
+    if (const SimState* sim = L ? get_sim(L) : nullptr; sim && sim->faf_exe()) {
+        build_progress_seen_ = fraction;
+    }
+}
+
 void Unit::release_build(lua_State* L, EntityRegistry& registry) {
     const bool mobile = build_order_ == "MobileBuild";
     stop_assisting(L, &registry);
@@ -1730,8 +1798,7 @@ void Unit::release_build(lua_State* L, EntityRegistry& registry) {
     }
 }
 
-bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
-                                  f32 efficiency) {
+bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry, lua_State* L, f32 efficiency) {
     auto* target = registry.find(build_target_id_);
     if (!target || target->destroyed() || !target->is_unit()) return false;
 
@@ -1742,12 +1809,18 @@ bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
 
     if (paused_ || build_rate_ <= 0) {
         work_progress_ = target->fraction_complete();
+        if (paused_) {
+            seen_while_paused(L, target->fraction_complete());
+        } else {
+            report_build_progress(L, registry, target->entity_id()); // nothing consumed
+        }
         return true;
     }
 
     f32 progress_rate = build_rate_ / static_cast<f32>(build_time_);
     static_cast<Unit*>(target)->materialize(progress_rate * static_cast<f32>(dt) * efficiency);
     work_progress_ = target->fraction_complete();
+    report_build_progress(L, registry, target->entity_id());
 
     return work_progress_ < 1.0f;
 }

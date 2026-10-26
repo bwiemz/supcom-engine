@@ -1,6 +1,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "sim/lua_sim.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -755,4 +756,120 @@ TEST_CASE("A slow helper's step brings the unit it helps build level with its he
     CHECK(w.site->health() ==
           Catch::Approx(w.site->max_health() * w.site->fraction_complete() + 0.05f));
     CHECK(helper->work_progress() == w.site->fraction_complete());
+}
+
+namespace {
+
+/// OnBuildProgress and OnBeingBuiltProgress, heard in `progress` as "<who> <band>": the first of
+/// 0.25, 0.5 and 0.75 the call's old and new fractions straddle, " from 0" after it for an old of
+/// 0.
+void listen_to_progress(AssistSim& w) {
+    const std::string code = R"(
+        progress = {}
+        local function heard(who, old, new)
+            local band = 'none'
+            for _, b in {0.25, 0.5, 0.75} do
+                if band == 'none' and old < b and new >= b then band = tostring(b) end
+            end
+            table.insert(progress, who .. ' ' .. band .. (old == 0 and ' from 0' or ''))
+        end
+        function Builder:OnBuildProgress(unit, old, new) heard(self.name, old, new) end
+        Site = {OnBeingBuiltProgress = function(self, builder, old, new)
+            heard('site:' .. builder.name, old, new)
+        end}
+        Site.__index = Site
+    )";
+    REQUIRE(luaL_loadbuffer(w.L, code.c_str(), code.size(), "progress") == 0);
+    REQUIRE(lua_pcall(w.L, 0, 0, 0) == 0);
+    lua_rawgeti(w.L, LUA_REGISTRYINDEX, w.site->lua_table_ref());
+    lua_getglobal(w.L, "Site");
+    lua_setmetatable(w.L, -2);
+    lua_pop(w.L, 1);
+}
+
+std::string progress(AssistSim& w) {
+    const std::string code = "local s = table.concat(progress, ','); progress = {}; return s";
+    REQUIRE(luaL_loadbuffer(w.L, code.c_str(), code.size(), "p") == 0);
+    REQUIRE(lua_pcall(w.L, 0, 1, 0) == 0);
+    std::string v = lua_tostring(w.L, -1);
+    lua_pop(w.L, 1);
+    return v;
+}
+
+} // namespace
+
+TEST_CASE("A builder and what it builds hear each quarter the build passes",
+          "[build][assist][build-progress]") {
+    // Moho's CBuildTaskHelper::UpdateWorkProgress: crossing 0.25, 0.5 or 0.75
+    // since the builder last looked, OnBuildProgress(unit, old, new) and
+    // OnBeingBuiltProgress(builder, old, new). The site goes 0.01 a tick.
+    AssistSim w;
+    listen_to_progress(w);
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    for (int tick = 0; tick < 120 && w.site->is_being_built(); ++tick) w.sim.tick();
+    REQUIRE_FALSE(w.site->is_being_built());
+    CHECK(progress(w) == "eng 0.25,site:eng 0.25,eng 0.5,site:eng 0.5,eng 0.75,site:eng 0.75");
+}
+
+TEST_CASE("A builder that joins a build late hears it passed the quarters behind it, from 0",
+          "[build][assist][build-progress]") {
+    // Its build task's fraction starts at 0: one call for the two quarters behind it
+    AssistSim w;
+    w.site->set_fraction_complete(0.6f);
+    listen_to_progress(w);
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    for (int tick = 0; tick < 5; ++tick) w.sim.tick();
+    CHECK(progress(w) == "eng 0.25 from 0,site:eng 0.25 from 0");
+}
+
+TEST_CASE("A builder paused through a quarter hears it on resuming, but not on FAF's executable",
+          "[build][assist][build-progress][pause]") {
+    // Retail's build task keeps what a paused builder last saw; FAF's copies
+    // the fraction in while it is paused.
+    for (const bool faf : {false, true}) {
+        CAPTURE(faf);
+        AssistSim w;
+        osc::sim::set_sim(w.L, &w.sim); // the sim's own state holds it, as in a game
+        w.sim.set_faf_exe(faf);
+        w.site->set_fraction_complete(0.3f);
+        listen_to_progress(w);
+        Unit* eng = w.engineer("eng", 16.0f);
+        Unit* other = w.engineer("other", 24.0f);
+        eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+        other->push_command(order(CommandType::Repair, *w.site, 2), true);
+        for (int tick = 0; tick < 3; ++tick) w.sim.tick();
+        REQUIRE(eng->is_building());
+        REQUIRE(other->is_building());
+        REQUIRE(w.site->fraction_complete() < 0.45f);
+        progress(w);
+        eng->set_paused(true);
+        // The other builder takes it past 0.5 alone
+        for (int tick = 0; tick < 60 && w.site->fraction_complete() < 0.55f; ++tick) w.sim.tick();
+        REQUIRE(w.site->fraction_complete() >= 0.55f);
+        CHECK(progress(w) == "other 0.5,site:other 0.5");
+        eng->set_paused(false);
+        w.sim.tick();
+        CHECK(progress(w) == (faf ? "" : "eng 0.5,site:eng 0.5"));
+    }
+}
+
+TEST_CASE("A helper with no build rate still hears the quarters others build",
+          "[build][assist][build-progress]") {
+    // It isn't paused: Moho's UpdateWorkProgress runs with nothing consumed
+    AssistSim w;
+    listen_to_progress(w);
+    Unit* eng = w.engineer("eng", 16.0f);
+    Unit* idle = w.engineer("idle", 24.0f);
+    idle->set_build_rate(0.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    idle->push_command(order(CommandType::Repair, *w.site, 2), true);
+    for (int tick = 0; tick < 120 && w.site->is_being_built(); ++tick) w.sim.tick();
+    REQUIRE_FALSE(w.site->is_being_built());
+    const std::string heard = progress(w);
+    for (const char* band : {"idle 0.25", "idle 0.5", "idle 0.75"}) {
+        CAPTURE(band);
+        CHECK(heard.find(band) != std::string::npos);
+    }
 }

@@ -1433,6 +1433,7 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
         build_cost_mass_ = costs.mass;
         build_cost_energy_ = costs.energy;
         work_progress_ = target.fraction_complete();
+        build_progress_seen_ = 0.0f;
         economy_.consumption_mass = costs.mass * static_cast<f64>(build_rate_) / costs.time;
         economy_.consumption_energy = costs.energy * static_cast<f64>(build_rate_) / costs.time;
         economy_.consumption_active = true;
@@ -1864,6 +1865,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                     build_cost_mass_ = target_unit->build_cost_mass();
                     build_cost_energy_ = target_unit->build_cost_energy();
                     work_progress_ = guarded_build->fraction_complete();
+                    build_progress_seen_ = 0.0f;
 
                     if (build_time_ > 0 && build_rate_ > 0) {
                         economy_.consumption_mass =
@@ -1886,7 +1888,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
 
             // Progress the build with our own build rate
             if (build_target_id_ != 0) {
-                if (!progress_build_assist(dt, registry, econ_eff)) {
+                const bool building_on = progress_build_assist(dt, registry, ctx.L, econ_eff);
+                if (destroyed() || !in_registry()) return OrderStep::Gone;
+                if (!building_on) {
                     stop_assisting(ctx.L, &ctx.registry);
                 }
             }
