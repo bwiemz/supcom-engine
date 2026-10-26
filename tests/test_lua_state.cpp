@@ -363,6 +363,24 @@ TEST_CASE("LuaState table iteration without pairs()", "[lua]") {
     lua_pop(state.raw(), 1);
 }
 
+TEST_CASE("table.getsize and table.empty are the engine's, as FAF's exe has them", "[lua]") {
+    // FA-Binary-Patches section/Lua/TableFuncs.cxx: FAF's utils.lua defines
+    // its own only when rawget(table, 'getsize') finds none
+    LuaState state;
+    auto result = state.do_string(R"(
+        assert(type(rawget(table, 'getsize')) == 'function', 'no getsize')
+        assert(type(rawget(table, 'empty')) == 'function', 'no empty')
+        local t = {1, 2, 3, a = 1, b = false}
+        t[2] = nil
+        assert(table.getsize(t) == 4, 'size ' .. table.getsize(t))
+        assert(table.getsize({}) == 0 and table.getsize(nil) == 0 and table.getsize(7) == 0)
+        assert(table.empty({}) and table.empty(nil) and table.empty('x'))
+        assert(not table.empty({false}) and not table.empty({a = 0}))
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    CHECK(result.ok());
+}
+
 TEST_CASE("MapPreview constructor returns controls for lobby preview swaps", "[lua][ui]") {
     LuaState state;
     osc::sim::SimState sim(state.raw(), nullptr);

@@ -13,6 +13,39 @@ extern "C" {
 
 namespace osc::lua {
 
+namespace {
+
+/// table.getsize(t): how many entries t holds, string keys and all; 0 for
+/// anything but a table. FAF's patched exe has it (FA-Binary-Patches
+/// section/Lua/TableFuncs.cxx), and FAF's utils.lua defines its own only
+/// without it.
+int table_getsize(lua_State* L) {
+    int size = 0;
+    if (lua_istable(L, 1)) {
+        lua_pushnil(L);
+        while (lua_next(L, 1) != 0) {
+            ++size;
+            lua_pop(L, 1);
+        }
+    }
+    lua_pushnumber(L, size);
+    return 1;
+}
+
+/// table.empty(t): whether t holds nothing; true for anything but a table
+/// (TableFuncs.cxx, as table_getsize).
+int table_empty(lua_State* L) {
+    bool empty = true;
+    if (lua_istable(L, 1)) {
+        lua_pushnil(L);
+        empty = lua_next(L, 1) == 0;
+    }
+    lua_pushboolean(L, empty ? 1 : 0);
+    return 1;
+}
+
+} // namespace
+
 LuaState::LuaState() {
     L_ = lua_open();
     if (!L_) {
@@ -27,6 +60,19 @@ LuaState::LuaState() {
     luaopen_string(L_);
     luaopen_math(L_);
     luaopen_debug(L_);
+
+    // FAF's exe's table.getsize and table.empty, which its utils.lua takes in
+    // place of its Lua ones; retail's utils.lua defines its own over them
+    lua_getglobal(L_, "table");
+    if (lua_istable(L_, -1)) {
+        lua_pushstring(L_, "getsize");
+        lua_pushcfunction(L_, table_getsize);
+        lua_rawset(L_, -3);
+        lua_pushstring(L_, "empty");
+        lua_pushcfunction(L_, table_empty);
+        lua_rawset(L_, -3);
+    }
+    lua_pop(L_, 1);
 
     // Add debug.allocatedsize stub (FA's memory profiler uses it)
     lua_getglobal(L_, "debug");
