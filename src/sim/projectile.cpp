@@ -374,8 +374,12 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
     // The surface: the ground, or for a shell that ends there, the water.
     f32 surface_t = 2.0f;
     const char* surface_type = nullptr;
+    bool ground = false;
     if (terrain && collide_surface) {
-        if (const auto t = terrain_crossing(*terrain, from, to)) surface_t = *t;
+        if (const auto t = terrain_crossing(*terrain, from, to)) {
+            surface_t = *t;
+            ground = true;
+        }
         const f32 water = terrain->water_elevation();
         if (destroy_on_water && terrain->has_water() && from.y >= water && to.y < water) {
             const f32 t = (from.y - water) / (from.y - to.y);
@@ -383,6 +387,7 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
             if (t < surface_t && terrain->get_terrain_height(at.x, at.z) < water) {
                 surface_t = t;
                 surface_type = "Water";
+                ground = false;
             }
         }
     }
@@ -404,6 +409,7 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
         if (mx * mx + my * my + mz * mz <= kArrived * kArrived && t < surface_t) {
             surface_t = t;
             surface_type = nullptr;
+            ground = false;
         }
     }
 
@@ -458,12 +464,13 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
     if (surface_type && terrain) {
         at.y = terrain->water_elevation();
     }
-    record_impact(at, surface_t, nullptr, surface_type, terrain);
+    record_impact(at, surface_t, nullptr, ground ? "Terrain" : surface_type, terrain);
     return true;
 }
 
 void Projectile::record_impact(const Vector3& at, f32 interpolation, const Entity* hit,
                                const char* type, const map::Terrain* terrain) {
+    set_position(at);
     const std::string kind = type ? type : impact_type(hit, terrain);
     // Moho's MotionTick: a hit of the ground (IMPACT_Terrain) counts, and one within its bounce
     // limit is no impact. Its velocity, damped, is reflected about the ground's normal there,
@@ -482,7 +489,6 @@ void Projectile::record_impact(const Vector3& at, f32 interpolation, const Entit
         set_position({at.x + back.x * 0.05f, at.y + back.y * 0.05f, at.z + back.z * 0.05f});
         return;
     }
-    set_position(at);
     impact_interpolation = interpolation;
     impact_entity_id = hit ? hit->entity_id() : 0;
     impact_kind = kind;
