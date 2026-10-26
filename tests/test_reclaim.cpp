@@ -5,6 +5,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -20,6 +21,7 @@ using osc::sim::Prop;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
+using osc::test::tick_until;
 
 namespace {
 
@@ -156,14 +158,14 @@ TEST_CASE("A guard helps wear a reclaimed unit down and leaves the finish to the
     const osc::u32 target_id = w.target->entity_id();
     eng->push_command(order(CommandType::Reclaim, target_id), true);
     helper->push_command(order(CommandType::Guard, eng->entity_id()), true);
-    int ticks = 0;
-    while (w.log().empty() && ticks < 10) {
-        w.sim.tick();
-        ++ticks;
-        if (w.log().empty()) {
-            CHECK(w.target->fraction_complete() == 1.0f);
-        }
-    }
+    const int ticks = tick_until(
+        [&] {
+            w.sim.tick();
+            if (w.log().empty()) {
+                CHECK(w.target->fraction_complete() == 1.0f);
+            }
+        },
+        "the target is reclaimed", 10, [&] { return !w.log().empty(); });
     CHECK(ticks < 5);
     CHECK(w.log() == "reclaimed,wreck 0");
     CHECK(eng->reclaim_target_id() == w.wreck->entity_id());

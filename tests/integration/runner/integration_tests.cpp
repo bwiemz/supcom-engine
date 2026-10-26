@@ -1,5 +1,6 @@
 #include "core/test_status.hpp"
 #include "integration_tests.hpp"
+#include "tick_until.hpp"
 
 #include "app/world_sounds.hpp"
 
@@ -141,6 +142,7 @@ void register_test_helpers(lua_State* L, bool moho_pathing) {
 // Damage test: deal lethal damage to entity #1 and run more ticks
 void test_damage(TestContext& ctx) {
     spdlog::info("=== DAMAGE TEST: Killing entity #1 ===");
+    const u32 acu = army_acu_id(ctx.sim, 0);
     auto damage_result = ctx.lua_state.do_string(
         "local e = GetEntityById(__osc_test_acu_id(1))\n"
         "if e then\n"
@@ -156,11 +158,10 @@ void test_damage(TestContext& ctx) {
                      damage_result.error().message);
     }
 
-    // Run 10 more ticks so DeathThread coroutine can complete
-    spdlog::info("Running 10 post-damage ticks...");
-    for (osc::u32 i = 0; i < 10; i++) {
-        ctx.sim.tick();
-    }
+    tick_until(ctx, "the commander's DeathThread destroys it", 300, [&] {
+        const auto* e = ctx.sim.entity_registry().find(acu);
+        return acu != 0 && (!e || e->destroyed());
+    });
     spdlog::info("Entities remaining: {}",
                  ctx.sim.entity_registry().count());
 }
@@ -168,6 +169,9 @@ void test_damage(TestContext& ctx) {
 // Move test: issue move to entity #1 and run more ticks
 void test_move(TestContext& ctx) {
     spdlog::info("=== MOVE TEST: Moving entity #1 ===");
+    const auto* acu = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
+    const f32 x0 = acu ? acu->position().x : 0.0f;
+    const f32 z0 = acu ? acu->position().z : 0.0f;
     auto move_result = ctx.lua_state.do_string(
         "local e = GetEntityById(__osc_test_acu_id(1))\n"
         "if e then\n"
@@ -184,10 +188,14 @@ void test_move(TestContext& ctx) {
                      move_result.error().message);
     }
 
-    spdlog::info("Running 200 post-move ticks (20s game time)...");
-    for (osc::u32 i = 0; i < 200; i++) {
-        ctx.sim.tick();
-    }
+    tick_until(ctx, "the commander walks 10 from where it stood", 400, [&] {
+        if (!acu) {
+            return false;
+        }
+        const f32 dx = acu->position().x - x0;
+        const f32 dz = acu->position().z - z0;
+        return dx * dx + dz * dz >= 100.0f;
+    });
 
     // Report final position
     auto pos_result = ctx.lua_state.do_string(
@@ -239,13 +247,11 @@ void test_fire(TestContext& ctx) {
             }
         }
 
-        // Run 100 ticks (10 seconds game time)
-        spdlog::info("Running 100 combat ticks...");
-        for (int i = 0; i < 100; i++) {
-            ctx.sim.tick();
-        }
+        const auto fought = tick_until(ctx, "both commanders are hit", 200, [&] {
+            return e1->health() < e1->max_health() && e2->health() < e2->max_health();
+        });
 
-        spdlog::info("After 100 combat ticks:");
+        spdlog::info("After {} combat ticks:", fought.value_or(200));
         e1 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
         e2 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 1));
         if (e1 && !e1->destroyed())
@@ -261,7 +267,7 @@ void test_fire(TestContext& ctx) {
         spdlog::info("  Entities remaining: {}",
                      ctx.sim.entity_registry().count());
     } else {
-        spdlog::warn("Fire test: entities #1 and #2 not both available");
+        osc::test_status::fail("[FAIL] Fire test: entities #1 and #2 not both available");
     }
 }
 
@@ -307,7 +313,10 @@ void test_economy(TestContext& ctx) {
     // tick rate). Its trend is income less what it spent.
     auto* brain = ctx.sim.army_at(0);
     if (!brain) return;
-    for (int i = 0; i < 10; ++i) ctx.sim.tick(); // the commander's income counted
+    if (!tick_until(ctx, "the commander's income is counted", 20,
+                    [&] { return brain->economy().mass.income > 0; })) {
+        return;
+    }
     const auto ran = ctx.lua_state.do_string(R"(
         local b = ArmyBrains[1]
         __osc_econ = {
@@ -379,29 +388,10 @@ void test_build(TestContext& ctx) {
                          build_result.error().message);
         }
 
-        // Run ticks to complete the build
         // UEF T1 pgen: BuildTime=125, ACU BuildRate=10 → 12.5s = 125 ticks
-        spdlog::info("Running 150 build ticks (15s game time)...");
-        for (int i = 0; i < 150; i++) {
-            ctx.sim.tick();
-
-            // Log progress every 25 ticks
-            if ((i + 1) % 25 == 0) {
-                if (u1->is_building()) {
-                    auto* target = ctx.sim.entity_registry().find(
-                        u1->build_target_id());
-                    if (target) {
-                        spdlog::info("  tick {}: building target #{}, "
-                                     "frac={:.1f}%, health={:.0f}/{:.0f}",
-                                     i + 1, u1->build_target_id(),
-                                     target->fraction_complete() * 100,
-                                     target->health(), target->max_health());
-                    }
-                } else {
-                    spdlog::info("  tick {}: not building", i + 1);
-                }
-            }
-        }
+        tick_until(ctx, "the commander finishes the power generator", 300,
+                   "__osc_test_find_unit('ueb1101', 1) and "
+                   "__osc_test_find_unit('ueb1101', 1):GetFractionComplete() >= 1");
 
         // Report result
         spdlog::info("Build test results:");
@@ -427,7 +417,7 @@ void test_build(TestContext& ctx) {
                 }
             });
     } else {
-        spdlog::warn("Build test: entity #1 not available");
+        osc::test_status::fail("[FAIL] Build test: entity #1 not available");
     }
 }
 
@@ -437,7 +427,7 @@ void test_chain(TestContext& ctx) {
 
     auto* e1 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
     if (!e1 || e1->destroyed() || !e1->is_unit()) {
-        spdlog::error("Chain test: entity #1 not available");
+        osc::test_status::fail("[FAIL] Chain test: entity #1 not available");
     } else {
         // Phase 1: ACU builds T1 Land Factory (ueb0101)
         // Economy.BuildTime=300, ACU BuildRate=10 → 30s = 300 ticks + margin
@@ -456,26 +446,16 @@ void test_chain(TestContext& ctx) {
         // Track builder to capture build_target_id before it completes
         auto* u1 = static_cast<osc::sim::Unit*>(e1);
         osc::u32 factory_id = 0;
-        for (int i = 0; i < 350; i++) {
-            // Capture target ID while builder is still building
-            if (u1->is_building() && factory_id == 0)
-                factory_id = u1->build_target_id();
-            ctx.sim.tick();
-            if ((i + 1) % 100 == 0) {
-                if (u1->is_building()) {
-                    auto* t = ctx.sim.entity_registry().find(u1->build_target_id());
-                    if (t) spdlog::info("  tick {}: target #{} frac={:.1f}%",
-                                        i + 1, t->entity_id(),
-                                        t->fraction_complete() * 100);
-                } else {
-                    spdlog::info("  tick {}: build complete", i + 1);
+        const auto finished = [&](osc::u32 id) {
+            const auto* e = ctx.sim.entity_registry().find(id);
+            return id != 0 && e && !e->destroyed() && e->fraction_complete() >= 1.0f;
+        };
+        if (tick_until(ctx, "Phase 1: the commander finishes the land factory", 700, [&] {
+                if (u1->is_building() && factory_id == 0) {
+                    factory_id = u1->build_target_id();
                 }
-            }
-        }
-
-        if (factory_id == 0) {
-            spdlog::error("Chain test: factory not found after Phase 1");
-        } else {
+                return finished(factory_id);
+            })) {
             spdlog::info("Phase 1 done: factory = entity #{}", factory_id);
 
             // Phase 2: Factory builds T1 Engineer (uel0105)
@@ -492,33 +472,21 @@ void test_chain(TestContext& ctx) {
             if (!r2) spdlog::warn("Chain P2 Lua error: {}", r2.error().message);
 
             osc::u32 engineer_id = 0;
-            for (int i = 0; i < 100; i++) {
-                auto* fent = ctx.sim.entity_registry().find(factory_id);
-                if (fent && fent->is_unit()) {
-                    auto* fu = static_cast<osc::sim::Unit*>(fent);
-                    if (fu->is_building() && engineer_id == 0)
-                        engineer_id = fu->build_target_id();
-                }
-                ctx.sim.tick();
-                if ((i + 1) % 25 == 0) {
-                    auto* fent2 = ctx.sim.entity_registry().find(factory_id);
-                    if (fent2 && fent2->is_unit()) {
-                        auto* fu = static_cast<osc::sim::Unit*>(fent2);
-                        if (fu->is_building()) {
-                            auto* t = ctx.sim.entity_registry().find(fu->build_target_id());
-                            if (t) spdlog::info("  tick {}: target #{} frac={:.1f}%",
-                                                i + 1, t->entity_id(),
-                                                t->fraction_complete() * 100);
-                        } else {
-                            spdlog::info("  tick {}: not building", i + 1);
-                        }
-                    }
-                }
-            }
-
-            if (engineer_id == 0) {
-                spdlog::error("Chain test: engineer not found after Phase 2");
-            } else {
+            if (tick_until(ctx, "Phase 2: the factory finishes an engineer and rolls it off", 400,
+                           [&] {
+                               auto* fent = ctx.sim.entity_registry().find(factory_id);
+                               if (!fent || !fent->is_unit()) {
+                                   return false;
+                               }
+                               auto* fu = static_cast<osc::sim::Unit*>(fent);
+                               if (fu->is_building() && engineer_id == 0) {
+                                   engineer_id = fu->build_target_id();
+                               }
+                               auto* eent = ctx.sim.entity_registry().find(engineer_id);
+                               return eent && eent->is_unit() && finished(engineer_id) &&
+                                      static_cast<osc::sim::Unit*>(eent)->is_idle_state() &&
+                                      fu->is_idle_state();
+                           })) {
                 spdlog::info("Phase 2 done: engineer = entity #{}", engineer_id);
 
                 // Phase 3: Engineer builds T1 Power Gen (ueb1101)
@@ -538,33 +506,16 @@ void test_chain(TestContext& ctx) {
                 if (!r3) spdlog::warn("Chain P3 Lua error: {}", r3.error().message);
 
                 osc::u32 pgen_id = 0;
-                for (int i = 0; i < 300; i++) {
-                    auto* eent = ctx.sim.entity_registry().find(engineer_id);
-                    if (eent && eent->is_unit()) {
-                        auto* eu = static_cast<osc::sim::Unit*>(eent);
-                        if (eu->is_building() && pgen_id == 0)
-                            pgen_id = eu->build_target_id();
-                    }
-                    ctx.sim.tick();
-                    if ((i + 1) % 100 == 0) {
-                        auto* eent2 = ctx.sim.entity_registry().find(engineer_id);
-                        if (eent2 && eent2->is_unit()) {
-                            auto* eu = static_cast<osc::sim::Unit*>(eent2);
-                            if (eu->is_building()) {
-                                auto* t = ctx.sim.entity_registry().find(eu->build_target_id());
-                                if (t) spdlog::info("  tick {}: target #{} frac={:.1f}%",
-                                                    i + 1, t->entity_id(),
-                                                    t->fraction_complete() * 100);
-                            } else {
-                                spdlog::info("  tick {}: not building", i + 1);
+                if (tick_until(ctx, "Phase 3: the engineer finishes the power generator", 600, [&] {
+                        auto* eent = ctx.sim.entity_registry().find(engineer_id);
+                        if (eent && eent->is_unit()) {
+                            auto* eu = static_cast<osc::sim::Unit*>(eent);
+                            if (eu->is_building() && pgen_id == 0) {
+                                pgen_id = eu->build_target_id();
                             }
                         }
-                    }
-                }
-
-                if (pgen_id == 0) {
-                    spdlog::error("Chain test: pgen not found after Phase 3");
-                } else {
+                        return finished(pgen_id);
+                    })) {
                     auto* pgen = ctx.sim.entity_registry().find(pgen_id);
                     spdlog::info("Phase 3 done: pgen = entity #{}, frac={:.1f}%, "
                                  "health={:.0f}/{:.0f}",
@@ -766,14 +717,9 @@ void test_reclaim(TestContext& ctx) {
         spdlog::info("[PASS] Reclaim test: the prop's EntityId is GetEntityId's string");
     else osc::test_status::fail("[FAIL] Reclaim test: {}", r.error().message);
 
-    // Run 200 ticks (plenty of time for ACU to move + reclaim)
-    spdlog::info("Running 200 reclaim ticks...");
-    for (int i = 0; i < 200; i++) {
-        ctx.sim.tick();
-        if ((i + 1) % 50 == 0) {
-            spdlog::info("  tick {}: {} entities",
-                         i + 1, ctx.sim.entity_registry().count());
-        }
+    if (!tick_until(ctx, "the commander moves to the prop and reclaims it", 400,
+                    "table.getn(__osc_reclaim_calls) >= 2")) {
+        return;
     }
     if (auto r = ctx.lua_state.do_string(R"(
             local got = table.concat(__osc_reclaim_calls, ',')
@@ -794,14 +740,9 @@ void test_reclaim(TestContext& ctx) {
         __osc_reclaim_calls = {}
         IssueReclaim({acu}, prop)
     )");
-    for (int i = 0; i < 100; ++i) {
-        ctx.sim.tick();
-        if (ctx.lua_state
-                .do_string("if not GetEntityById(__osc_test_acu_id(1)):IsUnitState('Reclaiming') "
-                           "then error('') end")
-                .ok()) {
-            break;
-        }
+    if (!tick_until(ctx, "setup: the commander begins reclaiming the second prop", 100,
+                    "GetEntityById(__osc_test_acu_id(1)):IsUnitState('Reclaiming')")) {
+        return;
     }
     (void)ctx.lua_state.do_string("IssueClearCommands({GetEntityById(__osc_test_acu_id(1))})");
     for (int i = 0; i < 3; ++i) {
@@ -840,6 +781,7 @@ void test_threat(TestContext& ctx) {
     spdlog::info("=== THREAT TEST: Threat queries, targeting, command tracking ===");
 
     auto tt_result = ctx.lua_state.do_string(R"(
+        __osc_threat_done = false
         ForkThread(function()
             WaitTicks(30) -- let session stabilize
 
@@ -990,6 +932,7 @@ void test_threat(TestContext& ctx) {
             end
 
             LOG('THREAT TEST: ALL PASSED')
+            __osc_threat_done = true
         end)
     )");
     if (!tt_result) {
@@ -998,9 +941,7 @@ void test_threat(TestContext& ctx) {
     }
 
     spdlog::info("Running threat test ticks...");
-    for (int i = 0; i < 50; i++) {
-        ctx.sim.tick();
-    }
+    tick_until(ctx, "the threat thread runs its checks", 200, "__osc_threat_done");
 
     // Attack vectors (Moho's ProcessAttackVectors): the map in 32-unit
     // cells, those with the enemy's units in the category marked, and an
@@ -1319,6 +1260,7 @@ void test_platoon(TestContext& ctx) {
     spdlog::info("=== PLATOON TEST: Platoon system ===");
 
     auto pt_result = ctx.lua_state.do_string(R"(
+        __osc_platoon_done = false
         ForkThread(function()
             WaitTicks(30) -- let session stabilize
 
@@ -1475,6 +1417,7 @@ void test_platoon(TestContext& ctx) {
             LOG('Platoon test: DisbandPlatoon OK')
 
             LOG('PLATOON TEST: ALL PASSED')
+            __osc_platoon_done = true
         end)
     )");
     if (!pt_result) {
@@ -1482,11 +1425,8 @@ void test_platoon(TestContext& ctx) {
                      pt_result.error().message);
     }
 
-    // Run enough ticks for the test thread to complete
     spdlog::info("Running platoon test ticks...");
-    for (int i = 0; i < 50; i++) {
-        ctx.sim.tick();
-    }
+    tick_until(ctx, "the platoon thread runs its checks", 100, "__osc_platoon_done");
 
     spdlog::info("Platoon test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
@@ -1616,6 +1556,7 @@ void test_repair(TestContext& ctx) {
     spdlog::info("=== REPAIR TEST: Build, damage, repair ===");
 
     auto rt_result = ctx.lua_state.do_string(R"(
+        __osc_repair_done = false
         ForkThread(function()
             WaitTicks(10)
 
@@ -1691,6 +1632,7 @@ void test_repair(TestContext& ctx) {
                     string.format('%.0f', final_hp) .. '/' .. max_hp ..
                     ' (not fully repaired)')
             end
+            __osc_repair_done = true
         end)
     )");
     if (!rt_result) {
@@ -1699,13 +1641,8 @@ void test_repair(TestContext& ctx) {
     }
 
     spdlog::info("Running repair test ticks...");
-    for (int i = 0; i < 400; i++) {
-        ctx.sim.tick();
-        if ((i + 1) % 100 == 0) {
-            spdlog::info("  tick {}: {} entities",
-                         i + 1, ctx.sim.entity_registry().count());
-        }
-    }
+    tick_until(ctx, "the repair thread builds, damages and repairs its power generator", 800,
+               "__osc_repair_done");
 
     spdlog::info("Repair test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
@@ -1717,6 +1654,7 @@ void test_upgrade(TestContext& ctx) {
     spdlog::info("=== UPGRADE TEST: Build T1 mex, upgrade to T2 ===");
 
     auto ut_result = ctx.lua_state.do_string(R"(
+        __osc_upgrade_done = false
         ForkThread(function()
             WaitTicks(10)
 
@@ -1796,6 +1734,7 @@ void test_upgrade(TestContext& ctx) {
             else
                 LOG('UPGRADE TEST FAILED: T2 mex not completed')
             end
+            __osc_upgrade_done = true
         end)
     )");
     if (!ut_result) {
@@ -1804,13 +1743,8 @@ void test_upgrade(TestContext& ctx) {
     }
 
     spdlog::info("Running upgrade test ticks...");
-    for (int i = 0; i < 1500; i++) {
-        ctx.sim.tick();
-        if ((i + 1) % 300 == 0) {
-            spdlog::info("  tick {}: {} entities",
-                         i + 1, ctx.sim.entity_registry().count());
-        }
-    }
+    tick_until(ctx, "the upgrade thread builds its mass extractor and upgrades it", 3000,
+               "__osc_upgrade_done");
 
     spdlog::info("Upgrade test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
@@ -1826,14 +1760,6 @@ void test_capture(TestContext& ctx) {
         else osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
         return static_cast<bool>(r);
     };
-    const auto run_until = [&](const char* done, int max_ticks) {
-        for (int i = 0; i < max_ticks; i += 5) {
-            for (int t = 0; t < 5; ++t) ctx.sim.tick();
-            if (ctx.lua_state.do_string(std::string("if not (") + done + ") then error() end"))
-                return true;
-        }
-        return false;
-    };
 
     // The commander builds a T1 power generator, which is given to ARMY_2:
     // ChangeUnitArmy gives the new army a new unit in its place.
@@ -1843,10 +1769,9 @@ void test_capture(TestContext& ctx) {
             IssueBuildMobile({__osc_acu}, {pos[1] + 10, pos[2], pos[3]}, 'ueb1101', {})
         )"))
         return;
-    if (!run_until("__osc_test_find_unit('ueb1101') and "
-                   "__osc_test_find_unit('ueb1101'):GetFractionComplete() >= 1",
-                   1500)) {
-        osc::test_status::fail("[FAIL] the power generator was never finished");
+    if (!tick_until(ctx, "the power generator is finished", 1500,
+                    "__osc_test_find_unit('ueb1101') and "
+                    "__osc_test_find_unit('ueb1101'):GetFractionComplete() >= 1")) {
         return;
     }
     // What it cost is counted as built (it was read from the builder's
@@ -1879,8 +1804,8 @@ void test_capture(TestContext& ctx) {
 
     // Retail's OnCaptured hands it over (TransferUnitsOwnership ->
     // ChangeUnitArmy): the captor's army gets a new one where it stood.
-    if (!run_until("IsDestroyed(__osc_enemy_pgen)", 2500)) {
-        osc::test_status::fail("[FAIL] Test 2: the power generator was never captured");
+    if (!tick_until(ctx, "Test 2: the power generator is captured", 2500,
+                    "IsDestroyed(__osc_enemy_pgen)")) {
         return;
     }
     lua("Test 2: captured, ARMY_1 has a new power generator where it stood", R"(
@@ -1899,8 +1824,8 @@ void test_capture(TestContext& ctx) {
     lua("setup: the commander repairs its hurt power generator", R"(
         IssueRepair({__osc_acu}, __osc_mine)
     )");
-    if (!run_until("__osc_acu:IsUnitState('Repairing')", 100)) {
-        osc::test_status::fail("[FAIL] Test 3: the commander never began repairing");
+    if (!tick_until(ctx, "Test 3: the commander begins repairing", 100,
+                    "__osc_acu:IsUnitState('Repairing')")) {
         return;
     }
     lua("setup: orders cleared mid-repair", "IssueClearCommands({__osc_acu})");
@@ -1915,8 +1840,8 @@ void test_capture(TestContext& ctx) {
         __osc_enemy_pgen = ChangeUnitArmy(__osc_mine, 2)
         IssueCapture({__osc_acu}, __osc_enemy_pgen)
     )");
-    if (!run_until("__osc_acu:IsUnitState('Capturing')", 100)) {
-        osc::test_status::fail("[FAIL] Test 4: the commander never began capturing");
+    if (!tick_until(ctx, "Test 4: the commander begins capturing", 100,
+                    "__osc_acu:IsUnitState('Capturing')")) {
         return;
     }
     lua("setup: orders cleared mid-capture", "IssueClearCommands({__osc_acu})");
@@ -2138,6 +2063,7 @@ void test_toggle(TestContext& ctx) {
 
     // Inject Lua test via ForkThread
     auto result = ctx.lua_state.do_string(R"(
+        __osc_toggle_done = false
         ForkThread(function()
             local acu = GetEntityById(__osc_test_acu_id(1))
             if not acu then
@@ -2224,6 +2150,7 @@ void test_toggle(TestContext& ctx) {
             end
 
             LOG('TOGGLE TEST: ALL PASSED')
+            __osc_toggle_done = true
         end)
     )");
     if (!result) {
@@ -2231,9 +2158,7 @@ void test_toggle(TestContext& ctx) {
     }
 
     spdlog::info("Running toggle test ticks...");
-    for (int i = 0; i < 50; i++) {
-        ctx.sim.tick();
-    }
+    tick_until(ctx, "the toggle thread runs its checks", 50, "__osc_toggle_done");
 
     spdlog::info("Toggle test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
@@ -2288,21 +2213,13 @@ void test_enhance(TestContext& ctx) {
         return;
     }
 
-    // Run ticks to let the enhancement complete
     // BuildTime=1000, BuildRate=10, dt=0.1 → 1000 ticks to complete
-    spdlog::info("Running enhancement ticks (1200)...");
-    for (int i = 0; i < 1200; i++) {
-        ctx.sim.tick();
-        // Log progress every 50 ticks
-        if ((i + 1) % 50 == 0) {
-            auto* acu = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
-            if (acu && acu->is_unit()) {
-                auto* unit = static_cast<osc::sim::Unit*>(acu);
-                spdlog::debug("  Tick {}: work_progress={:.2f} enhancing={}",
-                              i + 1, unit->work_progress(),
-                              unit->is_enhancing() ? "yes" : "no");
-            }
-        }
+    if (!tick_until(ctx, "the commander finishes AdvancedEngineering and is mobile again", 2400, R"(
+            GetEntityById(__osc_test_acu_id(1)):HasEnhancement('AdvancedEngineering') and
+            not GetEntityById(__osc_test_acu_id(1)):IsUnitState('Enhancing') and
+            GetEntityById(__osc_test_acu_id(1)):IsMobile()
+        )")) {
+        return;
     }
 
     // Verify enhancement completed
@@ -2874,31 +2791,18 @@ void test_transport(TestContext& ctx) {
     }
 
     spdlog::info("Running transport test ticks...");
-    for (int i = 0; i < 1100; i++) {
-        ctx.sim.tick();
-        if ((i + 1) % 50 == 0) {
-            spdlog::info("  tick {}: {} entities",
-                         i + 1,
-                         ctx.sim.entity_registry().count());
-        }
-    }
+    tick_until(ctx, "the transport thread reaches its end", 2200, "__osc_transport_specific_done");
 
     spdlog::info("Transport test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
                  ctx.sim.thread_manager().active_count());
-    // The script ran to its end (a check it never reached would not fail).
-    lua_State* L = ctx.lua_state.raw();
-    lua_pushstring(L, "__osc_transport_specific_done");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    const bool done = lua_toboolean(L, -1) != 0;
-    lua_pop(L, 1);
-    if (!done) osc::test_status::fail("[FAIL] transport test: the script did not reach its end");
 }
 
 void test_fow(TestContext& ctx) {
     spdlog::info("=== FOW TEST: Visibility grid + OnIntelChange ===");
 
     auto fow_result = ctx.lua_state.do_string(R"(
+        __osc_fow_done = false
         ForkThread(function()
             WaitTicks(10)
 
@@ -3089,6 +2993,7 @@ void test_fow(TestContext& ctx) {
             end
 
             LOG('FOW TEST: ALL TESTS COMPLETE')
+            __osc_fow_done = true
         end)
     )");
     if (!fow_result) {
@@ -3097,14 +3002,7 @@ void test_fow(TestContext& ctx) {
     }
 
     spdlog::info("Running FOW test ticks...");
-    for (int i = 0; i < 200; i++) {
-        ctx.sim.tick();
-        if ((i + 1) % 50 == 0) {
-            spdlog::info("  tick {}: {} entities",
-                         i + 1,
-                         ctx.sim.entity_registry().count());
-        }
-    }
+    tick_until(ctx, "the FOW thread runs its checks", 200, "__osc_fow_done");
 
     spdlog::info("FOW test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
@@ -3116,6 +3014,7 @@ void test_los(TestContext& ctx) {
     spdlog::info("=== LOS TEST: Terrain line-of-sight occlusion ===");
 
     auto los_result = ctx.lua_state.do_string(R"(
+        __osc_los_done = false
         ForkThread(function()
             WaitTicks(10)
 
@@ -3244,6 +3143,7 @@ void test_los(TestContext& ctx) {
             farEnemy:Destroy()
 
             LOG('LOS TEST: ALL TESTS COMPLETE')
+            __osc_los_done = true
         end)
     )");
     if (!los_result) {
@@ -3252,14 +3152,7 @@ void test_los(TestContext& ctx) {
     }
 
     spdlog::info("Running LOS test ticks...");
-    for (int i = 0; i < 200; i++) {
-        ctx.sim.tick();
-        if ((i + 1) % 50 == 0) {
-            spdlog::info("  tick {}: {} entities",
-                         i + 1,
-                         ctx.sim.entity_registry().count());
-        }
-    }
+    tick_until(ctx, "the LOS thread runs its checks", 200, "__osc_los_done");
 
     spdlog::info("LOS test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
@@ -3271,6 +3164,7 @@ void test_stall(TestContext& ctx) {
     spdlog::info("=== STALL TEST: Economy stalling ===");
 
     auto stall_result = ctx.lua_state.do_string(R"(
+        __osc_stall_done = false
         ForkThread(function()
             WaitTicks(10)
 
@@ -3384,6 +3278,7 @@ void test_stall(TestContext& ctx) {
             LOG('STALL TEST 7: PASS (reclaim has no efficiency parameter by design)')
 
             LOG('=== STALL TEST COMPLETE ===')
+            __osc_stall_done = true
         end)
     )");
     if (!stall_result) {
@@ -3391,9 +3286,7 @@ void test_stall(TestContext& ctx) {
                      stall_result.error().message);
     }
 
-    for (osc::u32 i = 0; i < 200; i++) {
-        ctx.sim.tick();
-    }
+    tick_until(ctx, "the stall thread runs its checks", 200, "__osc_stall_done");
 
     spdlog::info("Stall test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
@@ -3404,6 +3297,7 @@ void test_jammer(TestContext& ctx) {
     spdlog::info("=== JAMMER TEST: Dead-reckoning, stealth, jammer ===");
 
     auto jammer_result = ctx.lua_state.do_string(R"(
+        __osc_jammer_done = false
         ForkThread(function()
             WaitTicks(10)
 
@@ -3608,6 +3502,7 @@ void test_jammer(TestContext& ctx) {
             end
 
             LOG('=== JAMMER TEST COMPLETE ===')
+            __osc_jammer_done = true
         end)
     )");
     if (!jammer_result) {
@@ -3615,9 +3510,7 @@ void test_jammer(TestContext& ctx) {
                      jammer_result.error().message);
     }
 
-    for (osc::u32 i = 0; i < 200; i++) {
-        ctx.sim.tick();
-    }
+    tick_until(ctx, "the jammer thread runs its checks", 200, "__osc_jammer_done");
 
     spdlog::info("Jammer test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
@@ -3628,6 +3521,7 @@ void test_stub(TestContext& ctx) {
     spdlog::info("=== STUB TEST: Moho binding real implementations ===");
 
     auto stub_result = ctx.lua_state.do_string(R"(
+        __osc_stub_done = false
         ForkThread(function()
             WaitTicks(10)
 
@@ -3774,6 +3668,7 @@ void test_stub(TestContext& ctx) {
             tank:Destroy()
 
             LOG('STUB TEST: all tests complete')
+            __osc_stub_done = true
         end)
     )");
     if (!stub_result) {
@@ -3781,9 +3676,7 @@ void test_stub(TestContext& ctx) {
                      stub_result.error().message);
     }
 
-    for (osc::u32 i = 0; i < 100; i++) {
-        ctx.sim.tick();
-    }
+    tick_until(ctx, "the stub thread's checks ran", 100, "__osc_stub_done");
 
     spdlog::info("Stub test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
@@ -4195,10 +4088,7 @@ void test_manip(TestContext& ctx) {
         ctx.lua_state.do_string(R"(
             __test_rot = CreateRotator(GetEntityById(__osc_test_acu_id(1)), 0, 'y', 90, 360)
         )");
-        // Run a few ticks to let the rotator advance
-        for (osc::u32 i = 0; i < 10; i++) {
-            ctx.sim.tick();
-        }
+        tick_until(ctx, "the rotator turns", 20, "__test_rot:GetCurrentAngle() > 0");
         auto r = ctx.lua_state.do_string(R"(
             local angle = __test_rot:GetCurrentAngle()
             if angle > 0 then
@@ -4218,9 +4108,7 @@ void test_manip(TestContext& ctx) {
             __test_cont:SetTargetSpeed(180)
             __test_cont:SetAccel(360)
         )");
-        for (osc::u32 i = 0; i < 20; i++) {
-            ctx.sim.tick();
-        }
+        tick_until(ctx, "the continuous rotator turns", 40, "__test_cont:GetCurrentAngle() > 0");
         auto r = ctx.lua_state.do_string(R"(
             local angle = __test_cont:GetCurrentAngle()
             if angle > 0 then
@@ -4239,9 +4127,7 @@ void test_manip(TestContext& ctx) {
             __test_anim = CreateAnimator(GetEntityById(__osc_test_acu_id(1)))
             __test_anim:PlayAnim('/test.sca'):SetRate(2)
         )");
-        for (osc::u32 i = 0; i < 20; i++) {
-            ctx.sim.tick();
-        }
+        tick_until(ctx, "the animator plays", 40, "__test_anim:GetAnimationFraction() > 0");
         auto r = ctx.lua_state.do_string(R"(
             local frac = __test_anim:GetAnimationFraction()
             if frac > 0 then
@@ -4264,10 +4150,7 @@ void test_manip(TestContext& ctx) {
                 __waitfor_done = true
             end)
         )");
-        // Run enough ticks for the rotator to reach 45 degrees
-        for (osc::u32 i = 0; i < 20; i++) {
-            ctx.sim.tick();
-        }
+        tick_until(ctx, "WaitFor(rotator) returns at the goal", 40, "__waitfor_done");
         auto r = ctx.lua_state.do_string(R"(
             if __waitfor_done then
                 LOG('Manip test 5: PASS - WaitFor thread completed')
@@ -4343,7 +4226,8 @@ void test_manip(TestContext& ctx) {
             if __osc_held_done then error('a looping animator was done') end
             __osc_held:SetRate(0)
         )");
-        for (osc::u32 i = 0; i < 60; i++) ctx.sim.tick();
+        tick_until(ctx, "both animators' waiters go on", 120,
+                   "__osc_played_done and __osc_held_done");
         auto r = ctx.lua_state.do_string(R"(
             if not __osc_played_done then
                 error('WaitFor(animator) still waiting at fraction ' .. __osc_played:GetAnimationFraction())
@@ -4468,7 +4352,10 @@ void test_canpath(TestContext& ctx) {
             __osc_canpath_scout:SetImmobile(true)
         )");
         if (!r) osc::test_status::fail("[FAIL] Test 5 scout: {}", r.error().message);
-        for (int i = 0; i < 70; ++i) ctx.sim.tick();
+        tick_until(ctx, "ARMY_1's threat map holds the enemy commander", 140,
+                   "(function() local p = GetEntityById(__osc_test_acu_id(2)):GetPosition() "
+                   "return GetArmyBrain('ARMY_1'):GetThreatBetweenPositions({p[1] - 10, 0, p[3]}, "
+                   "{p[1] + 10, 0, p[3]}, nil, 'Overall') > 0 end)()");
     }
     {
         auto r = ctx.lua_state.do_string(R"(
@@ -4596,10 +4483,13 @@ void test_armor(TestContext& ctx) {
             Damage(exp, exp, 500, nil, 'ExperimentalFootfall')
             local hp_after = exp:GetHealth()
             local lost = hp_before - hp_after
-            if lost < 1 then
+            Damage(exp, exp, 100, nil, 'Normal')
+            local normal = hp_after - exp:GetHealth()
+            if lost < 1 and normal > 1 then
                 LOG('Armor test 4: PASS - ExperimentalFootfall blocked = ' .. lost)
             else
-                WARN('Armor test 4: FAIL - expected 0 damage, got ' .. lost)
+                WARN('Armor test 4: FAIL - expected 0 damage, got ' .. lost ..
+                     '; Normal damage took ' .. normal)
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 4: Experimental immune to ExperimentalFootfall"); }
@@ -5224,13 +5114,14 @@ void test_flags(TestContext& ctx) {
     {
         auto r = ctx.lua_state.do_string(
             "-- Create a prop and mark it non-reclaimable\n"
-            "local prop = CreatePropHPR('/env/common/props/massDeposit01_prop.bp', 250, 20, 250, 0, 0, 0)\n"
+            "local x, z = 220, 790\n"
+            "local prop = CreatePropHPR('/env/evergreen/props/rocks/rock01_prop.bp', x + 3,\n"
+            "                           GetTerrainHeight(x + 3, z), z, 0, 0, 0)\n"
             "if not prop then error('could not create prop') end\n"
             "prop:SetReclaimable(false)\n"
             "rawset(_G, '__flags_test_prop_id', prop:GetEntityId())\n"
-            "-- Try reclaiming with entity #1\n"
-            "local u = GetEntityById(__osc_test_acu_id(1))\n"
-            "if not u then error('no entity 1') end\n"
+            "local u = CreateUnitHPR('uel0105', 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)\n"
+            "rawset(_G, '__flags_test_engineer', u)\n"
             "IssueReclaim({u}, prop)\n");
         if (r) {
             // Tick to let reclaim attempt run
@@ -5238,14 +5129,23 @@ void test_flags(TestContext& ctx) {
             auto r2 = ctx.lua_state.do_string(
                 "local prop = GetEntityById(__flags_test_prop_id)\n"
                 "if not prop then error('prop disappeared unexpectedly') end\n"
-                "local frac = prop.FractionComplete or 1.0\n"
+                "local frac = prop:GetFractionComplete()\n"
                 "if frac >= 0.99 then\n"
-                "    LOG('Flags test 3: PASS - fraction=' .. tostring(frac) .. ' (not reclaimed)')\n"
+                "    LOG('Flags test 3: PASS - fraction=' .. tostring(frac) .. ' (not "
+                "reclaimed)')\n"
                 "else\n"
                 "    error('Flags test 3: FAIL - reclaim proceeded, fraction=' .. tostring(frac))\n"
                 "end\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 3: SetReclaimable(false) blocks reclaim"); }
             else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r2.error().message); }
+            (void)ctx.lua_state.do_string("local prop = GetEntityById(__flags_test_prop_id)\n"
+                                          "prop:SetReclaimable(true)\n"
+                                          "IssueClearCommands({__flags_test_engineer})\n"
+                                          "IssueReclaim({__flags_test_engineer}, prop)\n");
+            tick_until(
+                ctx, "Test 3: the engineer reclaims the prop once it is reclaimable", 20,
+                "(function() local p = GetEntityById(__flags_test_prop_id) "
+                "return not p or p:BeenDestroyed() or p:GetFractionComplete() < 0.99 end)()");
         } else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); }
     }
 
@@ -5832,10 +5732,7 @@ void test_anim(TestContext& ctx) {
             __anim_manip:PlayAnim('/units/uel0001/uel0001_a001.sca')
             __anim_manip:SetRate(1.0)
         )");
-        // Run 30 ticks (~1 second game time) to advance animation
-        for (osc::u32 i = 0; i < 30; i++) {
-            ctx.sim.tick();
-        }
+        tick_until(ctx, "the walk animation plays", 60, "__anim_manip:GetAnimationFraction() > 0");
         auto r = ctx.lua_state.do_string(R"(
             local frac = __anim_manip:GetAnimationFraction()
             local dur = __anim_manip:GetAnimationDuration()
@@ -6567,7 +6464,12 @@ void test_prop(TestContext& ctx) {
     lua_check("Test 11c: at 12.5 s it is still being reclaimed (it takes 20)", R"(
         if __osc_reclaim_wreck:BeenDestroyed() then error('gone early: the time multiplier was ignored') end
     )");
-    for (int i = 0; i < 90; ++i) ctx.sim.tick();
+    const auto wreck_gone = tick_until(ctx, "Test 11d: the reclaimed wreck goes", 90,
+                                       "__osc_reclaim_wreck:BeenDestroyed()");
+    if (!wreck_gone) {
+        fail++;
+    }
+    spdlog::info("Test 11d: the wreck went {} ticks after 12.5 s", wreck_gone.value_or(-1));
     lua_check("Test 11d: ...and by 21.5 s the wreck is gone", R"(
         if not __osc_reclaim_wreck:BeenDestroyed() then error('still there') end
     )");
@@ -6602,7 +6504,11 @@ void test_prop(TestContext& ctx) {
             error(string.format('normal (%.3f, %.3f, %.3f), depth %.3f', n[1], n[2], n[3], hit.depth))
         end
     )");
-    for (int i = 0; i < 40; ++i) ctx.sim.tick();
+    if (!tick_until(ctx, "Test 13c: the tree the tank ran into falls flat", 80,
+                    "(function() local q = __osc_hit_tree:GetOrientation() "
+                    "return math.abs(1 - 2 * (q[1] * q[1] + q[3] * q[3])) <= 0.05 end)()")) {
+        fail++;
+    }
     lua_check("Test 13c: the tree it ran into lies flat", R"(
         local q = __osc_hit_tree:GetOrientation()
         local up_y = 1 - 2 * (q[1] * q[1] + q[3] * q[3])
@@ -7008,10 +6914,17 @@ void test_projectile(TestContext& ctx) {
         e1->set_position({256, 25, 256});
         e2->set_position({276, 25, 256}); // 20 units apart
 
-        // Run ticks to trigger weapon fire
-        for (int i = 0; i < 15; i++) {
-            ctx.sim.tick();
-        }
+        tick_until(ctx, "a commander fires at the other", 60, [&] {
+            bool fired = false;
+            ctx.sim.entity_registry().for_each([&](const osc::sim::Entity& entity) {
+                if (entity.is_projectile() && !entity.destroyed()) {
+                    const auto& shot = static_cast<const osc::sim::Projectile&>(entity);
+                    fired = fired || shot.target_entity_id == e1->entity_id() ||
+                            shot.target_entity_id == e2->entity_id();
+                }
+            });
+            return fired;
+        });
     }
 
     // Test 1: Projectile entities exist in registry
@@ -7187,7 +7100,14 @@ void test_projectile(TestContext& ctx) {
     // be script errors, which fail the run.
     const int failures_before = osc::test_status::failure_count();
     lua_check("Test 8: a commander dies (its death weapon fires)", R"(
-        ArmyBrains[2]:GetListOfUnits(categories.COMMAND, false)[1]:Kill()
+        local acu = ArmyBrains[2]:GetListOfUnits(categories.COMMAND, false)[1]
+        local w = acu:GetWeaponByLabel('DeathWeapon')
+        local fire = w.Fire
+        w.Fire = function(self)
+            fire(self)
+            __osc_death_weapon_fired = true
+        end
+        acu:Kill()
     )");
     for (int i = 0; i < 20; ++i) ctx.sim.tick();
     if (osc::test_status::failure_count() == failures_before) {
@@ -7197,6 +7117,9 @@ void test_projectile(TestContext& ctx) {
         fail++;
         osc::test_status::fail("[FAIL] Test 9: script errors after the commander died");
     }
+    lua_check("Test 9b: the death weapon fired", R"(
+        if not __osc_death_weapon_fired then error('it did not') end
+    )");
 
     spdlog::info("Projectile test: {}/{} passed", pass, pass + fail);
 }
@@ -7281,6 +7204,16 @@ void test_weapon(TestContext& ctx) {
             return on_wmotion(self, new, old)
         end
         IssueMove({mover}, {330, GetTerrainHeight(330, 940), 940})
+
+        function __osc_weapons_done()
+            local mml, reloaded = __osc_wlog[__osc_mml:GetWeapon(1)], false
+            for i, e in mml do
+                if e.name == 'RackSalvoReloadState' and mml[i + 1] then reloaded = true end
+            end
+            return reloaded and table.getn(__osc_tank:GetWeapon(1).__osc_shots) >= 10 and
+                   table.getn(__osc_bot:GetWeapon(1).__osc_shots) >= 3 and
+                   string.find(table.concat(__osc_motion, ' '), 'Stopping>Stopped', 1, true) ~= nil
+        end
     )");
     {
         lua_State* L = ctx.lua_state.raw();
@@ -7293,7 +7226,8 @@ void test_weapon(TestContext& ctx) {
             static_cast<osc::sim::Unit*>(built)->set_is_being_built(true);
     }
 
-    for (int i = 0; i < 160; ++i) ctx.sim.tick();
+    tick_until(ctx, "the tank fires ten shots, the bot a salvo, the MML reloads, the mover stops",
+               320, "__osc_weapons_done()");
 
     lua_check("Test 1: the tank walks Idle -> FireReady -> Firing", R"(
         local log = __osc_wlog[__osc_tank:GetWeapon(1)]
@@ -7401,7 +7335,8 @@ void test_weapon(TestContext& ctx) {
             error(__osc_stunned_weapon.__osc_stun_shots .. ' shots while stunned')
         end
     )");
-    for (int i = 0; i < 40; ++i) ctx.sim.tick();
+    tick_until(ctx, "the stun wears off and the tank fires", 80,
+               "not __osc_stunned_tank:IsStunned() and __osc_stunned_weapon.__osc_stun_shots > 0");
     lua_check("Test 12c: the stun wears off, and it fires", R"(
         if __osc_stunned_tank:IsStunned() then error('still stunned after 6.5 s') end
         if __osc_stunned_weapon.__osc_stun_shots == 0 then error('no shot after the stun') end
@@ -7449,9 +7384,6 @@ void test_targeting(TestContext& ctx) {
             fail++;
             osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
         }
-    };
-    auto ticks = [&](int n) {
-        for (int i = 0; i < n; ++i) ctx.sim.tick();
     };
     auto unit_of = [&](const char* global) -> osc::sim::Unit* {
         lua_State* L = ctx.lua_state.raw();
@@ -7507,7 +7439,7 @@ void test_targeting(TestContext& ctx) {
 
     // Weapons take what ARMY_1's ReconTick (one tick in 8 here) has a blip of,
     // on their next check (the tanks' every 5 ticks).
-    ticks(13);
+    tick_for(ctx, 13);
     lua_check("Test 1: a farther TECH1 MOBILE unit beats a nearer structure", R"(
         if __osc_target(__osc_tank) ~= __osc_foe then error('target is not the enemy tank') end
     )");
@@ -7543,13 +7475,13 @@ void test_targeting(TestContext& ctx) {
 
     // ResetTarget looks again on the next tick, though the tank's
     // TargetCheckInterval is 5 ticks.
-    ticks(1);
+    tick_for(ctx, 1);
     lua_check("Test 7: SetTargetingPriorities takes effect (a copy, not the table), at once", R"(
         if __osc_target(__osc_tank) ~= __osc_pgen then error('target is not the structure') end
         IssueAttack({__osc_tank}, __osc_foe)
     )");
 
-    ticks(7);
+    tick_for(ctx, 7);
     lua_check("Test 8: an ally turned enemy becomes a target", R"(
         if __osc_target(__osc_ally_tank) ~= __osc_ally_pgen then error('no target') end
     )");
@@ -7562,7 +7494,7 @@ void test_targeting(TestContext& ctx) {
     lua_check("Test 11: without it a weapon keeps its target", R"(
         if __osc_target(__osc_loyalist, 1) ~= __osc_recheck_pgen then error('it switched') end
     )");
-    ticks(2);
+    tick_for(ctx, 2);
     lua_check("Test 12: an attack order's target overrides the priorities", R"(
         if __osc_target(__osc_tank) ~= __osc_foe then error('the order was ignored') end
     )");
@@ -7587,7 +7519,7 @@ void test_targeting(TestContext& ctx) {
         __osc_ground_tank_id = tank:GetEntityId()
         __osc_ground_point = {gx, gz}
     )");
-    ticks(200);
+    tick_for(ctx, 200);
     lua_check("Test 14: the tank comes within range and fires at the point, the order kept", R"(
         local p = __osc_ground_tank:GetPosition()
         local d = math.sqrt((p[1] - __osc_ground_point[1])^2 + (p[3] - __osc_ground_point[2])^2)
@@ -7613,7 +7545,7 @@ void test_targeting(TestContext& ctx) {
             osc::test_status::fail("[FAIL] Test 15: its gun isn't aimed at the point");
         }
     }
-    ticks(2);
+    tick_for(ctx, 2);
     {
         const osc::sim::Unit* tank = unit_of("__osc_ground_tank_id");
         const auto* queue = tank ? &tank->command_queue() : nullptr;
@@ -7699,11 +7631,24 @@ void test_aim(TestContext& ctx) {
         -- instances (Prop.SetReclaimValues), which is later work.
         __osc_right:SetCanTakeDamage(false)
     )");
-    for (int i = 0; i < 40; ++i) {
-        ctx.sim.tick();
-        (void)ctx.lua_state.do_string(
-            "table.insert(__osc_headings, "
-            "(__osc_tank:GetWeapon(1):GetAimManipulator():GetHeadingPitch()))");
+    if (!tick_until(
+            [&] {
+                ctx.sim.tick();
+                (void)ctx.lua_state.do_string(
+                    "table.insert(__osc_headings, "
+                    "(__osc_tank:GetWeapon(1):GetAimManipulator():GetHeadingPitch()))");
+            },
+            "the tank fires and its turret holds; the tracker and the Othuum's right turret aim",
+            80,
+            [&] {
+                return lua_true(ctx.lua_state,
+                                "(function() local h = __osc_headings local n = table.getn(h) "
+                                "return __osc_shots[1] ~= nil and h[n] == h[n - 1] and "
+                                "__osc_tracker:GetWeapon(1):GetCurrentTarget() == __osc_far and "
+                                "__osc_othuum:GetWeapon(3):GetCurrentTarget() == __osc_right "
+                                "end)()");
+            })) {
+        fail++;
     }
 
     lua_check("Test 1: the weapon starts tracking with its aim controller's label", R"(
@@ -7780,7 +7725,13 @@ void test_aim(TestContext& ctx) {
         Warp(__osc_behind, {p[1], p[2], p[3] - 100})
         __osc_lost_at = GetGameTick()
     )");
-    for (int i = 0; i < 45; ++i) ctx.sim.tick();
+    if (!tick_until(ctx, "the tank stops tracking and its turret is back at rest", 90,
+                    "(function() local last = __osc_events[table.getn(__osc_events)] "
+                    "return last.name == 'OnStopTracking' and math.abs("
+                    "__osc_tank:GetWeapon(1):GetAimManipulator():GetHeadingPitch()) <= 1e-3 "
+                    "end)()")) {
+        fail++;
+    }
     lua_check("Test 7: losing the target stops tracking, and the turret goes back to rest", R"(
         local last = __osc_events[table.getn(__osc_events)]
         if last.name ~= 'OnStopTracking' or last.label ~= 'Default' then
@@ -7806,8 +7757,8 @@ void test_aim(TestContext& ctx) {
         end
         IssueAttack({__osc_scathis}, __osc_scathis_mark)
     )");
-    for (int i = 0; i < 250; ++i) {
-        ctx.sim.tick();
+    if (!tick_until(ctx, "the Scathis fires", 500, "__osc_scathis_shots > 0")) {
+        fail++;
     }
     lua_check("Test 8: a Scathis fires its high arc from its unpacked barrel", R"(
         if __osc_scathis_shots == 0 then
@@ -7909,12 +7860,19 @@ void test_death(TestContext& ctx) {
         end
         __osc_marine_id = __osc_marine:GetEntityId()
     )");
-    for (int i = 0; i < 40; ++i) ctx.sim.tick(); // the marine walks, the plane climbs
+    if (!tick_until(ctx, "the aircraft climb 5 above the ground", 80,
+                    "(function() for _, u in {__osc_plane, __osc_bare_plane, __osc_scout} do "
+                    "local p = u:GetPosition() "
+                    "if p[2] - GetTerrainHeight(p[1], p[3]) < 5 then return false end "
+                    "end return true end)()")) {
+        fail++;
+    }
 
     lua_check("Test 1: Kill makes a unit dead at once, its orders gone", R"(
         local p = __osc_plane:GetPosition()
         __osc_plane_height = p[2] - GetTerrainHeight(p[1], p[3])
         if __osc_plane_height < 5 then error('the plane is not up: ' .. __osc_plane_height) end
+        if table.getn(__osc_tank:GetCommandQueue()) == 0 then error('no orders to lose') end
         __osc_tank:Kill()
         if not __osc_tank:IsDead() then error('not dead after Kill') end
         local rec = __osc_deaths.tank
@@ -7937,11 +7895,22 @@ void test_death(TestContext& ctx) {
     )");
     const osc::u32 marine_id = global_id("__osc_marine_id");
     std::vector<std::array<osc::f32, 16>> marine_pose;
-    for (int i = 0; i < 120; ++i) {
-        // The marine's pose just before its script destroys it.
-        if (const auto* m = ctx.sim.entity_registry().find(marine_id); m && m->is_unit())
-            marine_pose = static_cast<const osc::sim::Unit*>(m)->animated_bone_matrices();
-        ctx.sim.tick();
+    if (!tick_until(
+            [&] {
+                // The marine's pose just before its script destroys it.
+                if (const auto* m = ctx.sim.entity_registry().find(marine_id); m && m->is_unit()) {
+                    marine_pose = static_cast<const osc::sim::Unit*>(m)->animated_bone_matrices();
+                }
+                ctx.sim.tick();
+            },
+            "every death plays out, and the scout runs dry", 240,
+            [&] {
+                return lua_true(ctx.lua_state,
+                                "__osc_tank:BeenDestroyed() and __osc_selfd:BeenDestroyed() and "
+                                "__osc_marine:BeenDestroyed() and __osc_plane:BeenDestroyed() and "
+                                "__osc_bare_plane:BeenDestroyed() and __osc_fuel[1] ~= nil");
+            })) {
+        fail++;
     }
 
     lua_check("Test 3: the death thread leaves a retail wreck and destroys the unit", R"(
@@ -8093,7 +8062,9 @@ void test_impact(TestContext& ctx) {
             return proj
         end
     )");
-    for (int i = 0; i < 60; ++i) ctx.sim.tick();
+    if (!tick_until(ctx, "two shells hit the generator", 120, "table.getn(__osc_impacts) >= 2")) {
+        fail++;
+    }
 
     lua_check("Test 1: a shell hitting a unit calls OnImpact('Unit', unit)", R"(
         local r = __osc_impacts[1]
@@ -8242,7 +8213,11 @@ void test_impact(TestContext& ctx) {
     )");
     ctx.sim.tick();
     (void)ctx.lua_state.do_string("__osc_mark:Destroy()");
-    for (int i = 0; i < 10; ++i) ctx.sim.tick();
+    if (!tick_until(ctx, "the burst, splash, dive and lost shells hear their first events", 20,
+                    "__osc_events.burst[1] ~= nil and __osc_events.splash[1] ~= nil and "
+                    "__osc_events.dive[1] ~= nil and __osc_events.lost[1] ~= nil")) {
+        fail++;
+    }
     lua_check("Test 7: a shell bursting at its height impacts 'Air'", R"(
         if __osc_events.burst[1] ~= 'OnImpact:Air' then
             error('events: ' .. table.concat(__osc_events.burst, ','))
@@ -8417,16 +8392,24 @@ void test_arc(TestContext& ctx) {
             return p
         end
     )");
-    for (int i = 0; i < 120; ++i) {
-        ctx.sim.tick();
-        (void)ctx.lua_state.do_string(R"(
-            for _, l in __osc_live do
-                if not l.p:BeenDestroyed() then
-                    local y = l.p:GetPosition()[2]
-                    if y > l.rec.top then l.rec.top = y end
-                end
-            end
-        )");
+    if (!tick_until(
+            [&] {
+                ctx.sim.tick();
+                (void)ctx.lua_state.do_string(R"(
+                    for _, l in __osc_live do
+                        if not l.p:BeenDestroyed() then
+                            local y = l.p:GetPosition()[2]
+                            if y > l.rec.top then l.rec.top = y end
+                        end
+                    end
+                )");
+            },
+            "the Lobo's first shell lands", 240,
+            [&] {
+                return lua_true(ctx.lua_state,
+                                "__osc_shells[1] ~= nil and __osc_shells[1].at ~= nil");
+            })) {
+        fail++;
     }
     lua_check("Test 2: a Lobo's shell climbs high and falls onto its target", R"(
         local s = __osc_shells[1]
@@ -8490,9 +8473,6 @@ void test_collide(TestContext& ctx) {
         }
     };
     const int failures_before = osc::test_status::failure_count();
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
-    };
 
     lua_check("setup", R"(
         function __osc_spawn(bp, army, x, z)
@@ -8575,7 +8555,10 @@ void test_collide(TestContext& ctx) {
             __osc_shoot(l.shooter, tp[1], tp[2] + 0.2, tp[3], 1.0, l.rec)
         end
     )");
-    run(40);
+    if (!tick_until(ctx, "both shots in the line end", 80,
+                    "__osc_enemy.rec.type ~= nil and __osc_friend.rec.type ~= nil")) {
+        fail++;
+    }
     lua_check("Test 4: an enemy in the way takes the shot", R"(
         local r = __osc_enemy.rec
         if r.type ~= 'Unit' or r.target ~= __osc_enemy.between then
@@ -8603,7 +8586,10 @@ void test_collide(TestContext& ctx) {
         __osc_shoot(shooter, mp[1], mp[2] + 0.25, mp[3], 0.25, __osc_moved)
         Warp(__osc_mover, {220, __osc_ground(220, 875), 875})
     )");
-    run(60);
+    if (!tick_until(ctx, "the shot into the ground and the one at the moved target end", 120,
+                    "__osc_down.type ~= nil and __osc_moved.type ~= nil")) {
+        fail++;
+    }
     lua_check("Test 6: the ground stops a shot where it meets it", R"(
         local r = __osc_down
         if r.type ~= 'Terrain' then error('type ' .. tostring(r.type)) end
@@ -8640,7 +8626,11 @@ void test_collide(TestContext& ctx) {
         q:TrackTarget(true):SetTurnRate(720):SetAcceleration(20):SetMaxSpeed(20)
         q:SetNewTargetGroundXYZ(__osc_spot_xyz[1], __osc_spot_xyz[2], __osc_spot_xyz[3])
     )");
-    run(60);
+    if (!tick_until(
+            ctx, "the shot into the sky and the two sent to places end", 120,
+            "__osc_sky.type ~= nil and __osc_sent.at ~= nil and __osc_sent_xyz.at ~= nil")) {
+        fail++;
+    }
     lua_check("Test 8: a shot out of time bursts in the air", R"(
         if __osc_sky.type ~= 'Air' then error('type ' .. tostring(__osc_sky.type)) end
     )");
@@ -8673,7 +8663,11 @@ void test_collide(TestContext& ctx) {
         __osc_shoot(t, 675, __osc_ground(675, 120) + 0.5, 120, 0.5, __osc_through)
         __osc_gen = __osc_spawn('ueb4202', 'ARMY_2', 330, 800)
     )");
-    run(20);
+    if (!tick_until(ctx, "the shot meets the rock, the tree group breaks up, the shield is up", 40,
+                    "__osc_on_rock.type ~= nil and __osc_trees:BeenDestroyed() and "
+                    "__osc_gen.MyShield ~= nil and __osc_gen.MyShield:IsOn()")) {
+        fail++;
+    }
     lua_check("Test 10: a rock stops a low shot", R"(
         local r = __osc_on_rock
         if r.type ~= 'Prop' or r.target ~= __osc_rock then
@@ -8696,7 +8690,10 @@ void test_collide(TestContext& ctx) {
         local inside = __osc_spawn('uel0201', 'ARMY_1', 334, 800)
         __osc_shoot(inside, 380, __osc_ground(380, 800) + 1.0, 800, 1.0, __osc_out)
     )");
-    run(40);
+    if (!tick_until(ctx, "the shots at the shield, from outside and from inside, end", 80,
+                    "__osc_in.type ~= nil and __osc_out.type ~= nil")) {
+        fail++;
+    }
     lua_check("Test 12: an enemy shield takes a shot from outside", R"(
         local r = __osc_in
         if r.type ~= 'Shield' or r.target ~= __osc_gen.MyShield then
@@ -8723,7 +8720,9 @@ void test_collide(TestContext& ctx) {
             return false
         end
     )");
-    run(20);
+    if (!tick_until(ctx, "the refusing shot ends", 40, "__osc_refused.type ~= nil")) {
+        fail++;
+    }
     lua_check("Test 14: it hits the tank, and was never asked itself", R"(
         local r = __osc_refused
         if r.type ~= 'Unit' or r.target ~= __osc_refuser_target then
@@ -8854,7 +8853,16 @@ void test_area(TestContext& ctx) {
         __osc_gen = __osc_spawn('ueb4202', 'ARMY_2', 330, 800)
         __osc_under = __osc_spawn('uel0201', 'ARMY_2', 335, 800)
     )");
-    for (int i = 0; i < 20; ++i) ctx.sim.tick();
+    if (!tick_until(ctx, "the shield over the tank is up", 40, [&] {
+            bool up = false;
+            ctx.sim.entity_registry().for_each([&](osc::sim::Entity& e) {
+                up = up || (e.is_shield() && !e.destroyed() &&
+                            e.collision_shape().type != osc::sim::CollisionShapeType::NONE);
+            });
+            return up;
+        })) {
+        fail++;
+    }
     lua_check("Test 6: a strong shield absorbs a blast on its surface", R"(
         local shield = __osc_gen.MyShield
         if not shield or not shield:IsOn() then error('the shield is down') end
@@ -8990,6 +8998,24 @@ void test_drive(TestContext& ctx) {
             local d = math.mod(to - from + 3 * math.pi, 2 * math.pi) - math.pi
             return math.abs(d)
         end
+        function __osc_stopped(u)
+            local x, _, z = u:GetVelocity()
+            return u:IsIdleState() and x == 0 and z == 0
+        end
+        __osc_last_at = {}
+        function __osc_settled(units)
+            local settled = true
+            for i, u in units do
+                local p = u:GetPosition()
+                local was = __osc_last_at[i]
+                if not u:IsIdleState() or not was or math.abs(p[1] - was[1]) > 0.01 or
+                   math.abs(p[3] - was[3]) > 0.01 then
+                    settled = false
+                end
+                __osc_last_at[i] = p
+            end
+            return settled
+        end
     )");
     lua_check("Test 1: CreateUnitHPR gives a unit its heading", R"(
         local u = __osc_spawn('uel0201', 'ARMY_1', 640, 80, 1.2)
@@ -9004,7 +9030,8 @@ void test_drive(TestContext& ctx) {
         __osc_goal = {620, GetTerrainHeight(620, 85), 85}
         IssueMove({__osc_striker.u}, __osc_goal)
     )");
-    run(120);
+    tick_until([&] { run(1); }, "the Striker turns round, drives to its goal and stops", 240,
+               [&] { return lua_true(ctx.lua_state, "__osc_stopped(__osc_striker.u)"); });
     lua_check("Test 2: it turns round on the spot before it drives", R"(
         local s = __osc_striker.samples
         -- From rest it pivots till the goal is within acos 0.98 (11.5
@@ -9080,7 +9107,8 @@ void test_drive(TestContext& ctx) {
         -- (CUnitMoveTask, 0x006180E0); retail's units are Moving at tick 1.
         if not __osc_hop.u:IsUnitState('Moving') then error('not Moving') end
     )");
-    run(40);
+    tick_until([&] { run(1); }, "the hop's Striker stops on its goal", 80,
+               [&] { return lua_true(ctx.lua_state, "__osc_stopped(__osc_hop.u)"); });
     lua_check("Test 5c: on a short hop it brakes at Moho's stopping speed", R"(
         -- CAiPathSpline::Generate caps a node at sqrt(2 d brake) from where it
         -- is, not a tick ahead: 2.67 on a hop of 2, where a tick ahead gave
@@ -9110,7 +9138,15 @@ void test_drive(TestContext& ctx) {
         __osc_backer = __osc_track(__osc_spawn('uel0101', 'ARMY_1', 620.5, 100.5, 0))
         IssueMove({__osc_backer.u}, {620.5, GetTerrainHeight(620.5, 70.5), 70.5})
     )");
-    run(100);
+    tick_until([&] { run(1); },
+               "the Fatboy, the Mantis, the pivoter, the about-turner and the backer stop", 200,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                __osc_stopped(__osc_fatboy.u) and __osc_stopped(__osc_mantis.u) and
+                __osc_stopped(__osc_pivoter.u) and __osc_stopped(__osc_about.u) and
+                __osc_stopped(__osc_backer.u)
+            )");
+               });
     lua_check("Test 6: a Fatboy backs up to a goal just behind it", R"(
         local s = __osc_fatboy.samples
         local last = s[table.getn(s)]
@@ -9198,7 +9234,8 @@ void test_drive(TestContext& ctx) {
         end
         __osc_held.u:SetImmobile(false)
     )");
-    run(20);
+    tick_until([&] { run(1); }, "released, it drives off", 40,
+               [&] { return lua_true(ctx.lua_state, "__osc_held.u:GetPosition()[1] >= 641"); });
     lua_check("Test 9: released, it drives", R"(
         if __osc_held.u:GetPosition()[1] < 641 then error('still held') end
     )");
@@ -9209,7 +9246,15 @@ void test_drive(TestContext& ctx) {
         __osc_mover = __osc_spawn('uel0201', 'ARMY_1', 600, 140, 0)
         IssueMove({__osc_mover}, {600, GetTerrainHeight(600, 200), 200})
     )");
-    run(40);
+    tick_until([&] { run(1); }, "setup: it is under way", 80,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    local p = __osc_mover:GetPosition()
+                    return VDist2(p[1], p[3], 600, 140) > 1
+                end)()
+            )");
+               });
     lua_check("Test 11: its GetVelocity is its last tick's move", R"(
         __osc_before = __osc_mover:GetPosition()
     )");
@@ -9529,15 +9574,30 @@ void test_crowd(TestContext& ctx) {
         }
     };
     const int failures_before = osc::test_status::failure_count();
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
-    };
 
     // On the flat plain east of the map's centre: six Strikers sent to one
     // point from a line, and a tank driving through an idle friend.
     lua_check("setup", R"(
         function __osc_spawn(bp, army, x, z, heading)
             return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, heading or 0, 0)
+        end
+        function __osc_stopped(u)
+            local x, _, z = u:GetVelocity()
+            return u:IsIdleState() and x == 0 and z == 0
+        end
+        __osc_last_at = {}
+        function __osc_settled(units)
+            local settled = true
+            for i, u in units do
+                local p = u:GetPosition()
+                local was = __osc_last_at[i]
+                if not u:IsIdleState() or not was or math.abs(p[1] - was[1]) > 0.01 or
+                   math.abs(p[3] - was[3]) > 0.01 then
+                    settled = false
+                end
+                __osc_last_at[i] = p
+            end
+            return settled
         end
         __osc_group = {}
         for i = 0, 5 do
@@ -9571,7 +9631,15 @@ void test_crowd(TestContext& ctx) {
             end
         end
     )");
-    run(200);
+    const auto idle = tick_until(ctx, "the six's orders are done", 500, R"(
+        (function()
+            for _, u in __osc_group do
+                if not u:IsIdleState() then return false end
+            end
+            return true
+        end)()
+    )");
+    tick_until(ctx, "the six settle round the point", 250, "__osc_settled(__osc_group)");
     lua_check("Test 1: a group sent to one point settles round it, none on another", R"(
         local n = table.getn(__osc_group)
         for i = 1, n do
@@ -9589,13 +9657,19 @@ void test_crowd(TestContext& ctx) {
             end
         end
     )");
-    // Retail's last of the six goes idle 215 ticks after the order (crowd probe's /synclog).
-    run(50);
     lua_check("Test 2: their orders are done: none still jostling for the spot", R"(
         for i, u in __osc_group do
             if u:IsMoving() then error('tank ' .. i .. ' is still trying to reach it') end
         end
     )");
+    // Retail's last of the six goes idle 215 ticks after the order (crowd probe's /synclog).
+    if (idle) {
+        check(*idle <= 250, fmt::format("Test 2b: the last of the six goes idle {} ticks after the "
+                                        "order, within 250",
+                                        *idle));
+    }
+    tick_until(ctx, "the mover and the passer arrive and stop", 250,
+               "__osc_stopped(__osc_mover) and __osc_stopped(__osc_passer)");
     lua_check("Test 3: a moving tank gets past an idle friend (pushing it, or round it with Moho's "
               "pathing), and arrives",
               R"(
@@ -9688,8 +9762,18 @@ void test_formation(TestContext& ctx) {
     // On the flat plain east of the map's centre: eight Strikers and two
     // Lobos ordered in AttackFormation facing south (+Z), and the same
     // facing east (+X).
-    // ScenarioUtilities' CommanderWarpDelay warps them in on tick 31.
-    run(31);
+    tick_until(ctx, "setup: ScenarioUtilities' CommanderWarpDelay warps the commanders in", 60, R"(
+        (function()
+            local acus = 0
+            for _, brain in ArmyBrains do
+                for _, acu in brain:GetListOfUnits(categories.COMMAND, false) do
+                    if not acu:IsUnitState('BlockCommandQueue') then return false end
+                    acus = acus + 1
+                end
+            end
+            return acus > 0
+        end)()
+    )");
     lua_check("setup: no other army's commander near the groups", R"(
         for i, brain in ArmyBrains do
             if i ~= 1 then
@@ -9730,7 +9814,19 @@ void test_formation(TestContext& ctx) {
         __osc_east_goal = {705, GetTerrainHeight(705, 165), 165}
         IssueFormMove(__osc_east.all, __osc_east_goal, 'AttackFormation', 90)
     )");
-    run(300);
+    tick_until([&] { run(1); }, "both formations' orders are done", 600,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    for _, g in {__osc_south, __osc_east} do
+                        for _, u in g.all do
+                            if not u:IsIdleState() then return false end
+                        end
+                    end
+                    return true
+                end)()
+            )");
+               });
     lua_check("Test 1: a formation order ends with every unit in its slot, none moving", R"(
         for _, g in {__osc_south, __osc_east} do
             for i, u in g.all do
@@ -9813,7 +9909,28 @@ void test_formation(TestContext& ctx) {
         }
         input.right_release(ctx.sim);
     }
-    run(300);
+    tick_until([&] { run(1); }, "the dragged Strikers' orders begin", 10,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+            (function()
+                for _, u in __osc_dragged do
+                    if u:IsIdleState() then return false end
+                end
+                return true
+            end)()
+        )");
+               });
+    tick_until([&] { run(1); }, "the dragged Strikers' orders are done", 600,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+            (function()
+                for _, u in __osc_dragged do
+                    if not u:IsIdleState() then return false end
+                end
+                return true
+            end)()
+        )");
+               });
     lua_check("Test 5b: dragged east, the Strikers' row runs along z at the press", R"(
         local xs, zs = {}, {}
         for _, u in __osc_dragged do
@@ -9850,7 +9967,17 @@ void test_formation(TestContext& ctx) {
         __osc_chase:MoveToTarget(__osc_quarry)
         __osc_chaser = chaser
     )");
-    run(400);
+    tick_until([&] { run(1); }, "the platoon's route and the chaser's move are done", 800,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    for _, u in __osc_route_units do
+                        if not u:IsIdleState() then return false end
+                    end
+                    return __osc_chaser:IsIdleState()
+                end)()
+            )");
+               });
     lua_check("Test 6: a platoon passes its first waypoint on the way to the second", R"(
         for i, t in __osc_tracks do
             if t.closest > 5 then error('unit ' .. i .. ' came no nearer than ' .. t.closest .. ' to the first waypoint') end
@@ -10172,7 +10299,22 @@ void test_missile(TestContext& ctx) {
               fmt::format("Test 2c: the UI's record of A asks {} M, {} E a second (6, 120)",
                           rec ? rec->mass_requested : -1.0f, rec ? rec->energy_requested : -1.0f));
     }
-    run(450);
+    tick_until(
+        [&] { run(1); },
+        "A's missile kills its target; B's, E's, F's and G's helpers move on; the nuke is 5 s up",
+        900,
+        [&] {
+            return lua_true(ctx.lua_state, R"(
+                (function()
+                    local b = __osc_b.__osc.builds[1]
+                    local nuke = __osc_missile_of(__osc_s, 1)
+                    return __osc_a.__osc.launched == 1 and __osc_e1:IsDead() and b ~= nil and
+                        b.done ~= nil and table.getn(__osc_b_calls) >= 2 and
+                        __osc_e_rec.back ~= nil and __osc_f_rec.attack ~= nil and
+                        __osc_g_rec.back ~= nil and nuke ~= nil and table.getn(nuke.path) >= 50
+                end)()
+            )");
+        });
     lua_check("Test 3: the missile took its build time and cost", R"(
         local b = __osc_a.__osc.builds[1]
         if not b.done then error('A never finished') end
@@ -10200,7 +10342,6 @@ void test_missile(TestContext& ctx) {
     lua_check("Test 4: assisted by four engineers, B built its missile faster, for the same cost",
               R"(
         local b = __osc_b.__osc.builds[1]
-        if not b or not b.done then error('B never finished') end
         -- 80 + 4 x 5 build rate: 24 s, from when the engineers' arms are on B.
         if b.done - b.start < 240 or b.done - b.start > 243 then error('B took ' .. (b.done - b.start) .. ' ticks') end
         -- The missile's cost, and the engineers' grants that run ahead of
@@ -10229,9 +10370,6 @@ void test_missile(TestContext& ctx) {
     )");
     lua_check("Test 4d: E's missile done, its engineer helps again 12 ticks on, its arm on E", R"(
         local r = __osc_e_rec
-        if not r.done or not r.back then
-            error(string.format('done at %s, back at %s', tostring(r.done), tostring(r.back)))
-        end
         if r.back - r.done < 12 or r.back - r.done > 17 then
             error('it helps again ' .. (r.back - r.done) .. ' ticks after the missile')
         end
@@ -10240,18 +10378,11 @@ void test_missile(TestContext& ctx) {
               R"(
         local r = __osc_f_rec
         if r.left then error('it stopped helping at ' .. (r.left - r.from) .. ' ticks') end
-        if not r.done or not r.attack then
-            error(string.format('done at %s, attacking at %s', tostring(r.done), tostring(r.attack)))
-        end
         if r.attack - r.done > 7 then error('it attacked ' .. (r.attack - r.done) .. ' ticks after the missile') end
     )");
     lua_check("Test 4f: damaged G is repaired once its missile is done, then helped again", R"(
         local r = __osc_g_rec
         if r.healed_early then error('repaired as its missile was built') end
-        if not (r.done and r.heal and r.full and r.back) then
-            error(string.format('done %s, repaired %s, whole %s, helped %s', tostring(r.done), tostring(r.heal),
-                                tostring(r.full), tostring(r.back)))
-        end
         if r.heal - r.done < 6 or r.heal - r.done > 11 then
             error('repaired ' .. (r.heal - r.done) .. ' ticks after its missile')
         end
@@ -10260,8 +10391,6 @@ void test_missile(TestContext& ctx) {
         end
     )");
     lua_check("Test 5: the order fired as the missile was done, and it killed its target", R"(
-        if __osc_a.__osc.launched ~= 1 then error('A launched ' .. __osc_a.__osc.launched) end
-        if not __osc_e1:IsDead() then error('the power generator lives') end
         if __osc_a:GetTacticalSiloAmmoCount() ~= 0 then error('A still has a missile') end
         if table.getn(__osc_a:GetCommandQueue()) ~= 0 then error('the order is still queued') end
         local m = __osc_missile_of(__osc_a, 1)
@@ -10269,7 +10398,6 @@ void test_missile(TestContext& ctx) {
     )");
     lua_check("Test 6: the nuke rose from its silo before turning", R"(
         local m = __osc_missile_of(__osc_s, 1)
-        if not m then error('S launched nothing') end
         local p0, p5 = m.path[1], m.path[50]
         local drift = math.sqrt((p5[1] - p0[1]) ^ 2 + (p5[3] - p0[3]) ^ 2)
         if drift > 2 or p5[2] - p0[2] < 20 then
@@ -10282,16 +10410,23 @@ void test_missile(TestContext& ctx) {
         if __osc_d.__osc.launched ~= 0 then error('the anti-nuke fired ' .. __osc_d.__osc.launched) end
         if __osc_d:GetTacticalSiloAmmoCount() ~= 1 then error('the anti-nuke spent its missile') end
     )");
-    run(300);
+    tick_until([&] { run(1); }, "the nuke comes down, and what stood about its target dies", 600,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    if not __osc_missile_of(__osc_s, 1).gone then return false end
+                    for _, v in __osc_victims do
+                        if not v:IsDead() then return false end
+                    end
+                    return true
+                end)()
+            )");
+               });
     lua_check("Test 8: the nuke destroyed what stood about its target", R"(
         local m = __osc_missile_of(__osc_s, 1)
-        if not m.gone then error('it is still flying') end
         local last = m.path[table.getn(m.path)]
         local miss = math.sqrt((last[1] - __osc_zero[1]) ^ 2 + (last[3] - __osc_zero[3]) ^ 2)
         if miss > 10 then error('it came down ' .. miss .. ' from its target') end
-        for i, v in __osc_victims do
-            if not v:IsDead() then error('victim ' .. i .. ' lives') end
-        end
     )");
     lua_check("Test 8b: the silo is credited with what its nuke killed", R"(
         local kills = __osc_s:GetStat('KILLS', 0).Value
@@ -10376,13 +10511,19 @@ void test_missile(TestContext& ctx) {
             error(string.format('B made %g alone and %g helped', __osc_alone, helped))
         end
     )");
-    run(278);
+    tick_until([&] { run(1); }, "A's storage fills, B's missile lands and C's is built", 600,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    local m = __osc_missile_of(__osc_b, 1)
+                    return __osc_a:GetTacticalSiloAmmoCount() == 12 and
+                        not __osc_a:IsUnitState('SiloBuildingAmmo') and m ~= nil and
+                        m.gone ~= nil and __osc_c:GetTacticalSiloAmmoCount() == 2
+                end)()
+            )");
+               });
     lua_check("Test 10: auto mode filled A's storage and stopped", R"(
-        if __osc_a:GetTacticalSiloAmmoCount() ~= 12 then
-            error('A has ' .. __osc_a:GetTacticalSiloAmmoCount())
-        end
         if table.getn(__osc_a.__osc.builds) ~= 2 then error('A built ' .. table.getn(__osc_a.__osc.builds)) end
-        if __osc_a:IsUnitState('SiloBuildingAmmo') then error('A is still building') end
         rawset(_G, '__osc_spent', __osc_consumed(__osc_a, 'Energy'))
     )");
     run(20);
@@ -10392,8 +10533,6 @@ void test_missile(TestContext& ctx) {
     )");
     lua_check("Test 12: a missile fired at the ground lands there", R"(
         local m = __osc_missile_of(__osc_b, 1)
-        if not m then error('B launched nothing') end
-        if not m.gone then error('it is still flying') end
         local last = m.path[table.getn(m.path)]
         local miss = math.sqrt((last[1] - __osc_spot[1]) ^ 2 + (last[3] - __osc_spot[3]) ^ 2)
         if miss > 4 then error('it came down ' .. miss .. ' from the spot') end
@@ -10403,7 +10542,6 @@ void test_missile(TestContext& ctx) {
     lua_check("Test 13: a launch cancelled while it waited fires nothing when the missile comes",
               R"(
         if __osc_c.__osc.launched ~= 0 then error('C launched') end
-        if __osc_c:GetTacticalSiloAmmoCount() ~= 2 then error('C has ' .. __osc_c:GetTacticalSiloAmmoCount()) end
         if __osc_e2:IsDead() then error('its old target died') end
     )");
 
@@ -10415,12 +10553,16 @@ void test_missile(TestContext& ctx) {
         IssueTactical({__osc_c}, __osc_spot2)
         __osc_g = __osc_spawn('xsb2108', 'ARMY_1', 660, 200)
         IssueSiloBuildTactical({__osc_g})
+        __osc_g_from = __osc_consumed(__osc_a, 'Energy')
     )");
     run(5);
     lua_check("setup: cancelled as the launcher opens; G killed", R"(
         if not __osc_c:IsUnitState('Busy') then error('C is not opening') end
         IssueClearCommands({__osc_c})
         if not __osc_g:IsUnitState('SiloBuildingAmmo') then error('G is not building') end
+        if __osc_consumed(__osc_a, 'Energy') <= __osc_g_from then
+            error('G paid nothing for its missile')
+        end
         __osc_g:Kill()
     )");
     run(1);
@@ -10439,11 +10581,17 @@ void test_missile(TestContext& ctx) {
         if __osc_c:GetTacticalSiloAmmoCount() ~= 2 then error('C has ' .. __osc_c:GetTacticalSiloAmmoCount()) end
         IssueTactical({__osc_c}, __osc_spot2)
     )");
-    run(300);
+    tick_until([&] { run(1); }, "C's missile, sent again, comes down", 600,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    local m = __osc_missile_of(__osc_c, 1)
+                    return m ~= nil and m.gone ~= nil
+                end)()
+            )");
+               });
     lua_check("Test 16: sent again, the missile lands there", R"(
         local m = __osc_missile_of(__osc_c, 1)
-        if not m then error('C launched nothing') end
-        if not m.gone then error('it is still flying') end
         local last = m.path[table.getn(m.path)]
         local miss = math.sqrt((last[1] - __osc_spot2[1]) ^ 2 + (last[3] - __osc_spot2[3]) ^ 2)
         if miss > 4 then error('it came down ' .. miss .. ' from where it was sent') end
@@ -10465,9 +10613,9 @@ void test_missile(TestContext& ctx) {
         IssueGuard({__osc_helper}, __osc_h)
         IssueSiloBuildTactical({__osc_h})
     )");
-    run(10);
+    tick_until([&] { run(1); }, "setup: the engineer helps H", 20,
+               [&] { return lua_true(ctx.lua_state, "__osc_helper:IsUnitState('Repairing')"); });
     lua_check("setup: H destroyed while its engineer helps", R"(
-        if not __osc_helper:IsUnitState('Repairing') then error('the engineer is not helping H') end
         __osc_h:Destroy()
     )");
     run(2);
@@ -10594,12 +10742,18 @@ void test_defence(TestContext& ctx) {
         __osc_d2:GiveTacticalSiloAmmo(1)
         IssueNuke({__osc_s}, __osc_zero)
     )");
-    run(500);
+    tick_until([&] { run(1); }, "the nuke is launched and is gone", 1000,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    local nuke = __osc_shot_of(__osc_s, 1)
+                    return nuke ~= nil and nuke.gone ~= nil
+                end)()
+            )");
+               });
     lua_check("Test 1: an anti-nuke shot the nuke down, and nothing about its target was harmed",
               R"(
         local nuke = __osc_shot_of(__osc_s, 1)
-        if not nuke then error('no nuke was launched') end
-        if not nuke.gone then error('the nuke is still flying') end
         if nuke.impact then error('the nuke impacted: ' .. nuke.impact) end
         for i, v in __osc_victims do
             if v:IsDead() or v:GetHealth() < v:GetMaxHealth() then error('victim ' .. i .. ' was hit') end
@@ -10627,7 +10781,18 @@ void test_defence(TestContext& ctx) {
             __osc_lanes[i] = lane
         end
     )");
-    run(450);
+    tick_until([&] { run(1); }, "every lane's missile is launched and is gone", 900,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    for _, lane in __osc_lanes do
+                        local m = __osc_shot_of(lane.tml, 1)
+                        if not m or not m.gone then return false end
+                    end
+                    return true
+                end)()
+            )");
+               });
     lua_check("Test 3: the undefended target was killed", R"(
         if not __osc_lanes[1].target:IsDead() then error('it lives') end
     )");
@@ -10658,7 +10823,6 @@ void test_defence(TestContext& ctx) {
         local m = __osc_shot_of(lane.tml, 1)
         if lane.tml.__osc_fired ~= 1 then error('the launcher fired ' .. lane.tml.__osc_fired) end
         if lane.target:IsDead() then error('the target died') end
-        if not m.gone then error('the missile is still flying') end
         -- Drawn onto the flare: the TMD isn't turreted, so its flare leaves
         -- along its dome's muzzle (Moho's launch), and the missile comes down
         -- by the TMD rather than on what it was sent at.
@@ -10682,15 +10846,33 @@ void test_defence(TestContext& ctx) {
         -- The destroyer's own torpedoes would sink the sub before it fires.
         __osc_sub:SetCanTakeDamage(false)
     )");
-    run(40);
-    // Made on deep water, it is under the surface; it attacks.
+    tick_until([&] { run(1); }, "setup: made on deep water, the sub is under the surface", 80,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    local p = __osc_sub:GetPosition()
+                    return __osc_sub:GetCurrentLayer() == 'Sub' and
+                        p[2] <= GetSurfaceHeight(p[1], p[3]) - 0.5
+                end)()
+            )");
+               });
     lua_check("setup: the sub, dived, attacks", R"(
-        if __osc_sub:GetCurrentLayer() ~= 'Sub' then error('the sub is on ' .. __osc_sub:GetCurrentLayer()) end
-        local p = __osc_sub:GetPosition()
-        if p[2] > GetSurfaceHeight(p[1], p[3]) - 0.5 then error('the sub is at ' .. p[2]) end
         IssueAttack({__osc_sub}, __osc_frigate)
     )");
-    run(300);
+    tick_until([&] { run(1); }, "a torpedo of the sub's is stopped", 600,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    for _, m in __osc_shots do
+                        if m.owner == __osc_sub and m.gone and m.torpedo and
+                           (not m.impact or string.find(m.impact, 'Projectile')) then
+                            return true
+                        end
+                    end
+                    return false
+                end)()
+            )");
+               });
     lua_check("Test 7: the destroyer's anti-torpedo shot torpedoes down", R"(
         -- Stopped: it met a projectile, or was killed (no impact at all).
         local torpedoes, stopped = 0, 0
@@ -10869,9 +11051,6 @@ void test_beam_weapon(TestContext& ctx) {
         }
     };
     const int failures_before = osc::test_status::failure_count();
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
-    };
 
     lua_check("setup", R"(
         function __osc_spawn(bp, army, x, z)
@@ -10930,14 +11109,18 @@ void test_beam_weapon(TestContext& ctx) {
         __osc_tml:GiveTacticalSiloAmmo(1)
         IssueTactical({__osc_tml}, __osc_zap_target)
     )");
-    run(300);
+    tick_until(ctx,
+               "the Cerberus kills the tank, the Monkeylord's beam checks 50 times and the "
+               "zapper's meets the missile",
+               600,
+               "__osc_block:IsDead() and table.getn(__osc_ml.__osc_impacts) >= 50 and "
+               "__osc_count(__osc_zapper, 'Projectile') > 0");
     lua_check("Test 1: a Cerberus fires its three beams through its script, and kills with them",
               R"(
         local w = __osc_cerberus:GetWeapon(1)
         if table.getn(w.Beams or {}) ~= 3 then error('it has ' .. table.getn(w.Beams or {}) .. ' beams') end
         if __osc_cerberus.__osc_shots ~= 0 then error('it fired ' .. __osc_cerberus.__osc_shots .. ' projectiles') end
         if __osc_count(__osc_cerberus, 'Unit', __osc_block) == 0 then error('no beam met the tank') end
-        if not __osc_block:IsDead() then error('the tank lives') end
     )");
     lua_check("Test 2: a pulsed beam hits every CollisionCheckInterval + 1 ticks, twice a shot",
               R"(
@@ -10957,7 +11140,6 @@ void test_beam_weapon(TestContext& ctx) {
     lua_check("Test 3: a continuous beam checks every other tick (interval 1)", R"(
         local ticks = {}
         for _, i in __osc_ml.__osc_impacts do table.insert(ticks, i.tick) end
-        if table.getn(ticks) < 50 then error('only ' .. table.getn(ticks) .. ' checks') end
         for k = 2, 50 do
             if ticks[k] - ticks[k - 1] ~= 2 then error('checks at ' .. ticks[k - 1] .. ' and ' .. ticks[k]) end
         end
@@ -10980,7 +11162,7 @@ void test_beam_weapon(TestContext& ctx) {
         rawset(_G, '__osc_wall_hp', __osc_wall:GetHealth())
         __osc_wall:SetCanTakeDamage(true)
     )");
-    run(10);
+    tick_for(ctx, 10);
     lua_check("Test 5: its small blast on the hull hurts a big target", R"(
         -- The Monkeylord's beam deals DamageArea (radius 0.5) at its end, on
         -- the structure's face, far from its position at its feet.
@@ -10997,7 +11179,6 @@ void test_beam_weapon(TestContext& ctx) {
         end
     )");
     lua_check("Test 7: a zapper's beam meets the missile", R"(
-        if __osc_count(__osc_zapper, 'Projectile') == 0 then error('it never met a projectile') end
         if __osc_zapper.__osc_shots ~= 0 then error('it fired projectiles') end
     )");
 
@@ -11030,11 +11211,8 @@ void test_charge(TestContext& ctx) {
         }
     };
     const int failures_before = osc::test_status::failure_count();
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
-    };
 
-    run(1);
+    tick_for(ctx, 1);
     lua_check("setup", R"(
         function __osc_spawn(bp, army, x, z)
             return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
@@ -11059,7 +11237,7 @@ void test_charge(TestContext& ctx) {
         __osc_poor = __osc_spawn('uel0105', 'ARMY_2', 560, 140)
         __osc_big = CreateEconomyEvent(__osc_poor, 1e9, 0, 1.0)
     )");
-    run(12);
+    tick_for(ctx, 12);
     lua_check(
         "Test 1: an economy event draws its cost over its time, telling its script how far it is",
         R"(
@@ -11100,7 +11278,7 @@ void test_charge(TestContext& ctx) {
         __osc_oc_spent = __osc_consumed('Energy')
         IssueOvercharge({__osc_acu}, __osc_victim)
     )");
-    run(60);
+    tick_for(ctx, 60);
     lua_check("Test 3: OverCharge fires the OverCharge weapon, and it draws its energy", R"(
         if __osc_oc_shots ~= 1 then error('the OverCharge fired ' .. __osc_oc_shots) end
         if not __osc_victim:IsDead() then error('the tank lives') end
@@ -11126,9 +11304,9 @@ void test_charge(TestContext& ctx) {
         __osc_victim2:SetFireState(1)
         IssueOvercharge({__osc_acu}, __osc_victim2)
     )");
-    run(5);
+    tick_for(ctx, 5);
     lua_check("setup: called off", "IssueClearCommands({__osc_acu})");
-    run(2);
+    tick_for(ctx, 2);
     lua_check("Test 4: an OverCharge called off before it fires switches its weapon off", R"(
         if __osc_disabled ~= 1 then error('OnDisableWeapon ran ' .. __osc_disabled .. ' times') end
         if __osc_zephyr ~= true then error('the main gun is still off') end
@@ -11144,7 +11322,7 @@ void test_charge(TestContext& ctx) {
         IssueTeleport({__osc_porter}, __osc_there)
         IssueMove({__osc_porter}, __osc_at(620, 200))
     )");
-    run(5);
+    tick_for(ctx, 5);
     lua_check("Test 5: a teleport charges before it warps, and what is queued waits", R"(
         local p = __osc_porter:GetPosition()
         if VDist2(p[1], p[3], __osc_home[1], __osc_home[3]) > 0.5 then error('it left before its charge') end
@@ -11152,13 +11330,12 @@ void test_charge(TestContext& ctx) {
             error('its queue holds ' .. table.getn(__osc_porter:GetCommandQueue()))
         end
     )");
-    run(20);
+    tick_until(ctx, "the teleport is done", 50, "table.getn(__osc_porter:GetCommandQueue()) <= 1");
     lua_check("Test 6: then it warps, and goes on to its move", R"(
         local p = __osc_porter:GetPosition()
         if VDist2(p[1], p[3], __osc_there[1], __osc_there[3]) > 6 then
             error(string.format('it is at %.1f,%.1f', p[1], p[3]))
         end
-        if table.getn(__osc_porter:GetCommandQueue()) > 1 then error('the teleport is still queued') end
     )");
     lua_check("setup: a teleport called off while charging", R"(
         __osc_failer = __osc_spawn('uel0105', 'ARMY_1', 560, 220)
@@ -11172,9 +11349,9 @@ void test_charge(TestContext& ctx) {
         __osc_failer_home = __osc_failer:GetPosition()
         IssueTeleport({__osc_failer}, __osc_at(620, 220))
     )");
-    run(3);
+    tick_for(ctx, 3);
     lua_check("setup: called off", "IssueClearCommands({__osc_failer})");
-    run(20);
+    tick_for(ctx, 20);
     lua_check("Test 7: a teleport called off while charging fails: the unit stays, free to move",
               R"(
         if __osc_failed ~= 1 then error('OnFailedTeleport ran ' .. __osc_failed .. ' times') end
@@ -11211,9 +11388,6 @@ void test_range(TestContext& ctx) {
         }
     };
     const int failures_before = osc::test_status::failure_count();
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
-    };
 
     // On the flat ground east of the map's centre. A gap is the distance
     // between centres less the worker's largest footprint side and the
@@ -11328,7 +11502,7 @@ void test_range(TestContext& ctx) {
         __osc_mark = {723.5, 130.5}
         IssueTactical({__osc_lobber}, __osc_at(723.5, 130.5))
     )");
-    run(3);
+    tick_for(ctx, 3);
     lua_check("Test 1: builders in reach build where they stand", R"(
         for name, u in {near = __osc_near, fac = __osc_fac, acu = __osc_acu} do
             if not u:IsUnitState('Building') then error(name .. ' is not building') end
@@ -11356,7 +11530,7 @@ void test_range(TestContext& ctx) {
         if n ~= 1 then error(n .. ' missiles ordered') end
     )");
 
-    run(5);
+    tick_for(ctx, 5);
     lua_check("Test 2: repair, reclaim and capture in reach start where they stand", R"(
         if not __osc_mender:IsUnitState('Repairing') then error('the mender is not repairing') end
         if not __osc_reclaimer:IsUnitState('Reclaiming') then error('the reclaimer is not reclaiming') end
@@ -11380,21 +11554,23 @@ void test_range(TestContext& ctx) {
 
     // The repair's target moves off: within twice the reach it goes on.
     lua_check("setup: the hurt tank moves 11 off", "Warp(__osc_hurt, __osc_at(586.5, 80.5))");
-    run(2);
+    tick_for(ctx, 2);
     lua_check("Test 7: a repair goes on out to twice its reach", R"(
         if not __osc_mender:IsUnitState('Repairing') then error('the mender stopped') end
     )");
     lua_check("setup: the hurt tank moves 14 off", "Warp(__osc_hurt, __osc_at(589.5, 80.5))");
-    run(2);
+    tick_for(ctx, 2);
     lua_check("Test 8: past that it stops", R"(
         if __osc_mender:IsUnitState('Repairing') then error('the mender repairs from 14') end
         if table.getn(__osc_mender:GetCommandQueue()) ~= 0 then error('the order is still queued') end
     )");
 
-    run(60);
+    tick_until(ctx, "far builds, the walker reclaims, the guard helps and the gateway builds", 120,
+               "__osc_far:IsUnitState('Building') and __osc_walker:IsUnitState('Reclaiming') and "
+               "__osc_helper:GetConsumptionPerSecondEnergy() > 0 and "
+               "__osc_gate:GetFocusUnit() ~= nil");
     lua_check("Test 9: a builder out of reach walks just clear of the site's skirt, and builds",
               R"(
-        if not __osc_far:IsUnitState('Building') then error('far is not building') end
         local d = __osc_from(__osc_far, 609.5, 110.5)
         -- Moho sends it to the cell nearest the site clear of its skirt grown
         -- by a cell, touching counting (CUnitMobileBuildTask, PrepareMove):
@@ -11402,21 +11578,18 @@ void test_range(TestContext& ctx) {
         if d < 2.9 or d > 4 then error(string.format('far builds from %.2f', d)) end
     )");
     lua_check("Test 10: a reclaimer out of reach walks up, and reclaims", R"(
-        if not __osc_walker:IsUnitState('Reclaiming') then error('the walker is not reclaiming') end
         if __osc_from(__osc_walker, 620.5, 90.5) < 1 then error('the walker never moved') end
     )");
     lua_check("Test 11: the guard walked into reach, and helps", R"(
-        if __osc_helper:GetConsumptionPerSecondEnergy() <= 0 then error('the helper pays nothing') end
         local d = __osc_from(__osc_helper, 661.5, 120.5)
         if d > 7 then error(string.format('the helper is %.2f from the build', d)) end
     )");
     lua_check("setup: the gateway builds", R"(
         __osc_scu = __osc_gate:GetFocusUnit()
-        if not __osc_scu then error('the gateway builds nothing') end
         __osc_scu_from = {GetGameTick(), __osc_scu:GetFractionComplete()}
     )");
 
-    run(140);
+    tick_for(ctx, 140);
     lua_check("Test 11b: a guard in reach of a factory, not of its build, builds with it", R"(
         local rate = (__osc_scu:GetFractionComplete() - __osc_scu_from[2]) / (GetGameTick() - __osc_scu_from[1])
         local want = (120 + 5) / (36000 * 10)
@@ -11425,6 +11598,19 @@ void test_range(TestContext& ctx) {
                                 want, tostring(__osc_gate_helper:GetFocusUnit())))
         end
         if __osc_from(__osc_gate_helper, 740.5, 162.5) > 0.1 then error('the helper moved') end
+    )");
+    tick_until(ctx, "the ACU backs off and fires; the builder on its site builds there", 200, R"(
+        (function()
+            local fired = __osc_lobber:GetTacticalSiloAmmoCount() == 0
+            if __osc_moho_pathing then
+                fired = __osc_from(__osc_lobber, __osc_mark[1], __osc_mark[2]) >= 4.5
+            end
+            if not fired then return false end
+            for _, u in GetArmyBrain('ARMY_1'):GetListOfUnits(categories.ueb1101, false) do
+                if __osc_from(u, 610.5, 165.5) < 1 then return true end
+            end
+            return false
+        end)()
     )");
     lua_check("Test 12: a launcher too close backs off, and fires", R"(
         local d = __osc_from(__osc_lobber, __osc_mark[1], __osc_mark[2])
@@ -11438,7 +11624,6 @@ void test_range(TestContext& ctx) {
             return
         end
         if d < 5 then error(string.format('the ACU is %.2f from its target', d)) end
-        if __osc_lobber:GetTacticalSiloAmmoCount() ~= 0 then error('the ACU never fired') end
     )");
 
     lua_check("Test 12b: a builder on its site builds there once clear of it", R"(
@@ -11479,7 +11664,13 @@ void test_range(TestContext& ctx) {
         IssueBuildMobile({__osc_queued_acu}, __osc_at(600.5, 182.5), 'ueb2101', {})
         IssueBuildMobile({__osc_queued_acu}, __osc_at(608.5, 190.5), 'ueb2101', {})
     )");
-    run(300);
+    tick_until(ctx, "the queued ACU builds its second, its torso turned to the site", 600, R"(
+        (function()
+            local u = __osc_queued_acu
+            return table.getn(u:GetCommandQueue()) == 1 and u:IsUnitState('Building') and
+                u:GetBoneDirection('Torso') >= 0.9
+        end)()
+    )");
     lua_check("Test 12h: the next build in the queue turns the ACU's torso to its site", R"(
         local n = table.getn(__osc_queued_acu:GetCommandQueue())
         if n ~= 1 or not __osc_queued_acu:IsUnitState('Building') then
@@ -11506,7 +11697,18 @@ void test_range(TestContext& ctx) {
         local prize = __osc_spawn('ueb0101', 'ARMY_2', 648.5, 285.5)
         IssueCapture({__osc_capture_acu}, prize)
     )");
-    run(20);
+    tick_until(ctx, "the ACUs reclaim, repair and capture, their torsos turned to their targets",
+               40, R"(
+        (function()
+            for state, u in {Reclaiming = __osc_reclaim_acu, Repairing = __osc_repair_acu,
+                             Capturing = __osc_capture_acu} do
+                if not u:IsUnitState(state) or u:GetBoneDirection('Torso') < 0.9 then
+                    return false
+                end
+            end
+            return true
+        end)()
+    )");
     for (const char* state : {"Reclaiming", "Repairing", "Capturing"}) {
         lua_check(fmt::format("Test 12i: {} turns the ACU's torso to its target, east of it", state)
                       .c_str(),
@@ -11540,7 +11742,8 @@ void test_range(TestContext& ctx) {
         IssueBuildMobile({a}, __osc_at(640.5, 124.5), 'ueb1101', {})
         IssueGuard({__osc_helper}, a)
     )");
-    run(300);
+    tick_until(ctx, "the guard stops building with it", 600,
+               "__osc_helper_calls[table.getn(__osc_helper_calls)] == 'stop'");
     lua_check("Test 12e: the guard builds the structure with it, as a mobile build", R"(
         local got = table.concat(__osc_helper_calls, ',')
         if got ~= 'start MobileBuild,stop' then error('calls: ' .. got) end
@@ -11556,15 +11759,15 @@ void test_range(TestContext& ctx) {
         end
         __osc_hurt:SetHealth(nil, __osc_hurt:GetMaxHealth() * 0.8)
     )");
-    run(1);
+    tick_for(ctx, 1);
     lua_check("Test 12d: below half", R"(
         __osc_hurt:SetHealth(nil, __osc_hurt:GetMaxHealth() * 0.6)
     )");
-    run(1);
+    tick_for(ctx, 1);
     lua_check("Test 12d: repaired", R"(
         __osc_hurt:SetHealth(nil, __osc_hurt:GetMaxHealth() * 0.9)
     )");
-    run(1);
+    tick_for(ctx, 1);
     lua_check("Test 12d: OnHealthChanged has each quarter, and the script's damage effects follow",
               R"(
         local got = table.concat(__osc_hurt_calls, ' ')
@@ -11588,7 +11791,7 @@ void test_range(TestContext& ctx) {
         const std::string set =
             fmt::format("__osc_burn:SetHealth(nil, __osc_burn:GetMaxHealth() * {})", ratio);
         (void)ctx.lua_state.do_string(set);
-        run(1);
+        tick_for(ctx, 1);
         int n = 0;
         for (const auto& fx : ctx.sim.effect_registry().all()) {
             if (!fx || fx->destroyed() || fx->entity_id() != burn_id ||
@@ -11638,7 +11841,7 @@ void test_range(TestContext& ctx) {
         end
         brain:SetArmyStatsTrigger('Economy_Ratio_Mass', 'OscStore', 'GreaterThanOrEqual', 0)
     )");
-    run(5);
+    tick_for(ctx, 5);
     lua_check("Test 12g: OnStatsTrigger came once", R"(
         local n = 0
         for _, name in __osc_stat_calls do if name == 'OscStore' then n = n + 1 end end
@@ -11672,14 +11875,19 @@ void test_range(TestContext& ctx) {
         __osc_far.ward = __osc_spawn('uel0201', 'ARMY_1', 625.5, 135.5)
         IssueGuard({__osc_far.guard}, __osc_far.ward)
     )");
-    run(20);
+    tick_until(ctx, "setup: the five are on their way", 40, R"(
+        (function()
+            for _, name in {'mender', 'reclaimer', 'taker', 'attacker', 'guard'} do
+                local u = __osc_far[name]
+                if not u:IsUnitState('Moving') or u:GetPosition()[1] < 596.5 then return false end
+            end
+            return true
+        end)()
+    )");
     lua_check("setup: they're on their way when their targets go", R"(
-        for _, name in {'mender', 'reclaimer', 'taker', 'attacker', 'guard'} do
-            if not __osc_far[name]:IsUnitState('Moving') then error('the ' .. name .. ' is not walking') end
-        end
         for _, name in {'hurt', 'scrap', 'prize', 'foe', 'ward'} do __osc_far[name]:Destroy() end
     )");
-    run(2);
+    tick_for(ctx, 2);
     lua_check("Test 12j: a worker whose target goes on its way is left neither ordered nor Moving",
               R"(
         for _, name in {'mender', 'reclaimer', 'taker', 'attacker', 'guard'} do
@@ -11700,12 +11908,12 @@ void test_range(TestContext& ctx) {
         __osc_far.mark:SetFireState(1)
         IssueTactical({__osc_far.lobber}, __osc_far.mark)
     )");
-    run(5);
+    tick_for(ctx, 5);
     lua_check("setup: it is backing off when its target goes", R"(
         if not __osc_far.lobber:IsUnitState('Moving') then error('the ACU is not backing off') end
         __osc_far.mark:Destroy()
     )");
-    run(2);
+    tick_for(ctx, 2);
     lua_check("Test 12k: a launcher whose target goes as it backs off is left neither ordered nor "
               "Moving",
               R"(
@@ -11731,9 +11939,6 @@ void test_factory_assist(TestContext& ctx) {
             osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
         }
     };
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
-    };
 
     // Two UEF T1 land factories on flat ground east of the map's centre: A
     // is given three T1 tanks to build, and B guards A (M206h; Moho's guard
@@ -11753,14 +11958,13 @@ void test_factory_assist(TestContext& ctx) {
         IssueBuildFactory({__osc_a}, 'uel0201', 3)
         IssueFactoryAssist({__osc_b}, __osc_a)
     )");
-    run(20);
+    tick_until(ctx, "A and B build", 40,
+               "__osc_building(__osc_a) ~= nil and __osc_building(__osc_b) ~= nil");
 
     // B took one of A's orders -- not the one A is building -- and builds a
     // tank itself.
     lua_check("B takes a build from A's queue", R"(
         local a, b = __osc_building(__osc_a), __osc_building(__osc_b)
-        if not a then error('A is not building') end
-        if not b then error('B is not building') end
         if b:GetBlueprint().BlueprintId ~= 'uel0201' then
             error('B builds ' .. tostring(b:GetBlueprint().BlueprintId))
         end
@@ -11773,18 +11977,19 @@ void test_factory_assist(TestContext& ctx) {
     )");
 
     // The three are built between them, and no more.
-    for (int i = 0; i < 150; ++i) {
-        run(10);
-        auto r = ctx.lua_state.do_string(R"(
-            for _, f in {__osc_a, __osc_b} do
-                local u = __osc_building(f)
-                if u then __osc_seen[u] = true end
-            end
-            if __osc_queue(__osc_a) == 0 and not __osc_building(__osc_a)
-               and not __osc_building(__osc_b) then error('done') end
-        )");
-        if (!r) break;
-    }
+    tick_until([&] { tick_for(ctx, 10); }, "A's queue is built between them", 150,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    for _, f in {__osc_a, __osc_b} do
+                        local u = __osc_building(f)
+                        if u then __osc_seen[u] = true end
+                    end
+                    return __osc_queue(__osc_a) == 0 and not __osc_building(__osc_a)
+                       and not __osc_building(__osc_b)
+                end)()
+            )");
+               });
     lua_check("the queue is built between them, and no more", R"(
         if __osc_b_first:IsDead() or __osc_b_first:IsBeingBuilt() then
             error("B's tank was not finished")
@@ -11803,13 +12008,12 @@ void test_factory_assist(TestContext& ctx) {
     lua_check("B's build ends with its guard order", R"(
         IssueBuildFactory({__osc_a}, 'uel0201', 2)
     )");
-    run(20);
+    tick_until(ctx, "B takes the second order", 40, "__osc_building(__osc_b) ~= nil");
     lua_check("B took the second order", R"(
         __osc_b_second = __osc_building(__osc_b)
-        if not __osc_b_second then error('B is not building') end
         IssueClearCommands({__osc_b})
     )");
-    run(2);
+    tick_for(ctx, 2);
     lua_check("B's unfinished tank is gone", R"(
         if __osc_building(__osc_b) then error('B still builds') end
         if not __osc_b_second:IsDead() then error('its tank is still there') end
@@ -11825,10 +12029,9 @@ void test_factory_assist(TestContext& ctx) {
         __osc_a:SetRepeatQueue(true)
         IssueFactoryAssist({__osc_b}, __osc_a)
     )");
-    run(20);
+    tick_until(ctx, "A and B build", 40,
+               "__osc_building(__osc_a) ~= nil and __osc_building(__osc_b) ~= nil");
     lua_check("so both build, and the order stays", R"(
-        if not __osc_building(__osc_a) then error('A is not building its order') end
-        if not __osc_building(__osc_b) then error('B is not building') end
         if __osc_queue(__osc_a) ~= 1 then
             error('A has ' .. __osc_queue(__osc_a) .. ' orders; 1 expected')
         end
@@ -11838,10 +12041,11 @@ void test_factory_assist(TestContext& ctx) {
     // repeating A's queue rather than removing it.
     lua_check("B takes the repeating A's next order", R"(
         IssueBuildFactory({__osc_a}, 'uel0201', 1)
+        __osc_b_was = __osc_building(__osc_b)
     )");
-    run(20);
+    tick_until(ctx, "B, its tank built, takes the next order", 600,
+               "__osc_building(__osc_b) ~= nil and __osc_building(__osc_b) ~= __osc_b_was");
     lua_check("which goes back on A's queue", R"(
-        if not __osc_building(__osc_b) then error('B is not building') end
         if __osc_queue(__osc_a) ~= 2 then
             error('A has ' .. __osc_queue(__osc_a) .. ' orders; 2 expected (1 re-queued)')
         end
@@ -11856,21 +12060,19 @@ void test_factory_assist(TestContext& ctx) {
         IssueClearCommands({__osc_a, __osc_b})
         if not __osc_a:IsRepeatQueue() then error('A is not repeating') end
     )");
-    run(2);
+    tick_for(ctx, 2);
     lua_check("B takes an order the lobby forbids", R"(
         if __osc_building(__osc_b) then error('B still builds') end
         IssueBuildFactory({__osc_a}, 'uel0201', 1)
         IssueBuildFactory({__osc_a}, 'uel0105', 1)
         IssueFactoryAssist({__osc_b}, __osc_a)
     )");
-    run(20);
+    tick_until(ctx, "B takes the order the lobby forbids, and drops it", 40,
+               "__osc_queue(__osc_a) == 1");
     lua_check("and builds nothing from it", R"(
         -- (A's lone tank order it may take, A repeating: Moho's rule above)
         local b = __osc_building(__osc_b)
         if b and b:GetBlueprint().BlueprintId == 'uel0105' then error('B builds the engineer') end
-        if __osc_queue(__osc_a) ~= 1 then
-            error('A has ' .. __osc_queue(__osc_a) .. ' orders; 1 expected (1 dropped)')
-        end
     )");
     lua_check("the lobby's rule lifted", "RemoveBuildRestriction(1, categories.ENGINEER)");
 
@@ -11882,7 +12084,7 @@ void test_factory_assist(TestContext& ctx) {
         __osc_b:SetRepeatQueue(false)
         __osc_a:SetRepeatQueue(false)
     )");
-    run(2);
+    tick_for(ctx, 2);
     lua_check("A, given one tank raised to three, and B guarding it", R"(
         if __osc_building(__osc_b) then error('B still builds') end
         IssueBuildFactory({__osc_a}, 'uel0201', 1)
@@ -11907,10 +12109,9 @@ void test_factory_assist(TestContext& ctx) {
                                a_unit ? a_unit->command_queue().size() : 0, a_count());
     }
     lua_check("B guards A", "IssueFactoryAssist({__osc_b}, __osc_a)");
-    run(20);
+    tick_until(ctx, "A and B build", 40,
+               "__osc_building(__osc_a) ~= nil and __osc_building(__osc_b) ~= nil");
     lua_check("B builds one of A's three while A builds another", R"(
-        if not __osc_building(__osc_a) then error('A is not building') end
-        if not __osc_building(__osc_b) then error('B is not building') end
         if __osc_building(__osc_a) == __osc_building(__osc_b) then error('one tank') end
         if __osc_queue(__osc_a) ~= 1 then error('A has ' .. __osc_queue(__osc_a) .. ' orders') end
     )");
@@ -11928,24 +12129,21 @@ void test_factory_assist(TestContext& ctx) {
     lua_check("A and B are cleared again", R"(
         IssueClearCommands({__osc_a, __osc_b})
     )");
-    run(2);
+    tick_for(ctx, 2);
     lua_check("A, repeating, is given one tank", R"(
         __osc_a:SetRepeatQueue(true)
         IssueBuildFactory({__osc_a}, 'uel0201', 1)
     )");
-    run(2);
+    tick_for(ctx, 2);
     lua_check("A builds it", R"(
         __osc_a_first = __osc_building(__osc_a)
         if not __osc_a_first then error('A is not building') end
     )");
-    for (int i = 0; i < 150; ++i) {
-        run(10);
-        auto r = ctx.lua_state.do_string(R"(
-            local u = __osc_building(__osc_a)
-            if u and u ~= __osc_a_first then error('the next') end
-        )");
-        if (!r) break;
-    }
+    tick_until([&] { tick_for(ctx, 10); }, "A starts its next tank", 150,
+               [&] {
+                   return lua_true(ctx.lua_state, "__osc_building(__osc_a) ~= nil and "
+                                                  "__osc_building(__osc_a) ~= __osc_a_first");
+               });
     lua_check("and, that one built, starts another", R"(
         if __osc_a_first:IsDead() or __osc_a_first:IsBeingBuilt() then
             error("A's first tank was not finished")
@@ -11968,24 +12166,20 @@ void test_factory_assist(TestContext& ctx) {
         IssueFactoryAssist({__osc_c}, __osc_a2)
         IssueBuildFactory({__osc_c}, 'uel0101', 1)
     )");
-    run(20);
+    tick_until(ctx, "C builds", 40, "__osc_building(__osc_c) ~= nil");
     lua_check("C builds its own scout first", R"(
         local u = __osc_building(__osc_c)
-        if not u then error('C is not building') end
         if u:GetBlueprint().BlueprintId ~= 'uel0101' then
             error('C builds ' .. u:GetBlueprint().BlueprintId .. ', not its own scout')
         end
         __osc_scout = u
         if __osc_queue(__osc_a2) ~= 3 then error("C took from A2's queue") end
     )");
-    for (int i = 0; i < 100; ++i) {
-        run(10);
-        auto r = ctx.lua_state.do_string(R"(
-            local u = __osc_building(__osc_c)
-            if u and u ~= __osc_scout then error('next') end
-        )");
-        if (!r) break;
-    }
+    tick_until([&] { tick_for(ctx, 10); }, "C starts its next build", 100,
+               [&] {
+                   return lua_true(ctx.lua_state, "__osc_building(__osc_c) ~= nil and "
+                                                  "__osc_building(__osc_c) ~= __osc_scout");
+               });
     lua_check("then, its scout built, it helps A2 again", R"(
         if __osc_scout:IsDead() or __osc_scout:IsBeingBuilt() then error('the scout was not finished') end
         local u = __osc_building(__osc_c)
@@ -12002,15 +12196,12 @@ void test_factory_assist(TestContext& ctx) {
         IssueBuildFactory({__osc_a3}, 'uel0201', 3)
         IssueFactoryAssist({__osc_d}, __osc_a3)
     )");
-    run(20);
+    tick_until(ctx, "D takes a build from A3's queue", 40, "__osc_queue(__osc_a3) == 2");
     lua_check("D takes a build from A3's queue while paused, and holds it", R"(
-        if __osc_queue(__osc_a3) ~= 2 then
-            error('A3 has ' .. __osc_queue(__osc_a3) .. ' orders; 2 expected')
-        end
         if __osc_building(__osc_d) then error('D builds while paused') end
         __osc_d:SetPaused(false)
     )");
-    run(15);
+    tick_until(ctx, "unpaused, D builds", 30, "__osc_building(__osc_d) ~= nil");
     lua_check("unpaused, D builds the order it took", R"(
         local u = __osc_building(__osc_d)
         if not u or u:GetBlueprint().BlueprintId ~= 'uel0201' then error('D is not building a tank') end
@@ -12033,9 +12224,6 @@ void test_factory_rally(TestContext& ctx) {
             fail++;
             osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
         }
-    };
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
 
     // Two UEF T1 land factories on flat ground east of the map's centre, as
@@ -12092,11 +12280,11 @@ void test_factory_rally(TestContext& ctx) {
         IssueFactoryRallyPoint({__osc_b}, {650, GetTerrainHeight(650, 140), 140})
         IssueFactoryAssist({__osc_b}, __osc_a)
     )");
-    run(20);
+    tick_until(ctx, "A and B build", 40,
+               "__osc_building(__osc_a) ~= nil and __osc_building(__osc_b) ~= nil");
     lua_check("A and B each build a tank", R"(
         __osc_ta = __osc_building(__osc_a)
         __osc_tb = __osc_building(__osc_b)
-        if not __osc_ta or not __osc_tb then error('A or B is not building') end
     )");
 
     // Once its tank is built, each factory holds its next build while the
@@ -12110,28 +12298,26 @@ void test_factory_rally(TestContext& ctx) {
             __osc_roll[k] = {f = pair[1], t = pair[2], waited = 0, over = false, built_while_busy = 0}
         end
     )");
-    auto rolloffs_over = [&] {
-        auto r = ctx.lua_state.do_string(
-            "if not (__osc_roll.a.over and __osc_roll.b.over) then error('rolling') end");
-        return r.ok();
-    };
-    for (int i = 0; i < 400 && !rolloffs_over(); ++i) {
-        run(1);
-        (void)ctx.lua_state.do_string(R"(
-            for _, r in __osc_roll do
-                if not r.over and not r.t:IsBeingBuilt() then
-                    local cmd = r.f.MoveCommand
-                    if cmd and not IsCommandDone(cmd) then
-                        if r.f:IsUnitState('Busy') then r.waited = r.waited + 1 end
-                        local f = __osc_building(r.f)
-                        if f and f ~= r.t then r.built_while_busy = r.built_while_busy + 1 end
-                    elseif r.waited > 0 then
-                        r.over = true
+    tick_until(
+        [&] {
+            ctx.sim.tick();
+            (void)ctx.lua_state.do_string(R"(
+                for _, r in __osc_roll do
+                    if not r.over and not r.t:IsBeingBuilt() then
+                        local cmd = r.f.MoveCommand
+                        if cmd and not IsCommandDone(cmd) then
+                            if r.f:IsUnitState('Busy') then r.waited = r.waited + 1 end
+                            local f = __osc_building(r.f)
+                            if f and f ~= r.t then r.built_while_busy = r.built_while_busy + 1 end
+                        elseif r.waited > 0 then
+                            r.over = true
+                        end
                     end
                 end
-            end
-        )");
-    }
+            )");
+        },
+        "A's and B's tanks roll off", 400,
+        [&] { return lua_true(ctx.lua_state, "__osc_roll.a.over and __osc_roll.b.over"); });
     lua_check("A and B were busy while their tanks rolled off, until the moves were done", R"(
         for k, r in __osc_roll do
             if r.waited < 3 or not r.over then
@@ -12148,7 +12334,11 @@ void test_factory_rally(TestContext& ctx) {
     )");
     // Then each lets the finished build go: A's last order went to B, which
     // builds it once it has rolled its own tank off.
-    run(30);
+    tick_until(ctx, "A and B let their finished builds go, and the next is built", 60, R"(
+        not __osc_a:IsUnitState('Busy') and not __osc_b:IsUnitState('Busy') and
+        (table.getn(__osc_a:GetCommandQueue()) == 0 or __osc_building(__osc_a) ~= nil or
+         __osc_building(__osc_b) ~= nil)
+    )");
     lua_check("the finished builds are let go after the roll-offs", R"(
         if __osc_a:IsUnitState('Busy') or __osc_b:IsUnitState('Busy') then
             error('still busy: A ' .. tostring(__osc_a:IsUnitState('Busy')) .. ', B ' ..
@@ -12160,16 +12350,19 @@ void test_factory_rally(TestContext& ctx) {
     )");
 
     // Built, each drives off to A's rally point: B built its tank for A.
-    for (int i = 0; i < 200; ++i) {
-        run(10);
-        auto r = ctx.lua_state.do_string(R"(
-            for _, t in {__osc_ta, __osc_tb} do
-                if t:IsDead() or t:IsBeingBuilt() or __osc_dist(t, 610, 140) > 6 then return end
-            end
-            error('there')
-        )");
-        if (!r) break;
-    }
+    tick_until([&] { tick_for(ctx, 10); }, "A's and B's tanks reach A's rally point", 200,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    for _, t in {__osc_ta, __osc_tb} do
+                        if t:IsDead() or t:IsBeingBuilt() or __osc_dist(t, 610, 140) > 6 then
+                            return false
+                        end
+                    end
+                    return true
+                end)()
+            )");
+               });
     lua_check("A's tank drives to A's rally point", R"(
         if __osc_ta:IsDead() or __osc_ta:IsBeingBuilt() then error('not built') end
         local d = __osc_dist(__osc_ta, 610, 140)
@@ -12202,7 +12395,7 @@ void test_factory_rally(TestContext& ctx) {
         ctx.sim.route_player_command({a_id}, move, true);
         ctx.sim.set_human_input_active(false);
     }
-    run(2);
+    tick_for(ctx, 2);
     lua_check("a player's move sets A's rally point, not its orders", R"(
         local p = __osc_a:GetRallyPoint()
         if VDist2(p[1], p[3], 560, 180) > 0.01 then
@@ -12221,22 +12414,24 @@ void test_factory_rally(TestContext& ctx) {
         __osc_strayed = 0
         __osc_rolled_to = false
     )");
-    for (int i = 0; i < 400; ++i) {
-        run(1);
-        (void)ctx.lua_state.do_string(R"(
-            __osc_eng = __osc_eng or __osc_building(__osc_air) or false
-            if __osc_eng and not __osc_eng:IsBeingBuilt() and not __osc_rolled_to then
-                local p = __osc_eng:GetPosition()
-                __osc_strayed = math.max(__osc_strayed, math.abs(p[3] - 140.35))
-                if __osc_air.MoveCommand and IsCommandDone(__osc_air.MoveCommand) then
-                    __osc_rolled_to = p
+    tick_until(
+        [&] {
+            ctx.sim.tick();
+            (void)ctx.lua_state.do_string(R"(
+                __osc_eng = __osc_eng or __osc_building(__osc_air) or false
+                if __osc_eng and not __osc_eng:IsBeingBuilt() and not __osc_rolled_to then
+                    local p = __osc_eng:GetPosition()
+                    __osc_strayed = math.max(__osc_strayed, math.abs(p[3] - 140.35))
+                    if __osc_air.MoveCommand and IsCommandDone(__osc_air.MoveCommand) then
+                        __osc_rolled_to = p
+                    end
                 end
-            end
-        )");
-    }
+            )");
+        },
+        "the engineer's roll-off move ends", 800,
+        [&] { return lua_true(ctx.lua_state, "__osc_rolled_to ~= false"); });
     lua_check("the engineer rolls straight off to the roll-off point", R"(
         local p = __osc_rolled_to
-        if not p then error('the roll-off move never ended') end
         -- With Moho's pathing the move is done anywhere in the point's cell
         -- (drive-test, Test 4).
         if VDist2(p[1], p[3], 677.25, 140.35) > (__osc_moho_pathing and 0.75 or 0.25) then
@@ -12255,32 +12450,37 @@ void test_factory_rally(TestContext& ctx) {
         __osc_climb = 0
         __osc_aside = 0
     )");
-    for (int i = 0; i < 600; ++i) {
-        (void)ctx.lua_state.do_string(R"(
-            __osc_scout = __osc_scout or __osc_building(__osc_airf) or false
-            __osc_was = __osc_scout and not __osc_scout:IsDead() and __osc_scout:GetPosition()
-        )");
-        run(1);
-        (void)ctx.lua_state.do_string(R"(
-            if __osc_was and not __osc_scout:IsDead() and not __osc_scout:IsBeingBuilt() then
-                local p = __osc_scout:GetPosition()
-                __osc_let_go = __osc_let_go or __osc_was
-                if not __osc_released then
-                    local q = __osc_scout:GetOrientation()
-                    __osc_released = {
-                        fx = 2 * (q[1] * q[3] + q[4] * q[2]),
-                        fz = 1 - 2 * (q[1] * q[1] + q[2] * q[2]),
-                    }
+    tick_until(
+        [&] {
+            (void)ctx.lua_state.do_string(R"(
+                __osc_scout = __osc_scout or __osc_building(__osc_airf) or false
+                __osc_was = __osc_scout and not __osc_scout:IsDead() and __osc_scout:GetPosition()
+            )");
+            ctx.sim.tick();
+            (void)ctx.lua_state.do_string(R"(
+                if __osc_was and not __osc_scout:IsDead() and not __osc_scout:IsBeingBuilt() then
+                    local p = __osc_scout:GetPosition()
+                    __osc_let_go = __osc_let_go or __osc_was
+                    if not __osc_released then
+                        local q = __osc_scout:GetOrientation()
+                        __osc_released = {
+                            fx = 2 * (q[1] * q[3] + q[4] * q[2]),
+                            fz = 1 - 2 * (q[1] * q[1] + q[2] * q[2]),
+                        }
+                    end
+                    if p[1] > __osc_let_go[1] - 30 then
+                        __osc_climb = math.max(__osc_climb, p[2] - __osc_was[2])
+                        __osc_aside = math.max(__osc_aside, math.abs(p[3] - __osc_let_go[3]))
+                    end
                 end
-                if p[1] > __osc_let_go[1] - 30 then
-                    __osc_climb = math.max(__osc_climb, p[2] - __osc_was[2])
-                    __osc_aside = math.max(__osc_aside, math.abs(p[3] - __osc_let_go[3]))
-                end
-            end
-        )");
-    }
+            )");
+        },
+        "the scout, let go, flies 30 west", 1200,
+        [&] {
+            return lua_true(ctx.lua_state, "__osc_let_go ~= false and "
+                                           "__osc_scout:GetPosition()[1] <= __osc_let_go[1] - 30");
+        });
     lua_check("the scout climbs from the factory and flies straight west", R"(
-        if not __osc_let_go then error('the scout was never finished') end
         if __osc_climb > 1 or __osc_aside > 1 then
             error('climbed ' .. __osc_climb .. ' in a tick, flew ' .. __osc_aside ..
                   ' aside of its line west')
@@ -12288,7 +12488,6 @@ void test_factory_rally(TestContext& ctx) {
     )");
     lua_check("the scout is let go facing the roll-off point nearest the rally", R"(
         local r = __osc_released
-        if not r then error('the scout was never finished') end
         if r.fx > -0.9 then
             error('faced ' .. r.fx .. ', ' .. r.fz .. ' when let go; west expected')
         end
@@ -12348,7 +12547,8 @@ void test_naval_depth(TestContext& ctx) {
         if math.abs(t.y + 1.5) > 1e-3 then error('it is ' .. t.y .. ' under, not 1.5') end
         IssueDive({__osc_sub})
     )");
-    run(60);
+    tick_until([&] { run(1); }, "the sub surfaces", 120,
+               [&] { return lua_true(ctx.lua_state, "__osc_sub:GetCurrentLayer() == 'Water'"); });
     lua_check(
         "Test 1: told to dive where it stands, it sinks to its depth; its layer is Sub only there",
         R"(
@@ -12357,7 +12557,8 @@ void test_naval_depth(TestContext& ctx) {
         __osc_trace = {}
         IssueDive({__osc_sub})
     )");
-    run(60);
+    tick_until([&] { run(1); }, "the sub reaches its depth", 120,
+               [&] { return lua_true(ctx.lua_state, "__osc_sub:GetCurrentLayer() == 'Sub'"); });
     lua_check("Test 1 (checked)", R"(
         local first, last = __osc_trace[1], __osc_trace[table.getn(__osc_trace)]
         if first.layer ~= 'Water' then error('it was ' .. first.layer .. ' as it began') end
@@ -12389,7 +12590,8 @@ void test_naval_depth(TestContext& ctx) {
         __osc_events = {}
         IssueDive({__osc_sub})
     )");
-    run(60);
+    tick_until([&] { run(1); }, "the sub surfaces again", 120,
+               [&] { return lua_true(ctx.lua_state, "__osc_sub:GetCurrentLayer() == 'Water'"); });
     lua_check("Test 3 (checked)", R"(
         local last = __osc_trace[table.getn(__osc_trace)]
         if last.layer ~= 'Water' or math.abs(last.y) > 1e-3 then
@@ -12485,7 +12687,16 @@ void test_naval_depth(TestContext& ctx) {
         __osc_target:SetCanTakeDamage(false)
         IssueAttack({__osc_sub}, __osc_target)
     )");
-    run(150);
+    const auto torpedo_hit = [&] {
+        return lua_true(ctx.lua_state, R"((function()
+            for _, r in __osc_shots do
+                if r.target == __osc_target and r.impact and r.impact ~= 'ProjectileUnderwater' then
+                    return true
+                end
+            end
+        end)())");
+    };
+    tick_until([&] { run(1); }, "a torpedo hits the frigate", 300, torpedo_hit);
     lua_check("Test 4: a surfaced sub's torpedoes dive in and hit a frigate",
               "__osc_check_shots('the frigate')");
     lua_check("setup: a dived sub to hit", R"(
@@ -12495,12 +12706,13 @@ void test_naval_depth(TestContext& ctx) {
         __osc_target = CreateUnitHPR('ues0203', 'ARMY_2', x, GetSurfaceHeight(x, z + 25), z + 25, 0, 0, 0)
         __osc_target:SetCanTakeDamage(false)
     )");
-    run(60);
+    tick_until([&] { run(1); }, "the target sub dives", 120,
+               [&] { return lua_true(ctx.lua_state, "__osc_target:GetCurrentLayer() == 'Sub'"); });
     lua_check("setup: the target is under", R"(
         if __osc_target:GetCurrentLayer() ~= 'Sub' then error('it is on ' .. __osc_target:GetCurrentLayer()) end
         IssueAttack({__osc_sub}, __osc_target)
     )");
-    run(150);
+    tick_until([&] { run(1); }, "a torpedo hits the dived sub", 300, torpedo_hit);
     lua_check("Test 5: they reach a dived sub too", "__osc_check_shots('the dived sub')");
 
     lua_check("setup: a torpedo launcher by the sub", R"(
@@ -12511,7 +12723,12 @@ void test_naval_depth(TestContext& ctx) {
         __osc_launcher:SetCanTakeDamage(false)
         __osc_launcher:SetWeaponEnabledByLabel('Turret01', false)
     )");
-    run(20);
+    tick_until([&] { run(1); }, "the sub's torpedoes target the launcher", 40,
+               [&] {
+                   return lua_true(ctx.lua_state,
+                                   "__osc_sub:GetWeaponByLabel('Torpedo01'):GetCurrentTarget() == "
+                                   "__osc_launcher");
+               });
     lua_check("Test 5b: a torpedo launcher floats on the Water layer, a sub's torpedoes' target",
               R"(
         if __osc_launcher:GetCurrentLayer() ~= 'Water' then
@@ -12576,7 +12793,13 @@ void test_naval_depth(TestContext& ctx) {
         IssueMove({__osc_acu}, {deep - 4, GetTerrainHeight(deep - 4, z), z})
         IssueMove({__osc_aurora}, {deep - 4, GetSurfaceHeight(deep - 4, z + 12), z + 12})
     )");
-    run(400);
+    tick_until([&] { run(1); }, "the ACU and the hover tank arrive", 800,
+               [&] {
+                   return lua_true(ctx.lua_state,
+                                   "table.getn(__osc_acu:GetCommandQueue()) == 0 and "
+                                   "table.getn(__osc_aurora:GetCommandQueue()) == 0 and "
+                                   "not __osc_acu:IsMoving() and not __osc_aurora:IsMoving()");
+               });
     lua_check("Test 7: the ACU walks the seabed, on the bed", R"(
         if __osc_acu:GetCurrentLayer() ~= 'Seabed' then error('it is on ' .. __osc_acu:GetCurrentLayer()) end
         local p = __osc_acu:GetPosition()
@@ -12606,7 +12829,12 @@ void test_naval_depth(TestContext& ctx) {
         local x, z = __osc_ashore[1], __osc_ashore[2]
         IssueMove({__osc_acu}, {x, GetTerrainHeight(x, z), z})
     )");
-    run(400);
+    tick_until([&] { run(1); }, "the ACU walks back ashore", 800,
+               [&] {
+                   return lua_true(ctx.lua_state,
+                                   "table.getn(__osc_acu:GetCommandQueue()) == 0 and "
+                                   "not __osc_acu:IsMoving()");
+               });
     lua_check("Test 9: back ashore, the ACU is on land", R"(
         local p = __osc_acu:GetPosition()
         if GetTerrainHeight(p[1], p[3]) < GetSurfaceHeight(p[1], p[3]) then
@@ -12642,9 +12870,6 @@ void test_transport_slots(TestContext& ctx) {
         const double v = lua_tonumber(L, -1);
         lua_pop(L, 1);
         return v;
-    };
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
     // The positions of a Lua list's units, from the sim.
     const auto positions = [&](const char* list) {
@@ -12705,11 +12930,13 @@ void test_transport_slots(TestContext& ctx) {
         end
     )"))
         return;
-    run(5);
+    tick_for(ctx, 5);
 
     // 15 tanks told to board: 14 slots take 14, and the 15th is refused.
     lua("IssueTransportLoad(__osc_small, __osc_xport)");
-    run(400);
+    tick_until(ctx, "the transport finishes loading the tanks", 800,
+               "__osc_count_attached(__osc_small) > 0 and "
+               "table.getn(__osc_xport:GetCommandQueue()) == 0");
     lua("__osc_n = __osc_count_attached(__osc_small)");
     check(number("__osc_n") == 14,
           fmt::format("14 of 15 tanks board a UEF T2 transport ({})", number("__osc_n")));
@@ -12782,7 +13009,7 @@ void test_transport_slots(TestContext& ctx) {
     lua("IssueTransportUnload({__osc_xport}, {640, GetTerrainHeight(640, 100), 100})");
     {
         const osc::sim::Vector3 from = transport ? transport->position() : osc::sim::Vector3{};
-        run(8);
+        tick_for(ctx, 8);
         const f32 moved = transport ? std::hypot(transport->position().x - from.x,
                                                  transport->position().z - from.z)
                                     : 0.0f;
@@ -12792,7 +13019,9 @@ void test_transport_slots(TestContext& ctx) {
                           "{:.5f} off at most)",
                           moved, placed, worst));
     }
-    run(400);
+    tick_until(ctx, "the transport unloads the tanks", 800,
+               "__osc_count_attached(__osc_small) == 0 and "
+               "table.getn(__osc_xport:GetCommandQueue()) == 0");
     lua("__osc_n = __osc_count_attached(__osc_small)");
     check(number("__osc_n") == 0,
           fmt::format("unloaded: {} tanks still aboard", number("__osc_n")));
@@ -12808,11 +13037,15 @@ void test_transport_slots(TestContext& ctx) {
     // Large units take 4 small bones each: 3 of 4 bots board, and then only
     // 2 tanks (14 - 3 x 4) fit beside them.
     lua("IssueTransportLoad(__osc_large, __osc_xport)");
-    run(500);
+    tick_until(ctx, "the transport finishes loading the bots", 1000,
+               "__osc_count_attached(__osc_large) > 0 and "
+               "table.getn(__osc_xport:GetCommandQueue()) == 0");
     lua("__osc_n = __osc_count_attached(__osc_large)");
     check(number("__osc_n") == 3, fmt::format("3 of 4 T3 bots board ({})", number("__osc_n")));
     lua("IssueTransportLoad({__osc_small[1], __osc_small[2], __osc_small[3]}, __osc_xport)");
-    run(500);
+    tick_until(ctx, "the transport finishes loading the tanks beside the bots", 1000,
+               "__osc_count_attached(__osc_small) > 0 and "
+               "table.getn(__osc_xport:GetCommandQueue()) == 0");
     lua("__osc_n = __osc_count_attached(__osc_small)");
     check(number("__osc_n") == 2,
           fmt::format("2 of 3 tanks fit beside them ({})", number("__osc_n")));
@@ -12823,7 +13056,7 @@ void test_transport_slots(TestContext& ctx) {
             if u:IsUnitState('Attached') then u:Destroy() break end
         end
     )");
-    run(3);
+    tick_for(ctx, 3);
     lua("__osc_room = __osc_xport:TransportHasSpaceFor(__osc_large[4]) and 1 or 0");
     check(number("__osc_room") == 1, "a bot destroyed aboard frees its slot");
 
@@ -12847,13 +13080,13 @@ void test_transport_slots(TestContext& ctx) {
         IssueMove({__osc_xport}, {660, GetTerrainHeight(660, 100), 100})
     )"))
         return;
-    run(40);
+    tick_for(ctx, 40);
     lua(R"(
         __osc_land_kill = __osc_aboard()
         __osc_land_layer = __osc_xport:GetCurrentLayer()
         __osc_land_kill:Kill()
     )");
-    run(2);
+    tick_for(ctx, 2);
     lua("__osc_n = table.getn(__osc_heard)");
     lua("__osc_set_down = __osc_land_kill:IsUnitState('Attached') and 0 or 1");
     lua("__osc_in_air = __osc_land_layer == 'Air' and 1 or 0");
@@ -12884,17 +13117,13 @@ void test_transport_slots(TestContext& ctx) {
             return math.abs(p[1] - __osc_sea[1]) < 3 and math.abs(p[3] - __osc_sea[2]) < 3
         end
     )");
-    for (int t = 0; t < 1500; ++t) {
-        lua("__osc_there = __osc_over_sea() and 1 or 0");
-        if (number("__osc_there") == 1) break;
-        run(1);
-    }
+    tick_until(ctx, "the transport is over the sea", 1500, "__osc_over_sea()");
     lua("__osc_there = __osc_over_sea() and 1 or 0");
     lua(R"(
         __osc_sea_kill = __osc_aboard()
         __osc_sea_kill:Kill()
     )");
-    run(2);
+    tick_for(ctx, 2);
     lua("__osc_n = table.getn(__osc_heard)");
     lua("__osc_was_it = __osc_heard[1] == __osc_sea_kill and 1 or 0");
     lua("__osc_set_down = __osc_sea_kill:IsUnitState('Attached') and 0 or 1");
@@ -12912,7 +13141,7 @@ void test_transport_slots(TestContext& ctx) {
         __osc_kept:Kill()
         __osc_kept_id = __osc_kept:GetEntityId()
     )");
-    run(2);
+    tick_for(ctx, 2);
     lua("__osc_n = __osc_kept:IsUnitState('Attached') and 1 or 0");
     check(number("__osc_n") == 1, "without the handler, the transport carries the dead unit on");
 
@@ -12930,18 +13159,15 @@ void test_transport_slots(TestContext& ctx) {
         end
         __osc_xport:Kill()
     )");
-    run(2);
+    tick_for(ctx, 2);
     lua("__osc_n = __osc_rider_heard");
     check(number("__osc_n") == 1,
           fmt::format("a unit aboard hears OnParentKilled as its transport dies, still alive ({})",
                       number("__osc_n")));
 
     // Destroyed, the transport holds the dead unit it kept no longer.
-    for (int t = 0; t < 900; ++t) {
-        lua("__osc_gone = __osc_xport:BeenDestroyed() and 1 or 0");
-        if (number("__osc_gone") == 1) break;
-        run(1);
-    }
+    tick_until(ctx, "the transport is destroyed", 900, "__osc_xport:BeenDestroyed()");
+    lua("__osc_gone = __osc_xport:BeenDestroyed() and 1 or 0");
     {
         const auto* kept = ctx.sim.entity_registry().find(
             osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_kept_id"))));
@@ -13060,25 +13286,30 @@ void test_transport_pickup(TestContext& ctx) {
 
     f32 flown = -1, from_centre = -1, lifted = 0;
     std::string ready_event;
-    int ticks = 2;
-    for (; ticks < 400; ++ticks) {
-        ctx.sim.tick();
-        if (flown < 0 && xport->pickup_ready()) {
-            ready_event = xport->vert_event();
-            flown = std::hypot(xport->position().x - start.x, xport->position().z - start.z);
-            from_centre =
-                std::hypot(xport->position().x - centre.x, xport->position().z - centre.z);
-        }
-        for (const auto* t : tanks)
-            if (t && !t->destroyed() && t->transport_id() == 0)
-                lifted = std::max(lifted, t->position().y - terrain->get_surface_height(
-                                                                t->position().x, t->position().z));
-        if (!xport->pickup_running() && !xport->has_unit_state("TransportLoading")) break;
-    }
+    const auto picked = tick_until(
+        [&] {
+            ctx.sim.tick();
+            if (flown < 0 && xport->pickup_ready()) {
+                ready_event = xport->vert_event();
+                flown = std::hypot(xport->position().x - start.x, xport->position().z - start.z);
+                from_centre =
+                    std::hypot(xport->position().x - centre.x, xport->position().z - centre.z);
+            }
+            for (const auto* t : tanks) {
+                if (t && !t->destroyed() && t->transport_id() == 0) {
+                    lifted =
+                        std::max(lifted, t->position().y - terrain->get_surface_height(
+                                                               t->position().x, t->position().z));
+                }
+            }
+        },
+        "the transport ends the pickup", 400,
+        [&] { return !xport->pickup_running() && !xport->has_unit_state("TransportLoading"); });
+    const int ticks = 2 + picked.value_or(400);
     const f32 hover =
         xport->position().y - terrain->get_terrain_height(xport->position().x, xport->position().z);
     lua("__osc_n = __osc_attached(__osc_tanks)");
-    check(number("__osc_n") == 6 && ticks < 300,
+    check(number("__osc_n") == 6 && ticks <= 300,
           fmt::format("6 of 8 tanks board, within {} ticks ({} aboard)", ticks, number("__osc_n")));
     check(flown > 30.0f && from_centre < 10.0f,
           fmt::format("the transport flew to its units ({:.0f} flown, {:.1f} from their centre)",
@@ -13171,7 +13402,8 @@ void test_transport_pickup(TestContext& ctx) {
         table.insert(__osc_mix, __osc_bot)
         IssueTransportLoad(__osc_mix, __osc_x3)
     )");
-    for (int i = 0; i < 300; ++i) ctx.sim.tick();
+    tick_until(ctx, "the third transport finishes its pickup", 600,
+               "__osc_attached(__osc_mix) > 0 and table.getn(__osc_x3:GetCommandQueue()) == 0");
     lua(R"(
         __osc_bot_in = __osc_bot:IsUnitState('Attached') and 1 or 0
         __osc_n = __osc_attached(__osc_mix)
@@ -13201,10 +13433,13 @@ void test_transport_pickup(TestContext& ctx) {
     )");
     auto* x4 = unit("__osc_x4");
     bool began = false;
-    for (int i = 0; i < 400 && x4 && !(began && !x4->pickup_running()); ++i) {
-        ctx.sim.tick();
-        began = began || x4->pickup_running();
-    }
+    tick_until(
+        [&] {
+            ctx.sim.tick();
+            began = began || x4->pickup_running();
+        },
+        "the solo pickup runs and ends", 400,
+        [&] { return !x4 || (began && !x4->pickup_running()); });
     for (int i = 0; i < 5; ++i) ctx.sim.tick();
     lua(R"(
         __osc_solo_in = __osc_solo:IsUnitState('Attached') and 1 or 0
@@ -13225,20 +13460,23 @@ void test_transport_pickup(TestContext& ctx) {
             __osc_r2[i] = CreateUnitHPR('uel0201', 'ARMY_1', 460 + 3 * i,
                                         GetTerrainHeight(460, 350), 350, 0, 0, 0)
         end
+        __osc_free = CreateUnitHPR('uel0201', 'ARMY_1', 470, GetTerrainHeight(470, 390), 390, 0, 0, 0)
         IssueTransportLoad(__osc_r2, __osc_rc)
     )");
     auto* rc = unit("__osc_rc");
     auto* rd = unit("__osc_rd");
-    for (int i = 0; i < 600 && rc && rc->cargo_ids().size() < 2; ++i) {
-        ctx.sim.tick();
-    }
+    auto* free_tank = unit("__osc_free");
+    tick_until(ctx, "both tanks board the transport", 600,
+               [&] { return !rc || rc->cargo_ids().size() >= 2; });
     std::vector<osc::u32> aboard = rc ? rc->cargo_ids() : std::vector<osc::u32>{};
-    if (rd && aboard.size() == 2) {
+    if (rd && free_tank && aboard.size() == 2) {
         osc::sim::UnitCommand load;
         load.type = osc::sim::CommandType::TransportLoad;
         load.target_id = rd->entity_id();
         load.target_pos = rd->position();
-        ctx.sim.route_command(aboard, load, true);
+        std::vector<osc::u32> ordered = aboard;
+        ordered.push_back(free_tank->entity_id());
+        ctx.sim.route_command(ordered, load, true);
     }
     std::size_t taken = 0;
     for (const osc::u32 id : aboard) {
@@ -13250,6 +13488,8 @@ void test_transport_pickup(TestContext& ctx) {
     check(aboard.size() == 2 && taken == 0,
           fmt::format("units aboard take no load order ({} aboard, {} orders taken)", aboard.size(),
                       taken));
+    check(free_tank && free_tank->command_queue().size() == 1,
+          "a unit on the ground given the same load order takes it");
 
     spdlog::info("Transport pickup test: {} passed, {} failed", pass, fail);
 }
@@ -13421,7 +13661,8 @@ void test_carrier(TestContext& ctx) {
               std::abs(order->target_pos.x - static_cast<osc::f32>(number("__osc_cx") + 60)) <
                   0.01f,
           "a launched plane is out, touchable again, and heads for the point");
-    for (int i = 0; i < 160; ++i) ctx.sim.tick();
+    tick_until(ctx, "the carrier launches them all", 320,
+               [&] { return carrier->stored_ids().empty() && carrier->command_queue().empty(); });
     check(launched() == 50 && carrier->stored_ids().empty() && carrier->command_queue().empty(),
           fmt::format("all 50 launched and the order done ({} out)", launched()));
 
@@ -13479,11 +13720,9 @@ void test_carrier(TestContext& ctx) {
         IssueBuildFactory({__osc_c3}, 'ura0102', 1)
     )");
     auto* c3 = unit("__osc_c3");
-    bool stored = false;
-    for (int i = 0; i < 2000 && c3 && !stored; ++i) {
-        ctx.sim.tick();
-        stored = !c3->stored_ids().empty();
-    }
+    const bool stored = tick_until(ctx, "the carrier stores the plane it builds", 2000, [&] {
+                            return !c3 || !c3->stored_ids().empty();
+                        }).has_value();
     for (int i = 0; i < 5; ++i) ctx.sim.tick();
     check(c3 && stored && !c3->busy(),
           fmt::format("a carrier stores the plane it builds and is free again (stored {}, busy {})",
@@ -13564,20 +13803,20 @@ void test_right_click(TestContext& ctx) {
     }
     // A power generator under construction.
     const osc::sim::Unit* unbuilt = nullptr;
-    for (int i = 0; i < 600 && !unbuilt; ++i) {
-        ctx.sim.tick();
+    tick_until(ctx, "the engineer starts the power generator", 600, [&] {
         ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
             const auto& u = static_cast<const osc::sim::Unit&>(e);
             if (!e.destroyed() && e.army() == 0 && u.is_being_built() &&
-                u.blueprint_id() == "ueb1101")
+                u.blueprint_id() == "ueb1101") {
                 unbuilt = &u;
+            }
         });
-    }
+        return unbuilt != nullptr;
+    });
     // Worked a little: a request is worked from the second tick after it is
     // made (Moho's ResourceConsumed), and a frame left at nothing decays away
-    for (int i = 0; i < 10 && unbuilt && unbuilt->fraction_complete() <= 0.0f; ++i) {
-        ctx.sim.tick();
-    }
+    tick_until(ctx, "the power generator is worked a little", 10,
+               [&] { return !unbuilt || unbuilt->fraction_complete() > 0.0f; });
     // FAF's scripts compare an order's commandType with Moho's numbers
     // (UnitQueueDataToCommand)
     check(lua(R"(
@@ -13645,9 +13884,8 @@ void test_right_click(TestContext& ctx) {
     if (unbuilt) {
         right_click({eng->entity_id(), tank2->entity_id()}, *unbuilt);
         // The orders since dropped the arm's aim: the repair waits for it to turn back.
-        for (int i = 0; i < 5 && eng->build_target_id() != unbuilt->entity_id(); ++i) {
-            ctx.sim.tick();
-        }
+        tick_until(ctx, "the engineer turns back to the build", 5,
+                   [&] { return eng->build_target_id() == unbuilt->entity_id(); });
         check(gave("Repair", unbuilt->entity_id()) && issued.size() == 1 &&
                   issued.front().units.size() == 2 &&
                   eng->build_target_id() == unbuilt->entity_id(),
@@ -13673,10 +13911,13 @@ void test_right_click(TestContext& ctx) {
         auto* eng2 = unit("__osc_eng2");
         if (eng2) right_click({eng2->entity_id()}, *unbuilt);
         bool helped = eng2 && eng2->build_target_id() == pgen;
-        for (int i = 0; i < 3000 && unbuilt->is_being_built(); ++i) {
-            ctx.sim.tick();
-            helped = helped || (eng2 && eng2->build_target_id() == pgen);
-        }
+        tick_until(
+            [&] {
+                ctx.sim.tick();
+                helped = helped || (eng2 && eng2->build_target_id() == pgen);
+            },
+            "the two engineers finish the power generator", 3000,
+            [&] { return !unbuilt->is_being_built(); });
         for (int i = 0; i < 3; ++i) ctx.sim.tick();
         // Both let it go when it is done, neither paying on.
         const auto released = [](const osc::sim::Unit& u) {
@@ -13739,7 +13980,8 @@ void test_right_click(TestContext& ctx) {
         if (left && left->is_being_built()) {
             const float stalled = left->fraction_complete();
             right_click({eng->entity_id()}, *left);
-            for (int i = 0; i < 3000 && left->is_being_built(); ++i) ctx.sim.tick();
+            tick_until(ctx, "the engineer finishes the abandoned one", 3000,
+                       [&] { return !left->is_being_built(); });
             check(stalled < 1.0f && !left->is_being_built() && number("__osc_done2") == 1,
                   fmt::format("an abandoned one ({:.0f}% built) is finished by a right-click "
                               "({} OnStopBeingBuilt)",
@@ -13965,23 +14207,32 @@ void test_carrier_land(TestContext& ctx) {
             standoff_ok && std::abs(d - (20.0f + static_cast<float>(place.delay))) < 0.01f;
         delays[static_cast<size_t>(k)] = place.delay;
     }
-    int all_in = -1;
-    for (int i = 0; i < 3000 && all_in < 0; ++i) {
-        ctx.sim.tick();
-        for (int k = 0; k < 7; ++k) {
-            auto* p = planes[static_cast<size_t>(k)];
-            if (!p) continue;
-            if (held[static_cast<size_t>(k)] < 0 && p->landing_phase() == 2)
-                held[static_cast<size_t>(k)] = i;
-            if (descending[static_cast<size_t>(k)] < 0 && p->landing_phase() == 3)
-                descending[static_cast<size_t>(k)] = i;
-            const auto& r = carrier->storage_reserved_ids();
-            if (carrier->is_stored_unit(p->entity_id()) &&
-                std::find(r.begin(), r.end(), p->entity_id()) != r.end())
-                reservation_kept = true;
-        }
-        if (stored_count() == 7) all_in = i;
-    }
+    int t = 0;
+    const bool all_in =
+        tick_until(
+            [&] {
+                ctx.sim.tick();
+                for (int k = 0; k < 7; ++k) {
+                    auto* p = planes[static_cast<size_t>(k)];
+                    if (!p) {
+                        continue;
+                    }
+                    if (held[static_cast<size_t>(k)] < 0 && p->landing_phase() == 2) {
+                        held[static_cast<size_t>(k)] = t;
+                    }
+                    if (descending[static_cast<size_t>(k)] < 0 && p->landing_phase() == 3) {
+                        descending[static_cast<size_t>(k)] = t;
+                    }
+                    const auto& r = carrier->storage_reserved_ids();
+                    if (carrier->is_stored_unit(p->entity_id()) &&
+                        std::find(r.begin(), r.end(), p->entity_id()) != r.end()) {
+                        reservation_kept = true;
+                    }
+                }
+                ++t;
+            },
+            "all seven land and are stored", 3000, [&] { return stored_count() == 7; })
+            .has_value();
     check(standoff_ok, "each comes in from 20 (and its turn's wait) back from its place");
     {
         // The seventh reservation goes round again: it waits 3 ticks, the
@@ -13996,10 +14247,12 @@ void test_carrier_land(TestContext& ctx) {
                           delays[0], delays[6], descending[0] - held[0], descending[6] - held[6]));
     }
     check(!reservation_kept, "a stored plane's place is no longer reserved");
-    check(all_in >= 0 && first && first->transport_id() == carrier->entity_id() &&
+    check(all_in && first && first->transport_id() == carrier->entity_id() &&
               !first->has_unit_state("TransportLoading") && first->command_queue().empty(),
           fmt::format("all seven land and are stored ({} stored)", stored_count()));
-    for (int i = 0; i < 30; ++i) ctx.sim.tick();
+    tick_until(ctx, "the carrier's order ends", 60, [&] {
+        return carrier->command_queue().empty() && !carrier->has_unit_state("TransportLoading");
+    });
     check(carrier->command_queue().empty() && !carrier->has_unit_state("TransportLoading") &&
               number("__osc_stopped") == 1 && carrier->storage_reserved_ids().empty() &&
               carrier->next_storage_point() == 0,
@@ -14021,12 +14274,14 @@ void test_carrier_land(TestContext& ctx) {
         auto* c5 = unit("__osc_c5");
         auto* early = unit("__osc_early");
         auto* late = unit("__osc_late");
-        bool both = false;
-        for (int i = 0; i < 3000 && c5 && early && late && !both; ++i) {
-            ctx.sim.tick();
-            both = c5->is_stored_unit(early->entity_id()) && c5->is_stored_unit(late->entity_id());
-        }
-        for (int i = 0; i < 30; ++i) ctx.sim.tick();
+        const bool both =
+            c5 && early && late && tick_until(ctx, "both planes are stored", 3000, [&] {
+                                       return c5->is_stored_unit(early->entity_id()) &&
+                                              c5->is_stored_unit(late->entity_id());
+                                   }).has_value();
+        tick_until(ctx, "the second carrier's orders end", 60, [&] {
+            return !c5 || (c5->command_queue().empty() && !c5->has_unit_state("TransportLoading"));
+        });
         check(both && c5->command_queue().empty() && !c5->has_unit_state("TransportLoading"),
               "a second load order while the first lands: both planes are stored");
     }
@@ -14047,12 +14302,10 @@ void test_carrier_land(TestContext& ctx) {
         dock.target_pos = carrier->position();
         ctx.sim.route_command({d->entity_id()}, dock, true);
     }
-    bool stored = false;
     float f0 = 0.0f, f1 = 0.0f;
-    for (int i = 0; i < 3000 && !stored; ++i) {
-        ctx.sim.tick();
-        stored = carrier->is_stored_unit(d->entity_id());
-    }
+    const bool stored = tick_until(ctx, "the damaged plane lands and is stored", 3000, [&] {
+                            return carrier->is_stored_unit(d->entity_id());
+                        }).has_value();
     if (stored) {
         f0 = d->fuel_ratio();
         ctx.sim.tick();
@@ -14061,11 +14314,9 @@ void test_carrier_land(TestContext& ctx) {
     check(stored && d->has_unit_state("Refueling") &&
               std::abs((f1 - f0) - 5.0f / 400.0f * 0.1f * 100.0f) < 1e-5f,
           fmt::format("docked, it lands and refuels stored, {:.4f} a tick", f1 - f0));
-    bool launched = false;
-    for (int i = 0; i < 300 && !launched; ++i) {
-        ctx.sim.tick();
-        launched = stored && d->transport_id() == 0;
-    }
+    const bool launched = stored && tick_until(ctx, "the refuelled plane is launched", 300, [&] {
+                                        return d->transport_id() == 0;
+                                    }).has_value();
     const float surface =
         ctx.sim.terrain() ? ctx.sim.terrain()->get_surface_height(d->position().x, d->position().z)
                           : 0.0f;
@@ -14074,7 +14325,8 @@ void test_carrier_land(TestContext& ctx) {
           fmt::format("full and repaired, it is launched ({:.2f} fuel, {:.0f}/{:.0f}, {:.1f} over "
                       "the water)",
                       d->fuel_ratio(), d->health(), d->max_health(), d->position().y - surface));
-    for (int i = 0; i < 200 && !d->command_queue().empty(); ++i) ctx.sim.tick();
+    tick_until(ctx, "the launched plane's order is done", 200,
+               [&] { return d->command_queue().empty(); });
     check(d->command_queue().empty() && !d->has_unit_state("Refueling") &&
               std::abs(d->current_altitude() - d->elevation_target()) < 0.25f,
           fmt::format("it climbs back to its flying height, and its order is done ({:.2f} of "
@@ -14094,12 +14346,16 @@ void test_carrier_land(TestContext& ctx) {
         dock.target_pos = carrier->position();
         ctx.sim.route_command({g->entity_id()}, dock, true);
         bool went_in = false;
-        for (int i = 0; i < 3000 && !(went_in && g->transport_id() == 0); ++i) {
-            ctx.sim.tick();
-            went_in = went_in || carrier->is_stored_unit(g->entity_id());
-        }
+        tick_until(
+            [&] {
+                ctx.sim.tick();
+                went_in = went_in || carrier->is_stored_unit(g->entity_id());
+            },
+            "the interceptor docks and is launched", 3000,
+            [&] { return went_in && g->transport_id() == 0; });
         const float launch_alt = g->current_altitude();
-        for (int i = 0; i < 300 && !g->command_queue().empty(); ++i) ctx.sim.tick();
+        tick_until(ctx, "the interceptor's order is done", 300,
+                   [&] { return g->command_queue().empty(); });
         check(went_in && launch_alt < g->elevation_target() && g->command_queue().empty() &&
                   std::abs(g->current_altitude() - g->elevation_target()) < 0.25f,
               fmt::format("an interceptor launched from {:.1f} climbs to its {:.1f} ({:.2f})",
@@ -14115,14 +14371,17 @@ void test_carrier_land(TestContext& ctx) {
         __osc_c4 = CreateUnitHPR('uas0303', 'ARMY_1', __osc_cx + 60, GetSurfaceHeight(__osc_cx, __osc_cz), __osc_cz + 60, 0, 0, 0)
         __osc_h = CreateUnitHPR('uea0102', 'ARMY_1', __osc_cx + 60, GetSurfaceHeight(__osc_cx, __osc_cz) + 20, __osc_cz + 90, 0, 0, 0)
     )");
-    for (int i = 0; i < 20; ++i) ctx.sim.tick(); // up at its flying height
+    tick_until(ctx, "the plane is up at its flying height", 100, [&] {
+        const auto* p = unit("__osc_h");
+        return p && std::abs(p->current_altitude() - p->elevation_target()) < 0.25f;
+    });
     lua(R"(
         __osc_c4:AddUnitToStorage(__osc_h)
         IssueTransportUnload({__osc_c4}, {__osc_cx + 120, 0, __osc_cz + 60})
     )");
     auto* c4 = unit("__osc_c4");
     if (auto* h = unit("__osc_h"); h && c4) {
-        for (int i = 0; i < 10 && h->transport_id() != 0; ++i) ctx.sim.tick();
+        tick_until(ctx, "the stored plane is launched", 10, [&] { return h->transport_id() == 0; });
         // Where it is after its launch tick: by its launch bone (one tick's
         // climb off), not back at the height it had.
         float nearest = 1e9f;
@@ -14148,8 +14407,9 @@ void test_carrier_land(TestContext& ctx) {
     )");
     auto* f = unit("__osc_f");
     auto* c3 = unit("__osc_c3");
+    const bool took = f && !f->command_queue().empty();
     for (int i = 0; i < 5; ++i) ctx.sim.tick();
-    check(f && c3 && f->command_queue().empty() && f->transport_id() == 0 &&
+    check(took && f && c3 && f->command_queue().empty() && f->transport_id() == 0 &&
               f->landing_phase() == 0 && c3->storage_reserved_ids().empty(),
           "ordered aboard a busy carrier, a plane gives up");
 
@@ -14160,11 +14420,9 @@ void test_carrier_land(TestContext& ctx) {
         IssueTransportLoad({__osc_e}, __osc_c2)
     )");
     auto* e = unit("__osc_e");
-    bool coming = false;
-    for (int i = 0; i < 20 && e && !coming; ++i) {
-        ctx.sim.tick();
-        coming = e->landing_phase() != 0;
-    }
+    const bool coming = e && tick_until(ctx, "the plane starts landing on the carrier", 20, [&] {
+                                 return e->landing_phase() != 0;
+                             }).has_value();
     lua("__osc_c2:Kill()");
     for (int i = 0; i < 3; ++i) ctx.sim.tick();
     check(coming && e && e->landing_phase() == 0 && !e->has_unit_state("TransportLoading") &&
@@ -14212,9 +14470,6 @@ void test_change_army(TestContext& ctx) {
         auto* e = ctx.sim.entity_registry().find(id);
         return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
-    };
     auto& registry = ctx.sim.entity_registry();
     lua_State* L = ctx.lua_state.raw();
 
@@ -14239,7 +14494,7 @@ void test_change_army(TestContext& ctx) {
     )"))
         return;
     if (auto* t = unit("__osc_tank")) t->set_custom_name("Fred");
-    run(3);
+    tick_for(ctx, 3);
     lua(R"(
         __osc_lost_before = GetArmyBrain('ARMY_1'):GetArmyStat('Units_Killed', 0).Value
         __osc_old_tank, __osc_old_id = __osc_tank, __osc_tank:GetEntityId()
@@ -14247,7 +14502,7 @@ void test_change_army(TestContext& ctx) {
         __osc_new_tank = ChangeUnitArmy(__osc_tank, 2)
         __osc_ticks_at = __osc_ticks
     )");
-    run(5);
+    tick_for(ctx, 5);
     lua_check("Test 1: a new unit of the new army takes the old one's place, with its health", R"(
         local n = __osc_new_tank
         if not n then error('ChangeUnitArmy gave nil') end
@@ -14280,7 +14535,7 @@ void test_change_army(TestContext& ctx) {
         __osc_pgen = CreateUnitHPR('ueb1101', 'ARMY_1', x, y, z, 0, 0, 0)
         __osc_new_pgen = ChangeUnitArmy(__osc_pgen, 2)
     )");
-    run(2);
+    tick_for(ctx, 2);
     {
         auto* p = unit("__osc_new_pgen");
         auto* grid = ctx.sim.pathfinding_grid();
@@ -14297,7 +14552,7 @@ void test_change_army(TestContext& ctx) {
             osc::u32 gx = 0, gz = 0;
             grid->world_to_grid(p->position().x, p->position().z, gx, gz);
             lua("__osc_new_pgen:Destroy()");
-            run(1);
+            tick_for(ctx, 1);
             check(grid->get(gx, gz) != osc::map::CellPassability::Obstacle,
                   "Test 5b: when the replacement is destroyed its ground is clear");
         }
@@ -14319,7 +14574,7 @@ void test_change_army(TestContext& ctx) {
                 e->attach_to_transport(xport, registry, L);
             }
     lua("__osc_new_xport = ChangeUnitArmy(__osc_xport, 2)");
-    run(2);
+    tick_for(ctx, 2);
     {
         auto* x = unit("__osc_new_xport");
         bool all = x && x->army() == 1 && x->cargo_ids().size() == 2;
@@ -14382,7 +14637,10 @@ void test_change_army(TestContext& ctx) {
         local tx, ty, tz = __osc_at(230, 30)
         IssueMove({__osc_plane}, {tx, ty, tz})
     )");
-    run(30);
+    tick_until(ctx, "the plane is in flight, turned east", 60, [&] {
+        const auto* p = unit("__osc_plane");
+        return p && p->layer() == "Air" && std::abs(p->heading()) > 0.5f;
+    });
     {
         auto* p = unit("__osc_plane");
         const float y = p ? p->position().y : 0.0f;
@@ -14420,7 +14678,7 @@ void test_change_army(TestContext& ctx) {
                 carrier->add_to_storage(*s, registry, L);
             }
         lua("__osc_new_carrier = ChangeUnitArmy(__osc_carrier, 2)");
-        run(2);
+        tick_for(ctx, 2);
         auto* c = unit("__osc_new_carrier");
         bool all = c && old_planes.size() == 2 && c->stored_ids().size() == 2;
         for (const osc::u32 id : c ? c->stored_ids() : std::vector<osc::u32>{}) {
@@ -14542,24 +14800,28 @@ void test_air_turn(TestContext& ctx) {
         flight->start = flight->unit->position();
     }
     const auto* ground = ctx.sim.terrain();
-    for (int t = 1; t <= 260 && (a.landed == 0 || f.landed == 0); ++t) {
-        ctx.sim.tick();
-        for (Flight* flight : {&a, &f}) {
-            const auto p = flight->unit->position();
-            if (flight->moved == 0 && (p.x != flight->start.x || p.z != flight->start.z)) {
-                flight->moved = t;
+    int t = 0;
+    tick_until(
+        [&] {
+            ctx.sim.tick();
+            ++t;
+            for (Flight* flight : {&a, &f}) {
+                const auto p = flight->unit->position();
+                if (flight->moved == 0 && (p.x != flight->start.x || p.z != flight->start.z)) {
+                    flight->moved = t;
+                }
+                if (flight->closed == 0 && flight->unit->command_queue().empty()) {
+                    flight->closed = t;
+                    flight->at_close = p;
+                }
+                if (flight->landed == 0 && flight->unit->layer() != "Air") {
+                    flight->landed = t;
+                }
+                flight->track.push_back(p);
+                flight->height.push_back(p.y - ground->get_terrain_height(p.x, p.z));
             }
-            if (flight->closed == 0 && flight->unit->command_queue().empty()) {
-                flight->closed = t;
-                flight->at_close = p;
-            }
-            if (flight->landed == 0 && flight->unit->layer() != "Air") {
-                flight->landed = t;
-            }
-            flight->track.push_back(p);
-            flight->height.push_back(p.y - ground->get_terrain_height(p.x, p.z));
-        }
-    }
+        },
+        "both interceptors land", 260, [&] { return a.landed != 0 && f.landed != 0; });
     const auto off = [](const osc::sim::Vector3& p, float x, float z) {
         return std::hypot(p.x - x, p.z - z);
     };
@@ -14810,9 +15072,9 @@ void test_air_staging(TestContext& ctx) {
     dock(*a, *pad);
     lua("IssueTransportLoad({__osc_b}, __osc_pad)");
     int attach_tick = -1;
-    for (int i = 0; i < 1500 && attach_tick < 0; ++i) {
-        step();
-        if (a->transport_id() == pad->entity_id()) attach_tick = now;
+    if (tick_until(step, "the interceptor docks", 1500,
+                   [&] { return a->transport_id() == pad->entity_id(); })) {
+        attach_tick = now;
     }
     const std::string a_bone = slot_bone(*pad, *a);
     check(attach_tick >= 0 && a->has_unit_state("Refueling") &&
@@ -14867,10 +15129,13 @@ void test_air_staging(TestContext& ctx) {
     // from the tick after it docked), where it sat, and climbs away.
     int detach_tick = -1;
     float docked_y = 0.0f;
-    for (int i = 0; i < 300 && detach_tick < 0; ++i) {
-        docked_y = a->position().y;
-        step();
-        if (a->transport_id() == 0) detach_tick = now;
+    if (tick_until(
+            [&] {
+                docked_y = a->position().y;
+                step();
+            },
+            "the interceptor is let go", 300, [&] { return a->transport_id() == 0; })) {
+        detach_tick = now;
     }
     check(detach_tick > 0 && (detach_tick - attach_tick - 1) % 9 == 0 && a->fuel_ratio() > 0.99f &&
               a->health() == a->max_health() && std::abs(a->position().y - docked_y) < 0.01f &&
@@ -14878,8 +15143,9 @@ void test_air_staging(TestContext& ctx) {
           fmt::format("full, it leaves on a 9-tick look ({} ticks after docking), from its "
                       "seat ({:.2f} over the ground)",
                       detach_tick - attach_tick, a->position().y - ground(*a)));
-    for (int i = 0; i < 200 && !a->command_queue().empty(); ++i) step();
-    for (int i = 0; i < 600 && !b_docked; ++i) step();
+    tick_until(step, "the interceptor's order is done", 200,
+               [&] { return a->command_queue().empty(); });
+    tick_until(step, "the gunship docks", 600, [&] { return b_docked; });
     lua("__osc_req = GetArmyBrain('ARMY_1'):GetEconomyRequested('ENERGY') * 10");
     check(asks >= 50.0 && std::abs(asked_with - number("__osc_req") - asks) < 0.01,
           fmt::format("its army pays for the repair ({:.2f} energy asked with {:.0f} for "
@@ -14895,7 +15161,8 @@ void test_air_staging(TestContext& ctx) {
           fmt::format("the gunship loaded onto the pad (the AI's way) docked on a medium bone "
                       "({})",
                       b_bone));
-    for (int i = 0; i < 600 && !b->command_queue().empty(); ++i) step();
+    tick_until(step, "the gunship's order is done", 600,
+               [&] { return b->command_queue().empty(); });
     // Its tank fills well before its hull (1100 health at 50 a tick): it
     // stays until both are full.
     check(b_left_health == b->max_health() && b_left_fuel > 0.99f,
@@ -14919,7 +15186,7 @@ void test_air_staging(TestContext& ctx) {
     check(c && c->fuel_ratio() == 0.0f && number("__osc_dry") == 1 && number("__osc_got") == 0,
           fmt::format("OnRunOutOfFuel once, at empty ({} heard)", number("__osc_dry")));
     if (c) dock(*c, *pad);
-    for (int i = 0; i < 1500 && c && c->transport_id() == 0; ++i) ctx.sim.tick();
+    tick_until(ctx, "the empty plane docks", 1500, [&] { return !c || c->transport_id() != 0; });
     // Slowed to a quarter by running dry, it still docked turned its bone's
     // way: it waits over the bone until it is.
     if (c && c->transport_id() == pad->entity_id()) {
@@ -14966,12 +15233,11 @@ void test_air_staging(TestContext& ctx) {
     )");
     auto* d = unit("__osc_d");
     if (d) dock(*d, *pad);
-    bool approaching = false;
-    for (int i = 0; i < 100 && d && !approaching; ++i) {
-        ctx.sim.tick();
-        approaching = !d->command_queue().empty() &&
-                      d->command_queue().front().dock_phase == osc::sim::DockPhase::Approach;
-    }
+    const bool approaching =
+        d && tick_until(ctx, "the plane heads for its bone", 100, [&] {
+                 return !d->command_queue().empty() &&
+                        d->command_queue().front().dock_phase == osc::sim::DockPhase::Approach;
+             }).has_value();
     const bool held = d && pad->built_transport_slots()->slot_of(d->entity_id()) != nullptr;
     lua("IssueClearCommands({__osc_d})");
     ctx.sim.tick();
@@ -14986,15 +15252,16 @@ void test_air_staging(TestContext& ctx) {
         IssueBuildMobile({__osc_eng}, {__osc_px + 50, 0, __osc_pz - 40}, 'ueb5202', {})
     )");
     const osc::sim::Unit* unbuilt = nullptr;
-    for (int i = 0; i < 600 && !unbuilt; ++i) {
-        ctx.sim.tick();
+    tick_until(ctx, "the engineer starts the pad", 600, [&] {
         ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
             const auto& u = static_cast<const osc::sim::Unit&>(e);
             if (!e.destroyed() && e.army() == 0 && u.is_being_built() &&
-                u.blueprint_id() == "ueb5202")
+                u.blueprint_id() == "ueb5202") {
                 unbuilt = &u;
+            }
         });
-    }
+        return unbuilt != nullptr;
+    });
     if (unbuilt && d) {
         dock(*d, *unbuilt);
         ctx.sim.tick();
@@ -15022,19 +15289,26 @@ void test_air_staging(TestContext& ctx) {
         auto* p2 = unit("__osc_p2");
         int broke_off = -1;
         bool p2_broke = false, p1_docked = false, p1_back = false;
-        for (int i = 0; i < 1500 && p1 && p2 && !p1_back; ++i) {
-            ctx.sim.tick();
-            const auto& q1 = p1->command_queue();
-            if (broke_off < 0 && !q1.empty() && q1.front().type == osc::sim::CommandType::Dock &&
-                q1.front().from_patrol && q1.front().target_id == pad->entity_id())
-                broke_off = i;
-            p2_broke =
-                p2_broke || (!p2->command_queue().empty() &&
-                             p2->command_queue().front().type != osc::sim::CommandType::Patrol);
-            p1_docked = p1_docked || p1->transport_id() == pad->entity_id();
-            p1_back = p1_docked && p1->transport_id() == 0 && !q1.empty() &&
-                      q1.front().type == osc::sim::CommandType::Patrol;
-        }
+        int t = 0;
+        tick_until(
+            [&] {
+                ctx.sim.tick();
+                const auto& q1 = p1->command_queue();
+                if (broke_off < 0 && !q1.empty() &&
+                    q1.front().type == osc::sim::CommandType::Dock && q1.front().from_patrol &&
+                    q1.front().target_id == pad->entity_id()) {
+                    broke_off = t;
+                }
+                p2_broke =
+                    p2_broke || (!p2->command_queue().empty() &&
+                                 p2->command_queue().front().type != osc::sim::CommandType::Patrol);
+                p1_docked = p1_docked || p1->transport_id() == pad->entity_id();
+                p1_back = p1_docked && p1->transport_id() == 0 && !q1.empty() &&
+                          q1.front().type == osc::sim::CommandType::Patrol;
+                ++t;
+            },
+            "the plane low on fuel refuels and patrols on", 1500,
+            [&] { return !p1 || !p2 || p1_back; });
         check(broke_off >= 0 && broke_off <= 6 && p1_docked && p1_back &&
                   p1->fuel_ratio() > 0.95f && !p2_broke,
               fmt::format("low on fuel, a patrolling plane breaks off to the pad (tick {}), "
@@ -15054,13 +15328,10 @@ void test_air_staging(TestContext& ctx) {
     if (auto* p3 = unit("__osc_p3")) {
         for (int i = 0; i < 20; ++i) ctx.sim.tick();
         lua("__osc_p3:SetFuelRatio(0.1)");
-        int took = -1;
-        for (int i = 1; i <= 20 && took < 0; ++i) {
-            ctx.sim.tick();
-            if (!p3->command_queue().empty() &&
-                p3->command_queue().front().type == osc::sim::CommandType::Dock)
-                took = i;
-        }
+        const int took = tick_until(ctx, "the plane run low breaks off", 20, [&] {
+                             return !p3->command_queue().empty() &&
+                                    p3->command_queue().front().type == osc::sim::CommandType::Dock;
+                         }).value_or(-1);
         check(took >= 1 && took <= 6,
               fmt::format("run low mid-patrol, it breaks off within 6 ticks ({})", took));
         lua("IssueClearCommands({__osc_p3})");
@@ -15075,12 +15346,11 @@ void test_air_staging(TestContext& ctx) {
         IssuePatrol({__osc_p5}, {__osc_px + 60, 0, __osc_pz + 400})
     )");
     if (auto* p5 = unit("__osc_p5")) {
-        bool broke = false;
-        for (int i = 0; i < 8 && !broke; ++i) {
-            ctx.sim.tick();
-            broke = !p5->command_queue().empty() &&
-                    p5->command_queue().front().type == osc::sim::CommandType::Dock;
-        }
+        const bool broke =
+            tick_until(ctx, "the damaged plane breaks off", 8, [&] {
+                return !p5->command_queue().empty() &&
+                       p5->command_queue().front().type == osc::sim::CommandType::Dock;
+            }).has_value();
         check(broke && p5->fuel_ratio() > 0.9f,
               fmt::format("damaged ({:.0f} of {:.0f}), a full plane breaks off to repair",
                           p5->health(), p5->max_health()));
@@ -15116,7 +15386,7 @@ void test_air_staging(TestContext& ctx) {
     )");
     auto* e = unit("__osc_e");
     if (e) dock(*e, *pad);
-    for (int i = 0; i < 1500 && e && e->transport_id() == 0; ++i) ctx.sim.tick();
+    tick_until(ctx, "the damaged plane docks", 1500, [&] { return !e || e->transport_id() != 0; });
     for (int i = 0; i < 2; ++i) ctx.sim.tick();
     const double asking = e ? e->economy().dock_repair_energy : 0.0;
     lua("__osc_e:Kill()");
@@ -15128,7 +15398,8 @@ void test_air_staging(TestContext& ctx) {
 
     // A pad that dies lets its planes go, where they sit.
     if (d) dock(*d, *pad);
-    for (int i = 0; i < 1500 && d && d->transport_id() == 0; ++i) ctx.sim.tick();
+    tick_until(ctx, "the called-off plane docks again", 1500,
+               [&] { return !d || d->transport_id() != 0; });
     const bool docked = d && d->transport_id() == pad->entity_id();
     lua("__osc_pad:Kill()");
     check(docked && d->transport_id() == 0 && d->is_dying(),
@@ -15215,13 +15486,18 @@ void test_transport_drop(TestContext& ctx) {
     // its hover height, each tank on the ground where it hung.
     lua("IssueTransportUnload({__osc_xport}, {640, GetTerrainHeight(640, 100), 100})");
     f32 dropped_at = -1, peak = 0;
-    for (int i = 0; i < 400 && dropped_at < 0; ++i) {
-        const f32 before = altitude(*xport);
-        ctx.sim.tick();
-        peak = std::max(peak, altitude(*xport));
-        for (const auto* t : tanks)
-            if (t && t->transport_id() == 0) dropped_at = before;
-    }
+    tick_until(
+        [&] {
+            const f32 before = altitude(*xport);
+            ctx.sim.tick();
+            peak = std::max(peak, altitude(*xport));
+            for (const auto* t : tanks) {
+                if (t && t->transport_id() == 0) {
+                    dropped_at = before;
+                }
+            }
+        },
+        "the transport sets its tanks down", 400, [&] { return dropped_at >= 0; });
     check(peak > 6.0f && dropped_at >= 0 && std::abs(dropped_at - 3.0f) < 0.05f,
           fmt::format("it flew up ({:.1f}) and came down to 3 before setting them down ({:.2f})",
                       peak, dropped_at));
@@ -15242,7 +15518,8 @@ void test_transport_drop(TestContext& ctx) {
                       off_ground, nearest, farthest));
 
     // Empty and idle, it lands as any aircraft does.
-    for (int i = 0; i < 60; ++i) ctx.sim.tick();
+    tick_until(ctx, "the empty transport lands", 120,
+               [&] { return !xport->is_air_unit() && xport->vert_event() == "Bottom"; });
     check(!xport->is_air_unit() && xport->vert_event() == "Bottom",
           fmt::format("empty, it lands ({} {}, {:.1f} up)", xport->layer(), xport->vert_event(),
                       altitude(*xport)));
@@ -15266,7 +15543,8 @@ void test_transport_drop(TestContext& ctx) {
         IssueTransportUnload({__osc_xport}, {x, GetSurfaceHeight(x, z), z})
     )"))
         return;
-    for (int i = 0; i < 900 && !xport->command_queue().empty(); ++i) ctx.sim.tick();
+    tick_until(ctx, "the unload over deep water ends", 900,
+               [&] { return xport->command_queue().empty(); });
     for (int i = 0; i < 30; ++i) ctx.sim.tick();
     lua("__osc_n = __osc_attached(__osc_tanks)");
     const f32 over_water = std::hypot(xport->position().x - static_cast<f32>(number("__osc_wx")),
@@ -15287,7 +15565,8 @@ void test_transport_drop(TestContext& ctx) {
     )"))
         return;
     auto* one = unit("__osc_one");
-    for (int i = 0; i < 400 && one && one->transport_id() != 0; ++i) ctx.sim.tick();
+    tick_until(ctx, "the lone tank is set down", 400,
+               [&] { return !one || one->transport_id() == 0; });
     check(one && one->transport_id() == 0 &&
               std::abs(one->position().y -
                        terrain->get_surface_height(one->position().x, one->position().z)) < 0.01f,
@@ -15316,9 +15595,6 @@ void test_issue_handles(TestContext& ctx) {
             osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
         }
     };
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
-    };
 
     lua_check("setup", R"(
         function __osc_spawn(bp, army, x, z)
@@ -15327,6 +15603,7 @@ void test_issue_handles(TestContext& ctx) {
         __osc_a = __osc_spawn('uel0201', 1, 300, 300)
         __osc_b = __osc_spawn('uel0201', 1, 310, 300)
         __osc_doomed = __osc_spawn('uel0201', 2, 600, 300)
+        __osc_doomed_id = __osc_doomed:GetEntityId()
         __osc_blip = __osc_doomed:GetBlip(2)
         if not __osc_blip then error('no blip') end
         __osc_platoon = ArmyBrains[1]:MakePlatoon('issue handles', 'none')
@@ -15344,7 +15621,8 @@ void test_issue_handles(TestContext& ctx) {
         IssueStop({ArmyBrains[1], __osc_platoon})
     )");
     lua_check("the doomed unit dies", "__osc_doomed:Kill()");
-    run(30); // killed, unregistered and freed
+    tick_until(ctx, "the doomed unit is killed, unregistered and freed", 60,
+               "GetEntityById(__osc_doomed_id) == nil");
     lua_check("a blip kept past its unit is skipped", R"(
         IssueStop({__osc_blip})
         IssueClearCommands({__osc_blip, __osc_a})
@@ -15361,8 +15639,9 @@ void test_issue_handles(TestContext& ctx) {
             if original then return original(self, blip, recon, val) end
         end
         __osc_spotted = __osc_spawn('uel0201', 2, 316, 300)
+        __osc_spotted_id = __osc_spotted:GetEntityId()
     )");
-    run(40);
+    tick_until(ctx, "army 1 hears OnIntelChange", 80, "table.getn(__osc_intel_blips) > 0");
     lua_check("intel blips carry no unit pointer", R"(
         if table.getn(__osc_intel_blips) == 0 then error('no OnIntelChange') end
         for _, blip in __osc_intel_blips do
@@ -15370,7 +15649,8 @@ void test_issue_handles(TestContext& ctx) {
         end
         __osc_spotted:Kill()
     )");
-    run(30);
+    tick_until(ctx, "the spotted unit is killed, unregistered and freed", 60,
+               "GetEntityById(__osc_spotted_id) == nil");
     lua_check("an intel blip kept past its unit is skipped", R"(
         IssueStop(__osc_intel_blips)
         IssueAttack({__osc_a}, __osc_intel_blips[1])
@@ -15390,9 +15670,6 @@ void test_influence(TestContext& ctx) {
             fail++;
             osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
         }
-    };
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
 
     // Army 1's influence map (M207b). An enemy (army 2) tank and power
@@ -15414,7 +15691,7 @@ void test_influence(TestContext& ctx) {
         __osc_pgen = __osc_spawn('ueb1101', 2, 640, 100)
         __osc_hidden = __osc_spawn('ueb1101', 2, 640, 300)
     )");
-    run(70);
+    tick_for(ctx, 70);
     lua_check("army 1 knows nothing of units it hasn't seen", R"(
         for _, p in {{600, 100}, {640, 100}, {640, 300}} do
             local t = __osc_threat(p[1], p[2])
@@ -15426,7 +15703,7 @@ void test_influence(TestContext& ctx) {
     lua_check("a scout comes", R"(
         __osc_scout = __osc_spawn('uel0101', 1, 620, 100)
     )");
-    run(70);
+    tick_for(ctx, 70);
     lua_check("it knows what the scout sees, closely", R"(
         local t = __osc_threat(600, 100)
         if math.abs(t - 1) > 1e-3 then error('tank cell threat ' .. t .. '; 1 expected') end
@@ -15463,7 +15740,7 @@ void test_influence(TestContext& ctx) {
     lua_check("the scout goes", R"(
         __osc_scout:Destroy()
     )");
-    run(330);
+    tick_for(ctx, 330);
     lua_check("the unseen tank fades; the generator stays", R"(
         local t = __osc_threat(600, 100)
         if t <= 0 or t >= 0.999 then error('tank cell threat ' .. t .. '; fading expected') end
@@ -15476,7 +15753,7 @@ void test_influence(TestContext& ctx) {
     lua_check("the generator dies unseen", R"(
         __osc_pgen:Destroy()
     )");
-    run(70);
+    tick_for(ctx, 70);
     lua_check("it is still on the map", R"(
         local g = __osc_threat(640, 100, 'Structures')
         if math.abs(g - 1) > 1e-3 then error('generator ' .. g .. '; 1 expected') end
@@ -15486,7 +15763,7 @@ void test_influence(TestContext& ctx) {
     lua_check("another scout comes", R"(
         __osc_scout = __osc_spawn('uel0101', 1, 636, 100)
     )");
-    run(70);
+    tick_for(ctx, 70);
     lua_check("and sees it gone", R"(
         local g = __osc_threat(640, 100, 'Structures')
         if g ~= 0 then error('generator ' .. g .. '; 0 expected') end
@@ -15496,14 +15773,14 @@ void test_influence(TestContext& ctx) {
     lua_check("a script assigns threat", R"(
         __osc_brain:AssignThreatAtPosition({100, 0, 900}, 50, 0.1, 'Overall')
     )");
-    run(31);
+    tick_for(ctx, 31);
     lua_check("which shows, fading", R"(
         local t = __osc_threat(100, 900)
         if math.abs(t - 45) > 1e-3 then error('assigned threat ' .. t .. '; 45 expected') end
         -- Given a negative rate, Moho clamps it to 0: it never fades.
         __osc_brain:AssignThreatAtPosition({900, 0, 900}, 30, -1, 'Overall')
     )");
-    run(61);
+    tick_for(ctx, 61);
     lua_check("a negative rate never fades", R"(
         local t = __osc_threat(900, 900)
         if math.abs(t - 30) > 1e-3 then error('assigned threat ' .. t .. '; 30 expected') end
@@ -15846,7 +16123,8 @@ void test_ferry(TestContext& ctx) {
         local n = __osc_beacons_near(710, 110)
         if n ~= 1 then error(n .. ' beacons') end
     )");
-    run(300);
+    tick_until([&] { run(1); }, "the ferry carries the first tanks and comes back", 600,
+               [&] { return lua_true(ctx.lua_state, "__osc_groups.first.returned"); });
     lua_check("Test 3: units sent to the beacon wait there, then board the ferry", R"(
         local g = __osc_groups.first
         if not g.waited then error('they never waited at the beacon') end
@@ -15871,7 +16149,8 @@ void test_ferry(TestContext& ctx) {
         IssueTransportLoad(__osc_late, __osc_beacon)
         __osc_follow('late', __osc_late)
     )");
-    run(400);
+    tick_until([&] { run(1); }, "the ferry sets the latecomer down", 800,
+               [&] { return lua_true(ctx.lua_state, "__osc_groups.late.dropped"); });
     lua_check("Test 5: a unit that comes later goes on the next trip", R"(
         local g = __osc_groups.late
         if not (g.waited and g.boarded and g.dropped) then
@@ -15897,7 +16176,8 @@ void test_ferry(TestContext& ctx) {
             g.out_by = nil
         end
     )");
-    run(500);
+    tick_until([&] { run(1); }, "the ferry sets the tank down on its new route", 1000,
+               [&] { return lua_true(ctx.lua_state, "__osc_groups.moved.dropped"); });
     lua_check("Test 6: a new route given mid-trip starts afresh: its waypoint, then its drop-off",
               R"(
         local g = __osc_groups.moved
@@ -18907,12 +19187,17 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
 
     // 5. StopLoadingDialog's fade-out ends in InitialAnimations ->
     //    HideGameUI('off') after ~4 s of UI time.
-    pump_frames(60 * 5);
-    lua_ok("Test 5: the game UI is shown after the loading fade", R"(
-        if import('/lua/ui/game/gamemain.lua').gameUIHidden then
-            error('game UI still hidden 5 s after StopLoadingDialog')
-        end
-    )");
+    const auto ui_shown = tick_until(
+        [&] { pump_frames(1); }, "Test 5: the game UI is shown after the loading fade", 60 * 10,
+        [&] {
+            return lua_true(ctx.lua_state, "not import('/lua/ui/game/gamemain.lua').gameUIHidden");
+        });
+    if (ui_shown && *ui_shown <= 60 * 5) {
+        spdlog::info("[PASS] Test 5: the game UI is shown after {} frames", *ui_shown);
+    } else if (ui_shown) {
+        osc::test_status::fail("[FAIL] Test 5: the game UI is shown only after {} frames, past 5 s",
+                               *ui_shown);
+    }
 
     // 6. Each sim beat drives gamemain.OnBeat, which runs the beat functions
     //    the game UI registers (economy, score, avatars ...).
@@ -19059,11 +19344,16 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         lua_ok("Test 13c: the thread waits while it fades", R"(
             if __osc_music_waited then error('WaitFor returned before the release ended') end
         )");
-        play(35); // past 6.06 s
-        pump_frames(2);
-        lua_ok("Test 13d: ... and resumes when it has ended", R"(
-            if not __osc_music_waited then error('WaitFor never returned') end
-        )");
+        const auto released =
+            tick_until([&] { play(1); }, "Test 13d: ... and resumes when it has ended", 70,
+                       [&] { return lua_true(ctx.lua_state, "__osc_music_waited"); });
+        if (released && *released <= 35) {
+            spdlog::info("[PASS] Test 13d: WaitFor returned {} ticks after 13c", *released);
+        } else if (released) {
+            osc::test_status::fail("[FAIL] Test 13d: WaitFor returned {} ticks after 13c, past "
+                                   "6.5 s from StopSound",
+                                   *released);
+        }
         lua_ok("Test 13e: the player's category volumes", R"(
             SetVolume('Music', 0.25)
             if math.abs(GetVolume('Music') - 0.25) > 1e-6 then error('volume ' .. GetVolume('Music')) end
@@ -19115,7 +19405,13 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if table.getn(avatars) < 1 then error('no avatar to select') end
         SelectUnits(avatars)
     )");
-    play(30);
+    tick_until([&] { play(1); }, "Test 10b: the unit view fades in on the selected commander", 60,
+               [&] {
+                   return lua_true(ctx.lua_state,
+                                   "GetRolloverInfo() ~= nil and "
+                                   "import('/lua/ui/game/unitview.lua').controls.bg:GetAlpha() "
+                                   ">= 0.99");
+               });
     lua_ok("Test 10b: unit view shows the selected commander", R"(
         local info = GetRolloverInfo()
         if not info then error('no rollover info for the selection') end
@@ -20447,7 +20743,18 @@ void test_victory_flow(TestContext& ctx, const std::function<void(int)>& pump_fr
         osc::test_status::fail("[FAIL] Test 3: could not kill the commanders");
         return;
     }
-    play(100); // 10 s: deaths finish, the script's 3 s polls see them
+    const auto defeated = tick_until(
+        [&] { play(1); }, "Test 4: each commander-less army was defeated by the script", 200,
+        [&] {
+            return lua_true(ctx.lua_state, "(function() for _, r in __osc_results do "
+                                           "if string.find(r, ':defeat') then return true end "
+                                           "end return false end)()");
+        });
+    if (!defeated) {
+        return;
+    }
+    spdlog::info("[PASS] Test 4: the script's defeat came {} ticks after the commanders died",
+                 *defeated);
 
     // The engine does not decide: the survivor has no result yet (the script
     // holds a victory for 15 s), while the defeated are out of the game.
@@ -20455,16 +20762,18 @@ void test_victory_flow(TestContext& ctx, const std::function<void(int)>& pump_fr
         osc::test_status::fail("[FAIL] Test 3: the game ended before the script's 15 s hold");
     else
         spdlog::info("[PASS] Test 3: no instant engine victory");
-    lua_ok("Test 4: each commander-less army was defeated by the script", R"(
-        local n = 0
-        for _, r in __osc_results do
-            if string.find(r, ':defeat') then n = n + 1 end
-        end
-        if n == 0 then error('no defeat results: ' .. table.concat(__osc_results, ', ')) end
-        __osc_defeats = n
-    )");
 
-    play(250); // the 15 s hold, OnVictory, and EndGame 3 s later
+    const auto observer =
+        tick_until([&] { play(1); }, "Test 8: NoteGameOver moved the player to observer", 500,
+                   [&] { return lua_true(ctx.lua_state, "GetFocusArmy() == -1"); });
+    if (observer && *defeated + *observer <= 350) {
+        spdlog::info("[PASS] Test 8: the player is an observer {} ticks after the commanders died",
+                     *defeated + *observer);
+    } else if (observer) {
+        osc::test_status::fail("[FAIL] Test 8: the player is an observer only {} ticks after the "
+                               "commanders died, past 35 s",
+                               *defeated + *observer);
+    }
     lua_ok("Test 5: the survivor's victory reached the UI", R"(
         local won = false
         for _, r in __osc_results do
@@ -20478,10 +20787,6 @@ void test_victory_flow(TestContext& ctx, const std::function<void(int)>& pump_fr
         osc::test_status::fail("[FAIL] Test 6: the session never ended");
     lua_ok("Test 7: the UI sees the session over", R"(
         if not SessionIsGameOver() then error('SessionIsGameOver() is false') end
-    )");
-    pump_frames(2);
-    lua_ok("Test 8: NoteGameOver moved the player to observer", R"(
-        if GetFocusArmy() ~= -1 then error('focus army ' .. GetFocusArmy()) end
     )");
     const auto tick = ctx.sim.tick_count();
     play(5);
@@ -23161,21 +23466,21 @@ void test_onframe(TestContext& ctx) {
 
     // --- Test 5: Destroyed controls are skipped ---
     {
-        int err = do_lua_string(L,
-            "do\n"
-            "local root = GetFrame(0)\n"
-            "rawset(_G, '_test_of2', {})\n"
-            "local c2 = rawget(_G, '_test_of2')\n"
-            "setmetatable(c2, {__index = moho.control_methods})\n"
-            "InternalCreateGroup(c2, root)\n"
-            "c2:SetNeedsFrameUpdate(true)\n"
-            "rawset(_G, '_test_of2_called', false)\n"
-            "c2.OnFrame = function(self, dt)\n"
-            "  rawset(_G, '_test_of2_called', true)\n"
-            "end\n"
-            "end\n"
-        );
+        int err = do_lua_string(L, "do\n"
+                                   "local root = GetFrame(0)\n"
+                                   "rawset(_G, '_test_of2', {})\n"
+                                   "local c2 = rawget(_G, '_test_of2')\n"
+                                   "setmetatable(c2, {__index = moho.control_methods})\n"
+                                   "InternalCreateGroup(c2, root)\n"
+                                   "c2:SetNeedsFrameUpdate(true)\n"
+                                   "rawset(_G, '_test_of2_called', false)\n"
+                                   "c2.OnFrame = function(self, dt)\n"
+                                   "  rawset(_G, '_test_of2_called', true)\n"
+                                   "end\n"
+                                   "rawset(_G, '_test_of_count', 0)\n"
+                                   "end\n");
         bool ok = (err == 0);
+        bool live_called = false;
         if (ok) {
             lua_pushstring(L, "_test_of2");
             lua_rawget(L, LUA_GLOBALSINDEX);
@@ -23203,11 +23508,22 @@ void test_onframe(TestContext& ctx) {
                     bool called = lua_toboolean(L, -1) != 0;
                     lua_pop(L, 1);
                     ok = !called;
+
+                    lua_pushstring(L, "_test_of_count");
+                    lua_rawget(L, LUA_GLOBALSINDEX);
+                    live_called = static_cast<i32>(lua_tonumber(L, -1)) == 1;
+                    lua_pop(L, 1);
                 }
             }
         }
-        if (ok) { pass++; spdlog::info("[PASS] Test 5: Destroyed control skipped"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 5: Destroyed control"); }
+        if (ok && live_called) {
+            pass++;
+            spdlog::info("[PASS] Test 5: Destroyed control skipped, a live one called");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 5: Destroyed control (skipped {}, live called {})",
+                                   ok, live_called);
+        }
     }
 
     // --- Test 6: update_controls integration with renderer (just verify no crash) ---
@@ -24511,7 +24827,8 @@ void test_commands(TestContext& ctx) {
         else if (unit2_id == 0) unit2_id = e.entity_id();
     });
     if (unit1_id == 0 || unit2_id == 0) {
-        spdlog::error("Commands test: need at least 2 units, found u1={} u2={}", unit1_id, unit2_id);
+        osc::test_status::fail("[FAIL] Commands test: need at least 2 units, found u1={} u2={}",
+                               unit1_id, unit2_id);
         return;
     }
     spdlog::info("Using unit IDs: {} and {}", unit1_id, unit2_id);
@@ -24619,15 +24936,14 @@ void test_commands(TestContext& ctx) {
                                     "u:AddCommandCap('RULEUCC_Teleport')\n"
                                     "IssueTeleport({u}, {200, 25, 300})\n");
         if (r) {
-            for (int t = 0; t < 40; ++t) ctx.sim.tick();
-            auto r2 = ctx.lua_state.do_string(
-                "local u = rawget(_G, '_cmd5_unit')\n"
-                "local p = u:GetPosition()\n"
-                "if math.abs(p[1] - 200) < 1 and math.abs(p[3] - 300) < 1 then\n"
-                "    LOG('cmd test 5: PASS')\n"
-                "else error('FAIL - pos=' .. p[1] .. ',' .. p[3]) end\n");
-            if (r2) { pass++; spdlog::info("[PASS] Test 5: IssueTeleport moves unit"); }
-            else { fail++; osc::test_status::fail("[FAIL] Test 5: {}", r2.error().message); }
+            if (tick_until(ctx, "Test 5: IssueTeleport moves the unit to (200, 300)", 80,
+                           "(function() local p = rawget(_G, '_cmd5_unit'):GetPosition() "
+                           "return math.abs(p[1] - 200) < 1 and math.abs(p[3] - 300) < 1 end)()")) {
+                pass++;
+                spdlog::info("[PASS] Test 5: IssueTeleport moves unit");
+            } else {
+                fail++;
+            }
         } else { fail++; osc::test_status::fail("[FAIL] Test 5: setup {}", r.error().message); }
     }
 
@@ -24807,7 +25123,7 @@ void test_deposits(TestContext& ctx) {
         unit1_id = e.entity_id();
     });
     if (unit1_id == 0) {
-        spdlog::error("Deposit test: no units found");
+        osc::test_status::fail("[FAIL] Deposit test: no units found");
         return;
     }
     auto u1 = std::to_string(osc::sim::EntityRegistry::moho_id(unit1_id));
@@ -24962,15 +25278,21 @@ void test_deposits(TestContext& ctx) {
             // Its block sits 0.3 down when empty, and rises as mass fills.
             const f32 start = manip->current().z;
             auto& mass = army->economy().mass;
-            for (int i = 0; i < 30; ++i) {
-                mass.stored = mass.max_storage;
-                ctx.sim.tick();
-            }
+            tick_until(
+                [&] {
+                    mass.stored = mass.max_storage;
+                    ctx.sim.tick();
+                },
+                "Test 8b: the storage block rises with full mass", 60,
+                [&] { return manip->current().z > -0.05f; });
             const f32 full = manip->current().z;
-            for (int i = 0; i < 30; ++i) {
-                mass.stored = 0;
-                ctx.sim.tick();
-            }
+            tick_until(
+                [&] {
+                    mass.stored = 0;
+                    ctx.sim.tick();
+                },
+                "Test 8b: the storage block sinks with no mass", 60,
+                [&] { return manip->current().z < -0.25f; });
             const f32 empty = manip->current().z;
             // On the bone its script names.
             const auto* bones = storage->bone_data();
@@ -25089,7 +25411,7 @@ void test_beams(TestContext& ctx) {
     });
 
     if (!src_unit || !tgt_unit) {
-        spdlog::error("[SKIP] Beam test: need at least 2 units");
+        osc::test_status::fail("[FAIL] Beam test: need at least 2 units");
         return;
     }
 

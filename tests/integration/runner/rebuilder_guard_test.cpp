@@ -18,6 +18,7 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "sim/sim_state.hpp"
@@ -78,12 +79,8 @@ void test_rebuilder_guard(TestContext& ctx) {
     )");
     for (int i = 0; i < 60; ++i) ctx.sim.tick();
     run_lua(ctx, "__osc_rb_pgen:SetHealth(nil, __osc_rb_pgen:GetMaxHealth() * 0.5)");
-    bool repaired = false;
-    for (int i = 0; i < 60 && !repaired; ++i) {
-        ctx.sim.tick();
-        repaired = unit(scu_id) && unit(scu_id)->is_repairing();
-    }
-    t.check(repaired, "setup: the support commander repairs its damaged generator");
+    tick_until(ctx, "setup: the support commander repairs its damaged generator", 60,
+               [&] { return unit(scu_id) && unit(scu_id)->is_repairing(); });
     const sim::Unit* before = unit(scu_id);
     const f32 off_before =
         before ? std::hypot(before->position().x - sx, before->position().z - sz) : 0.0f;

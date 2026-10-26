@@ -17,6 +17,7 @@
 #include "intel_probe.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "renderer/effect_blueprint_file.hpp"
 #include "renderer/particle_system.hpp"
@@ -501,10 +502,10 @@ void test_particle_render(TestContext& ctx) {
         const size_t fogged = particles_of(r, seen_fx).size();
         r.set_fog_enabled(false);
         size_t caught = 0;
-        for (int i = 0; i < 5 && caught == 0; ++i) {
-            step();
+        tick_until(step, "Test 9: seen, F's emitter catches up at its next look", 5, [&] {
             caught = particles_of(r, seen_fx).size();
-        }
+            return caught > 0;
+        });
         const Frame seen_frame = drawn(r);
         const sim::EntityRecord* fr = nullptr;
         for (const auto& e : seen.cur().entities)

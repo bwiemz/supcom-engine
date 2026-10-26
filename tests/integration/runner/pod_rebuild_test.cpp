@@ -9,6 +9,7 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "sim/script_class.hpp"
@@ -57,21 +58,18 @@ void test_pod_rebuild(TestContext& ctx) {
     run_lua(ctx, "ArmyBrains[1]:GiveResource('ENERGY', 100000)\n"
                  "ArmyBrains[1]:GiveResource('MASS', 10000)\n");
     u32 first = 0;
-    for (int i = 0; i < 50 && !first; ++i) {
-        ctx.sim.tick();
-        first = pod_id();
+    if (!tick_until(ctx, "the station makes its pod", 50, [&] {
+            first = pod_id();
+            return first != 0;
+        })) {
+        return;
     }
-    t.check(first != 0, "the station makes its pod");
-    if (!first) return;
 
     run_lua(ctx, "__osc_pr_station.PodData.PodOne.PodHandle:Kill()\n");
-    u32 rebuilt = 0;
-    for (int i = 0; i < 1200 && !rebuilt; ++i) {
-        ctx.sim.tick();
+    tick_until(ctx, "the station rebuilds the pod", 1200, [&] {
         const u32 id = pod_id();
-        if (id != 0 && id != first) rebuilt = id;
-    }
-    t.check(rebuilt != 0, "the station rebuilds the pod");
+        return id != 0 && id != first;
+    });
 
     spdlog::info("=== POD REBUILD TEST: {} passed, {} failed ===", t.pass, t.fail);
 }

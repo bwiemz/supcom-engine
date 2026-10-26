@@ -4,8 +4,10 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "renderer/renderer.hpp"
+#include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 
 #include <spdlog/spdlog.h>
@@ -118,13 +120,22 @@ void test_ghost_render(TestContext& ctx) {
                         "factory for a generator changes {} pixels)",
                         both, factory.pixels));
 
-    (void)spawn_unit(ctx, "__osc_ghost_shield", "ueb4202", "ARMY_1", {spot->x + 9.0f, spot->z});
+    const u32 generator =
+        spawn_unit(ctx, "__osc_ghost_shield", "ueb4202", "ARMY_1", {spot->x + 9.0f, spot->z});
     run_lua(ctx, "ForkThread(function()\n"
                  "  while true do ArmyBrains[1]:GiveResource('ENERGY', 5000) WaitTicks(1) end\n"
                  "end)\n");
-    for (int i = 0; i < 20; ++i) {
-        ctx.sim.tick();
-    }
+    tick_until(ctx, "Test 5: the shield generator's shield is up", 60, [&] {
+        bool up = false;
+        ctx.sim.entity_registry().for_each([&](sim::Entity& e) {
+            if (e.is_shield() && !e.destroyed()) {
+                const auto& shield = static_cast<const sim::Shield&>(e);
+                up = up ||
+                     (shield.owner_id == generator && (shield.is_on || !e.mesh_override().empty()));
+            }
+        });
+        return up;
+    });
     shots.recapture();
     const Pixels shielded = shot(nullptr);
     const Tint under = changed_tint(shielded, shot(&ghost));

@@ -6,6 +6,7 @@
 
 #include "integration_tests.hpp"
 #include "render_probe.hpp" // Tally
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "sim/sim_state.hpp"
@@ -24,9 +25,6 @@ void test_hull_facing(TestContext& ctx) {
         auto r = ctx.lua_state.do_string(code);
         t.check(static_cast<bool>(r),
                 r ? std::string(what) : std::string(what) + ": " + r.error().message);
-    };
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
 
     lua("setup", R"(
@@ -78,7 +76,7 @@ void test_hull_facing(TestContext& ctx) {
         __osc_front = __osc_count_shots(__osc_summit, 'FrontTurret01')
         IssueAttack({__osc_summit}, __osc_frigate)
     )");
-    run(300);
+    tick_for(ctx, 300);
     lua("Test 1: the battleship puts its target 60 off its bow", R"(
         local off = math.abs(__osc_off_bow(__osc_summit, __osc_frigate))
         if math.abs(off - 60) > 3 then error('the frigate is ' .. off .. ' off the bow') end
@@ -109,7 +107,7 @@ void test_hull_facing(TestContext& ctx) {
         __osc_pgen:SetCanTakeDamage(false)
         __osc_missiles = __osc_count_shots(__osc_mml, 'MissileWeapon')
     )");
-    run(150);
+    tick_for(ctx, 150);
     lua("Test 3: the launcher, which can't turn, pivots to the target and fires", R"(
         local off = math.abs(__osc_off_bow(__osc_mml, __osc_pgen))
         if off > 1 then error('the target is ' .. off .. ' off its bow') end

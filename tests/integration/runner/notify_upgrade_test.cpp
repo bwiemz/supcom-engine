@@ -22,6 +22,7 @@
 // platoon slot, repeat flag, damage and guards.
 
 #include "integration_tests.hpp"
+#include "tick_until.hpp"
 
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
@@ -154,14 +155,9 @@ void test_notify_upgrade(TestContext& ctx) {
     )"))
         return;
 
-    bool upgraded = false;
-    for (int i = 0; i < 1500 && !upgraded; ++i) {
-        ctx.sim.tick();
-        auto r = ctx.lua_state.do_string("__up_done = __up_poll() and 1 or 0");
-        upgraded = r && global_number("__up_done") == 1.0;
+    if (!tick_until(ctx, "the T1 factory upgraded to T2", 1500, "__up_poll()")) {
+        return;
     }
-    record(upgraded, "the T1 factory upgraded to T2");
-    if (!upgraded) return;
 
     {
         const auto id = osc::sim::EntityRegistry::from_moho_id(
@@ -213,14 +209,7 @@ void test_notify_upgrade(TestContext& ctx) {
         if __up_t2:IsUnitState('BeingUpgraded') then error('still BeingUpgraded') end
     )");
 
-    bool helped = false;
-    for (int i = 0; i < 1500 && !helped; ++i) {
-        auto r = ctx.lua_state.do_string("__up_done = __up_poll_build() and 1 or 0");
-        helped = r && global_number("__up_done") == 1.0;
-        if (!helped) {
-            ctx.sim.tick();
-        }
-    }
+    tick_until(ctx, "the engineer guarding a builder helps it", 1500, "__up_poll_build()");
     const auto states = [&](const char* name, const char* expect, const char* what) {
         check(what, (std::string("local s, e = __up_states.") + name + ", '" + expect + "'\n" +
                      R"(local got = s and (tostring(s[1]) .. '/' .. tostring(s[2]) .. '/' ..

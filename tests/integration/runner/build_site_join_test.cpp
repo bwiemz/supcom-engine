@@ -4,6 +4,7 @@
 
 #include "integration_tests.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "sim/script_class.hpp"
@@ -49,11 +50,6 @@ void test_build_site_join(TestContext& ctx) {
         const auto r = ctx.lua_state.do_string(code);
         t.check(static_cast<bool>(r), r ? what : fmt::format("{}: {}", what, r.error().message));
         return static_cast<bool>(r);
-    };
-    const auto ticks = [&](int n) {
-        for (int i = 0; i < n; ++i) {
-            ctx.sim.tick();
-        }
     };
     if (!run("engineers of two armies, their sites clear, resources to spare", R"(
         local near = GetUnitsInRect(240, 770, 330, 802)
@@ -119,7 +115,7 @@ void test_build_site_join(TestContext& ctx) {
     )")) {
         return;
     }
-    ticks(5);
+    tick_for(ctx, 5);
     {
         sim::UnitCommand build;
         build.type = sim::CommandType::BuildMobile;
@@ -138,12 +134,25 @@ void test_build_site_join(TestContext& ctx) {
         IssueBuildMobile({__osc_join_onto}, {282, GetTerrainHeight(282, 772), 772}, 'ueb1101', {})
         IssueBuildMobile({__osc_join_foe_frame}, {302, GetTerrainHeight(302, 772), 772}, 'ueb1101', {})
     )");
-    ticks(5);
+    tick_for(ctx, 5);
     run("another army's engineers sent to the sites the first ones' frames took", R"(
         IssueBuildMobile({__osc_join_foe}, {262, GetTerrainHeight(262, 772), 772}, 'ueb1101', {})
         IssueBuildMobile({__osc_join_radar}, {302, GetTerrainHeight(302, 772), 772}, 'ueb3101', {})
     )");
-    ticks(25);
+    tick_until(ctx, "each engineer starts its build, or fails to", 50, R"(
+        (function()
+            local builders = {__osc_join_apart, __osc_join_foe}
+            for _, list in {__osc_join_player, __osc_join_own, builders} do
+                for _, e in list do
+                    if not e:GetFocusUnit() then return false end
+                end
+            end
+            for _, e in {__osc_join_onto, __osc_join_radar} do
+                if table.getn(e:GetCommandQueue()) ~= 0 then return false end
+            end
+            return table.getn(__osc_join_onto_heard) > 0 and table.getn(__osc_join_radar_heard) > 0
+        end)()
+    )");
     run("1: three engineers given one player's order build one power generator, together", R"(
         local pgens = __osc_join_on('ueb1101', 262.5, 784.5)
         if table.getn(pgens) ~= 1 then error(table.getn(pgens) .. ' power generators on the site') end
@@ -179,7 +188,15 @@ void test_build_site_join(TestContext& ctx) {
         if table.getn(__osc_join_on('ueb1101', 302.5, 772.5)) ~= 1 then error('the frame is gone') end
         __osc_join_refused(__osc_join_radar, __osc_join_radar_heard)
     )");
-    ticks(120);
+    tick_until(ctx, "the joined power generators are finished", 240, R"(
+        (function()
+            for _, x in {262.5, 302.5} do
+                local pgen = __osc_join_on('ueb1101', x, 784.5)[1]
+                if not pgen or pgen:GetFractionComplete() < 1 then return false end
+            end
+            return true
+        end)()
+    )");
     run("7: the joined power generators are finished, one to a site", R"(
         for _, x in {262.5, 302.5} do
             local pgens = __osc_join_on('ueb1101', x, 784.5)

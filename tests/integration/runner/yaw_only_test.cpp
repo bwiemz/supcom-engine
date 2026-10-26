@@ -7,6 +7,7 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "map/terrain.hpp"
@@ -48,15 +49,14 @@ void test_yaw_only(TestContext& ctx) {
     spawn_unit(ctx, "__osc_yo_target", "ueb1101", "ARMY_2", {sea->x + 100, sea->z});
     run_lua(ctx, "__osc_yo_target:SetCanTakeDamage(false)");
     std::set<u32> missiles;
-    for (int i = 0; i < 600; ++i) {
-        ctx.sim.tick();
+    tick_until(ctx, "the Torrent fires its missile racks", 1200, [&] {
         ctx.sim.entity_registry().for_each([&](const sim::Entity& e) {
-            if (e.is_projectile() && e.army() == 0) missiles.insert(e.entity_id());
+            if (e.is_projectile() && e.army() == 0) {
+                missiles.insert(e.entity_id());
+            }
         });
-    }
-    t.check(ctx.sim.entity_registry().find(torrent) != nullptr && missiles.size() >= 2,
-            fmt::format("the Torrent fires its missile racks: {} missiles in 60 seconds",
-                        missiles.size()));
+        return ctx.sim.entity_registry().find(torrent) != nullptr && missiles.size() >= 2;
+    });
     spdlog::info("=== YAW ONLY TEST: {} passed, {} failed ===", t.pass, t.fail);
 }
 

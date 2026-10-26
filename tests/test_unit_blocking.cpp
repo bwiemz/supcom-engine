@@ -17,6 +17,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_blocking.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -33,6 +34,7 @@ using osc::sim::OrientedBox;
 using osc::sim::Unit;
 using osc::sim::Vector3;
 using osc::sim::path::Cell;
+using osc::test::tick_until;
 
 namespace {
 
@@ -389,19 +391,21 @@ TEST_CASE("Head-on, the one the other comes at makes for beside the other, on it
     const Unit* other = nullptr;
     osc::sim::Vector3 point{}, other_at{};
     bool other_held = false;
-    for (int t = 0; t < 400 && !stepper; ++t) {
-        w.sim.tick();
-        for (Unit* u : {&a, &b}) {
-            if (!u->navigator().sidestepping() || !u->navigator().waypoint()) continue;
-            stepper = u;
-            other = u == &a ? &b : &a;
-            point = *u->navigator().waypoint();
-            other_at = other->position();
-            other_held = other->navigator().holding();
-            break;
-        }
-    }
-    REQUIRE(stepper);
+    tick_until([&] { w.sim.tick(); }, "one of them steps aside", 400,
+               [&] {
+                   for (Unit* u : {&a, &b}) {
+                       if (!u->navigator().sidestepping() || !u->navigator().waypoint()) {
+                           continue;
+                       }
+                       stepper = u;
+                       other = u == &a ? &b : &a;
+                       point = *u->navigator().waypoint();
+                       other_at = other->position();
+                       other_held = other->navigator().holding();
+                       break;
+                   }
+                   return stepper != nullptr;
+               });
     INFO("point " << point.x << ", " << point.z << "; other at " << other_at.x << ", "
                   << other_at.z);
     CHECK(std::abs(point.x - other_at.x) < 1.0f); // beside it, not ahead

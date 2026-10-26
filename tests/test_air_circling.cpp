@@ -20,6 +20,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -28,7 +29,6 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <deque>
-#include <functional>
 #include <memory>
 #include <set>
 #include <string>
@@ -42,6 +42,7 @@ using osc::sim::CirclingInput;
 using osc::sim::SimRandom;
 using osc::sim::Unit;
 using osc::sim::Vector3;
+using osc::test::tick_until;
 
 namespace {
 
@@ -202,12 +203,6 @@ struct World {
         for (const auto& w : u.weapons()) w->fire_clock = 1000000;
         sim.tick();
     }
-
-    int run_until(Unit& u, const std::function<bool()>& done, int limit) {
-        int t = 0;
-        for (; t < limit && !done(); ++t) tick(u);
-        return t;
-    }
 };
 
 bool engaged(const Unit& u) {
@@ -365,7 +360,7 @@ TEST_CASE("A gunship handed a ground target circles it within its weapon's reach
     World::arm(g, 22.0f);
     const Vector3 at{64.0f, 10.0f, 64.0f};
     World::attack_ground(g, at);
-    REQUIRE(w.run_until(g, [&] { return engaged(g); }, 300) < 300);
+    tick_until([&] { w.tick(g); }, "the gunship engages", 300, [&] { return engaged(g); });
 
     for (int t = 0; t < 100; ++t) w.tick(g); // settle onto the circle
     f32 nearest = 1e9f;
@@ -406,7 +401,7 @@ TEST_CASE("Without CirclingDirChange a gunship goes round one way only", "[air_c
     World::arm(g, 22.0f);
     const Vector3 at{64.0f, 10.0f, 64.0f};
     World::attack_ground(g, at);
-    REQUIRE(w.run_until(g, [&] { return engaged(g); }, 300) < 300);
+    tick_until([&] { w.tick(g); }, "the gunship engages", 300, [&] { return engaged(g); });
     for (int t = 0; t < 100; ++t) w.tick(g);
     f32 net = 0.0f;
     f32 total = 0.0f;
@@ -431,7 +426,7 @@ TEST_CASE("A gunship without MinAirspeed goes round its target by a MaxAirspeed'
     World::arm(g, 22.0f);
     const Vector3 at{64.0f, 10.0f, 64.0f};
     World::attack_ground(g, at);
-    REQUIRE(w.run_until(g, [&] { return engaged(g); }, 300) < 300);
+    tick_until([&] { w.tick(g); }, "the gunship engages", 300, [&] { return engaged(g); });
     for (int t = 0; t < 100; ++t) {
         w.tick(g);
     }
@@ -462,7 +457,8 @@ TEST_CASE("A HoverOverAttack aircraft flies on past its reach and hangs over its
         at = target.position();
         World::attack(h, target);
     }
-    REQUIRE(w.run_until(h, [&] { return flat_dist(h, at) < 22.0f; }, 300) < 300);
+    tick_until([&] { w.tick(h); }, "the hoverer comes within its reach", 300,
+               [&] { return flat_dist(h, at) < 22.0f; });
     f32 nearest = 1e9f;
     Vector3 last = h.position();
     for (int t = 0; t < 300; ++t) {
@@ -491,7 +487,8 @@ TEST_CASE("A unit that can't fly stops at its weapon's reach of its attack targe
         at = target.position();
         World::attack(g, target);
     }
-    REQUIRE(w.run_until(g, [&] { return flat_dist(g, at) < 22.0f; }, 600) < 600);
+    tick_until([&] { w.tick(g); }, "the tank comes within its reach", 600,
+               [&] { return flat_dist(g, at) < 22.0f; });
     f32 nearest = 1e9f;
     for (int t = 0; t < 100; ++t) {
         w.tick(g);
@@ -541,7 +538,7 @@ TEST_CASE("A gunship circles its order's target point on a unit, not the unit's 
     const Vector3 bow = target.target_point(0);
     REQUIRE(bow.x == 72.0f);
     REQUIRE(w.sim.route_command({g.entity_id()}, attack_order(target), true) != 0);
-    REQUIRE(w.run_until(g, [&] { return engaged(g); }, 300) < 300);
+    tick_until([&] { w.tick(g); }, "the gunship engages", 300, [&] { return engaged(g); });
 
     for (int t = 0; t < 100; ++t) {
         w.tick(g);
@@ -625,9 +622,10 @@ TEST_CASE("A game saved while a gunship circles loads and goes on as the origina
     World::arm(g, 22.0f);
     World::attack_ground(g, {64.0f, 10.0f, 64.0f});
     a.sim.set_recording(true);
-    REQUIRE(a.run_until(g, [&] { return engaged(g); }, 300) < 300);
+    tick_until([&] { a.tick(g); }, "the gunship engages", 300, [&] { return engaged(g); });
     for (int t = 0; t < 45; ++t) a.tick(g);
     REQUIRE(g.air_combat().circle_radius_ratio != 1.0f);
+    const f32 saved_ratio = g.air_combat().circle_radius_ratio;
     const osc::sim::SavedGame save = osc::sim::save_game(a.sim, "circling");
     REQUIRE_FALSE(save.snapshot.empty());
     World b;
@@ -649,6 +647,7 @@ TEST_CASE("A game saved while a gunship circles loads and goes on as the origina
     CHECK(loaded->position().x == g.position().x);
     CHECK(loaded->position().z == g.position().z);
     CHECK(loaded->air_combat().circle_radius_ratio == g.air_combat().circle_radius_ratio);
+    CHECK(g.air_combat().circle_radius_ratio != saved_ratio);
 }
 
 TEST_CASE("A circling gunship given a move stops circling and flies it", "[air_circling]") {
@@ -656,7 +655,7 @@ TEST_CASE("A circling gunship given a move stops circling and flies it", "[air_c
     Unit& g = *w.make("gunship", 20.0f, 64.0f);
     World::arm(g, 22.0f);
     World::attack_ground(g, {64.0f, 10.0f, 64.0f});
-    REQUIRE(w.run_until(g, [&] { return engaged(g); }, 300) < 300);
+    tick_until([&] { w.tick(g); }, "the gunship engages", 300, [&] { return engaged(g); });
     for (int t = 0; t < 40; ++t) w.tick(g);
     REQUIRE(g.air_combat().flying);
     osc::sim::UnitCommand move;
@@ -667,7 +666,8 @@ TEST_CASE("A circling gunship given a move stops circling and flies it", "[air_c
     w.tick(g);
     CHECK_FALSE(g.air_combat().flying);
     CHECK(g.air_combat().timeout_tick == 0);
-    w.run_until(g, [&] { return g.command_queue().empty(); }, 400);
+    tick_until([&] { w.tick(g); }, "the gunship finishes its move", 400,
+               [&] { return g.command_queue().empty(); });
     CHECK(flat_dist(g, {110.0f, 0.0f, 110.0f}) < 6.0f);
 }
 
@@ -801,22 +801,22 @@ TEST_CASE("A drone guarding a hurt unit out of its reach flies winged to it, onc
     f32 worst_extra = 0.0f;
     Vector3 last = d.position();
     Vector3 last_v = d.air_velocity();
-    int t = 0;
-    for (; t < 600 && !d.is_repairing(); ++t) {
-        w.tick(d);
-        const Vector3 p = d.position();
-        const f32 moved = std::hypot(p.x - last.x, p.z - last.z);
-        fastest = std::max(fastest, moved * 10.0f);
-        const Vector3& v = d.air_velocity();
-        if (d.air_combat().flying && !d.is_repairing()) {
-            const f32 step = std::hypot(v.x + last_v.x, v.z + last_v.z) * 0.05f;
-            worst_extra = std::max(worst_extra, std::abs(moved - step));
-        }
-        last = p;
-        last_v = v;
-    }
+    const int t = tick_until(
+        [&] {
+            w.tick(d);
+            const Vector3 p = d.position();
+            const f32 moved = std::hypot(p.x - last.x, p.z - last.z);
+            fastest = std::max(fastest, moved * 10.0f);
+            const Vector3& v = d.air_velocity();
+            if (d.air_combat().flying && !d.is_repairing()) {
+                const f32 step = std::hypot(v.x + last_v.x, v.z + last_v.z) * 0.05f;
+                worst_extra = std::max(worst_extra, std::abs(moved - step));
+            }
+            last = p;
+            last_v = v;
+        },
+        "the drone starts repairing", 600, [&] { return d.is_repairing(); });
     INFO("ticks " << t << " fastest " << fastest << " worst extra " << worst_extra);
-    CHECK(d.is_repairing());
     CHECK(d.repair_target_id() == hurt.entity_id());
     CHECK(fastest <= 6.0f * 1.05f);
     CHECK(worst_extra < 0.01f);
@@ -869,6 +869,7 @@ TEST_CASE("A circling gunship leans forward as its speed changes only with BankF
         }
     }
     INFO("plain " << plain_pitch << " forward " << forward_pitch);
+    REQUIRE(engaged(plain));
     REQUIRE(engaged(forward));
     CHECK(forward_pitch > 0.1f);
     CHECK(plain_pitch < forward_pitch * 0.5f);

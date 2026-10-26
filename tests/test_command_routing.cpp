@@ -169,6 +169,7 @@ TEST_CASE("A Stop given without clearing waits behind the orders before it", "[r
     sim.tick();
     REQUIRE(unit_of(sim, id)->command_queue().size() == 2);
     CHECK(unit_of(sim, id)->command_queue().front().type == CommandType::Move);
+    CHECK(unit_of(sim, id)->command_queue().front().begun);
     CHECK(unit_of(sim, id)->command_queue().back().type == CommandType::Stop);
 }
 

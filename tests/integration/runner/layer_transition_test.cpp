@@ -11,6 +11,7 @@
 
 #include "integration_tests.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "sim/script_class.hpp"
@@ -43,15 +44,13 @@ Crossing cross(sim::SimState& sim, sim::EntityRegistry& registry, u32 id, const 
         sim::Entity* e = registry.find(id);
         return e && e->is_unit() && !e->destroyed() ? static_cast<sim::Unit*>(e) : nullptr;
     };
-    for (int t = 0; t < 400; ++t) {
-        sim.tick();
-        sim::Unit* u = unit();
-        if (!u) return c;
-        if (u->layer() == layer) {
-            c.crossed = true;
-            break;
-        }
-    }
+    const auto crossed =
+        tick_until([&] { sim.tick(); }, fmt::format("the Salem's layer becomes {}", layer), 400,
+                   [&] {
+                       const sim::Unit* u = unit();
+                       return u && u->layer() == layer;
+                   });
+    c.crossed = crossed.has_value();
     sim::Unit* u = unit();
     if (!c.crossed || !u) return c;
     const sim::Vector3 start = u->position();

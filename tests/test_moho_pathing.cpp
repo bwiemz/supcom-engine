@@ -21,6 +21,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -31,6 +32,7 @@ extern "C" {
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using osc::f32;
@@ -39,6 +41,7 @@ using osc::u32;
 using osc::u8;
 using osc::blueprints::NamedFootprint;
 using osc::sim::Unit;
+using osc::test::tick_until;
 namespace oc = osc::blueprints::occupancy;
 
 namespace {
@@ -135,15 +138,18 @@ struct World {
         u.push_command(cmd, true);
     }
 
-    /// Ticks until `u` has no orders left (or `limit`); whether its
+    /// Ticks until `u` has no orders left, failing at `limit`; whether its
     /// footprint always fitted where it stood.
-    bool run(Unit& u, int limit, int& ticks) {
+    bool run(Unit& u, std::string_view what, int limit, int& ticks) {
         bool fitted = true;
-        for (ticks = 0; ticks < limit && !u.command_queue().empty(); ++ticks) {
-            sim.tick();
-            if (sim.footprint_fits_at(u.footprint(), u.position().x, u.position().z) == 0)
-                fitted = false;
-        }
+        ticks = tick_until(
+            [&] {
+                sim.tick();
+                if (sim.footprint_fits_at(u.footprint(), u.position().x, u.position().z) == 0) {
+                    fitted = false;
+                }
+            },
+            what, limit, [&] { return u.command_queue().empty(); });
         return fitted;
     }
 };
@@ -160,8 +166,7 @@ TEST_CASE("With Moho pathing a tank's move asks its army, follows the cells and 
     w.sim.tick();
     CHECK(tank.navigator().moho_active());
     int ticks = 0;
-    CHECK(w.run(tank, 600, ticks));
-    CHECK(tank.command_queue().empty());
+    CHECK(w.run(tank, "the tank's move ends", 600, ticks));
     const auto at =
         osc::sim::footprint_rect(tank.footprint(), tank.position().x, tank.position().z);
     CHECK(at.x0 == 100);
@@ -182,8 +187,7 @@ TEST_CASE("With Moho pathing tanks go round a wall through its gap, never standi
         Unit& tank = *w.make(bp, 30.5f, 20.5f);
         World::move(tank, 100.5f, 20.5f);
         int ticks = 0;
-        CHECK(w.run(tank, 1200, ticks));
-        CHECK(tank.command_queue().empty());
+        CHECK(w.run(tank, "the tank's move round the wall ends", 1200, ticks));
         CHECK(tank.position().x > 95.0f);
         CHECK(std::abs(tank.position().z - 20.5f) < 4.0f);
     }
@@ -195,8 +199,7 @@ TEST_CASE("With Moho pathing off, a tank moves by the grid pathfinder as before"
     Unit& tank = *w.make("tank", 20.5f, 20.5f);
     World::move(tank, 100.5f, 90.5f);
     int ticks = 0;
-    w.run(tank, 600, ticks);
-    CHECK(tank.command_queue().empty());
+    w.run(tank, "the tank's move ends", 600, ticks);
     CHECK_FALSE(tank.navigator().moho_active());
     CHECK(std::abs(tank.position().x - 100.5f) < 1.0f);
 }
@@ -232,14 +235,11 @@ TEST_CASE("With Moho pathing a game saved with searches waiting and one in fligh
     for (size_t i = 0; i < tanks.size(); ++i)
         World::move(*tanks[i], 110.5f - static_cast<f32>(i % 4) * 5.0f,
                     15.5f + static_cast<f32>(i) * 4.0f);
-    // A few ticks in: some searches done, one in flight, the rest waiting.
-    bool waiting = false;
-    for (int t = 0; t < 10 && !waiting; ++t) {
-        a.sim.tick();
-        const auto& q = a.sim.get_army(0)->path_queue();
-        waiting = !q.pending().empty() && q.search().traveler() != nullptr;
-    }
-    CHECK(waiting);
+    tick_until([&] { a.sim.tick(); }, "searches wait and one is in flight", 10,
+               [&] {
+                   const auto& q = a.sim.get_army(0)->path_queue();
+                   return !q.pending().empty() && q.search().traveler() != nullptr;
+               });
     const osc::sim::SavedGame save = osc::sim::save_game(a.sim, "paths");
     REQUIRE_FALSE(save.snapshot.empty());
 
@@ -278,8 +278,7 @@ TEST_CASE("With Moho pathing a destination the unit won't fit moves to the neare
     Unit& tank = *w.make("tank", 20.5f, 20.5f);
     World::move(tank, 62.0f, 62.0f); // inside it
     int ticks = 0;
-    CHECK(w.run(tank, 600, ticks));
-    CHECK(tank.command_queue().empty());
+    CHECK(w.run(tank, "the move into the structure ends", 600, ticks));
     CHECK(std::abs(tank.position().x - 62.0f) < 5.0f);
     CHECK(std::abs(tank.position().z - 62.0f) < 5.0f);
 
@@ -288,8 +287,7 @@ TEST_CASE("With Moho pathing a destination the unit won't fit moves to the neare
     // where truncating 63.5 says 63, inside.
     Unit& other = *w.make("tank", 30.5f, 80.5f);
     World::move(other, 62.5f, 64.0f);
-    CHECK(w.run(other, 600, ticks));
-    CHECK(other.command_queue().empty());
+    CHECK(w.run(other, "the move beside the structure ends", 600, ticks));
     const auto at =
         osc::sim::footprint_rect(other.footprint(), other.position().x, other.position().z);
     CHECK(at.z0 == 64);
@@ -323,8 +321,8 @@ TEST_CASE("With Moho pathing its state is in the sync checksum's navigation doma
         osc::sim::PathTables& tables = *w.sim.path_tables();
         osc::sim::path::PathQueue& queue = w.sim.get_army(0)->path_queue();
         // Every cluster built first, so dirtying one is news.
-        for (int t = 0; t < 2000 && !tables.done(); ++t) w.sim.tick();
-        REQUIRE(tables.done());
+        tick_until([&] { w.sim.tick(); }, "every cluster is built", 2000,
+                   [&] { return tables.done(); });
         const auto check = [&](const char* what, const std::function<void()>& change) {
             const auto before = w.sim.checksum_parts();
             change();
@@ -345,11 +343,10 @@ TEST_CASE("With Moho pathing its state is in the sync checksum's navigation doma
         }
         for (size_t i = 0; i < tanks.size(); ++i)
             World::move(*tanks[i], 110.5f, 15.5f + static_cast<f32>(i) * 4.0f);
-        // Ticks until their searches wait (those its army's budget leaves
-        // as its army's phase ends).
-        for (int t = 0; t < 10 && queue.pending().empty(); ++t) w.sim.tick();
-        if (moho) REQUIRE(queue.pending().size() > 2);
         if (moho) {
+            tick_until([&] { w.sim.tick(); }, "searches past its army's budget wait", 10,
+                       [&] { return !queue.pending().empty(); });
+            REQUIRE(queue.pending().size() > 2);
             const auto work_once = [&] {
                 osc::i32 budget = 1;
                 queue.work(tables, budget);
@@ -359,17 +356,21 @@ TEST_CASE("With Moho pathing its state is in the sync checksum's navigation doma
             check("its progress", work_once);
             check("a search cancelled", [&] { queue.cancel(*queue.pending().back()); });
         }
-        // Then one following its path.
         Unit* moving = nullptr;
-        for (int t = 0; t < 20 && !moving; ++t) {
-            w.sim.tick();
-            for (Unit* u : tanks)
-                if (!moving && !queue.queued(u->navigator().moho_path().finder()) &&
-                    u->navigator().moho_path().state() ==
-                        osc::sim::path::PathNavigator::State::HasPath)
-                    moving = u;
+        if (moho) {
+            tick_until([&] { w.sim.tick(); }, "a tank follows its path", 20,
+                       [&] {
+                           for (Unit* u : tanks) {
+                               if (!queue.queued(u->navigator().moho_path().finder()) &&
+                                   u->navigator().moho_path().state() ==
+                                       osc::sim::path::PathNavigator::State::HasPath) {
+                                   moving = u;
+                                   return true;
+                               }
+                           }
+                           return false;
+                       });
         }
-        if (moho) REQUIRE(moving);
         if (!moving) moving = tanks.front();
         osc::sim::path::PathNavigator& nav = moving->navigator().moho_path();
         check("a search queued", [&] { queue.queue(nav.finder()); });
@@ -389,21 +390,27 @@ TEST_CASE("With Moho pathing its state is in the sync checksum's navigation doma
 
 namespace {
 
-/// Ticks until none of `units` has orders left (or `limit`); whether every
+/// Ticks until none of `units` has orders left, failing at `limit`; whether every
 /// footprint always fitted where it stood.
-bool run_all(World& w, const std::vector<Unit*>& units, int limit, int& ticks) {
+bool run_all(World& w, const std::vector<Unit*>& units, std::string_view what, int limit,
+             int& ticks) {
     bool fitted = true;
     const auto busy = [&] {
         for (const Unit* u : units)
             if (!u->command_queue().empty()) return true;
         return false;
     };
-    for (ticks = 0; ticks < limit && busy(); ++ticks) {
-        w.sim.tick();
-        for (const Unit* u : units)
-            if (w.sim.footprint_fits_at(u->footprint(), u->position().x, u->position().z) == 0)
-                fitted = false;
-    }
+    ticks = tick_until(
+        [&] {
+            w.sim.tick();
+            for (const Unit* u : units) {
+                if (w.sim.footprint_fits_at(u->footprint(), u->position().x, u->position().z) ==
+                    0) {
+                    fitted = false;
+                }
+            }
+        },
+        what, limit, [&] { return !busy(); });
     return fitted;
 }
 
@@ -434,11 +441,9 @@ TEST_CASE("With Moho pathing a gap two cells wide lets a 1x1 tank through and no
     World::move(small, 100.5f, 70.5f);
     World::move(big, 100.5f, 70.5f);
     int ticks = 0;
-    CHECK(run_all(w, {&small, &big}, 1500, ticks));
+    CHECK(run_all(w, {&small, &big}, "both tanks' moves end", 1500, ticks));
     INFO("ticks " << ticks);
-    CHECK(small.command_queue().empty());
     CHECK(small.position().x > 99.0f);
-    CHECK(big.command_queue().empty());
     CHECK(big.position().x < 60.0f); // never through
     CHECK(big.position().x > 50.0f); // but as near as it fits
     // Given up: no search of its still waiting or in flight.
@@ -457,10 +462,11 @@ TEST_CASE("With Moho pathing a goal walled in all round ends the move outside, b
     w.sim.occupy_ground(9999, box);
     Unit& tank = *w.make("tank", 30.5f, 30.5f);
     World::move(tank, 100.5f, 100.5f);
+    w.sim.tick();
+    CHECK(tank.navigator().moho_active());
     int ticks = 0;
-    CHECK(w.run(tank, 1500, ticks));
+    CHECK(w.run(tank, "the move to the walled-in goal ends", 1500, ticks));
     INFO("ticks " << ticks);
-    CHECK(tank.command_queue().empty());
     const f32 dx = tank.position().x - 100.5f;
     const f32 dz = tank.position().z - 100.5f;
     CHECK(std::sqrt(dx * dx + dz * dz) < 16.0f); // at the box's wall
@@ -633,10 +639,8 @@ TEST_CASE("With Moho pathing a two-point move chain slows for two ticks at the f
     queue_move(tank, 20.5f, 40.5f);
     queue_move(tank, 20.5f, 70.5f);
     f32 into = 0.0f;
-    for (int t = 0; t < 300 && cell_z(tank) != 40; ++t) {
-        into = step_of(w, tank);
-    }
-    REQUIRE(cell_z(tank) == 40);
+    tick_until([&] { into = step_of(w, tank); }, "the tank reaches the first point's cell", 300,
+               [&] { return cell_z(tank) == 40; });
     REQUIRE(tank.command_queue().size() == 2);
     const f32 first = step_of(w, tank);
     CHECK(tank.command_queue().size() == 1);

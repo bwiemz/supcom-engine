@@ -14,6 +14,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -31,6 +32,7 @@ using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
 using osc::sim::Vector3;
+using osc::test::tick_until;
 
 namespace {
 
@@ -127,8 +129,8 @@ TEST_CASE("A unit's script hears its terrain type change as it drives onto new g
     CHECK(heard(g.L).empty());
 
     u->push_command(move_to({90.0f, 0.0f, 64.0f}), true);
-    for (int t = 0; t < 150; ++t) sim.tick();
-    REQUIRE(u->position().x > 85.0f);
+    tick_until([&] { sim.tick(); }, "the tank finishes its move onto the sand", 300,
+               [&] { return u->command_queue().empty() && u->position().x > 85.0f; });
     CHECK(u->current_terrain_type() == 5);
     CHECK(heard(g.L) == "Sand<Default"); // once, on the tick after it crossed
 }

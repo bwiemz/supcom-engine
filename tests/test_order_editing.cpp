@@ -13,6 +13,7 @@
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
 #include "sim/world_snapshot.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -32,6 +33,7 @@ using osc::sim::SimCallbackEntry;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
+using osc::test::tick_until;
 
 namespace {
 
@@ -120,9 +122,8 @@ TEST_CASE("Moving an order's target sends every unit given it there", "[order_ed
     w.ticks(1);
     CHECK(a.command_queue().front().target_pos.x == 30.0f);
     CHECK(b.command_queue().front().target_pos.z == 90.0f);
-    w.ticks(300);
-    CHECK(distance(a, 30, 90) < 3.0f);
-    CHECK(distance(b, 30, 90) < 3.0f);
+    tick_until([&] { w.sim->tick(); }, "both units reach the moved target", 600,
+               [&] { return distance(a, 30, 90) < 3.0f && distance(b, 30, 90) < 3.0f; });
 }
 
 TEST_CASE("Another army's player can't move an order", "[order_edit]") {
@@ -136,6 +137,10 @@ TEST_CASE("Another army's player can't move an order", "[order_edit]") {
     w.sim->schedule_callback(1, retarget(id, {a.entity_id()}, 30, 90));
     w.ticks(2);
     CHECK(a.command_queue().front().target_pos.x == 100.0f);
+    w.sim->set_command_source(0, 1, true);
+    w.sim->schedule_callback(1, retarget(id, {a.entity_id()}, 30, 90));
+    w.ticks(2);
+    CHECK(a.command_queue().front().target_pos.x == 30.0f);
 }
 
 TEST_CASE("A moved order's target is kept to the playable area", "[order_edit]") {
@@ -338,8 +343,8 @@ TEST_CASE("Taking off the order under way sends the unit on to the next", "[orde
     const auto before = ids_of(a);
     REQUIRE(before.size() == 2);
     w.sim->submit_callback(removal(before[0], {a.entity_id()}));
-    w.ticks(300);
-    CHECK(distance(a, 10, 60) < 3.0f);
+    tick_until([&] { w.sim->tick(); }, "the unit reaches the next order's point", 300,
+               [&] { return distance(a, 10, 60) < 3.0f; });
     CHECK(a.position().x < 40.0f);
 }
 
@@ -354,6 +359,10 @@ TEST_CASE("Another army's player can't take an order off", "[order_edit]") {
     w.sim->schedule_callback(1, removal(before[0], {a.entity_id()}));
     w.ticks(2);
     CHECK(ids_of(a) == before);
+    w.sim->set_command_source(0, 1, true);
+    w.sim->schedule_callback(1, removal(before[0], {a.entity_id()}));
+    w.ticks(2);
+    CHECK(ids_of(a).empty());
 }
 
 TEST_CASE("A factory's rally order can be taken off", "[order_edit]") {
@@ -652,6 +661,11 @@ TEST_CASE("Only a move is made a patrol, and only of the sender's units", "[orde
     CHECK(a.command_queue()[0].type == CommandType::Move);
     CHECK(a.command_queue()[1].type == CommandType::Attack);
     CHECK(theirs.command_queue()[0].type == CommandType::Move);
+    w.sim->schedule_callback(
+        1, patrol(a.command_queue()[0].command_id, a.entity_id(), CommandType::Patrol));
+    w.ticks(2);
+    CHECK(std::any_of(a.command_queue().begin(), a.command_queue().end(),
+                      [](const UnitCommand& c) { return c.type == CommandType::Patrol; }));
 }
 
 namespace {

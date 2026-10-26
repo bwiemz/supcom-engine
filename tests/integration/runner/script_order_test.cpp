@@ -17,6 +17,7 @@
 // a no-op (retail's AI never enhanced) and the Eye could not scry.
 
 #include "integration_tests.hpp"
+#include "tick_until.hpp"
 
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
@@ -72,27 +73,28 @@ void test_script_orders(TestContext& ctx) {
 
     // 1. It works, and finishes
     f32 midway = 0;
-    bool done = false;
-    for (int i = 1; i <= 1500 && !done; ++i) {
-        ctx.sim.tick();
-        auto* acu = acu_of(ctx.sim);
-        if (!acu) break;
-        if (i == 300) {
-            midway = acu->work_progress();
-            // What retail's AI waits on (platoon.lua's EnhanceAI)
-            run(ctx, "the states midway", R"(
-                if not __acu:IsUnitState('Enhancing') then error('not Enhancing') end
-                if not __acu:IsUnitState('Upgrading') then error('not Upgrading') end
-            )");
-        }
-        done = acu->command_queue().empty() && !acu->has_script_task();
-    }
-    auto* acu = acu_of(ctx.sim);
-    if (!acu || !done) {
-        test_status::fail("[FAIL] script orders: EnhanceTask never finished (progress {:.2f})",
-                          acu ? acu->work_progress() : -1.0f);
+    int ticked = 0;
+    if (!tick_until(
+            [&] {
+                ctx.sim.tick();
+                const auto* acu = acu_of(ctx.sim);
+                if (++ticked == 300 && acu) {
+                    midway = acu->work_progress();
+                    // What retail's AI waits on (platoon.lua's EnhanceAI)
+                    run(ctx, "the states midway", R"(
+                        if not __acu:IsUnitState('Enhancing') then error('not Enhancing') end
+                        if not __acu:IsUnitState('Upgrading') then error('not Upgrading') end
+                    )");
+                }
+            },
+            "script orders: EnhanceTask finishes", 1500,
+            [&] {
+                const auto* acu = acu_of(ctx.sim);
+                return acu && acu->command_queue().empty() && !acu->has_script_task();
+            })) {
         return;
     }
+    auto* acu = acu_of(ctx.sim);
     if (midway <= 0.0f || midway >= 1.0f)
         test_status::fail("[FAIL] script orders: EnhanceTask's progress at tick 300: {:.2f}",
                           midway);
@@ -114,10 +116,10 @@ void test_script_orders(TestContext& ctx) {
     if (!run(ctx, "the second enhancement",
              "IssueScript({__acu}, { TaskName = 'EnhanceTask', Enhancement = 'Shield' })"))
         return;
-    for (int i = 0; i < 100; ++i) ctx.sim.tick();
-    acu = acu_of(ctx.sim);
-    const bool working = acu && acu->has_script_task() && acu->work_progress() > 0.0f;
-    if (!working) test_status::fail("[FAIL] script orders: the Shield enhancement never began");
+    const auto working = tick_until(ctx, "script orders: the Shield enhancement begins", 200, [&] {
+        acu = acu_of(ctx.sim);
+        return acu && acu->has_script_task() && acu->work_progress() > 0.0f;
+    });
     if (!run(ctx, "the clear", "IssueClearCommands({__acu})")) return;
     ctx.sim.tick();
     acu = acu_of(ctx.sim);

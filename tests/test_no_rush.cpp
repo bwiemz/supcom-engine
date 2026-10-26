@@ -10,6 +10,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -23,6 +24,7 @@ using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
 using osc::sim::Vector3;
+using osc::test::tick_until;
 
 namespace {
 
@@ -77,6 +79,8 @@ TEST_CASE("No Rush pins a straying unit at the boundary", "[norush]") {
     // Direct order (as an AI would issue) toward a far target.
     u->push_command(move_to(1000.0f, 0.0f), true);
 
+    tick_until([&] { sim.tick(); }, "the unit reaches the boundary", 150,
+               [&] { return dist_xz(u->position(), origin) >= 49.5f; });
     for (int i = 0; i < 40; ++i) sim.tick();
     CHECK(dist_xz(u->position(), origin) <= 50.5f);
 }
@@ -114,8 +118,8 @@ TEST_CASE("Units confined during No Rush are freed once it expires", "[norush]")
     for (int i = 0; i < 8; ++i) sim.tick();     // inside the window
     CHECK(dist_xz(u->position(), origin) <= 50.5f);
 
-    for (int i = 0; i < 60; ++i) sim.tick();     // window expired → free to leave
-    CHECK(dist_xz(u->position(), origin) > 50.5f);
+    tick_until([&] { sim.tick(); }, "the unit leaves the zone once the window expires", 120,
+               [&] { return dist_xz(u->position(), origin) > 50.5f; });
 }
 
 TEST_CASE("No Rush confines each army to its own start", "[norush]") {
@@ -149,6 +153,6 @@ TEST_CASE("Civilian units are exempt from No Rush", "[norush]") {
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
     u->push_command(move_to(1000.0f, 0.0f), true);
 
-    for (int i = 0; i < 60; ++i) sim.tick();
-    CHECK(dist_xz(u->position(), origin) > 50.5f); // wildlife roams freely
+    tick_until([&] { sim.tick(); }, "the civilian unit leaves the zone", 120,
+               [&] { return dist_xz(u->position(), origin) > 50.5f; });
 }

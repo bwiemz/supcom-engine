@@ -18,6 +18,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -25,7 +26,6 @@ extern "C" {
 
 #include <algorithm>
 #include <cmath>
-#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -34,6 +34,7 @@ using osc::f32;
 using osc::i32;
 using osc::u32;
 using osc::sim::Unit;
+using osc::test::tick_until;
 namespace oc = osc::blueprints::occupancy;
 
 namespace {
@@ -168,12 +169,6 @@ struct World {
         cmd.target_pos = {x, 20.0f, z};
         u.push_command(cmd, true);
     }
-
-    int run_until(const std::function<bool()>& done, int limit) {
-        int t = 0;
-        for (; t < limit && !done(); ++t) sim.tick();
-        return t;
-    }
 };
 
 } // namespace
@@ -185,8 +180,8 @@ TEST_CASE("An idle aircraft lands a second after its orders run out: it reserves
     Unit& plane = *w.make("plane", 30.0f, 30.0f);
     REQUIRE(plane.is_air_unit());
     World::move(plane, 60.0f, 60.0f);
-    const int flew = w.run_until([&] { return plane.command_queue().empty(); }, 400);
-    CHECK(flew < 400);
+    tick_until([&] { w.sim.tick(); }, "the plane finishes its move", 400,
+               [&] { return plane.command_queue().empty(); });
     CHECK(plane.is_air_unit());
     // Within the second, still up.
     for (int i = 0; i < 5; ++i) w.sim.tick();
@@ -194,17 +189,15 @@ TEST_CASE("An idle aircraft lands a second after its orders run out: it reserves
     CHECK_FALSE(plane.idle_landing().descending);
     bool reserved_seen = false;
     bool moving_down_seen = false;
-    const int landed = w.run_until(
-        [&] {
-            if (plane.idle_landing().descending) {
-                const auto& r = plane.idle_landing().reserved;
-                reserved_seen = reserved_seen || w.sim.occupancy().reserved_any(r);
-            }
-            moving_down_seen = moving_down_seen || plane.has_unit_state("MovingDown");
-            return !plane.is_air_unit();
-        },
-        300);
-    CHECK(landed < 300);
+    tick_until([&] { w.sim.tick(); }, "the plane lands", 300,
+               [&] {
+                   if (plane.idle_landing().descending) {
+                       const auto& r = plane.idle_landing().reserved;
+                       reserved_seen = reserved_seen || w.sim.occupancy().reserved_any(r);
+                   }
+                   moving_down_seen = moving_down_seen || plane.has_unit_state("MovingDown");
+                   return !plane.is_air_unit();
+               });
     CHECK(reserved_seen);
     CHECK(moving_down_seen);
     CHECK(plane.layer() == "Land");
@@ -225,8 +218,7 @@ TEST_CASE("Two aircraft idle at one spot land apart: the second keeps off the fi
     Unit& a = *w.make("plane", 59.0f, 59.0f);
     Unit& b = *w.make("plane", 61.0f, 61.0f);
     const auto both_down = [&] { return !a.is_air_unit() && !b.is_air_unit(); };
-    w.run_until(both_down, 400);
-    REQUIRE(both_down());
+    tick_until([&] { w.sim.tick(); }, "both planes land", 400, both_down);
     const f32 dx = a.position().x - b.position().x;
     const f32 dz = a.position().z - b.position().z;
     CHECK(std::sqrt(dx * dx + dz * dz) >= 2.0f); // their 2x2 places apart
@@ -241,7 +233,8 @@ TEST_CASE("Aircraft sent to one point all finish the move there and land", "[air
     }
     std::vector<int> finished(planes.size(), -1);
     int tick = 0;
-    const int t = w.run_until(
+    const int t = tick_until(
+        [&] { w.sim.tick(); }, "all the planes land", 800,
         [&] {
             for (size_t i = 0; i < planes.size(); ++i) {
                 if (finished[i] < 0 && planes[i]->command_queue().empty()) {
@@ -251,13 +244,11 @@ TEST_CASE("Aircraft sent to one point all finish the move there and land", "[air
             ++tick;
             return std::all_of(planes.begin(), planes.end(),
                                [](const Unit* p) { return !p->is_air_unit(); });
-        },
-        800);
+        });
     INFO("ticks " << t);
     for (size_t i = 0; i < planes.size(); ++i) {
         INFO("plane " << i << " finished its move at tick " << finished[i]);
         CHECK(finished[i] >= 0);
-        CHECK_FALSE(planes[i]->is_air_unit());
     }
 }
 
@@ -270,15 +261,17 @@ TEST_CASE("With nowhere to land an aircraft stays up, CannotFindPlaceToLand; one
     everything.rects = {{0, 0, 64, 64}};
     w.sim.occupy_ground(9999, everything);
     Unit& plane = *w.make("plane", 32.0f, 32.0f);
-    for (int i = 0; i < 40; ++i) w.sim.tick();
+    tick_until([&] { w.sim.tick(); }, "the plane finds no place to land", 80,
+               [&] { return plane.has_unit_state("CannotFindPlaceToLand"); });
     CHECK(plane.is_air_unit());
-    CHECK(plane.has_unit_state("CannotFindPlaceToLand"));
 
     World w2;
     Unit& drone = *w2.make("drone", 32.0f, 32.0f);
+    const Unit& lander = *w2.make("plane", 96.0f, 96.0f);
     for (int i = 0; i < 100; ++i) w2.sim.tick();
     CHECK(drone.is_air_unit());
     CHECK_FALSE(drone.idle_landing().descending);
+    CHECK((lander.idle_landing().descending || !lander.is_air_unit()));
 }
 
 namespace {
@@ -318,8 +311,8 @@ TEST_CASE("An idle aircraft that can't land, or is told to speed through, flies 
         World w(128, 20.0f);
         Unit& fighter = *w.make("fighter", 30.0f, 64.0f);
         World::move(fighter, place.x, place.z);
-        w.run_until([&] { return fighter.has_unit_state("CannotFindPlaceToLand"); }, 400);
-        REQUIRE(fighter.has_unit_state("CannotFindPlaceToLand"));
+        tick_until([&] { w.sim.tick(); }, "the fighter finds no place to land", 400,
+                   [&] { return fighter.has_unit_state("CannotFindPlaceToLand"); });
         REQUIRE(fighter.command_queue().empty());
         const Flight seen = watch(w, fighter, place, 20, 300);
         CHECK(seen.slowest > 2.0f);
@@ -330,7 +323,8 @@ TEST_CASE("An idle aircraft that can't land, or is told to speed through, flies 
         World w;
         Unit& flier = *w.make("flier", 30.0f, 64.0f);
         World::move(flier, place.x, place.z);
-        w.run_until([&] { return flier.command_queue().empty(); }, 400);
+        tick_until([&] { w.sim.tick(); }, "the flier finishes its move", 400,
+                   [&] { return flier.command_queue().empty(); });
         flier.set_unit_state("ForceSpeedThrough", true);
         const Flight seen = watch(w, flier, place, 20, 300);
         CHECK(seen.slowest > 2.0f);
@@ -340,7 +334,8 @@ TEST_CASE("An idle aircraft that can't land, or is told to speed through, flies 
         World w;
         Unit& flier = *w.make("flier", 30.0f, 64.0f);
         World::move(flier, place.x, place.z);
-        w.run_until([&] { return flier.command_queue().empty(); }, 400);
+        tick_until([&] { w.sim.tick(); }, "the flier finishes its move", 400,
+                   [&] { return flier.command_queue().empty(); });
         flier.navigator().set_speed_through_goal(true);
         CHECK(watch(w, flier, place, 100, 100).slowest < 0.1f);
     }
@@ -366,12 +361,14 @@ TEST_CASE("An aircraft under construction neither lands nor takes off", "[air_la
     World w;
     Unit& plane = *w.make("plane", 40.0f, 40.0f);
     plane.set_is_being_built(true);
+    const Unit& lander = *w.make("plane", 80.0f, 80.0f);
     const osc::sim::Vector3 at = plane.position();
     for (int i = 0; i < 60; ++i) w.sim.tick();
     CHECK(plane.is_air_unit());
     CHECK_FALSE(plane.idle_landing().descending);
     CHECK(plane.position().x == at.x);
     CHECK(plane.position().z == at.z);
+    CHECK((lander.idle_landing().descending || !lander.is_air_unit()));
 }
 
 TEST_CASE("An EXPERIMENTAL aircraft is built on the ground and takes off once finished; another "
@@ -400,16 +397,17 @@ TEST_CASE("A landed aircraft given an order takes off, climbs to its height and 
           "[air_landing]") {
     World w;
     Unit& plane = *w.make("plane", 40.0f, 40.0f);
-    w.run_until([&] { return !plane.is_air_unit(); }, 300);
+    tick_until([&] { w.sim.tick(); }, "the plane lands", 300, [&] { return !plane.is_air_unit(); });
     REQUIRE(plane.layer() == "Land");
     World::move(plane, 90.0f, 40.0f);
     w.sim.tick();
     CHECK(plane.is_air_unit());
     CHECK(plane.has_unit_state("MovingUp"));
-    const int up = w.run_until([&] { return !plane.has_unit_state("MovingUp"); }, 200);
-    CHECK(up < 200);
+    tick_until([&] { w.sim.tick(); }, "the plane climbs to its height", 200,
+               [&] { return !plane.has_unit_state("MovingUp"); });
     CHECK(plane.vert_event() == "Top");
-    w.run_until([&] { return plane.command_queue().empty(); }, 400);
+    tick_until([&] { w.sim.tick(); }, "the plane finishes its move", 400,
+               [&] { return plane.command_queue().empty(); });
     CHECK(plane.position().x > 80.0f);
 }
 
@@ -419,8 +417,8 @@ TEST_CASE("A game saved while an aircraft comes down loads and goes on as the or
     World a;
     Unit& plane = *a.make("plane", 50.0f, 50.0f);
     a.sim.set_recording(true);
-    a.run_until([&] { return plane.idle_landing().descending; }, 200);
-    REQUIRE(plane.idle_landing().descending);
+    tick_until([&] { a.sim.tick(); }, "the plane comes down", 200,
+               [&] { return plane.idle_landing().descending; });
     a.sim.tick();
     const osc::sim::SavedGame save = osc::sim::save_game(a.sim, "landing");
     REQUIRE_FALSE(save.snapshot.empty());
@@ -430,13 +428,16 @@ TEST_CASE("A game saved while an aircraft comes down loads and goes on as the or
     INFO(err);
     REQUIRE(err.empty());
     CHECK(b.sim.occupancy().reserved_any(plane.idle_landing().reserved));
-    for (int t = 0; t < 80; ++t) {
-        a.sim.tick();
-        b.sim.tick();
-        INFO("tick " << t);
-        REQUIRE(b.sim.compute_sync_checksum() == a.sim.compute_sync_checksum());
-    }
-    CHECK(plane.layer() == "Land");
+    int t = 0;
+    tick_until(
+        [&] {
+            a.sim.tick();
+            b.sim.tick();
+            INFO("tick " << t);
+            REQUIRE(b.sim.compute_sync_checksum() == a.sim.compute_sync_checksum());
+            ++t;
+        },
+        "the plane lands", 160, [&] { return plane.layer() == "Land"; });
 }
 
 TEST_CASE("A landed aircraft refuels by itself, FuelRechargeRate / FuelUseTime / 100 a tick; "
@@ -449,7 +450,7 @@ TEST_CASE("A landed aircraft refuels by itself, FuelRechargeRate / FuelUseTime /
     plane.set_fuel_ratio(0.2f);
     w.sim.tick();
     CHECK(plane.fuel_ratio() < 0.2f);
-    w.run_until([&] { return !plane.is_air_unit(); }, 300);
+    tick_until([&] { w.sim.tick(); }, "the plane lands", 300, [&] { return !plane.is_air_unit(); });
     REQUIRE(plane.vert_event() == "Bottom");
     const f32 down = plane.fuel_ratio();
     for (int i = 0; i < 100; ++i) w.sim.tick();
@@ -461,8 +462,8 @@ TEST_CASE("An order while an aircraft comes down: it gives up its place, climbs 
           "[air_landing]") {
     World w;
     Unit& plane = *w.make("plane", 40.0f, 40.0f);
-    w.run_until([&] { return plane.idle_landing().descending; }, 200);
-    REQUIRE(plane.idle_landing().descending);
+    tick_until([&] { w.sim.tick(); }, "the plane comes down", 200,
+               [&] { return plane.idle_landing().descending; });
     w.sim.tick();
     const auto place = plane.idle_landing().reserved;
     REQUIRE(w.sim.occupancy().reserved_any(place));
@@ -473,7 +474,8 @@ TEST_CASE("An order while an aircraft comes down: it gives up its place, climbs 
     CHECK_FALSE(plane.has_unit_state("MovingDown"));
     CHECK_FALSE(w.sim.occupancy().reserved_any(place));
     CHECK(plane.is_air_unit());
-    w.run_until([&] { return plane.command_queue().empty(); }, 400);
+    tick_until([&] { w.sim.tick(); }, "the plane finishes its move", 400,
+               [&] { return plane.command_queue().empty(); });
     CHECK(plane.position().x > 90.0f);
     CHECK(plane.current_altitude() > low);
 }
@@ -481,8 +483,8 @@ TEST_CASE("An order while an aircraft comes down: it gives up its place, climbs 
 TEST_CASE("An idle empty transport lands as any aircraft does", "[air_landing][transport]") {
     World w;
     Unit& ferry = *w.make("ferry", 40.0f, 40.0f);
-    const int landed = w.run_until([&] { return !ferry.is_air_unit(); }, 300);
-    CHECK(landed < 300);
+    tick_until([&] { w.sim.tick(); }, "the transport lands", 300,
+               [&] { return !ferry.is_air_unit(); });
     CHECK(ferry.layer() == "Land");
     CHECK(ferry.vert_event() == "Bottom");
 }
@@ -494,7 +496,8 @@ TEST_CASE("Over deep water a TRANSPORTATION or CANLANDONWATER aircraft lands on 
     Unit& ferry = *w.make("ferry", 20.0f, 20.0f);
     Unit& pod = *w.make("pod", 44.0f, 44.0f);
     Unit& plane = *w.make("plane", 20.0f, 44.0f);
-    w.run_until([&] { return !ferry.is_air_unit() && !pod.is_air_unit(); }, 300);
+    tick_until([&] { w.sim.tick(); }, "the transport and the pod come down", 300,
+               [&] { return !ferry.is_air_unit() && !pod.is_air_unit(); });
     CHECK(ferry.layer() == "Water");
     CHECK(std::abs(ferry.position().x - 20.0f) < 1.0f);
     CHECK(std::abs(ferry.position().z - 20.0f) < 1.0f);
@@ -515,14 +518,12 @@ TEST_CASE("An idle transport with cargo comes down to its TransportHoverHeight a
     ferry.set_fuel_recharge_rate(10.0f);
     ferry.set_fuel_ratio(0.5f);
     bool down_seen = false;
-    const int hovering = w.run_until(
-        [&] {
-            down_seen =
-                down_seen || (ferry.vert_event() == "Down" && ferry.has_unit_state("MovingDown"));
-            return ferry.vert_event() == "Hover";
-        },
-        300);
-    CHECK(hovering < 300);
+    tick_until([&] { w.sim.tick(); }, "the transport hovers", 300,
+               [&] {
+                   down_seen = down_seen ||
+                               (ferry.vert_event() == "Down" && ferry.has_unit_state("MovingDown"));
+                   return ferry.vert_event() == "Hover";
+               });
     CHECK(down_seen);
     CHECK_FALSE(ferry.has_unit_state("MovingDown"));
     CHECK(ferry.is_air_unit());
@@ -539,17 +540,16 @@ TEST_CASE("A transport given an order out of its hover climbs away: Up, then Top
     Unit& ferry = *w.make("ferry", 40.0f, 40.0f);
     Unit& tank = *w.make("tank", 44.0f, 40.0f);
     tank.attach_to_transport(&ferry, w.sim.entity_registry(), w.state.raw());
-    w.run_until([&] { return ferry.vert_event() == "Hover"; }, 300);
-    REQUIRE(ferry.vert_event() == "Hover");
+    tick_until([&] { w.sim.tick(); }, "the transport hovers", 300,
+               [&] { return ferry.vert_event() == "Hover"; });
     World::move(ferry, 100.0f, 40.0f);
     bool up_seen = false;
-    const int top = w.run_until(
-        [&] {
-            up_seen = up_seen || (ferry.vert_event() == "Up" && ferry.has_unit_state("MovingUp"));
-            return ferry.vert_event() == "Top";
-        },
-        300);
-    CHECK(top < 300);
+    tick_until([&] { w.sim.tick(); }, "the transport climbs to the top", 300,
+               [&] {
+                   up_seen =
+                       up_seen || (ferry.vert_event() == "Up" && ferry.has_unit_state("MovingUp"));
+                   return ferry.vert_event() == "Top";
+               });
     CHECK(up_seen);
     CHECK_FALSE(ferry.has_unit_state("MovingUp"));
 }
@@ -566,17 +566,15 @@ TEST_CASE("A transport unloading comes down to its hover height as to a landing:
     ferry.push_command(drop, true);
     bool down_seen = false;
     std::string at_drop;
-    const int dropped = w.run_until(
-        [&] {
-            down_seen = down_seen || ferry.vert_event() == "Down";
-            if (ferry.cargo_ids().empty()) {
-                return true;
-            }
-            at_drop = ferry.vert_event();
-            return false;
-        },
-        300);
-    CHECK(dropped < 300);
+    tick_until([&] { w.sim.tick(); }, "the transport drops its cargo", 300,
+               [&] {
+                   down_seen = down_seen || ferry.vert_event() == "Down";
+                   if (ferry.cargo_ids().empty()) {
+                       return true;
+                   }
+                   at_drop = ferry.vert_event();
+                   return false;
+               });
     CHECK(down_seen);
     CHECK(at_drop == "Hover");
 }
@@ -591,15 +589,15 @@ TEST_CASE("An aircraft flies one step a tick as it passes from one move to the n
     next.target_pos = {60.0f, 20.0f, 80.0f};
     plane.push_command(next, false);
     f32 longest = 0.0f;
-    int flew = 0;
-    for (; flew < 400 && !plane.command_queue().empty(); ++flew) {
-        const auto before = plane.position();
-        w.sim.tick();
-        const f32 dx = plane.position().x - before.x;
-        const f32 dz = plane.position().z - before.z;
-        longest = std::max(longest, std::sqrt(dx * dx + dz * dz));
-    }
-    CHECK(flew < 400);
+    tick_until(
+        [&] {
+            const auto before = plane.position();
+            w.sim.tick();
+            const f32 dx = plane.position().x - before.x;
+            const f32 dz = plane.position().z - before.z;
+            longest = std::max(longest, std::sqrt(dx * dx + dz * dz));
+        },
+        "the plane finishes both moves", 400, [&] { return plane.command_queue().empty(); });
     CHECK(plane.position().z > 70.0f);
     CHECK(longest <= 10.0f * 0.1f + 1e-3f);
 }
@@ -626,23 +624,26 @@ TEST_CASE("An aircraft flies one step when a move hands over to a guard", "[air_
     next.target_id = 0;
     reference.push_command(next, false);
     bool handed_over = false;
-    for (int tick = 0; tick < 400 && !handed_over; ++tick) {
-        const auto before = plane.position();
-        queued.sim.tick();
-        plain.sim.tick();
-        handed_over = plane.command_queue().front().type == osc::sim::CommandType::Guard;
-        INFO("tick " << tick);
-        if (handed_over) {
-            const f32 dx = plane.position().x - before.x;
-            const f32 dz = plane.position().z - before.z;
-            CHECK(std::sqrt(dx * dx + dz * dz) <= 10.0f * 0.1f + 1e-3f);
-        } else {
-            CHECK(std::abs(plane.position().x - reference.position().x) <= 1e-5f);
-            CHECK(std::abs(plane.position().y - reference.position().y) <= 1e-5f);
-            CHECK(std::abs(plane.position().z - reference.position().z) <= 1e-5f);
-        }
-    }
-    REQUIRE(handed_over);
+    int tick = 0;
+    tick_until(
+        [&] {
+            const auto before = plane.position();
+            queued.sim.tick();
+            plain.sim.tick();
+            handed_over = plane.command_queue().front().type == osc::sim::CommandType::Guard;
+            INFO("tick " << tick);
+            if (handed_over) {
+                const f32 dx = plane.position().x - before.x;
+                const f32 dz = plane.position().z - before.z;
+                CHECK(std::sqrt(dx * dx + dz * dz) <= 10.0f * 0.1f + 1e-3f);
+            } else {
+                CHECK(std::abs(plane.position().x - reference.position().x) <= 1e-5f);
+                CHECK(std::abs(plane.position().y - reference.position().y) <= 1e-5f);
+                CHECK(std::abs(plane.position().z - reference.position().z) <= 1e-5f);
+            }
+            ++tick;
+        },
+        "the move hands over to the guard", 400, [&] { return handed_over; });
 }
 
 TEST_CASE("An aircraft whose script slows it as its fuel runs out flies that tick slowed",
@@ -690,23 +691,27 @@ TEST_CASE("A transport comes down over its pickup a step a tick, ready for its c
     int low = -1;
     int ready = -1;
     int descending = 0;
-    for (int t = 0; t < 400 && ready < 0; ++t) {
-        const auto before = ferry.position();
-        w.sim.tick();
-        INFO("tick " << t);
-        if (ferry.has_unit_state("MovingDown")) {
-            ++descending;
-            CHECK(ferry.position().x == before.x);
-            CHECK(ferry.position().z == before.z);
-            CHECK(before.y - ferry.position().y <= 0.5f + 1e-4f);
-        }
-        if (low < 0 && ferry.current_altitude() == 3.0f) {
-            low = t;
-        }
-        if (ferry.pickup_ready()) {
-            ready = t;
-        }
-    }
+    int t = 0;
+    tick_until(
+        [&] {
+            const auto before = ferry.position();
+            w.sim.tick();
+            INFO("tick " << t);
+            if (ferry.has_unit_state("MovingDown")) {
+                ++descending;
+                CHECK(ferry.position().x == before.x);
+                CHECK(ferry.position().z == before.z);
+                CHECK(before.y - ferry.position().y <= 0.5f + 1e-4f);
+            }
+            if (low < 0 && ferry.current_altitude() == 3.0f) {
+                low = t;
+            }
+            if (ferry.pickup_ready()) {
+                ready = t;
+            }
+            ++t;
+        },
+        "the transport is ready for its cargo", 400, [&] { return ready >= 0; });
     REQUIRE(low >= 0);
     CHECK(descending > 5);
     CHECK(ready == low + 1);

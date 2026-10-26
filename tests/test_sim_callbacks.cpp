@@ -507,6 +507,9 @@ TEST_CASE("Unit settings out of range are ignored", "[simcallback]") {
     CHECK(w.unit(id).script_bits() == 0);
     CHECK_FALSE(w.unit(id).is_paused());
     CHECK(w.hooks().empty());
+    w.sim.submit_callback(setting("FireState", 2.0, id));
+    w.sim.tick();
+    CHECK(w.unit(id).fire_state() == 2);
 }
 
 TEST_CASE("ProcessInfo's pause and auto mode call the same hooks", "[simcallback]") {
@@ -774,6 +777,13 @@ TEST_CASE("A callback's NaN or infinite numbers change nothing", "[simcallback]"
         }
     }
     CHECK(f.command_queue().size() == 3);
+    SimCallbackEntry fewer;
+    fewer.func_name = osc::sim::kDecreaseBuildCountCallback;
+    fewer.unit_ids = {id};
+    fewer.args["Index"] = 1.0;
+    fewer.args["Count"] = 1.0;
+    w.sim.run_sim_callback(fewer);
+    CHECK(f.command_queue().size() == 2);
 
     SimCallbackEntry defeat;
     defeat.func_name = osc::sim::kDefeatArmyCallback;

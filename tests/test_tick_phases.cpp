@@ -26,6 +26,7 @@
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
 #include "sim/world_snapshot.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -46,6 +47,7 @@ using osc::sim::CommandType;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
 using osc::sim::Weapon;
+using osc::test::tick_until;
 
 namespace {
 
@@ -354,10 +356,7 @@ TEST_CASE("A projectile made by the thread OnFire forks is made and moves in the
             end)
         end})"));
     w.arm(shooter, "gun");
-    for (int t = 0; t < 5 && w.number("fired") == 0; ++t) {
-        w.sim.tick();
-    }
-    REQUIRE(w.number("fired") > 0);
+    tick_until([&] { w.sim.tick(); }, "the gun fires", 10, [&] { return w.number("fired") != 0; });
     CHECK(w.number("made") == w.number("fired"));
     const osc::sim::Projectile* shot = nullptr;
     w.sim.entity_registry().for_each([&](osc::sim::Entity& e) {
@@ -387,9 +386,8 @@ TEST_CASE("Army 0's weapons fire before army 1's, whichever unit was made first"
     }
     w.arm(*first, "gun1");
     w.arm(*second, "gun2");
-    for (int t = 0; t < 5 && w.text("order").empty(); ++t) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the guns fire", 10,
+               [&] { return !w.text("order").empty(); });
     CHECK(w.text("order") == "12");
 }
 
@@ -429,10 +427,8 @@ TEST_CASE("A thread OnStartBuild forks runs in the tick of OnStartBuild", "[tick
     build.type = CommandType::BuildFactory;
     build.blueprint_id = "t1";
     fac.push_command(build, false);
-    for (int t = 0; t < 10 && w.number("started") == 0; ++t) {
-        w.sim.tick();
-    }
-    REQUIRE(w.number("started") > 0);
+    tick_until([&] { w.sim.tick(); }, "the factory starts its build", 20,
+               [&] { return w.number("started") != 0; });
     CHECK(w.number("ran") == w.number("started"));
 }
 
@@ -517,18 +513,17 @@ osc::u32 seabed_tick(f32 stun_seconds, osc::u32 stun_tick, osc::u32* stunned_in)
     tank.set_motion_type("RULEUMT_Amphibious");
     Phases::drive_east(tank);
     REQUIRE(w.run("stunned = 0"));
-    for (int t = 0; t < 100; ++t) {
-        if (stun_seconds > 0 && w.sim.tick_count() + 1 == stun_tick) {
-            REQUIRE(w.run("ForkThread(function() tank:SetStunned(" + std::to_string(stun_seconds) +
-                          ") stunned = GetGameTick() end)"));
-        }
-        w.sim.tick();
-        if (tank.layer() == "Seabed") {
-            *stunned_in = static_cast<osc::u32>(w.number("stunned"));
-            return w.sim.tick_count();
-        }
-    }
-    return 0;
+    tick_until(
+        [&] {
+            if (stun_seconds > 0 && w.sim.tick_count() + 1 == stun_tick) {
+                REQUIRE(w.run("ForkThread(function() tank:SetStunned(" +
+                              std::to_string(stun_seconds) + ") stunned = GetGameTick() end)"));
+            }
+            w.sim.tick();
+        },
+        "the tank reaches the seabed", 100, [&] { return tank.layer() == "Seabed"; });
+    *stunned_in = static_cast<osc::u32>(w.number("stunned"));
+    return w.sim.tick_count();
 }
 
 } // namespace
@@ -567,9 +562,8 @@ TEST_CASE("An animator a motion event sets going plays in that tick's pose", "[t
                   "   if old == 'Stopped' then started = GetGameTick() walk:SetRate(1) end"
                   " end"));
     Phases::drive_east(tank);
-    for (int t = 0; t < 10 && w.number("started") == 0; ++t) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the tank starts moving", 20,
+               [&] { return w.number("started") != 0; });
     REQUIRE(w.number("started") == static_cast<f32>(w.sim.tick_count()));
     REQUIRE(w.run("played = walk:GetAnimationFraction()"));
     CHECK(w.number("played") == Catch::Approx(0.1f));
@@ -592,9 +586,8 @@ TEST_CASE("An animator a silo's OnSiloBuildStart sets going plays in that tick's
     launcher.projectile_bp_id = "/nuke";
     silo.set_build_rate(10.0f);
     silo.order_silo_build(true);
-    for (int t = 0; t < 5 && w.number("started") == 0; ++t) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the silo starts its build", 10,
+               [&] { return w.number("started") != 0; });
     REQUIRE(w.number("started") == static_cast<f32>(w.sim.tick_count()));
     REQUIRE(w.run("played = hatch:GetAnimationFraction()"));
     CHECK(w.number("played") == Catch::Approx(0.1f));
@@ -686,11 +679,9 @@ TEST_CASE("A unit finished in a tick's orders is in its army's income from the n
     build.type = CommandType::BuildFactory;
     build.blueprint_id = "gen";
     fac.push_command(build, false);
-    for (int t = 0; t < 30 && w.number("done") == 0; ++t) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the generator is built", 60,
+               [&] { return w.number("done") != 0; });
     const auto done = static_cast<int>(w.number("done"));
-    REQUIRE(done > 0);
     CHECK(w.sim.get_army(0)->economy().energy.income == 100.0);
     w.sim.tick();
     REQUIRE(w.run("was = income[" + std::to_string(done) + "] next = income[" +
@@ -903,9 +894,8 @@ TEST_CASE("An army's overflow reaches a higher-index ally that tick, a lower-ind
                   "     WaitTicks(1)"
                   "   end"
                   " end)"));
-    for (int t = 0; t < 6; ++t) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the overflow reaches the taker", 12,
+               [&] { return w.number("arrived") != 0; });
     CHECK(w.number("arrived") == static_cast<f32>(2 + giver));
 }
 
@@ -916,12 +906,14 @@ TEST_CASE("A projectile's hit is found by one step and dealt at the start of its
     Unit& rival = w.make("rival", "tank", 2, 110.0f, 100.0f);
     w.fire_at_rival(rival);
     osc::u32 damaged = 0;
-    for (int t = 0; t < 8 && w.number("hit") == 0; ++t) {
-        w.sim.tick();
-        if (damaged == 0 && rival.health() < rival.max_health()) {
-            damaged = w.sim.tick_count();
-        }
-    }
+    tick_until(
+        [&] {
+            w.sim.tick();
+            if (damaged == 0 && rival.health() < rival.max_health()) {
+                damaged = w.sim.tick_count();
+            }
+        },
+        "the shell hits the rival", 20, [&] { return w.number("hit") != 0; });
     REQUIRE(w.number("checked") > 0);
     CHECK(w.number("hit") == w.number("checked") + 1);
     CHECK(static_cast<f32>(damaged) == w.number("hit"));
@@ -968,10 +960,8 @@ TEST_CASE("A scripted projectile's damage is its OnImpact's alone, however its w
                   "   PM.SetVelocity(shot, 35, 0, 0) " +
                   pass + " end)"));
     const f32 full = rival.health();
-    for (int t = 0; t < 8 && w.number("hit") == 0; ++t) {
-        w.sim.tick();
-    }
-    REQUIRE(w.number("hit") > 0);
+    tick_until([&] { w.sim.tick(); }, "the shell hits the rival", 20,
+               [&] { return w.number("hit") != 0; });
     CHECK(full - rival.health() == Catch::Approx(passed == "nothing" ? 0.0f : 10.0f));
 }
 
@@ -1003,9 +993,8 @@ TEST_CASE("A shot from a weapon with no script takes the engine's damage once",
     Weapon& gun = w.arm(shooter, nullptr);
     gun.muzzle_velocity = 35.0f;
     const f32 full = rival.health();
-    for (int t = 0; t < 30 && rival.health() == full; ++t) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the shot damages the rival", 60,
+               [&] { return rival.health() != full; });
     CHECK(full - rival.health() == Catch::Approx(10.0f));
     if (scripted) {
         CHECK(w.number("hits") == 1.0f);
@@ -1019,15 +1008,16 @@ TEST_CASE("The snapshot of the tick that finds a hit holds the projectile at the
     Unit& rival = w.make("rival", "tank", 2, 110.0f, 100.0f);
     w.fire_at_rival(rival);
     osc::u32 shot_id = 0;
-    for (int t = 0; t < 8 && w.number("checked") == 0; ++t) {
-        w.sim.tick();
-        w.sim.entity_registry().for_each([&](osc::sim::Entity& e) {
-            if (e.is_projectile()) {
-                shot_id = e.entity_id();
-            }
-        });
-    }
-    REQUIRE(w.number("checked") > 0);
+    tick_until(
+        [&] {
+            w.sim.tick();
+            w.sim.entity_registry().for_each([&](osc::sim::Entity& e) {
+                if (e.is_projectile()) {
+                    shot_id = e.entity_id();
+                }
+            });
+        },
+        "the shell's collision check runs", 20, [&] { return w.number("checked") != 0; });
     REQUIRE(shot_id != 0);
     osc::sim::WorldSnapshot snap;
     osc::sim::capture_world(w.sim, snap);
@@ -1050,10 +1040,8 @@ TEST_CASE("A fragment made in its parent's OnImpact moves in that tick", "[tick-
                                  " end");
     REQUIRE(w.run("made = 0 made_y = 0"));
     w.drop_shell();
-    for (int t = 0; t < 8 && w.number("made") == 0; ++t) {
-        w.sim.tick();
-    }
-    REQUIRE(w.number("made") > 0);
+    tick_until([&] { w.sim.tick(); }, "the shell's OnImpact makes the fragment", 20,
+               [&] { return w.number("made") != 0; });
     const osc::sim::Entity* frag = nullptr;
     w.sim.entity_registry().for_each([&](osc::sim::Entity& e) {
         if (e.is_projectile() && e.blueprint_id() == "/frag") {
@@ -1075,10 +1063,8 @@ TEST_CASE("A unit made during the entity walk takes its step in that tick", "[ti
                                  " end");
     REQUIRE(w.run("made = 0"));
     w.drop_shell();
-    for (int t = 0; t < 8 && w.number("made") == 0; ++t) {
-        w.sim.tick();
-    }
-    REQUIRE(w.number("made") > 0);
+    tick_until([&] { w.sim.tick(); }, "the shell's OnImpact makes the healer", 20,
+               [&] { return w.number("made") != 0; });
     lua_State* L = w.state.raw();
     lua_getglobal(L, "healer");
     lua_pushstring(L, "_c_object");
@@ -1114,18 +1100,19 @@ TEST_CASE("SetLifetime(0.5) from OnLostTarget leaves a projectile six steps", "[
                   " end)"));
     osc::u32 shot_id = 0;
     std::vector<f32> xs;
-    for (int t = 0; t < 20 && w.number("hit") == 0; ++t) {
-        w.sim.tick();
-        w.sim.entity_registry().for_each([&](osc::sim::Entity& e) {
-            if (e.is_projectile()) {
-                shot_id = e.entity_id();
-            }
-        });
-        const osc::sim::Entity* shot = w.sim.entity_registry().find(shot_id);
-        xs.push_back(shot ? shot->position().x : 0.0f);
-    }
+    tick_until(
+        [&] {
+            w.sim.tick();
+            w.sim.entity_registry().for_each([&](osc::sim::Entity& e) {
+                if (e.is_projectile()) {
+                    shot_id = e.entity_id();
+                }
+            });
+            const osc::sim::Entity* shot = w.sim.entity_registry().find(shot_id);
+            xs.push_back(shot ? shot->position().x : 0.0f);
+        },
+        "the missile impacts", 40, [&] { return w.number("hit") != 0; });
     REQUIRE(w.number("lost") > 1);
-    REQUIRE(w.number("hit") > 0);
     CHECK(w.text("hit_kind") == "Air");
     CHECK(w.number("hit") == w.number("lost") + 6);
     const f32 before_lost = xs[static_cast<size_t>(w.number("lost")) - 2];
@@ -1205,9 +1192,8 @@ Meeting shell_meets_tank(bool tank_first) {
     give_box(tank);
     Phases::drive_east(tank);
     watch_rival(w);
-    for (int t = 0; t < 20 && w.number("hit_x") == 0; ++t) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the shell hits the tank", 40,
+               [&] { return w.number("hit_x") != 0; });
     Meeting m;
     m.checked = w.number("checked");
     m.hit_x = w.number("hit_x");
@@ -1240,9 +1226,8 @@ f32 blast_by_tank(bool tank_first) {
     tank.set_collision_shape({});
     Phases::drive_east(tank);
     watch_rival(w);
-    for (int t = 0; t < 8; ++t) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the blast reaches the tank", 20,
+               [&] { return w.number("damaged") != 0; });
     return w.number("damaged");
 }
 
@@ -1264,7 +1249,6 @@ TEST_CASE("A shot meets its target and a blast reaches a unit alike whichever wa
     REQUIRE(a.checked > 0);
     CHECK(a.checked == b.checked);
     CHECK(a.hit_x == Catch::Approx(b.hit_x));
-    CHECK(blast_by_tank(true) > 0);
     CHECK(blast_by_tank(true) == blast_by_tank(false));
 }
 
@@ -1558,10 +1542,8 @@ TEST_CASE("A factory's frame, and an entity on it, follow the factory the tick i
     build.type = CommandType::BuildFactory;
     build.blueprint_id = "t1";
     fac.push_command(build, false);
-    for (int t = 0; t < 10 && w.number("framed") == 0; ++t) {
-        w.sim.tick();
-    }
-    REQUIRE(w.number("framed") > 0);
+    tick_until([&] { w.sim.tick(); }, "the factory starts its build", 20,
+               [&] { return w.number("framed") != 0; });
     w.sim.tick();
     REQUIRE(w.run("EM.SetPosition(fac, {64, 10, 60})"));
     w.sim.tick();
@@ -1615,10 +1597,8 @@ TEST_CASE("A tree a projectile hits leans in the tick of the hit", "[tick-phases
     REQUIRE(w.run("hit = 0 hit_kind = ''"
                   " shot = EM.CreateProjectile(shooter, '/shell', 0, 1, 0)"
                   " PM.SetBallisticAcceleration(shot, 0) PM.SetVelocity(shot, 35, 0, 0)"));
-    for (int t = 0; t < 20 && w.number("hit") == 0; ++t) {
-        w.sim.tick();
-    }
-    REQUIRE(w.number("hit") > 0);
+    tick_until([&] { w.sim.tick(); }, "the shell hits the tree", 40,
+               [&] { return w.number("hit") != 0; });
     REQUIRE(w.text("hit_kind") == "Prop");
     const osc::sim::Vector3 up = osc::sim::quat_rotate(tree.orientation(), {0.0f, 1.0f, 0.0f});
     CHECK(up.x == Catch::Approx(std::sin(0.25f)));
@@ -1665,10 +1645,8 @@ TEST_CASE("A beam deals its damage at its place in the entity walk, after its un
         shoot();
         beam();
     }
-    for (int t = 0; t < 20 && w.number("shell") == 0; ++t) {
-        w.sim.tick();
-    }
-    REQUIRE(w.number("shell") > 0);
+    tick_until([&] { w.sim.tick(); }, "the shell hits the target", 40,
+               [&] { return w.number("shell") != 0; });
     REQUIRE(w.number("beamed") == w.number("shell"));
     INFO("beam_first " << beam_first);
     CHECK(w.run(std::string("assert(after_beam == ") + (beam_first ? "true" : "false") + ")"));
@@ -1692,10 +1670,8 @@ TEST_CASE("A downed aircraft's OnImpact runs in its own step: a shot it makes mo
     plane.set_position({100.0f, 11.0f, 100.0f});
     plane.place_now();
     plane.begin_dying();
-    for (int t = 0; t < 20 && w.number("made") == 0; ++t) {
-        w.sim.tick();
-    }
-    REQUIRE(w.number("made") > 0);
+    tick_until([&] { w.sim.tick(); }, "the plane's OnImpact makes its shot", 40,
+               [&] { return w.number("made") != 0; });
     REQUIRE(w.run("shot_y = EM.GetPosition(shot)[2]"));
     CHECK(w.number("shot_y") == Catch::Approx(w.number("made_y") + 2.0f));
 }
@@ -1890,7 +1866,7 @@ TEST_CASE("A jammer's fakes are made, and known fake, only in the recon tick of 
     const osc::u32 id = jammer.entity_id();
     int blip = 0;
     int fakes = 0;
-    while (fakes == 0 && static_cast<int>(w.sim.tick_count()) < made + 3 * armies) {
+    const auto note_blip_and_fakes = [&] {
         w.sim.tick();
         const auto* recon = w.sim.entity_recon(id);
         if (blip == 0 && recon && (*recon)[static_cast<size_t>(viewer)].radar) {
@@ -1899,7 +1875,9 @@ TEST_CASE("A jammer's fakes are made, and known fake, only in the recon tick of 
         if (!w.sim.held_fakes(viewer).empty()) {
             fakes = static_cast<int>(w.sim.tick_count());
         }
-    }
+    };
+    tick_until(note_blip_and_fakes, "the viewer holds the jammer's fakes", 6 * armies,
+               [&] { return fakes != 0; });
     const int first = w.turn_after(made, viewer);
     CHECK(blip == first);
     CHECK(fakes == first + armies);
@@ -1910,8 +1888,7 @@ TEST_CASE("A jammer's fakes are made, and known fake, only in the recon tick of 
     radar.enable_intel("Omni");
     int known = 0;
     int hidden = 0;
-    while ((known == 0 || hidden == 0) &&
-           static_cast<int>(w.sim.tick_count()) < omni + 2 * armies) {
+    const auto note_known_and_hidden = [&] {
         w.sim.tick();
         const auto held = w.sim.held_fakes(viewer);
         if (known == 0 && !held.empty() &&
@@ -1925,7 +1902,9 @@ TEST_CASE("A jammer's fakes are made, and known fake, only in the recon tick of 
                          [&](const osc::sim::FakeBlipRecord& f) { return f.viewer == viewer; })) {
             hidden = static_cast<int>(w.sim.tick_count());
         }
-    }
+    };
+    tick_until(note_known_and_hidden, "the viewer knows the fakes fake and the snapshot drops them",
+               4 * armies, [&] { return known != 0 && hidden != 0; });
     CHECK(known == w.turn_after(omni, viewer));
     CHECK(hidden == known);
 }
@@ -2068,10 +2047,7 @@ TEST_CASE("A Lua thread's IssueClearCommands ends a unit's task inside the call"
         return eng.is_reclaiming() || eng.is_repairing() || eng.is_capturing() ||
                eng.has_script_task();
     };
-    for (int t = 0; t < 5 && !working(); ++t) {
-        w.sim.tick();
-    }
-    REQUIRE(working());
+    tick_until([&] { w.sim.tick(); }, "the engineer starts its task", 10, working);
     REQUIRE(w.number("stopped") == 0.0f);
     REQUIRE(w.run("cleared = 0 after = 0 ForkThread(function()"
                   "   IssueClearCommands({eng})"
@@ -2134,10 +2110,8 @@ TEST_CASE("A Stop given to a building engineer while paused ends its build befor
     build.blueprint_id = "fac";
     build.target_pos = {104.0f, 10.0f, 100.0f};
     eng.push_command(build, false);
-    for (int t = 0; t < 10 && w.number("started") == 0; ++t) {
-        w.sim.tick();
-    }
-    REQUIRE(w.number("started") > 0);
+    tick_until([&] { w.sim.tick(); }, "the engineer starts its build", 20,
+               [&] { return w.number("started") != 0; });
     REQUIRE(eng.build_target_id() != 0);
     command(w, osc::sim::kRequestPauseCallback);
     w.sim.tick();
@@ -2315,10 +2289,7 @@ TEST_CASE("A weapon holds a target off its layers till its next check, not firin
     REQUIRE(w.run("fired = 0 gun = {OnFire = function() fired = fired + 1 end}"));
     Weapon& gun = w.arm(tank, "gun");
     gun.rate_of_fire = 10.0f;
-    for (int t = 0; t < 5 && w.number("fired") == 0; ++t) {
-        w.sim.tick();
-    }
-    REQUIRE(w.number("fired") > 0);
+    tick_until([&] { w.sim.tick(); }, "the gun fires", 10, [&] { return w.number("fired") != 0; });
     REQUIRE(gun.target_entity_id == rival.entity_id());
 
     gun.fire_target_layer_caps = osc::sim::parse_layer_caps("Air");

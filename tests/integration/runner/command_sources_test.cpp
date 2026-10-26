@@ -14,6 +14,7 @@
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit_command.hpp"
+#include "tick_until.hpp"
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -133,7 +134,15 @@ void run_command_sources_test(app::Engine& e) {
         beat(1);
         return asked;
     };
-    beat(10); // the armies' units are in
+    if (!tick_until([&] { beat(1); }, "the armies' commanders are in", 50,
+                    [&] {
+                        return lua_true(sim_lua,
+                                        "(function() for i = 1, 4 do if not ArmyBrains[i]:"
+                                        "GetListOfUnits(categories.COMMAND, false)[1] then "
+                                        "return false end end return true end)()");
+                    })) {
+        return;
+    }
     // FAF's simInit has union and common armies; retail's knows no such option
     const bool faf = truth_of(sim_lua, "rawget(_G, 'MergeArmyPair')");
     spdlog::info("command-sources-test: {}'s scripts", faf ? "FAF" : "retail");
@@ -226,7 +235,8 @@ void run_command_sources_test(app::Engine& e) {
         ForkThread(MergeArmyPair, 1, 2, acu, 1)
     )"));
     const bool kept = truth_of(sim_lua, "__osc_commander_kept");
-    for (int i = 0; i < 60 && sim.army_has_command_source(1, 1); ++i) beat(10);
+    tick_until([&] { beat(1); }, "Test 5: MergeArmyPair takes player two's control", 600,
+               [&] { return !sim.army_has_command_source(1, 1); });
     beat(2);
     const f64 left = number_of(sim_lua, "table.getn(ArmyBrains[2]:GetListOfUnits("
                                         "categories.ALLUNITS, false))");

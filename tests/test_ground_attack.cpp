@@ -14,6 +14,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -30,6 +31,7 @@ using osc::sim::Unit;
 using osc::sim::UnitCommand;
 using osc::sim::Vector3;
 using osc::sim::Weapon;
+using osc::test::tick_until;
 
 namespace {
 
@@ -123,15 +125,17 @@ TEST_CASE("A ground attack brings its unit within range, and its weapon takes th
     Unit* u = tank(sim, 70.0f, 64.0f);
     const Vector3 at{110.0f, 7.8f, 64.0f};
     u->push_command(ground_attack(at), true);
-    ticks(sim, *u, 150);
+    tick_until([&] { ticks(sim, *u, 1); }, "it comes to rest in range, its gun on the point", 300,
+               [&] {
+                   return !u->command_queue().empty() && u->command_queue().front().engaged &&
+                          gun(*u).has_ground_target && u->ground_speed() == 0.0f;
+               });
 
     REQUIRE(u->command_queue().size() == 1);
     CHECK(u->command_queue().front().type == CommandType::Attack);
-    CHECK(u->command_queue().front().engaged);
     // It stops once in range, not at the point.
     CHECK(dist_to(*u, at) <= 10.0f);
     CHECK(dist_to(*u, at) > 5.0f);
-    CHECK(gun(*u).has_ground_target);
     CHECK(gun(*u).ground_from_order);
     CHECK(gun(*u).ground_target.x == at.x);
     CHECK(gun(*u).ground_target.z == at.z);
@@ -152,13 +156,18 @@ TEST_CASE("A ground attack's units make for the square about the point, keeping 
     const Vector3 at{105.0f, 7.8f, 100.0f};
     a->push_command(ground_attack(at), true);
     b->push_command(ground_attack(at), true);
-    for (int t = 0; t < 300; ++t) {
-        hold(*a);
-        hold(*b);
-        sim.tick();
-    }
+    const auto in_range_at_rest = [](const Unit& u) {
+        return u.command_queue().front().engaged && u.ground_speed() == 0.0f;
+    };
+    tick_until(
+        [&] {
+            hold(*a);
+            hold(*b);
+            sim.tick();
+        },
+        "both come to rest in range", 600,
+        [&] { return in_range_at_rest(*a) && in_range_at_rest(*b); });
     for (const Unit* u : {a, b}) {
-        CHECK(u->command_queue().front().engaged);
         CHECK(dist_to(*u, at) <= 18.0f);
     }
     CHECK(std::abs(a->position().x - 98.0f) < 1.0f);
@@ -172,13 +181,16 @@ TEST_CASE("A ground attack with no order after it never ends", "[ground-attack]"
     Unit* u = tank(sim, 100.0f, 64.0f);
     const Vector3 at{105.0f, 7.8f, 64.0f};
     u->push_command(ground_attack(at), true);
-    ticks(sim, *u, 5);
-    REQUIRE(gun(*u).ground_from_order);
+    tick_until([&] { ticks(sim, *u, 1); }, "the gun takes the order's point", 10,
+               [&] { return gun(*u).ground_from_order; });
     gun(*u).shots_at_target = 50;
     ticks(sim, *u, 20);
     REQUIRE(u->command_queue().size() == 1);
     CHECK(u->command_queue().front().type == CommandType::Attack);
     CHECK(gun(*u).has_ground_target);
+    u->push_command(move_to({100.0f, 7.8f, 90.0f}), false);
+    ticks(sim, *u, 1);
+    CHECK(u->command_queue().front().type == CommandType::Move);
 }
 
 TEST_CASE("After AttackGroundTries shots, a ground attack goes to the back of the queue",
@@ -191,8 +203,8 @@ TEST_CASE("After AttackGroundTries shots, a ground attack goes to the back of th
     const Vector3 next{100.0f, 7.8f, 90.0f};
     u->push_command(ground_attack(at), true);
     u->push_command(move_to(next), false);
-    ticks(sim, *u, 5);
-    REQUIRE(gun(*u).ground_from_order);
+    tick_until([&] { ticks(sim, *u, 1); }, "the gun takes the order's point", 10,
+               [&] { return gun(*u).ground_from_order; });
 
     // Fewer shots than its tries (3, Moho's default): it stays.
     gun(*u).shots_at_target = 2;
@@ -225,7 +237,8 @@ TEST_CASE("A weapon's own AttackGroundTries counts", "[ground-attack]") {
     gun(*u).attack_ground_tries = 6;
     u->push_command(ground_attack({105.0f, 7.8f, 64.0f}), true);
     u->push_command(move_to({100.0f, 7.8f, 90.0f}), false);
-    ticks(sim, *u, 5);
+    tick_until([&] { ticks(sim, *u, 1); }, "the gun takes the order's point", 10,
+               [&] { return gun(*u).ground_from_order; });
     gun(*u).shots_at_target = 5;
     ticks(sim, *u, 2);
     CHECK(u->command_queue().front().type == CommandType::Attack);
@@ -248,6 +261,9 @@ TEST_CASE("A weapon that cannot attack the ground never takes the point", "[grou
     CHECK(u->command_queue().front().type == CommandType::Attack);
     CHECK(dist_to(*u, at) <= 1.5f);
     CHECK_FALSE(gun(*u).has_ground_target);
+    gun(*u).cannot_attack_ground = false;
+    tick_until([&] { ticks(sim, *u, 1); }, "a gun that can attack the ground takes the point", 10,
+               [&] { return gun(*u).has_ground_target; });
 }
 
 TEST_CASE("A FormAttack on the ground with no weapon for it ends; a plain one waits there",
@@ -312,8 +328,8 @@ TEST_CASE("The order gone, its point goes; a script's ground target stays", "[gr
     land(sim);
     Unit* u = tank(sim, 100.0f, 64.0f);
     u->push_command(ground_attack({105.0f, 7.8f, 64.0f}), true);
-    ticks(sim, *u, 5);
-    REQUIRE(gun(*u).ground_from_order);
+    tick_until([&] { ticks(sim, *u, 1); }, "the gun takes the order's point", 10,
+               [&] { return gun(*u).ground_from_order; });
     u->push_command(move_to({100.0f, 7.8f, 70.0f}), true); // a fresh order
     ticks(sim, *u, 1);
     CHECK_FALSE(gun(*u).has_ground_target);

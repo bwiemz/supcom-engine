@@ -17,6 +17,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -34,6 +35,7 @@ using osc::sim::CommandType;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
+using osc::test::tick_until;
 
 namespace {
 
@@ -117,12 +119,9 @@ TEST_CASE("A guard takes on an enemy within its GuardScanRadius of itself, not o
     CHECK(fight(*tank) == nullptr);
 
     Unit* near = still(sim, 1, 70.0f, 55.0f); // 15.8 from the tank
-    const UnitCommand* f = nullptr;
-    for (int t = 0; t < 10 && !f; ++t) {
-        sim.tick();
-        f = fight(*tank);
-    }
-    REQUIRE(f);
+    tick_until([&] { sim.tick(); }, "the guard takes on the near enemy", 20,
+               [&] { return fight(*tank) != nullptr; });
+    const UnitCommand* f = fight(*tank);
     CHECK(f->target_id == near->entity_id());
     CHECK(f->command_id == 7);
     CHECK(f->leash_anchor_id == ward->entity_id());
@@ -140,10 +139,10 @@ TEST_CASE("Back from its fight, a guard goes home before it looks about again", 
     Unit* tank = armed(sim, 0, 35.0f, 50.0f);
     Unit* enemy = still(sim, 1, 50.0f, 50.0f);
     tank->push_command(guard(ward, 1), true);
-    for (int t = 0; t < 10 && !fight(*tank); ++t) sim.tick();
-    REQUIRE(fight(*tank));
-    for (int t = 0; t < 60; ++t) sim.tick(); // up to it, in range
-    CHECK(dist(*tank, *enemy) <= 5.5f);
+    tick_until([&] { sim.tick(); }, "the guard takes on the enemy", 20,
+               [&] { return fight(*tank) != nullptr; });
+    tick_until([&] { sim.tick(); }, "the guard is up to the enemy, in range", 120,
+               [&] { return dist(*tank, *enemy) <= 5.5f; });
 
     // Its target gone, the guard is back at the head, on its way home; a new
     // enemy within its scan of where it stands, but not home, waits.
@@ -153,13 +152,12 @@ TEST_CASE("Back from its fight, a guard goes home before it looks about again", 
     REQUIRE(!tank->command_queue().empty());
     CHECK(tank->command_queue().front().type == CommandType::Guard);
     CHECK(tank->command_queue().front().guard_returning);
-    bool home = false;
-    for (int t = 0; t < 100 && !home; ++t) {
-        sim.tick();
-        CHECK(fight(*tank) == nullptr);
-        home = !tank->command_queue().front().guard_returning;
-    }
-    CHECK(home);
+    tick_until(
+        [&] {
+            sim.tick();
+            CHECK(fight(*tank) == nullptr);
+        },
+        "the guard is home", 200, [&] { return !tank->command_queue().front().guard_returning; });
     CHECK(dist(*tank, *ward) <= 10.5f); // its footprint (0) and half its scan
     CHECK(dist(*tank, *other) > 20.0f); // home, the other is out of its scan
 }
@@ -174,10 +172,8 @@ TEST_CASE("A guard's ward moved while the guard fights moves, before its tick to
     Unit* tank = armed(sim, 0, 55.0f, 50.0f);
     still(sim, 1, 70.0f, 55.0f);
     tank->push_command(guard(ward, 7), true);
-    for (int t = 0; t < 10 && !fight(*tank); ++t) {
-        sim.tick();
-    }
-    REQUIRE(fight(*tank));
+    tick_until([&] { sim.tick(); }, "the guard takes on the enemy", 20,
+               [&] { return fight(*tank) != nullptr; });
     osc::sim::SimCallbackEntry cb;
     cb.func_name = osc::sim::kSetCommandTargetCallback;
     cb.args["Command"] = 7.0;
@@ -212,22 +208,22 @@ TEST_CASE("A guard's fight ends at GuardReturnRadius from what it guards, once i
     runner->push_command(away, true);
     tank->push_command(guard(ward, 1), true);
     bool armed_once = false;
-    bool ended = false;
     f32 farthest = 0;
-    for (int t = 0; t < 400 && !ended; ++t) {
-        sim.tick();
-        farthest = std::max(farthest, dist(*tank, *ward));
-        if (const UnitCommand* f = fight(*tank)) armed_once = armed_once || f->leash_armed;
-        ended = armed_once && !fight(*tank);
-    }
-    CHECK(armed_once);
-    CHECK(ended);
+    tick_until(
+        [&] {
+            sim.tick();
+            farthest = std::max(farthest, dist(*tank, *ward));
+            if (const UnitCommand* f = fight(*tank)) {
+                armed_once = armed_once || f->leash_armed;
+            }
+        },
+        "the fight ends at the leash", 400, [&] { return armed_once && !fight(*tank); });
     CHECK(farthest <= 32.0f);                         // GRR 30, and its stop and turn
     CHECK(runner->position().x > tank->position().x); // it got away
     // It goes home, and lets the runner go (beyond its scan).
-    for (int t = 0; t < 200; ++t) sim.tick();
+    tick_until([&] { sim.tick(); }, "the guard is home", 400,
+               [&] { return dist(*tank, *ward) <= 10.5f; });
     CHECK(fight(*tank) == nullptr);
-    CHECK(dist(*tank, *ward) <= 10.5f);
 }
 
 TEST_CASE("An engineer guarding an engineer helps, and takes on no enemies", "[guard]") {
@@ -248,8 +244,8 @@ TEST_CASE("An engineer guarding an engineer helps, and takes on no enemies", "[g
     // Guarding a tank, the same engineer does.
     Unit* tank = still(sim, 0, 55.0f, 45.0f);
     acu->push_command(guard(tank, 2), true);
-    for (int t = 0; t < 10 && !fight(*acu); ++t) sim.tick();
-    CHECK(fight(*acu) != nullptr);
+    tick_until([&] { sim.tick(); }, "the engineer guarding a tank takes on the enemy", 20,
+               [&] { return fight(*acu) != nullptr; });
 }
 
 TEST_CASE("A guard of a point goes there and takes on enemies near it", "[guard]") {
@@ -259,12 +255,9 @@ TEST_CASE("A guard of a point goes there and takes on enemies near it", "[guard]
     Unit* tank = armed(sim, 0, 10.0f, 10.0f);
     Unit* enemy = still(sim, 1, 70.0f, 60.0f);
     tank->push_command(guard(nullptr, 1, {60.0f, 0.0f, 60.0f}), true);
-    const UnitCommand* f = nullptr;
-    for (int t = 0; t < 300 && !f; ++t) {
-        sim.tick();
-        f = fight(*tank);
-    }
-    REQUIRE(f);
+    tick_until([&] { sim.tick(); }, "the guard takes on the enemy near its point", 300,
+               [&] { return fight(*tank) != nullptr; });
+    const UnitCommand* f = fight(*tank);
     CHECK(f->target_id == enemy->entity_id());
     CHECK(f->leash_anchor_id == 0);
     CHECK(f->leash_anchor_pos.x == 60.0f);
@@ -273,10 +266,11 @@ TEST_CASE("A guard of a point goes there and takes on enemies near it", "[guard]
     CHECK(tank->guard_order() != nullptr);
 
     sim.entity_registry().unregister_entity(enemy->entity_id());
-    for (int t = 0; t < 200; ++t) sim.tick();
+    tick_until(
+        [&] { sim.tick(); }, "the guard is back at its point", 400,
+        [&] { return std::hypot(tank->position().x - 60.0f, tank->position().z - 60.0f) <= 2.5f; });
     REQUIRE(!tank->command_queue().empty());
     CHECK(tank->command_queue().front().type == CommandType::Guard);
-    CHECK(std::hypot(tank->position().x - 60.0f, tank->position().z - 60.0f) <= 2.5f);
 }
 
 TEST_CASE("A guard leaves alone what its own queue captures", "[guard]") {
@@ -297,6 +291,12 @@ TEST_CASE("A guard leaves alone what its own queue captures", "[guard]") {
         sim.tick();
         CHECK(fight(*tank) == nullptr);
     }
+    tank->push_command(guard(ward, 3), true);
+    tick_until([&] { sim.tick(); }, "with no capture queued, the guard takes on the prize", 20,
+               [&] {
+                   const UnitCommand* f = fight(*tank);
+                   return f && f->target_id == prize->entity_id();
+               });
 }
 
 namespace {
@@ -342,11 +342,9 @@ TEST_CASE("Engineers assisting a shield generator regenerate its bubble while it
     eng->set_build_rate(5.0f);
     eng->set_max_build_distance(5.0f);
     eng->push_command(guard(gen, 1), true);
-    for (int t = 0; t < 10; ++t) {
-        sim.tick();
-    }
-    CHECK(eng->repair_target_id() == gen->entity_id());
-    CHECK(bubble->health() > 1005.0f);
+    tick_until(
+        [&] { sim.tick(); }, "the engineer regenerates the bubble", 20,
+        [&] { return eng->repair_target_id() == gen->entity_id() && bubble->health() > 1005.0f; });
 
     const f32 off_at = bubble->health();
     run_lua(g.L, "on = false");
@@ -427,13 +425,14 @@ TEST_CASE("A guarding engineer walks to its build place before it helps a factor
     INFO("place " << place.x << "," << place.z);
     CHECK((cell_x + 1.0f < 55.5f || cell_x > 65.5f || cell_z + 1.0f < 45.5f || cell_z > 55.5f));
 
-    int started = -1;
-    for (int t = 0; t < 120 && started < 0; ++t) {
-        sim.tick();
-        if (eng->is_moving()) CHECK_FALSE(eng->is_building());
-        if (eng->is_building()) started = t;
-    }
-    REQUIRE(started >= 0);
+    tick_until(
+        [&] {
+            sim.tick();
+            if (eng->is_moving()) {
+                CHECK_FALSE(eng->is_building());
+            }
+        },
+        "the engineer starts helping", 240, [&] { return eng->is_building(); });
     CHECK(std::hypot(eng->position().x - place.x, eng->position().z - place.z) < 1.5f);
 }
 
@@ -448,12 +447,8 @@ TEST_CASE("A guarding engineer that walked up to a factory goes on helping on ev
     Unit* eng = engineer_of(sim, 60.5f, 80.5f);
     eng->push_command(guard(factory, 1), true);
 
-    int started = -1;
-    for (int t = 0; t < 200 && started < 0; ++t) {
-        sim.tick();
-        if (eng->is_building()) started = t;
-    }
-    REQUIRE(started >= 0);
+    tick_until([&] { sim.tick(); }, "the engineer starts helping", 400,
+               [&] { return eng->is_building(); });
     CHECK(eng->build_target_id() == unit->entity_id());
     for (int t = 0; t < 100; ++t) {
         sim.tick();
@@ -497,8 +492,8 @@ TEST_CASE("A guarding engineer displaced between a factory's builds walks back t
 
     sim.tick();
     const osc::sim::Vector3 place = eng->navigator().goal();
-    for (int t = 0; t < 200 && !eng->is_building(); ++t) sim.tick();
-    REQUIRE(eng->is_building());
+    tick_until([&] { sim.tick(); }, "the engineer starts helping", 400,
+               [&] { return eng->is_building(); });
 
     factory->set_build_target_id(0);
     first->set_is_being_built(false);
@@ -507,12 +502,8 @@ TEST_CASE("A guarding engineer displaced between a factory's builds walks back t
 
     eng->set_position({60.5f, 0.0f, 80.5f});
     const Unit* second = build_unit(sim, *factory, 60.5f, 47.5f);
-    int started = -1;
-    for (int t = 0; t < 200 && started < 0; ++t) {
-        sim.tick();
-        if (eng->is_building()) started = t;
-    }
-    REQUIRE(started >= 0);
+    tick_until([&] { sim.tick(); }, "the engineer starts helping the next build", 400,
+               [&] { return eng->is_building(); });
     CHECK(eng->build_target_id() == second->entity_id());
     CHECK(std::hypot(eng->position().x - place.x, eng->position().z - place.z) < 1.5f);
     for (int t = 0; t < 100; ++t) {
