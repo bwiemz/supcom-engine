@@ -450,10 +450,34 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     case CommandType::Teleport: return order_teleport(cmd, ctx.L);
     case CommandType::Ferry: return order_ferry(cmd, ctx);
     case CommandType::WaitForFerry: return order_wait_for_ferry(cmd, ctx);
+    case CommandType::DestroySelf: return order_destroy_self(ctx);
     default: // an order no handler runs: dropped
         command_queue_.pop_front();
         return OrderStep::Next;
     }
+}
+
+OrderStep Unit::order_destroy_self(SimContext& ctx) {
+    // IAiCommandDispatchImpl's UNITCOMMAND_DestroySelf: unit->Destroy(), as a
+    // script's Destroy does it
+    command_queue_.pop_front();
+    if (ctx.L && lua_table_ref() >= 0) {
+        const int top = lua_gettop(ctx.L);
+        lua_rawgeti(ctx.L, LUA_REGISTRYINDEX, lua_table_ref());
+        lua_pushstring(ctx.L, "Destroy");
+        lua_gettable(ctx.L, -2);
+        if (lua_isfunction(ctx.L, -1)) {
+            lua_pushvalue(ctx.L, top + 1);
+            if (lua_pcall(ctx.L, 1, 0, 0) != 0) {
+                spdlog::warn("Destroy error: {}", lua_tostring(ctx.L, -1));
+            }
+        }
+        lua_settop(ctx.L, top);
+    }
+    if (!destroyed()) {
+        ctx.registry.destroy(*this);
+    }
+    return OrderStep::Gone;
 }
 
 OrderStep Unit::order_stop(lua_State* L) {

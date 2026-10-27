@@ -2819,6 +2819,151 @@ void do_sim_command(lua_State* L, const std::vector<std::string>& args) {
     send_sim_command(L, {args.begin() + 1, args.end()});
 }
 
+/// The ground under the screen point (x, y), in the UI's pixels (the world
+/// camera's CameraScreenToSurface); false with no world view.
+bool screen_to_surface(lua_State* L, f32 x, f32 y, sim::Vector3& out) {
+    lua_pushstring(L, "__osc_world_view");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* wv = static_cast<ui::WorldView*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    auto* r = get_renderer(L);
+    if (!wv || !wv->camera() || !r) return false;
+    return renderer::pick_ground_in(r->ui_views(), x, y, wv->terrain(), out.x, out.y, out.z);
+}
+
+/// atoi's answer: the leading digits (after a sign), else 0.
+int parse_int(const std::string& text) {
+    size_t i = 0;
+    while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i]))) ++i;
+    if (i < text.size() && text[i] == '+') {
+        ++i;
+        if (i < text.size() && text[i] == '-') return 0; // "+-5": no number
+    }
+    int value = 0;
+    const char* begin = text.data() + i;
+    const auto [end, error] = std::from_chars(begin, text.data() + text.size(), value);
+    return error == std::errc{} && end != begin ? value : 0;
+}
+
+/// Moho's CON_CreateUnit (0x00897580): CreateUnit <blueprint> [army] [x y], a
+/// complete unit for the army (0-based; the focus army's when not given)
+/// where the cursor points, or under the screen point x, y unless it is the
+/// one the last such command used. A cheat the sim makes (CMDST_CreateUnit);
+/// retail's create-unit dialog sends it.
+void create_unit_command(lua_State* L, const std::vector<std::string>& args) {
+    auto* sim = get_sim(L);
+    auto* queue = get_callback_queue(L);
+    if (!sim || !queue || !session_active(L)) {
+        print_loc(L, "<LOC _No_session>");
+        return;
+    }
+    if (args.size() < 2) return;
+    sim::Vector3 at{};
+    cursor_world_pos(L, at);
+    if (args.size() >= 4) {
+        // (with four tokens Moho reads past them, for 0)
+        static std::pair<f32, f32> last_point{0.0f, 0.0f}; // (Moho's starts at 0, 0)
+        const std::pair<f32, f32> point{static_cast<f32>(parse_int(args[3])),
+                                        static_cast<f32>(args.size() > 4 ? parse_int(args[4]) : 0)};
+        if (point != last_point) {
+            screen_to_surface(L, point.first, point.second, at);
+            last_point = point;
+        }
+    }
+    int army = 0;
+    const auto armies = static_cast<int>(sim->army_count());
+    if (args.size() >= 3) {
+        army = parse_int(args[2]);
+        if (army < 0 || army >= armies) {
+            spdlog::info("Invalid army index ({}) -- must be less than {}", army, armies);
+            return;
+        }
+    } else {
+        army = focus_army(L);
+        if (army < 0) return;
+    }
+    std::string id = args[1];
+    std::transform(id.begin(), id.end(), id.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const auto* store = LuaState::get_blueprint_store(L);
+    const auto* entry = store ? store->find(id) : nullptr;
+    // (Moho plays an error cue)
+    if (!entry || entry->type != blueprints::BlueprintType::Unit) return;
+    sim::SimCallbackEntry cb;
+    cb.func_name = sim::kCreateUnitCallback;
+    cb.args["Blueprint"] = entry->id;
+    cb.args["Army"] = static_cast<f64>(army);
+    cb.args["X"] = static_cast<f64>(at.x);
+    cb.args["Z"] = static_cast<f64>(at.z);
+    cb.args["Heading"] = 0.0;
+    queue->push(std::move(cb));
+}
+
+/// Moho's CON_PopupCreateUnitMenu (0x007B5A40): retail's create-unit dialog,
+/// opened where the cursor is on the screen.
+void popup_create_unit_menu(lua_State* L, const std::vector<std::string>&) {
+    if (!session_active(L)) {
+        print_loc(L, "<LOC _No_session>");
+        return;
+    }
+    f64 x = 0, y = 0;
+    if (auto* r = get_renderer(L)) r->ui_mouse_position(x, y);
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, "/lua/ui/dialogs/createunit.lua");
+    if (!lua_isfunction(L, -2) || lua_pcall(L, 1, 1, 0) != 0 || !lua_istable(L, -1)) {
+        spdlog::warn("failed to load \"/lua/ui/dialogs/createunit.lua\" module");
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushstring(L, "CreateDialog");
+    lua_gettable(L, -2);
+    lua_pushnumber(L, x);
+    lua_pushnumber(L, y);
+    if (lua_pcall(L, 2, 0, 0) != 0) spdlog::warn("PopupCreateUnitMenu: {}", lua_tostring(L, -1));
+    lua_settop(L, top);
+}
+
+/// Moho's CON_TeleportSelectedUnits (0x00833F90): the focus army's selected
+/// units warped to where the cursor points, each a cheat the sim runs
+/// (Sim::WarpEntity), placed as Unit::Warp places it.
+void teleport_selected_units(lua_State* L, const std::vector<std::string>&) {
+    auto* sim = get_sim(L);
+    auto* queue = get_callback_queue(L);
+    auto* ih = get_input_handler(L);
+    if (!sim || !queue || !ih || !session_active(L)) {
+        print_loc(L, "<LOC _No_session>");
+        return;
+    }
+    const int focus = focus_army(L);
+    sim::Vector3 at{};
+    cursor_world_pos(L, at);
+    for (const u32 id : ih->selected()) {
+        const sim::Entity* e = sim->entity_registry().find(id);
+        if (!e || !e->is_unit() || e->army() != focus) continue;
+        sim::SimCallbackEntry cb;
+        cb.func_name = sim::kWarpEntityCallback;
+        cb.args["Entity"] = static_cast<f64>(id);
+        cb.args["X"] = static_cast<f64>(at.x);
+        cb.args["Y"] = static_cast<f64>(at.y);
+        cb.args["Z"] = static_cast<f64>(at.z);
+        queue->push(std::move(cb));
+    }
+}
+
+/// Moho's CON_DestroySelectedUnits (0x00833D60): a DestroySelf order to the
+/// selection, its queues cleared; the sim refuses it without cheats.
+void destroy_selected_units(lua_State* L, const std::vector<std::string>&) {
+    auto* ih = get_input_handler(L);
+    if (!get_sim(L) || !ih || !session_active(L)) {
+        print_loc(L, "<LOC _No_session>");
+        return;
+    }
+    const std::vector<u32> ids(ih->selected().begin(), ih->selected().end());
+    issue_targetless_order(L, ids, "DestroySelf", 0, true);
+}
+
 } // namespace
 
 void register_session_console_commands(ui::Console& console) {
@@ -2840,6 +2985,10 @@ void register_session_console_commands(ui::Console& console) {
             send_sim_command(L, line);
         });
     }
+    console.add("CreateUnit", create_unit_command);
+    console.add("PopupCreateUnitMenu", popup_create_unit_menu);
+    console.add("TeleportSelectedUnits", teleport_selected_units);
+    console.add("DestroySelectedUnits", destroy_selected_units);
 }
 
 } // namespace osc::lua

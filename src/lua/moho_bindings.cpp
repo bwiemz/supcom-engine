@@ -3093,6 +3093,8 @@ void issue_targetless_order(lua_State* L, const std::vector<u32>& ids, const std
         // it, not its queue, so `clear` does nothing).
         cmd.type = name == "BuildSiloNuke" ? sim::CommandType::SiloBuildNuke
                                            : sim::CommandType::SiloBuildTactical;
+    } else if (name == "DestroySelf") {
+        cmd.type = sim::CommandType::DestroySelf;
     } else if (name == "Script" && lua_istable(L, data)) {
         auto bytes = sim::lua_to_bytes(L, data);
         if (!bytes) {
@@ -4038,11 +4040,18 @@ static ui::Console* get_console(lua_State* L) {
     return console;
 }
 
-/// ConExecute(line) / ConExecuteSave(line): run a console line (Moho's
-/// CON_Execute; the engine keeps no history to save it to).
+/// ConExecute(line): run a console line (Moho's CON_Execute).
 static int l_ConExecute(lua_State* L) {
     const char* line = luaL_checkstring(L, 1);
     if (auto* console = get_console(L)) console->execute(L, line);
+    return 0;
+}
+
+/// ConExecuteSave(line): the line saved for CON_ExecuteLastCommand, then run
+/// (Moho's CON_ExecuteSave; retail's console and create-unit dialogs use it).
+static int l_ConExecuteSave(lua_State* L) {
+    const char* line = luaL_checkstring(L, 1);
+    if (auto* console = get_console(L)) console->execute_save(L, line);
     return 0;
 }
 
@@ -4126,6 +4135,10 @@ void register_console_commands(ui::Console& console) {
     console.add("UI_ToggleGamePanels", [](lua_State* L, const Args&) {
         call_module_function(L, "/lua/ui/game/gamemain.lua", "HideGameUI", {});
     });
+    // CON_ExecuteLastCommand: the last line ConExecuteSave saved, run again
+    // (the debug key map's Ctrl-Shift-X)
+    console.add("CON_ExecuteLastCommand",
+                [&console](lua_State* L, const Args&) { console.execute_last(L); });
     // ShowStats [section]: retail's engine statistics window, the section
     // given (or all) open, toggled (Moho's ShowStats, 0x00834F90)
     console.add("ShowStats", [](lua_State* L, const Args& args) {
@@ -5058,7 +5071,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetGameSpeed", l_GetGameSpeed);
     state.register_function("ConExecute", l_ConExecute);
     state.register_function("ConTextMatches", l_ConTextMatches);
-    state.register_function("ConExecuteSave", l_ConExecute);
+    state.register_function("ConExecuteSave", l_ConExecuteSave);
     state.register_function("SessionRequestPause", l_SessionRequestPause);
     state.register_function("SessionResume", l_SessionResume);
 

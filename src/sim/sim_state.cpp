@@ -1804,6 +1804,10 @@ void SimState::dispatch_due_commands() {
             run_sim_callback(*sc.callback);
             return;
         }
+        // Moho's Sim::IssueCommand refuses a DestroySelf without cheats.
+        if (sc.command.type == CommandType::DestroySelf && !cheats_enabled()) {
+            return;
+        }
         UnitCommand base = sc.command;
         if (base.command_id == 0) {
             base.command_id = next_command_id();
