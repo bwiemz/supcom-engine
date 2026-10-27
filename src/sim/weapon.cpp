@@ -836,7 +836,11 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     }
     // A recheck changes target only for a better priority.
     if (current_priority >= 0 && (best_id == 0 || best_priority >= current_priority)) return;
-    if (best_id == 0) return;
+    if (best_id == 0) {
+        // Moho's acquire task, finding no enemy, clears the target ReTargetOnMiss gave up
+        target_held = false;
+        return;
+    }
     target_entity_id = best_id;
     retarget_misses = 0;
     target_held = false;

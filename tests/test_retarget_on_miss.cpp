@@ -182,6 +182,22 @@ TEST_CASE("ReTargetOnMiss gives a target up on the eleventh miss in a row, and p
     CHECK(gun.blacklist[0].second == 8);
 }
 
+TEST_CASE("A target ReTargetOnMiss gave up is dropped once a look finds no other",
+          "[weapon][retarget]") {
+    Scene s;
+    Weapon& gun = arm(*s.ship, 15.0f);
+    ticks(s.sim, *s.ship, 2);
+    REQUIRE(gun.target_entity_id == s.near->entity_id());
+    for (int i = 0; i < 11; ++i) {
+        gun.note_impact(*s.ship, true, s.registry(), &s.sim);
+    }
+    REQUIRE(gun.target_held);
+    gun.target_check_clock = 0;
+    ticks(s.sim, *s.ship, 1);
+    CHECK_FALSE(gun.target_held);
+    CHECK_FALSE(gun.has_target());
+}
+
 TEST_CASE("ReTargetOnMiss counts only misses while the unit and its target stand still",
           "[weapon][retarget]") {
     Scene s;
@@ -254,6 +270,31 @@ TEST_CASE("While ReTargetOnMiss passes over the attack order's target, the weapo
     CHECK(gun.target_entity_id == s.far->entity_id());
     ticks(s.sim, *s.ship, 1);
     CHECK(gun.target_entity_id == s.near->entity_id());
+}
+
+TEST_CASE("While ReTargetOnMiss passes over its attack order's target, its unit goes at it",
+          "[weapon][retarget]") {
+    Scene s("RULEUMT_Land");
+    s.ship->set_max_speed(5.0f);
+    Unit::Drive drive;
+    drive.max_accel = 50.0f;
+    s.ship->set_drive(drive);
+    Weapon& gun = arm(*s.ship, 30.0f);
+    UnitCommand attack;
+    attack.type = CommandType::Attack;
+    attack.target_id = s.near->entity_id();
+    s.ship->push_command(attack, true);
+    ticks(s.sim, *s.ship, 3);
+    REQUIRE_FALSE(s.ship->navigator().is_moving());
+    const f32 x0 = s.ship->position().x;
+
+    gun.retarget_cooldown = 30;
+    ticks(s.sim, *s.ship, 10);
+    CHECK(s.ship->navigator().is_moving());
+    CHECK(s.ship->position().x > x0 + 0.5f);
+    ticks(s.sim, *s.ship, 25);
+    CHECK(gun.retarget_cooldown == 0);
+    CHECK_FALSE(s.ship->navigator().is_moving());
 }
 
 TEST_CASE("A ReTargetOnMiss weapon's shot tells it where it landed", "[weapon][retarget]") {
