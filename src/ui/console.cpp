@@ -122,6 +122,32 @@ void Console::execute(lua_State* L, std::string_view line) {
     }
 }
 
+void Console::execute_save(lua_State* L, std::string_view line) {
+    if (line.empty()) {
+        return;
+    }
+    constexpr size_t kSavedLimit = 100;
+    saved_.emplace_front(line);
+    while (saved_.size() > kSavedLimit) {
+        saved_.pop_back();
+    }
+    execute(L, line);
+}
+
+void Console::execute_last(lua_State* L) {
+    // A saved line that runs CON_ExecuteLastCommand would run itself without
+    // end (Moho's overflows its stack): the inner one runs nothing.
+    if (saved_.empty() || running_last_) {
+        if (running_last_) spdlog::warn("CON_ExecuteLastCommand: the last command runs itself");
+        return;
+    }
+    running_last_ = true;
+    // (a copy: the line may save another)
+    const std::string line = saved_.front();
+    execute(L, line);
+    running_last_ = false;
+}
+
 namespace {
 
 bool same_no_case(const std::string& a, std::string_view b) {

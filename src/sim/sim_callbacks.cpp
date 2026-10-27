@@ -601,6 +601,22 @@ void debug_command(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     execute_debug_command(sim, L, *command, at, army, cb.unit_ids);
 }
 
+/// Moho's Sim::WarpEntity (0x00748CD0, ICommandSink's
+/// WarpEntity): a cheat, so nothing unless cheats are on; the unit warped as
+/// Unit::Warp places it, its height and layer those of the place.
+void warp_entity(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
+    if (!sim.cheats_enabled()) return;
+    const auto* id = number_in(cb, "Entity", 0, 4294967295.0);
+    const auto* x = number_in(cb, "X", -1e6, 1e6);
+    const auto* y = number_in(cb, "Y", -1e6, 1e6);
+    const auto* z = number_in(cb, "Z", -1e6, 1e6);
+    if (!id || !x || !y || !z) return;
+    Entity* e = sim.entity_registry().find(static_cast<u32>(*id));
+    if (!e || e->destroyed() || !e->is_unit()) return;
+    static_cast<Unit*>(e)->warp(
+        sim.terrain(), {static_cast<f32>(*x), static_cast<f32>(*y), static_cast<f32>(*z)}, L);
+}
+
 } // namespace
 
 void SimState::run_sim_callback(const SimCallbackEntry& cb) {
@@ -622,6 +638,7 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     else if (cb.func_name == kRemoveCommandCallback) remove_command(*this, L, cb);
     else if (cb.func_name == kSetCommandTypeCallback) set_command_type(*this, cb);
     else if (cb.func_name == kCreateUnitCallback) create_unit(*this, L, cb);
+    else if (cb.func_name == kWarpEntityCallback) warp_entity(*this, L, cb);
     else if (cb.func_name == kExecLuaInSimCallback) exec_lua_in_sim(*this, L, cb);
     else if (cb.func_name == kDebugCommandCallback) debug_command(*this, L, cb);
     else if (cb.func_name == kDecreaseCommandCountCallback) decrease_command_count(*this, L, cb);

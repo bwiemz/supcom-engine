@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <functional>
 #include <map>
 #include <string>
@@ -34,6 +35,13 @@ public:
     /// CON_Execute: each `;`-separated command in turn. An unknown one is
     /// logged, as Moho prints it.
     void execute(lua_State* L, std::string_view line);
+    /// CON_ExecuteSave (0x0041D270): `line` put first on the saved lines (the
+    /// last 100 kept), then run. An empty one is neither.
+    void execute_save(lua_State* L, std::string_view line);
+    /// CON_ExecuteLastCommand (0x0041D370): the last line saved, run again.
+    void execute_last(lua_State* L);
+    /// The saved lines, the latest first.
+    const std::deque<std::string>& saved() const { return saved_; }
 
 private:
     struct NoCase {
@@ -41,6 +49,8 @@ private:
         bool operator()(std::string_view a, std::string_view b) const;
     };
     std::map<std::string, Handler, NoCase> commands_;
+    std::deque<std::string> saved_;
+    bool running_last_ = false;
 };
 
 /// Moho's console variables (TConVar, M217i): the value a command's

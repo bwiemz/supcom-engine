@@ -49,6 +49,10 @@ enum class CommandType : u8 {
     // patrol, engaging and, for engineers, reclaiming and repairing on the
     // way; the order ends where it arrives.
     AggressiveMove = 81,
+    // A cheat (Moho's UNITCOMMAND_DestroySelf, the console's
+    // DestroySelectedUnits): the unit destroyed as the order comes up. The
+    // sim refuses it without cheats.
+    DestroySelf = 82,
 };
 
 /// Moho's CommandIsInstant: an order that takes no move of its own.
@@ -103,6 +107,7 @@ inline int moho_command_number(CommandType type, bool formed) {
     case CommandType::Overcharge: return 34;
     case CommandType::AggressiveMove: return formed ? 36 : 35;
     case CommandType::Dock: return 39;
+    case CommandType::DestroySelf: return 31;
     }
     return 0;
 }
