@@ -1000,8 +1000,31 @@ void UIDispatch::handle_key(lua_State* L, const UIEvent& ev) {
         if (console) console->execute(L, *action);
         return;
     }
-    // An unbound Enter opens the chat, in a game (UI_ActivateChat).
-    if (moho_key_code(ev.key_code) == 13) activate_chat(L, ev);
+    // An unbound Enter opens the chat, in a game (UI_ActivateChat); an unbound
+    // ~ the console (MAUI_ToggleConsole, 0x0083D810).
+    const i32 code = moho_key_code(ev.key_code);
+    if (code == 13) activate_chat(L, ev);
+    else if (code == '~') toggle_console(L);
+}
+
+void UIDispatch::toggle_console(lua_State* L) {
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, "/lua/ui/uimain.lua");
+    if (!lua_isfunction(L, -2) || lua_pcall(L, 1, 1, 0) != 0 || !lua_istable(L, -1)) {
+        report_ui_callback_error(
+            fmt::format("Error running '/lua/ui/uimain.lua:ToggleConsole': {}",
+                        lua_isstring(L, -1) ? lua_tostring(L, -1) : "no module"));
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushstring(L, "ToggleConsole");
+    lua_gettable(L, -2);
+    if (lua_pcall(L, 0, 0, 0) != 0)
+        report_ui_callback_error(fmt::format("Error running '/lua/ui/uimain.lua:ToggleConsole': {}",
+                                             lua_tostring(L, -1)));
+    lua_settop(L, top);
 }
 
 void UIDispatch::activate_chat(lua_State* L, const UIEvent& ev) {

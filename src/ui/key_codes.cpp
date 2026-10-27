@@ -47,6 +47,11 @@ constexpr i32 kWxNumpadEqual = 390;
 } // namespace
 
 i32 moho_key_code(i32 glfw_key) {
+    // Moho's wx (wxCharCodeMSWToWX's table, FAF exe 0x0096AD62..0x0096ADA3)
+    // names the OEM keys by a character each, VK_OEM_1..7 as ; + , - . / ~ [
+    // \ ] ': two differ from the key's own, the = key (+) and the ` key (~).
+    if (glfw_key == GLFW_KEY_EQUAL) return '+';
+    if (glfw_key == GLFW_KEY_GRAVE_ACCENT) return '~';
     // GLFW's printable keys are their (unshifted, upper case) ASCII codes,
     // as wx's are.
     if (glfw_key >= GLFW_KEY_SPACE && glfw_key <= GLFW_KEY_GRAVE_ACCENT) return glfw_key;

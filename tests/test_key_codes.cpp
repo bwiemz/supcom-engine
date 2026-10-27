@@ -30,7 +30,11 @@ TEST_CASE("Keys reach Lua with wx's key codes, as Moho gives them", "[ui][input]
     CHECK(moho_key_code(GLFW_KEY_Z) == 'Z');
     CHECK(moho_key_code(GLFW_KEY_0) == '0');
     CHECK(moho_key_code(GLFW_KEY_MINUS) == '-');
-    CHECK(moho_key_code(GLFW_KEY_GRAVE_ACCENT) == '`');
+    CHECK(moho_key_code(GLFW_KEY_SEMICOLON) == ';');
+    CHECK(moho_key_code(GLFW_KEY_APOSTROPHE) == '\'');
+    // Moho's wx names two OEM keys by another character: = as +, ` as ~
+    CHECK(moho_key_code(GLFW_KEY_EQUAL) == '+');
+    CHECK(moho_key_code(GLFW_KEY_GRAVE_ACCENT) == '~');
     // wx's own codes for the rest.
     CHECK(moho_key_code(GLFW_KEY_LEFT) == 316);
     CHECK(moho_key_code(GLFW_KEY_UP) == 317);

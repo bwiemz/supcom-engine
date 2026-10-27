@@ -7,5 +7,4 @@ method OnSpecialAction
 method OnStart
 method OnSubtitle
 module /lua/ui/uimain.lua:StopCursorText
-module /lua/ui/uimain.lua:ToggleConsole
 module /lua/user/prefs.lua:GetOption
