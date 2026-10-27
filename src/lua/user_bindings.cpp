@@ -15,6 +15,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
 #include "lua/order_helpers.hpp"
+#include "lua/sim_bindings.hpp"
 #include "map/scmap_parser.hpp"
 #include "map/terrain.hpp"
 #include "renderer/command_graph_renderer.hpp"
@@ -2398,7 +2399,7 @@ void select_units_by_category(lua_State* L, const std::string& expression,
     const bool idle = how.idle;
     const bool go_to = how.go_to;
     const bool exclude_engineers = how.exclude_engineers;
-    const sim::CategoryExpr category = sim::parse_category_list(expression);
+    const sim::CategoryExpr category = parse_entity_category(L, expression);
     auto* r = get_renderer(L);
     std::optional<renderer::Frustum> view;
     if (in_view && r) {

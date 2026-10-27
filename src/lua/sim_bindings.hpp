@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/category_expr.hpp"
 
 #include <string>
 
@@ -35,6 +36,10 @@ void register_prefetch_bindings(LuaState& state);
 /// construction tabs build category expressions. Its ParseEntityCategory is
 /// the user state's, which raises with no session (session_active).
 void register_category_bindings(LuaState& state);
+
+/// `text` parsed as Lua's ParseEntityCategory parses it, for the engine to test
+/// units against: a word no blueprint has is left out (Moho's ParseEntityCategory)
+sim::CategoryExpr parse_entity_category(lua_State* L, const std::string& text);
 
 /// Push the sim state's shared Vector metatable (x/y/z alias [1]/[2]/[3]),
 /// creating it on first use. Every vector the engine hands to scripts
