@@ -74,15 +74,15 @@ const char* impact_type(const Entity& hit) {
 }
 
 /// Whether `struck` lets the beam's weapon hit it: its
-/// OnCollisionCheckWeapon(weapon), true without one (or without a weapon to
-/// give it). An error counts as allowed, and fails a test run.
+/// OnCollisionCheckWeapon(weapon), no without one (a prop) or on an error (Moho's
+/// RunScript_OnCollisionCheckWeapon). With no script to ask, yes. An error fails a test run.
 bool weapon_allowed(lua_State* L, const Entity& struck, int weapon_ref) {
     if (!L || struck.lua_table_ref() < 0 || weapon_ref < 0) return true;
     const int top = lua_gettop(L);
     lua_rawgeti(L, LUA_REGISTRYINDEX, struck.lua_table_ref());
     lua_pushstring(L, "OnCollisionCheckWeapon");
     lua_gettable(L, -2);
-    bool allowed = true;
+    bool allowed = false;
     if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, top + 1);
         lua_rawgeti(L, LUA_REGISTRYINDEX, weapon_ref);

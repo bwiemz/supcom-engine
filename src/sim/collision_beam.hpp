@@ -15,7 +15,7 @@ class SimState;
 ///   muzzle's facing, to its length.
 /// - What stops it: the first thing in the way whose OnCollisionCheckWeapon
 ///   (given the firing weapon) lets it: a unit, a shield met from outside, a
-///   prop, a projectile, the ground or the water's surface.
+///   projectile, the ground or the water's surface. A prop has none.
 /// - What follows: its end goes there, and its script hears
 ///   OnImpact(type, target), which deals the damage. With nothing in the
 ///   way the type is 'Air', or 'Underwater' below the surface.

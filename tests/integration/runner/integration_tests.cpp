@@ -11095,11 +11095,7 @@ void test_beam_weapon(TestContext& ctx) {
         end
     )");
     lua_check("setup: a Cerberus, a Monkeylord and a zapper, each with a target", R"(
-        -- The Cerberus (ReTargetOnMiss) stands where trees are: its beams, starting inside one,
-        -- would miss the tank till it gave it up, as Moho's would. Clear its spot and its line.
-        for _, p in GetReclaimablesInRect(Rect(522, 62, 558, 78)) or {} do
-            if IsProp(p) then p:Destroy() end
-        end
+        -- The Cerberus stands among trees, which its beams pass
         __osc_cerberus = __osc_watch(__osc_spawn('urb2301', 'ARMY_1', 530, 70))
         __osc_block = __osc_spawn('uel0201', 'ARMY_2', 550, 70)
         __osc_block:SetFireState(1)
