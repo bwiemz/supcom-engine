@@ -112,4 +112,17 @@ struct SpinStep {
 SpinStep air_spin_step(const Quaternion& body, const Vector3& momentum, const Vector3& inertia,
                        const Vector3& accel, f32 dt);
 
+/// SPhysBody::IntegrateAngularImpulse for a world-axes torque per unit mass `torque`.
+SpinStep air_torque_step(const Quaternion& body, const Vector3& momentum, const Vector3& inertia,
+                         const Vector3& torque, f32 dt);
+
+/// CalcMoveAir's tumble for an aircraft killed in flight: each axis' draw is in +-h, h the
+/// body's inverse inertia, 1 / (mass x `inertia`), clamped to [0.25, 4] (a NaN to 0.25).
+Vector3 tumble_range(f32 mass, const Vector3& inertia);
+
+/// The tumble's torque per unit mass in world axes for the draws `drawn`: each over its axis'
+/// inverse inertia, turned by `body`. A massless body's is none.
+Vector3 tumble_torque(const Quaternion& body, f32 mass, const Vector3& inertia,
+                      const Vector3& drawn);
+
 } // namespace osc::sim

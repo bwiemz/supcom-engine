@@ -13,8 +13,6 @@ namespace osc::sim {
 
 namespace {
 
-constexpr f32 kTwoPi = 6.28318530f;
-
 /// ComputeAirControl's turn and roll axes toward `wanted`, under KTurn and
 /// KTurnDamping, KRoll and KRollDamping.
 void steer_attitude(Unit& unit, const Quaternion& wanted, const EntityRegistry* registry,
@@ -31,17 +29,7 @@ void steer_attitude(Unit& unit, const Quaternion& wanted, const EntityRegistry* 
                         err.z * r.k_roll / load - w.z * r.k_roll_damping};
     const SpinStep step = air_spin_step(body, unit.air_spin(), inertia, accel, dt);
     unit.set_air_spin(step.momentum);
-    unit.set_orientation(step.orientation);
-    const Vector3 fwd = forward_of(step.orientation);
-    f32 heading = osc::dmath::atan2(fwd.x, fwd.z);
-    if (heading < 0.0f) {
-        heading += kTwoPi;
-    }
-    unit.set_heading(heading);
-    const Vector3 right = quat_rotate(step.orientation, Vector3{1.0f, 0.0f, 0.0f});
-    const Vector3 up = quat_rotate(step.orientation, Vector3{0.0f, 1.0f, 0.0f});
-    unit.set_bank_angle(osc::dmath::atan2(right.y, up.y));
-    unit.set_pitch_angle(osc::dmath::asin(std::clamp(-fwd.y, -1.0f, 1.0f)));
+    unit.set_flight_orientation(step.orientation);
 }
 
 /// ComputeAirControl's step toward `force`, `lift` and `axes`.

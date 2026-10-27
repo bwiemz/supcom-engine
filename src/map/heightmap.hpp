@@ -32,6 +32,9 @@ public:
 
     /// The grid's highest point.
     f32 max_height() const { return max_height_; }
+    /// Its lowest point: the floor of Moho's CHeightField tier box. As the highest, an edit
+    /// only ever moves it outward.
+    f32 min_height() const { return min_height_; }
 
     /// STIMap::LookAheadForMaxTerrain without the water: the highest point of
     /// the CHeightField tier cell around (x, z) that the look-ahead picks.
@@ -61,6 +64,7 @@ private:
     std::vector<u16> data_; // row-major [gz * grid_width + gx]
     std::vector<u16> original_;
     f32 max_height_ = 0.0f;
+    f32 min_height_ = 0.0f;
     u64 digest_ = 0;
     struct Tier {
         u32 width = 0;

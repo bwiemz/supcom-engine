@@ -245,7 +245,8 @@ void mix_unit_script_state(Fnv& units, const Unit& u, UnitScratch& scratch) {
     const u64 flags = (u.busy() ? 1u : 0u) | (u.block_command_queue() ? 2u : 0u) |
                       (u.can_take_damage() ? 0u : 4u) | (u.can_be_killed() ? 0u : 8u) |
                       (u.is_crashing() ? 16u : 0u) | (u.teleporting() ? 32u : 0u) |
-                      (u.jostled() ? 64u : 0u);
+                      (u.jostled() ? 64u : 0u) |
+                      (u.motion_state() == Unit::MotionState::Crashed ? 128u : 0u);
     if (flags != 0) units.mix(0x464c414700000000ull | flags); // "FLAG"
     // Speed, acceleration and turn multipliers, only off 1.
     if (u.speed_mult() != 1.0f || u.accel_mult() != 1.0f || u.turn_mult() != 1.0f) {
