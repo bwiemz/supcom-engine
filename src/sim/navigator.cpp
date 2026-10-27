@@ -408,8 +408,7 @@ path::SplineUnit spline_unit(const Unit& unit) {
     su.speed_mult = unit.speed_mult();
     su.accel_mult = unit.accel_mult();
     su.turn_mult = unit.turn_mult();
-    // Its nav speed carries its speed multiplier, which the spline applies itself.
-    su.top_speed = su.speed_mult > 0 ? unit.nav_speed() / su.speed_mult : unit.nav_speed();
+    su.top_speed = unit.nav_speed();
     return su;
 }
 
@@ -758,7 +757,10 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     //   circle through it tangent to its heading (radius dist / 2 sin err), at
     //   half its TurnRate; on a circle at least its TurnRadius wide, at that
     //   radius a tick. Always slow enough to stop on its goal (below).
-    const f32 top = reverse ? std::min(d.max_speed_reverse, max_speed) : max_speed;
+    // Moho's SteeringParams: the lesser of its blueprint's speed and its top speed, which
+    // already carries its speed multiplier, times the multiplier
+    const f32 top =
+        std::min(reverse ? d.max_speed_reverse : unit.max_speed(), max_speed) * unit.speed_mult();
     f32 target = top;
     if (d.rotate_on_spot && d.rotate_threshold > ratio) {
         target = osc::dmath::cos(cap_err) >= 0.98f ? top : 0.0f;
