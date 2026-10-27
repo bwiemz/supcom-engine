@@ -88,6 +88,7 @@ add_executable(osc_tests
     test_faf_bindings.cpp
     test_engine_stats.cpp
     test_army_stats_sync.cpp
+    test_sim_console.cpp
     test_external_factory.cpp
     test_damage_callbacks.cpp
     test_profiler_self_time.cpp

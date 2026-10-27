@@ -81,6 +81,7 @@ add_library(osc_sim STATIC
     build_info.cpp
     sim_callbacks.cpp
     sim_checksum.cpp
+    sim_console.cpp
 )
 add_library(osc::sim ALIAS osc_sim)
 
