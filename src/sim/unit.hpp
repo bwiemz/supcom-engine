@@ -935,6 +935,8 @@ public:
     void set_pitch_angle(f32 p) { pitch_ = p; }
     f32 bank_angle() const { return bank_angle_; }
     void set_bank_angle(f32 b) { bank_angle_ = b; }
+    /// An aircraft's orientation, and its heading, bank and pitch as read from it.
+    void set_flight_orientation(const Quaternion& q);
     f32 current_airspeed() const { return current_airspeed_; }
     void set_current_airspeed(f32 s) { current_airspeed_ = s; }
     f32 current_altitude() const { return current_altitude_; }
@@ -1146,11 +1148,17 @@ public:
     void set_velocity(const Vector3& v) { velocity_ = v; }
     void advance_coords() override;
 
-    // A killed aircraft's fall (see begin_dying).
-    bool is_crashing() const { return crashing_; }
+    /// Moho's CUnitMotion motion state (EUnitMotionState), as a killed aircraft goes through it:
+    /// Ballistic from the step after it dies in flight, Crashed once its fall has met the ground
+    /// or the water. Scripts hear each change (OnMotionStateChange).
+    enum class MotionState : u8 { None, Ballistic, Crashed };
+    MotionState motion_state() const { return motion_state_; }
+    /// Falling, as a killed aircraft does (Ballistic).
+    bool is_crashing() const { return motion_state_ == MotionState::Ballistic; }
+    /// The torque per unit mass, in world axes, that keeps turning a falling unit (CUnitMotion's
+    /// mTorque): drawn as it starts to fall.
+    const Vector3& tumble_torque() const { return tumble_torque_; }
     bool teleporting() const { return teleporting_; }
-    f32 crash_velocity_y() const { return crash_velocity_y_; }
-    f32 crash_spin_rate() const { return crash_spin_rate_; }
 
     // Misc flags
     u32 creator_id() const { return creator_id_; }
@@ -1197,8 +1205,13 @@ public:
     /// falls until it lands.
     bool is_dying() const { return dying_; }
     void begin_dying();
-    /// True on the step it lands.
-    bool tick_dying(f32 dt, const map::Terrain* terrain);
+    /// Moho's CUnitMotion::MotionTick for a dead unit, none while it is being built. An aircraft
+    /// in flight, or a transport hovering instead of landing, neither stunned nor Immobile,
+    /// starts to fall (CalcMoveAir); a falling one falls on (CalcMoveBallistic) until it meets
+    /// the ground or the water, which tells its script (OnImpact, through `sim`) before it moves
+    /// there. Every draw is from `random`, the sim's stream.
+    void step_dead_motion(const map::Terrain* terrain, SimRandom& random, lua_State* L,
+                          SimState* sim);
     bool needs_kill_cleanup() const { return needs_kill_cleanup_; }
     /// Moho's Unit::KillCleanup (faf-re unit/core/Unit.cpp:16252), at the end of the death tick.
     void kill_cleanup(lua_State* L);
@@ -1820,6 +1833,16 @@ private:
     /// A transport down to its TransportHoverHeight as to a landing (Moho's
     /// ShouldHoverInsteadOfLand): MovingDown, then the Hover event. True there.
     bool hover_low(f64 dt, SimContext& ctx);
+    /// Moho's CUnitMotion::ShouldHoverInsteadOfLand: a transport with a TransportHoverHeight
+    /// that is loading or has cargo aboard.
+    bool hovers_instead_of_landing() const;
+    /// CalcMoveAir's dead aircraft: on the Air layer, Ballistic, its tumble drawn, one free fall
+    /// step of its flight body under gravity.
+    void start_fall(SimRandom& random, lua_State* L);
+    /// CalcMoveBallistic: a tick's fall under gravity, turned by its tumble, to where it meets
+    /// the ground or the water.
+    void fall(const map::Terrain* terrain, lua_State* L, SimState* sim);
+    void set_motion_state(MotionState next, lua_State* L);
     /// A transport flies to the point and drops all its cargo.
     OrderStep order_transport_unload(UnitCommand& cmd, SimContext& ctx);
     /// An aircraft's refuel at a staging platform (M206r, Moho's CUnitRefuel):
@@ -2191,12 +2214,11 @@ private:
     f32 dive_surface_speed_ = 1.0f; // Physics.DiveSurfaceSpeed
     Vector3 dive_lean_;
     std::string vert_event_ = "Top";
-    // Air crash state
-    bool crashing_ = false;
+    // A killed aircraft's fall (step_dead_motion)
+    MotionState motion_state_ = MotionState::None;
+    Vector3 tumble_torque_{};
     Vector3 velocity_{};
     Vector3 motion_step_{};
-    f32 crash_velocity_y_ = 0;
-    f32 crash_spin_rate_ = 0;
     // Misc flags
     u32 creator_id_ = 0;
     bool lifts_off_ = false;

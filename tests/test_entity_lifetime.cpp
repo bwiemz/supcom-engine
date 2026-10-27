@@ -185,6 +185,7 @@ TEST_CASE("a crashed aircraft is removed from the registry", "[lifetime][m183]")
 
     auto u = std::make_unique<Unit>();
     u->set_layer("Air");
+    u->set_motion_type("RULEUMT_Air");
     u->set_position({32.0f, 40.0f, 32.0f});
     u->set_current_altitude(40.0f);
     u->set_current_airspeed(10.0f);

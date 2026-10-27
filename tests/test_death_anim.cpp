@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "sim/manipulator.hpp"
+#include "sim/sim_random.hpp"
 #include "sim/unit.hpp"
 
 using namespace osc;
@@ -26,7 +27,8 @@ TEST_CASE("Unit: begin_dying makes the unit dead", "[death]") {
 TEST_CASE("Unit: a dead unit stays dead until destroyed", "[death]") {
     Unit u;
     u.begin_dying();
-    for (int i = 0; i < 600; ++i) u.tick_dying(0.1f, nullptr);
+    SimRandom rng;
+    for (int i = 0; i < 600; ++i) u.step_dead_motion(nullptr, rng, nullptr, nullptr);
     CHECK(u.is_dying());
     CHECK_FALSE(u.is_wreckage());
 }

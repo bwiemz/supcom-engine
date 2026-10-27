@@ -10,6 +10,7 @@
 #include "lua/sim_bindings.hpp"
 #include "lua/sim_sync.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/sim_random.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/manipulator.hpp"
@@ -863,31 +864,49 @@ TEST_CASE("PathfindingGrid extended passability compiles", "[m160]") {
     CHECK(unit.layer() == "Water");
 }
 
+namespace {
+
+/// Commit `u`'s steps as a sim tick would, falling dead over flat ground at 0 until it is
+/// Crashed (or `ticks` run out): true if it was.
+bool fall_dead(osc::sim::Unit& u, int ticks) {
+    const osc::map::Terrain flat(
+        osc::map::Heightmap(256, 256, 1.0f / 128.0f, std::vector<osc::u16>(257 * 257, 0)), 0.0f);
+    osc::sim::SimRandom rng(9);
+    for (int i = 0; i < ticks; ++i) {
+        u.step_dead_motion(&flat, rng, nullptr, nullptr);
+        u.advance_coords();
+        if (u.motion_state() == osc::sim::Unit::MotionState::Crashed) return true;
+    }
+    return false;
+}
+
+} // namespace
+
 TEST_CASE("Air crash physics: gravity pulls unit down", "[m159]") {
     osc::sim::Unit unit;
     unit.set_layer("Air");
+    unit.set_motion_type("RULEUMT_Air");
     unit.set_heading(0);
     unit.set_current_airspeed(10.0f);
     unit.set_current_altitude(50.0f);
     unit.set_position({100, 50, 100});
+    unit.advance_coords();
 
-    unit.begin_dying(); // killed in flight: it falls
-    CHECK(unit.is_crashing());
+    unit.begin_dying(); // killed in flight: it falls from its next step
     CHECK(unit.is_dying());
+    CHECK_FALSE(unit.is_crashing());
 
-    bool landed = false;
-    tick_until([&] { landed = unit.tick_dying(0.1f, nullptr); }, "the plane's crash ends", 100,
-               [&] { return !unit.is_crashing(); });
-
-    // Should have fallen and impacted, and reports the landing once
-    CHECK(unit.position().y <= 0.1f);
-    CHECK(landed);
-    CHECK_FALSE(unit.tick_dying(0.1f, nullptr));
+    // Down from 50 at Moho's 4.9 a second squared: ~4.5 s
+    CHECK(fall_dead(unit, 100));
+    CHECK(unit.position().y == Catch::Approx(0.0f).margin(1e-3));
+    CHECK(unit.layer() == "Land");
+    CHECK_FALSE(unit.is_crashing());
 }
 
 TEST_CASE("Air unit full lifecycle: spawn, fly, die, crash", "[m159]") {
     osc::sim::Unit unit;
     unit.set_layer("Air");
+    unit.set_motion_type("RULEUMT_Air");
     unit.set_max_airspeed(15.0f);
     unit.set_turn_rate_rad(2.0f);
     unit.set_accel_rate(10.0f);
@@ -903,15 +922,12 @@ TEST_CASE("Air unit full lifecycle: spawn, fly, die, crash", "[m159]") {
     }
     CHECK(unit.position().x > 50);
     CHECK(unit.current_airspeed() > 0);
+    unit.advance_coords();
 
     // Killed in flight, it falls
     unit.begin_dying();
-    CHECK(unit.is_crashing());
-
-    bool hit_ground = false;
-    tick_until([&] { hit_ground = unit.tick_dying(0.1f, nullptr); }, "the plane hits the ground",
-               200, [&] { return hit_ground; });
-    CHECK(unit.position().y <= 0.1f);
+    CHECK(fall_dead(unit, 200));
+    CHECK(unit.position().y == Catch::Approx(0.0f).margin(1e-3));
 }
 
 TEST_CASE("Naval unit motion type helpers", "[m160]") {

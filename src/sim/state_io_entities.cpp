@@ -1519,11 +1519,10 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.dive_surface_speed_);
     w.vec3(u.dive_lean_);
     w.str(u.vert_event_);
-    w.b(u.crashing_);
+    enum8(w, u.motion_state_);
+    w.vec3(u.tumble_torque_);
     w.vec3(u.velocity_);
     // motion_step_: taken by the tick's commit, zero between ticks
-    w.f32v(u.crash_velocity_y_);
-    w.f32v(u.crash_spin_rate_);
     w.u32v(u.creator_id_);
     w.b(u.lifts_off_);
     w.u32v(u.warp_aborted_command_);
@@ -1947,10 +1946,9 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.dive_surface_speed_ = r.f32v();
     u.dive_lean_ = r.vec3();
     u.vert_event_ = r.str();
-    u.crashing_ = r.b();
+    u.motion_state_ = enum8<Unit::MotionState>(r);
+    u.tumble_torque_ = r.vec3();
     u.velocity_ = r.vec3();
-    u.crash_velocity_y_ = r.f32v();
-    u.crash_spin_rate_ = r.f32v();
     u.creator_id_ = r.u32v();
     u.lifts_off_ = r.b();
     u.warp_aborted_command_ = r.u32v();

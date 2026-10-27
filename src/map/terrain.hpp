@@ -70,6 +70,13 @@ public:
     f32 water_elevation() const { return water_elevation_; }
     bool has_water() const { return has_water_; }
 
+    /// Where the segment p + t d, t in [0, length], d of unit length, first meets the ground or
+    /// the water: Moho's STIMap::SurfaceIntersection, as t. A start under the water meets it at
+    /// once; ground under the water meets the water above it. Without water, a hit at the map's
+    /// lowest point or none at all meets the plane there. None if the segment meets nothing.
+    std::optional<f32> surface_intersect(f32 px, f32 py, f32 pz, f32 dx, f32 dy, f32 dz,
+                                         f32 length) const;
+
     /// The share of the map under water, as Moho's brain:GetMapWaterRatio
     /// measures it: heightfield vertices every 8 units, the border ring
     /// left out, below the water's surface (none if the map has no water).
