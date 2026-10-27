@@ -8249,8 +8249,11 @@ void test_impact(TestContext& ctx) {
         end
     )");
     lua_check("Test 8: the water's surface ends one shell and takes the other under", R"(
-        if __osc_events.splash[1] ~= 'OnImpact:Water' then
-            error('splash: ' .. table.concat(__osc_events.splash, ','))
+        -- Retail tells the script it entered, then ends it there (Moho's
+        -- CheckCollision, 0x006A3D79)
+        local splash = table.concat(__osc_events.splash, ',')
+        if string.sub(splash, 1, 27) ~= 'OnEnterWater,OnImpact:Water' then
+            error('splash: ' .. splash)
         end
         if __osc_events.dive[1] ~= 'OnEnterWater' then
             error('dive: ' .. table.concat(__osc_events.dive, ','))
@@ -10579,17 +10582,19 @@ void test_defence(TestContext& ctx) {
     )");
 
     // A nuke launched at power generators two anti-nukes cover, each holding
-    // one missile.
+    // one missile, all on the north-east shore's dry ground: a nuke skims no
+    // surface (CollideSurface false), so one launched from the seabed would
+    // stay on the Water layer, which the anti-nukes don't fire at, as Moho's.
     lua_check("setup: a nuke, and anti-nukes about its target", R"(
-        __osc_s = __osc_watch(__osc_spawn('ueb2305', 'ARMY_1', 560, 300))
+        __osc_s = __osc_watch(__osc_spawn('ueb2305', 'ARMY_1', 960, 40))
         __osc_s:GiveNukeSiloAmmo(1)
-        __osc_zero = __osc_at(560, 600)
+        __osc_zero = __osc_at(960, 300)
         __osc_victims = {}
         for i = -1, 1 do
-            table.insert(__osc_victims, __osc_spawn('ueb1101', 'ARMY_2', 560 + 8 * i, 600))
+            table.insert(__osc_victims, __osc_spawn('ueb1101', 'ARMY_2', 960 + 8 * i, 300))
         end
-        __osc_d1 = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 580, 620))
-        __osc_d2 = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 540, 620))
+        __osc_d1 = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 980, 320))
+        __osc_d2 = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 940, 320))
         __osc_d1:GiveTacticalSiloAmmo(1)
         __osc_d2:GiveTacticalSiloAmmo(1)
         IssueNuke({__osc_s}, __osc_zero)

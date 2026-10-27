@@ -194,30 +194,16 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
                   grown(scale_z(), scale_velocity.z));
     }
 
-    if (collide(from, registry, L, terrain)) return;
+    std::optional<PathImpact> impact = collide(from, registry, L, terrain);
+    if (destroyed() || !in_registry()) return;
 
-    // Crossing the water's surface tells the script: a torpedo dropped from
-    // the air starts tracking as it enters.
-    if (terrain && terrain->has_water()) {
-        const bool wet = pos.y < terrain->water_elevation() &&
-                         terrain->get_terrain_height(pos.x, pos.z) < terrain->water_elevation();
-        if (wet != in_water) {
-            in_water = wet;
-            if (!call_script(L, registry, wet ? "OnEnterWater" : "OnExitWater")) return;
-        }
-    }
-
-    // Air bursts: flak detonates on reaching its target's height above the
-    // surface (DetonatesAtTargetHeight sets it); an artillery shell, once it
-    // has risen above its burst height, on coming back down past it.
-    {
-        const f32 height = pos.y - (terrain ? terrain->get_surface_height(pos.x, pos.z) : 0.0f);
-        if (detonate_below_height > 0 && height > detonate_below_height) burst_armed = true;
-        if ((detonate_above_height > 0 && height >= detonate_above_height) ||
-            (burst_armed && height <= detonate_below_height)) {
-            record_impact(pos, 1.0f, nullptr, "Air", terrain);
-            return;
-        }
+    // Air bursts (Moho's detonate band, which CheckCollision tests last and which
+    // stands in place of anything else this tick met): flak on reaching its target's
+    // height (DetonatesAtTargetHeight sets it), a shell coming down to its burst height.
+    if (auto burst = detonate_band(from, terrain)) impact = burst;
+    if (impact) {
+        record_impact(impact->at, impact->interpolation, impact->hit, impact->type, terrain);
+        return;
     }
 
     // Its time up, it bursts where this tick's move took it, an 'Air' (or
@@ -366,25 +352,57 @@ Vector3 lerp(const Vector3& a, const Vector3& b, f32 t) {
 
 } // namespace
 
-bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_State* L,
-                         const map::Terrain* terrain) {
-    if (!collision_enabled) return false;
+std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
+                                                          EntityRegistry& registry, lua_State* L,
+                                                          const map::Terrain* terrain) {
+    if (!collision_enabled) return std::nullopt;
     const Vector3 to = pending_position();
 
-    // The surface: the ground, or for a shell that ends there, the water.
+    // The surface, with CollideSurface (Moho's CheckCollision): the water, then the ground.
+    // Crossing the water's surface changes its layer and tells its script (a torpedo dropped
+    // from the air starts tracking as it enters): retail's first, whatever else the step meets;
+    // FAF's patched exe last, and not if the ground came first (FA-Binary-Patches
+    // hooks/FixCollisions.cpp). A shell that DestroyOnWater ends where it crosses, as it goes
+    // in (retail) or either way (FAF's); the ground, if nearer, instead.
     f32 surface_t = 2.0f;
     const char* surface_type = nullptr;
     if (terrain && collide_surface) {
-        if (const auto t = terrain_crossing(*terrain, from, to)) surface_t = *t;
+        const bool faf = registry.faf_exe();
         const f32 water = terrain->water_elevation();
-        if (destroy_on_water && terrain->has_water() && from.y >= water && to.y < water) {
-            const f32 t = (from.y - water) / (from.y - to.y);
-            const Vector3 at = lerp(from, to, t);
-            if (t < surface_t && terrain->get_terrain_height(at.x, at.z) < water) {
-                surface_t = t;
+        enum class Crossing : u8 { None, Enter, Exit };
+        Crossing crossing = Crossing::None;
+        if (terrain->has_water()) {
+            if (in_water) {
+                if (to.y > water) crossing = Crossing::Exit;
+            } else if (water > to.y) {
+                crossing = Crossing::Enter;
+            }
+        }
+        const auto change_layer = [&] {
+            in_water = crossing == Crossing::Enter;
+            return call_script(L, registry, in_water ? "OnEnterWater" : "OnExitWater");
+        };
+        if (crossing != Crossing::None && !faf && !change_layer()) return std::nullopt;
+        // Along the step's line from where it was (0 when level with the water). One behind
+        // the step's start ends nothing: Moho's interpolation there, below 0, is no impact.
+        f32 water_t = 0.0f;
+        if (crossing != Crossing::None) {
+            const f32 dy = to.y - from.y;
+            if (dy != 0.0f) water_t = (water - from.y) / dy;
+            if (destroy_on_water && (faf || crossing == Crossing::Enter) && water_t >= 0.0f) {
+                surface_t = water_t;
                 surface_type = "Water";
             }
         }
+        bool ground_first = false;
+        if (const auto t = terrain_crossing(*terrain, from, to);
+            t && (surface_t > 1.0f || *t < surface_t)) {
+            surface_t = *t;
+            surface_type = nullptr;
+            ground_first = !(*t > water_t);
+        }
+        if (crossing != Crossing::None && faf && !ground_first && !change_layer())
+            return std::nullopt;
     }
 
     // A tracking shot sent to a place (a strategic missile, which skims no
@@ -407,11 +425,12 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
         }
     }
 
-    // What it meets on the way, nearest first. Retail's CheckCollision sweeps a tenth of the step
-    // past each end (0.1 at 0x00E4F714) and measures the hit from the swept line's start.
+    // What it meets on the way, nearest first, each asked again every tick. Retail's
+    // CheckCollision sweeps a tenth of the step past each end (0.1 at 0x00E4F714), FAF's patched
+    // exe a hundredth (FixCollisions), and measures the hit from the swept line's start.
     if (collide_entity) {
-        constexpr f32 kSweepBeyond = 0.1f;
-        constexpr f32 kSweepLength = 1.0f + 2.0f * kSweepBeyond;
+        const f32 kSweepBeyond = registry.faf_exe() ? 0.01f : 0.1f;
+        const f32 kSweepLength = 1.0f + 2.0f * kSweepBeyond;
         const Vector3 d{to.x - from.x, to.y - from.y, to.z - from.z};
         const Vector3 start{from.x - d.x * kSweepBeyond, from.y - d.y * kSweepBeyond,
                             from.z - d.z * kSweepBeyond};
@@ -422,7 +441,6 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
         std::vector<std::pair<f32, u32>> hits;
         for (const u32 id : candidates) {
             if (id == entity_id() || id == launcher_id) continue;
-            if (std::find(passed.begin(), passed.end(), id) != passed.end()) continue;
             const Entity* e = registry.find(id);
             if (!e || e->destroyed()) continue;
             // A corpse is in the way (Moho's CheckCollision); a unit in a hold isn't.
@@ -440,26 +458,53 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
         for (const auto& [t, id] : hits) {
             Entity* e = registry.find(id);
             if (!e || e->destroyed()) continue;
-            if (!collision_allowed(L, registry, *e)) {
-                passed.push_back(id);
-                continue;
-            }
+            if (!collision_allowed(L, registry, *e)) continue;
             e = registry.find(id);
             if (!e || e->destroyed()) continue;
-            record_impact(lerp(start, end, t), t * kSweepLength, e, nullptr, terrain);
-            return true;
+            return PathImpact{lerp(start, end, t), t * kSweepLength, e, nullptr};
         }
     }
 
     if (surface_t > 1.0f) {
-        return false;
+        return std::nullopt;
     }
     Vector3 at = lerp(from, to, surface_t);
     if (surface_type && terrain) {
         at.y = terrain->water_elevation();
     }
-    record_impact(at, surface_t, nullptr, surface_type, terrain);
-    return true;
+    return PathImpact{at, surface_t, nullptr, surface_type};
+}
+
+std::optional<Projectile::PathImpact> Projectile::detonate_band(const Vector3& from,
+                                                                const map::Terrain* terrain) const {
+    // CheckCollision's tail (Steam's exe 0x006A476E, faf-re Projectile.cpp): its height over
+    // the ground or the water where the step ends (-10000 for no water); the burst point then
+    // solved from the ground's height alone, a tenth of the step at the least, all of it at
+    // the most. Retail reads the water whenever the map has some (0x006A3D0F); FAF's exe only
+    // for a shot that CollideSurface, in its surface pass (0x0069D2B0).
+    const Vector3 to = pending_position();
+    const f32 ground = terrain ? terrain->get_terrain_height(to.x, to.z) : 0.0f;
+    const bool faf = registry() && registry()->faf_exe();
+    const f32 water = terrain && terrain->has_water() && (!faf || collide_surface)
+                          ? terrain->water_elevation()
+                          : -10000.0f;
+    const f32 height = to.y - std::max(ground, water);
+    const f32 above =
+        detonate_above_override < 0.0f ? detonate_above_height : detonate_above_override;
+    const f32 below =
+        detonate_below_override < 0.0f ? detonate_below_height : detonate_below_override;
+    const f32 dy = to.y - from.y;
+    f32 f = 0.0f;
+    if (below > 0.0f && below > height && dy < 0.0f) {
+        f = (below + ground - from.y) / dy;
+    } else if (above > 0.0f && height > above && dy > 0.0f) {
+        f = (above + ground - from.y) / dy;
+    } else {
+        return std::nullopt;
+    }
+    f = f < 1.0f ? f : 1.0f; // NaN too
+    f = std::max(f, 0.1f);
+    return PathImpact{lerp(from, to, f), f, nullptr, "Air"};
 }
 
 void Projectile::record_impact(const Vector3& at, f32 interpolation, const Entity* hit,
@@ -494,11 +539,13 @@ bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entit
     const u32 other_id = other.entity_id();
     // What is struck is asked, OnCollisionCheck(self, other) with `other`
     // the projectile; the projectile itself is not (faf-re Projectile::
-    // CheckCollision calls only the collided entity's script). A missing one
-    // allows it. Retail's comment: "If we return false the thing hitting us
-    // has no idea that it came into contact with us". FAF's torpedo answers
-    // false to anything but an anti-torpedo projectile hitting it, and had
-    // been asked about every ship it ran into.
+    // CheckCollision calls only the collided entity's script). As Moho's
+    // RunScript (0x0069F6B0), none, or an error in it, is no collision: a bare
+    // Entity, whose class has none, isn't hit. (An entity of the engine's with
+    // no script at all, which Moho can't have, is.) Retail's comment: "If we
+    // return false the thing hitting us has no idea that it came into contact
+    // with us". FAF's torpedo answers false to anything but an anti-torpedo
+    // projectile hitting it, and had been asked about every ship it ran into.
     const auto check = [&](u32 self, u32 with) {
         const Entity* a = registry.find(self);
         const Entity* b = registry.find(with);
@@ -508,7 +555,7 @@ bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entit
         lua_rawgeti(L, LUA_REGISTRYINDEX, a->lua_table_ref());
         lua_pushstring(L, "OnCollisionCheck");
         lua_gettable(L, -2);
-        bool allowed = true;
+        bool allowed = false;
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, top + 1);
             lua_rawgeti(L, LUA_REGISTRYINDEX, b->lua_table_ref());

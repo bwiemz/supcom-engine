@@ -4126,6 +4126,12 @@ void register_console_commands(ui::Console& console) {
     console.add("UI_ToggleGamePanels", [](lua_State* L, const Args&) {
         call_module_function(L, "/lua/ui/game/gamemain.lua", "HideGameUI", {});
     });
+    // ShowStats [section]: retail's engine statistics window, the section
+    // given (or all) open, toggled (Moho's ShowStats, 0x00834F90)
+    console.add("ShowStats", [](lua_State* L, const Args& args) {
+        call_module_function(L, "/lua/debug/EngineStats.lua", "Toggle",
+                             {args.size() >= 2 ? std::string_view(args[1]) : "all"});
+    });
     // SetFocusArmy <index>: 0-based, -1 an observer, as the score board asks
     // for an army it was clicked on (Moho's: RequestFocusArmy).
     console.add("SetFocusArmy", [](lua_State* L, const Args& args) {

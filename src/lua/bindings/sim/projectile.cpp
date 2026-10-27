@@ -338,13 +338,13 @@ static int proj_GetZigZagFrequency(lua_State* L) {
 
 static int proj_ChangeDetonateAboveHeight(lua_State* L) {
     auto* p = check_projectile(L);
-    if (p) p->detonate_above_height = static_cast<f32>(luaL_checknumber(L, 2));
+    if (p) p->detonate_above_override = static_cast<f32>(luaL_checknumber(L, 2));
     return 0;
 }
 
 static int proj_ChangeDetonateBelowHeight(lua_State* L) {
     auto* p = check_projectile(L);
-    if (p) p->detonate_below_height = static_cast<f32>(luaL_checknumber(L, 2));
+    if (p) p->detonate_below_override = static_cast<f32>(luaL_checknumber(L, 2));
     return 0;
 }
 

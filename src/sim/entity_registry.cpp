@@ -24,6 +24,13 @@ u32 EntityRegistry::reserve_id(const Entity& e) {
     return (bits | id_pools_[bits].next++) + 1;
 }
 
+std::array<u32, 16> EntityRegistry::family_counts() const {
+    std::array<u32, 16> counts{};
+    for (const Slot& slot : order_)
+        if (slot.entity) ++counts[((slot.id - 1u) >> 28) & 0xFu]; // reserve_id's ids are one past
+    return counts;
+}
+
 void EntityRegistry::index_slots() {
     slot_of_.clear();
     for (size_t i = 0; i < order_.size(); ++i)

@@ -21,7 +21,6 @@ G BaseManagerReclaimThread  # not Moho's: a BaseManager method called bare
 G ClearQueueGrid            # not Moho's
 G ERROR                     # not Moho's: a retail typo (error)
 G EngineStartSplashScreens  # user state: the startup movies
-G ExecLuaInSim
 G GetArmy                   # not Moho's as a global (a method of units and brains)
 G GetBlueprint              # user state: a UI unit's blueprint, as UserUnit:GetBlueprint gives it
 G GetMovieVolume            # user state: the movies' volume

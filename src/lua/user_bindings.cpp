@@ -11,12 +11,15 @@
 #include "lua/arg_count.hpp"
 
 #include "lua/engine_bindings.hpp"
+#include "lua/engine_stats.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
 #include "lua/order_helpers.hpp"
+#include "lua/sim_sync.hpp"
 #include "map/scmap_parser.hpp"
 #include "map/terrain.hpp"
+#include "renderer/command_feedback.hpp"
 #include "renderer/command_graph_renderer.hpp"
 #include "renderer/input_handler.hpp"
 #include "renderer/range_overlays.hpp"
@@ -53,6 +56,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -1635,6 +1639,28 @@ static int l_AddSelectUnits(lua_State* L) {
     return 0;
 }
 
+/// ExecLuaInSim(name, args): the sim's global function `name` called with
+/// `args`, through the command stream (kExecLuaInSimCallback), as Moho's
+/// (cfunc_ExecLuaInSimL 0x008BA5C0); the sim runs it with cheats on. Without
+/// a session, nothing.
+static int l_ExecLuaInSim(lua_State* L) {
+    constexpr const char* kHelp = "Execute some lua code in the sim";
+    if (lua_gettop(L) != 2) return arg_count_error(L, kHelp, 2, lua_gettop(L));
+    if (!lua_isstring(L, 1)) return luaL_typerror(L, 1, "string");
+    auto* queue = get_callback_queue(L);
+    if (!queue || !session_active(L)) return 0;
+    sim::SimCallbackEntry entry;
+    entry.func_name = sim::kExecLuaInSimCallback;
+    entry.args["Func"] = std::string(lua_tostring(L, 1));
+    entry.lua_args = sim::lua_to_bytes(L, 2);
+    if (!entry.lua_args) {
+        spdlog::warn("ExecLuaInSim: '{}' args can't be carried", lua_tostring(L, 1));
+        return 0;
+    }
+    queue->push(std::move(entry));
+    return 0;
+}
+
 // SimCallback({Func="name", Args={...} or a value}, addUnitSelection)
 // Serializes the Lua table into a C++ SimCallbackEntry and queues it.
 static int l_SimCallback(lua_State* L) {
@@ -2088,18 +2114,10 @@ void register_user_bindings(LuaState& state) {
     state.register_function("SetInvertMidMouseButton", l_SetInvertMidMouseButton);
     state.register_function("AddCommandFeedbackBlip", l_AddCommandFeedbackBlip);
     state.register_function("IsDestroyed", ui_is_destroyed);
-    // FAF's engine/Library.lua: the engine's statistics tree, which it fills
-    // each frame (FAF's performance and logger modules read it; it is
-    // empty here), and the folder the executable is in.
-    lua_pushstring(L, "__EngineStats");
-    lua_newtable(L);
-    lua_pushstring(L, "Name");
-    lua_pushstring(L, "Root");
-    lua_rawset(L, -3);
-    lua_pushstring(L, "Children");
-    lua_newtable(L);
-    lua_rawset(L, -3);
-    lua_rawset(L, LUA_GLOBALSINDEX);
+    // The engine's statistics tree, as each frame publishes it
+    // (update_engine_stats), and FAF's engine/Library.lua's folder the
+    // executable is in.
+    engine_stats().publish(L);
     lua_pushstring(L, "LaunchDir");
     lua_pushstring(L, platform::executable_path().parent_path().string().c_str());
     lua_rawset(L, LUA_GLOBALSINDEX);
@@ -2131,6 +2149,7 @@ void register_user_bindings(LuaState& state) {
     state.register_function("SelectUnits", l_SelectUnits);
     state.register_function("AddSelectUnits", l_AddSelectUnits);
     state.register_function("SimCallback", l_SimCallback);
+    state.register_function("ExecLuaInSim", l_ExecLuaInSim);
     state.register_function("GetUnitCommandFromCommandCap", l_GetUnitCommandFromCommandCap);
     state.register_function("IssueCommand", l_IssueCommand);
     state.register_function("IssueDockCommand", l_IssueDockCommand);
@@ -2245,56 +2264,6 @@ bool cursor_world_pos(lua_State* L, sim::Vector3& out) {
     r->ui_mouse_position(dx, dy);
     return renderer::pick_ground_in(r->ui_views(), static_cast<f32>(dx), static_cast<f32>(dy),
                                     wv->terrain(), out.x, out.y, out.z);
-}
-
-/// The child named `name` of the stat item on top of the stack (in its
-/// Children list, which it makes if need be), pushed; made if missing.
-static void push_stat_child(lua_State* L, const char* name) {
-    lua_pushstring(L, "Children");
-    lua_rawget(L, -2);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_newtable(L);
-        lua_pushstring(L, "Children");
-        lua_pushvalue(L, -2);
-        lua_rawset(L, -4);
-    }
-    const int n = luaL_getn(L, -1);
-    for (int i = 1; i <= n; ++i) {
-        lua_rawgeti(L, -1, i);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Name");
-            lua_rawget(L, -2);
-            const char* got = lua_tostring(L, -1);
-            const bool match = got && std::strcmp(got, name) == 0;
-            lua_pop(L, 1);
-            if (match) {
-                lua_remove(L, -2); // the Children list
-                return;
-            }
-        }
-        lua_pop(L, 1);
-    }
-    lua_newtable(L);
-    lua_pushstring(L, "Name");
-    lua_pushstring(L, name);
-    lua_rawset(L, -3);
-    lua_pushvalue(L, -1);
-    lua_rawseti(L, -3, n + 1);
-    luaL_setn(L, -2, n + 1);
-    lua_remove(L, -2);
-}
-
-/// Set the leaf stat `name` of the item on top of the stack.
-static void set_stat(lua_State* L, const char* name, const char* type, auto push_value) {
-    push_stat_child(L, name);
-    lua_pushstring(L, "Type");
-    lua_pushstring(L, type);
-    lua_rawset(L, -3);
-    lua_pushstring(L, "Value");
-    push_value();
-    lua_rawset(L, -3);
-    lua_pop(L, 1);
 }
 
 /// CON_StartCommandMode: `StartCommandMode mode name` starts the command
@@ -2695,33 +2664,101 @@ void track_unit(lua_State* L, const std::vector<std::string>& args) {
 
 } // namespace
 
-void update_engine_stats(lua_State* L) {
+namespace {
+
+/// UIWorldViewUpdateCursorEngineStats (0x0086F090), for the cursor at `at`
+/// on the world: Camera_Cursor_Position, _Elevation (the ground under it)
+/// and _OCell, then, with the camera, _LODMetric (its LOD metric at the
+/// cursor) and Camera_FocusDistance (its target zoom)
+void note_cursor(EngineStats& stats, const map::Terrain& terrain, const sim::Vector3& at,
+                 const renderer::Camera* camera) {
+    stats.set_string("Camera_Cursor_Position",
+                     fmt::format("x={:.2f},y={:.2f},z={:.2f}", at.x, at.y, at.z));
+    stats.set_float("Camera_Cursor_Elevation", terrain.get_terrain_height(at.x, at.z));
+    stats.set_string("Camera_Cursor_OCell",
+                     fmt::format("x={},z={}", static_cast<int>(at.x), static_cast<int>(at.z)));
+    if (!camera) return;
+    sim::Vector3 eye;
+    camera->eye_position(eye.x, eye.y, eye.z);
+    sim::Vector3 forward{camera->focus_x() - eye.x, camera->focus_y() - eye.y,
+                         camera->focus_z() - eye.z};
+    const f32 length =
+        std::sqrt(forward.x * forward.x + forward.y * forward.y + forward.z * forward.z);
+    if (length > 0.0f) forward = {forward.x / length, forward.y / length, forward.z / length};
+    stats.set_float("Camera_Cursor_LODMetric",
+                    renderer::lod_metric(at, eye, forward, camera->fov()));
+    stats.set_float("Camera_FocusDistance", std::fabs(camera->zoom()));
+}
+
+} // namespace
+
+void update_engine_stats(lua_State* L, f64 frame_seconds, const sim::SimState* sim) {
+    EngineStats& stats = engine_stats();
+    stats.note_frame(static_cast<f32>(frame_seconds));
+    stats.note_memory();
+    stats.note_entities(sim ? &sim->entity_registry() : nullptr);
+    // Moho writes the Camera stats for the WorldCamera's view alone
     sim::Vector3 at;
-    if (cursor_world_pos(L, at) && !std::isnan(at.x) && !std::isnan(at.z))
-        update_cursor_stats(L, at);
+    const map::Terrain* terrain = sim ? sim->terrain() : nullptr;
+    if (terrain && cursor_world_pos(L, at) && !std::isnan(at.x) && !std::isnan(at.z)) {
+        const renderer::Camera* camera = nullptr;
+        bool world = true;
+        if (auto* r = get_renderer(L)) {
+            f64 x = 0, y = 0;
+            r->ui_mouse_position(x, y);
+            camera = r->ui_view_at(static_cast<f32>(x), static_cast<f32>(y)).camera;
+            world = camera == &r->cameras().world();
+        }
+        if (world) note_cursor(stats, *terrain, at, camera);
+    }
+    stats.publish(L);
 }
 
 void update_cursor_stats(lua_State* L, const sim::Vector3& at) {
     const auto* sim = get_sim(L);
     const map::Terrain* terrain = sim ? sim->terrain() : nullptr;
     if (!terrain) return;
-    lua_pushstring(L, "__EngineStats");
+    note_cursor(engine_stats(), *terrain, at, nullptr);
+    engine_stats().publish(L);
+}
+
+namespace {
+
+/// ShowArmyStats [army] [section]: retail's army statistics window for the
+/// army (0-based; the focus army's when not given), the section given (or
+/// all) open, as Moho's ShowArmyStats (0x00835160) calls ArmyStats.lua's
+/// Show(army, section). Nothing for an observer, or without a session.
+void show_army_stats(lua_State* L, const std::vector<std::string>& args) {
+    if (!get_sim(L)) return;
+    const int focus = focus_army(L);
+    if (focus < 0) return;
+    // Moho's atoi: the leading digits, else 0
+    int army = focus;
+    if (args.size() > 1) {
+        int given = 0;
+        const auto [end, error] =
+            std::from_chars(args[1].data(), args[1].data() + args[1].size(), given);
+        army = error == std::errc{} ? given : 0;
+    }
+    const std::string section = args.size() > 2 ? args[2] : "all";
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "import");
     lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
+    lua_pushstring(L, "/lua/debug/ArmyStats.lua");
+    if (!lua_isfunction(L, -2) || lua_pcall(L, 1, 1, 0) != 0 || !lua_istable(L, -1)) {
+        spdlog::warn("ShowArmyStats: failed to load \"/lua/debug/ArmyStats.lua\" module");
+        lua_settop(L, top);
         return;
     }
-    push_stat_child(L, "Camera");
-    push_stat_child(L, "Cursor");
-    const std::string position = fmt::format("x={:.2f},y={:.2f},z={:.2f}", at.x, at.y, at.z);
-    set_stat(L, "Position", "String", [&] { lua_pushstring(L, position.c_str()); });
-    set_stat(L, "Elevation", "Float",
-             [&] { lua_pushnumber(L, terrain->get_terrain_height(at.x, at.z)); });
-    const std::string cell =
-        fmt::format("x={},z={}", static_cast<int>(at.x), static_cast<int>(at.z));
-    set_stat(L, "OCell", "String", [&] { lua_pushstring(L, cell.c_str()); });
-    lua_pop(L, 3); // Cursor, Camera, __EngineStats
+    lua_pushstring(L, "Show");
+    lua_gettable(L, -2);
+    lua_pushnumber(L, army);
+    lua_pushlstring(L, section.data(), section.size());
+    if (lua_pcall(L, 2, 0, 0) != 0) spdlog::warn("ShowArmyStats: {}", lua_tostring(L, -1));
+    lua_settop(L, top);
 }
+
+} // namespace
 
 void register_session_console_commands(ui::Console& console) {
     console.add("StartCommandMode", start_command_mode);
@@ -2731,6 +2768,7 @@ void register_session_console_commands(ui::Console& console) {
     console.add("UI_ShowRenameDialog", show_rename_dialog);
     console.add("RenameUnit", rename_unit);
     console.add("UI_TrackUnit", track_unit);
+    console.add("ShowArmyStats", show_army_stats);
 }
 
 } // namespace osc::lua

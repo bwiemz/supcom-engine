@@ -110,6 +110,9 @@ void push_projectile_class(lua_State* L, const std::string& bp_id) {
 
 void create_projectile_object(lua_State* L, Projectile& proj, bool in_water, bool push,
                               u32 source) {
+    // Below the water as it is made, as Moho's constructor sets mBelowWater: its surface pass
+    // alone changes that (a shot that skims no surface keeps it)
+    proj.in_water = in_water;
     if (!L) return;
     const int top = lua_gettop(L);
     // Its categories first: its own OnCreate may test them.

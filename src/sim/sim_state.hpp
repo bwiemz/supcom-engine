@@ -8,6 +8,7 @@
 #include "sim/command_scheduler.hpp"
 #include "sim/economy_event.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/debug_canvas.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/intel_sources.hpp"
 #include "sim/occupancy.hpp"
@@ -174,6 +175,12 @@ public:
     /// Ground units path as Moho's do (roadmap item 4c-2c): their army's
     /// queue searches the footprint classes' cluster maps, and they follow
     /// the cells as CAiPathNavigator does. Off by default for now.
+    /// Moho's debug canvases (Sim::GetDebugCanvas): the one the sim's scripts draw into this
+    /// tick (DrawLine, DrawLinePop, DrawCircle), and the last tick's, which AdvanceBeat rolls
+    /// it into. The UI draws both, until the next beat replaces them.
+    DebugCanvas& debug_canvas() { return debug_canvas_; }
+    const DebugCanvas& debug_canvas() const { return debug_canvas_; }
+    const std::vector<DebugLine>& debug_lines() const { return debug_lines_; }
     bool moho_pathing() const { return moho_pathing_; }
     void set_moho_pathing(bool on) { moho_pathing_ = on; }
     /// How far along its path, in cells, a navigator may pick a target to
@@ -449,6 +456,12 @@ public:
     bool cheats_enabled();
     /// Whether cheats are on, unlogged (the user session's copy of it).
     bool cheats_option() const { return cheats_enabled_; }
+    /// The army (0-based, -1 none) whose stats each beat's Sync carries as
+    /// __ArmyStats: Moho's Sim::mSyncArmy, which SetArmyStatsSyncArmy sets
+    /// (retail's ArmyStats.lua, through ExecLuaInSim). Not saved, as Moho's
+    /// isn't.
+    i32 sync_army() const { return sync_army_; }
+    void set_sync_army(i32 army) { sync_army_ = army; }
     // --- The sim's own thread (OE-134) ---
     /// A tick runs on the sim's thread: until it is collected, nothing else
     /// may read the live sim (the UI reads its last published snapshot).
@@ -1178,6 +1191,7 @@ private:
     std::map<i32, std::set<u32>> army_sources_;  // army -> its command sources
     u32 current_command_source_ = kEngineSource; // see current_command_source
     bool cheats_enabled_ = false;
+    i32 sync_army_ = -1;
     i32 paused_by_ = -1;               // see request_pause
     u32 pause_serial_ = 0;
     bool single_step_ = false;
@@ -1195,6 +1209,8 @@ private:
     /// (roadmap item 4c), made with the pathfinding grid.
     std::unique_ptr<PathTables> path_tables_;
     UnitBlockers unit_blockers_{*this};
+    DebugCanvas debug_canvas_;           // see debug_canvas
+    std::vector<DebugLine> debug_lines_; // see debug_canvas
     bool moho_pathing_ = false;
     bool faf_exe_ = false; // see faf_exe
     bool run_opponent_ai_ = true;                 // see run_opponent_ai

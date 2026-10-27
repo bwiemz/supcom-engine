@@ -2021,6 +2021,8 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.b(p.keep_last_aim);
     w.f32v(p.detonate_above_height);
     w.f32v(p.detonate_below_height);
+    w.f32v(p.detonate_above_override);
+    w.f32v(p.detonate_below_override);
     w.b(p.destroy_on_water);
     w.b(p.stay_upright);
     w.b(p.velocity_align);
@@ -2035,8 +2037,6 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.u32v(p.impact_entity_id);
     w.str(p.impact_kind);
     w.b(p.in_water);
-    w.b(p.burst_armed);
-    save_ids(w, p.passed);
     // info_: the sim's blueprint info, by blueprint (load_sim_state); launch_position,
     // launch_orientation, launch_tick: the display's, for the frame of its first step
 }
@@ -2080,6 +2080,8 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.keep_last_aim = r.b();
     p.detonate_above_height = r.f32v();
     p.detonate_below_height = r.f32v();
+    p.detonate_above_override = r.f32v();
+    p.detonate_below_override = r.f32v();
     p.destroy_on_water = r.b();
     p.stay_upright = r.b();
     p.velocity_align = r.b();
@@ -2094,8 +2096,6 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.impact_entity_id = r.u32v();
     p.impact_kind = r.str();
     p.in_water = r.b();
-    p.burst_armed = r.b();
-    p.passed = load_ids(r);
 }
 
 void StateIO::save(StateWriter& w, const Prop& p) {

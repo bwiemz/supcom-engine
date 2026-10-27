@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 93; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 95; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -122,6 +122,10 @@ constexpr u32 kVersion = 93; // 2: entities' wanted loops (M216b); 3: emitter ov
                              //     targets and held target; a shot's listening weapon
                              // 92: a builder's last seen build fraction (OnBuildProgress)
                              // 93: a projectile's terrain bounces
+                             // 94: a projectile's detonate heights set apart from its
+                             //     blueprint's, and no burst arming
+                             // 95: no entities a projectile was turned away from (it asks
+                             //     again every tick)
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -408,7 +412,10 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     // entity_trace_from_, entity_trace_to_, steer_log_, faf_exe_, run_opponent_ai_: the host's;
     // nav_personal_pos_max_distance_: no save holds FAF's exe global, which
     // its OnPostLoad sets again;
-    // bone_cache_, anim_cache_: caches
+    // bone_cache_, anim_cache_: caches; debug_canvas_, debug_lines_: the scripts' debug
+    // drawing, which no save holds (Moho's canvases aren't saved either)
+    // sync_army_: whose stats each beat's Sync carries, a debug window's (Moho's mSyncArmy isn't
+    // saved)
     {
         std::vector<std::string> armor;
         armor.reserve(sim.armor_def_.table_.size());

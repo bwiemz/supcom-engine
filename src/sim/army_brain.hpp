@@ -287,6 +287,9 @@ public:
 
     /// GetArmyStat's: the stat, made at 0 (whatever its default) if the army has none yet
     f64 make_stat(const std::string& key) { return stats_[key]; }
+    /// Every stat the army has, by name (an unordered map: sort before
+    /// anything another peer would see)
+    const std::unordered_map<std::string, f64>& stats() const { return stats_; }
 
     /// A condition on a stat the army doesn't have is dropped (Moho's
     /// CArmyStats::SetArmyStatsTrigger): false.
@@ -312,6 +315,10 @@ public:
     const std::map<std::string, f64>* blueprint_stats(const std::string& stat) const {
         auto it = blueprint_stats_.find(stat);
         return it == blueprint_stats_.end() ? nullptr : &it->second;
+    }
+    /// Every stat kept per blueprint, as blueprint_stats gives each
+    const std::unordered_map<std::string, std::map<std::string, f64>>& all_blueprint_stats() const {
+        return blueprint_stats_;
     }
     /// A stat summed over these blueprints (Moho's CArmyStatItem::SumCategory)
     f64 blueprint_stat(const std::string& stat, const std::set<std::string>& blueprints) const;

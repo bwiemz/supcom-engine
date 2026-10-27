@@ -99,8 +99,13 @@ public:
     /// mKeepLastAimLatch: set at launch at something neither in the air nor
     /// under the water).
     bool keep_last_aim = false;
-    f32 detonate_above_height = 0;  // ChangeDetonateAboveHeight
-    f32 detonate_below_height = 0;  // ChangeDetonateBelowHeight
+    /// Its burst band (Moho's): its blueprint's DetonateAboveHeight and DetonateBelowHeight,
+    /// in place of which ChangeDetonateAboveHeight and ChangeDetonateBelowHeight set heights
+    /// (negative, as they start: the blueprint's).
+    f32 detonate_above_height = 0;
+    f32 detonate_below_height = 0;
+    f32 detonate_above_override = -1.0f;
+    f32 detonate_below_override = -1.0f;
     bool destroy_on_water = false;   // SetDestroyOnWater
     bool stay_upright = false;       // SetStayUpright
     bool velocity_align = false;     // SetVelocityAlign
@@ -123,8 +128,6 @@ public:
     u32 launch_tick = 0;
     /// Below the water's surface: crossing it raises OnEnterWater/OnExitWater.
     bool in_water = false;
-    /// Risen above its DetonateBelowHeight: it bursts on coming back down.
-    bool burst_armed = false;
     /// Terrain bounces (Moho's mBounceLimit, mGroundTick, mBounceVelocityDamping): its blueprint's
     /// MinBounceCount to MaxBounceCount, picked as it is made, of its ground hits send it back up
     /// instead of ending it, its velocity damped by BounceVelDamp each time. Every ground hit
@@ -136,9 +139,6 @@ public:
     /// mDirectAwayFromGround, mGroundDirection).
     bool bounce_pending = false;
     Vector3 bounce_velocity;
-
-    /// Entities an OnCollisionCheck turned it away from: it passes them.
-    std::vector<u32> passed;
 
     /// Its step, `tick` the sim's (Moho's MotionTick): the impact its last
     /// step found, else its move and the collision check.
@@ -185,10 +185,21 @@ private:
     /// The engine's own damage, for projectiles no weapon passed DamageData to
     /// (the engine-fired silo and OverCharge shots).
     void deal_engine_damage(lua_State* L, Entity* target, EntityRegistry& registry);
-    /// This tick's path, `from` to where it is now, against what it can hit:
-    /// true if it hit something (it may be gone).
-    bool collide(const Vector3& from, EntityRegistry& registry, lua_State* L,
-                 const map::Terrain* terrain);
+    /// What this tick's path met: where, how far along it, what, and the impact's type (none:
+    /// the hit's own).
+    struct PathImpact {
+        Vector3 at;
+        f32 interpolation = 0;
+        const Entity* hit = nullptr;
+        const char* type = nullptr;
+    };
+    /// This tick's path, `from` to where it is now, against what it can hit: the nearest hit
+    /// (its scripts may have destroyed it).
+    std::optional<PathImpact> collide(const Vector3& from, EntityRegistry& registry, lua_State* L,
+                                      const map::Terrain* terrain);
+    /// Moho's detonate band, CheckCollision's last test: an 'Air' burst where this tick's path
+    /// crosses its height above the ground, which stands in place of anything else it met.
+    std::optional<PathImpact> detonate_band(const Vector3& from, const map::Terrain* terrain) const;
     void record_impact(const Vector3& at, f32 interpolation, const Entity* hit, const char* type,
                        const map::Terrain* terrain);
     /// Whether its script and `other`'s both let them meet

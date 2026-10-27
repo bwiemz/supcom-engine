@@ -11,6 +11,7 @@ add_library(osc_sim STATIC
     bone_data.cpp
     bounded_props.cpp
     collision.cpp
+    debug_canvas.cpp
     collision_beam.cpp
     collision_cells.cpp
     emitter_params.cpp

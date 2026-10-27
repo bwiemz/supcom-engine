@@ -811,8 +811,9 @@ void App::Window::update_ui(double dt) {
         osc::lua::pump_desyncs(ui_lua_state.raw());
     }
 
-    // The engine statistics the UI reads this frame (FAF's cursor depth)
-    if (sim_state) osc::lua::update_engine_stats(ui_lua_state.raw());
+    // The engine statistics the UI reads this frame (Moho publishes them
+    // every UI tick, the front end's too)
+    osc::lua::update_engine_stats(ui_lua_state.raw(), wall_dt, sim_state.get());
 
     run_ui_scripts(dt);
 }

@@ -34,6 +34,7 @@ add_executable(osc_tests
     test_primary_weapon_target.cpp
     test_retarget_on_miss.cpp
     test_projectile_bounce.cpp
+    test_projectile_detonate.cpp
     test_weapon_intel.cpp
     test_command_feedback.cpp
     test_map_border.cpp
@@ -82,6 +83,8 @@ add_executable(osc_tests
     test_user_unit.cpp
     test_verify_script_command.cpp
     test_faf_bindings.cpp
+    test_engine_stats.cpp
+    test_army_stats_sync.cpp
     test_external_factory.cpp
     test_damage_callbacks.cpp
     test_profiler_self_time.cpp
@@ -92,6 +95,7 @@ add_executable(osc_tests
     test_binding_coverage.cpp
     test_lua_persist.cpp
     test_lua_state.cpp
+    test_sim_debug_draw.cpp
     test_sim_sync.cpp
     test_init_loader.cpp
     test_blueprint_loading.cpp

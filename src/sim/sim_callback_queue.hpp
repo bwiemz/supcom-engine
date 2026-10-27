@@ -78,6 +78,11 @@ inline constexpr const char* kDecreaseCommandCountCallback = "__osc_DecreaseComm
 /// network game sends it (a single-player save is written at once).
 inline constexpr const char* kSaveGameCallback = "__osc_SaveGame";
 
+/// Func name of Moho's CMDST_ExecuteLuaInSim, as ExecLuaInSim sends it: with
+/// cheats on, the sim's global function `Func` called with the one value
+/// lua_args holds.
+inline constexpr const char* kExecLuaInSimCallback = "__osc_ExecLuaInSim";
+
 /// The engine's own callbacks start with this; a script may not issue one.
 inline constexpr const char* kEngineCallbackPrefix = "__osc_";
 

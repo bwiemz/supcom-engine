@@ -46,6 +46,19 @@ void WorldShapes::line(const sim::Vector3& a, const sim::Vector3& b, u32 color, 
     add({{add3(a, offset), add3(b, offset), sub3(b, offset), sub3(a, offset)}, color});
 }
 
+void WorldShapes::hairline(const sim::Vector3& a, const sim::Vector3& b, u32 color) {
+    // A pixel wide at its farther end, across both the line and the way the eye looks at it
+    const f32 px = std::max(pixel_ ? pixel_(a) : 0.0f, pixel_ ? pixel_(b) : 0.0f);
+    const sim::Vector3 along = sub3(b, a);
+    const sim::Vector3 look =
+        sub3({(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f}, eye_);
+    sim::Vector3 across{along.y * look.z - along.z * look.y, along.z * look.x - along.x * look.z,
+                        along.x * look.y - along.y * look.x};
+    if (across.x == 0.0f && across.y == 0.0f && across.z == 0.0f) across = {1.0f, 0.0f, 0.0f};
+    const sim::Vector3 offset = with_length(across, (px > 0.0f ? px : 1.0f) * 0.5f);
+    add({{add3(a, offset), add3(b, offset), sub3(b, offset), sub3(a, offset)}, color});
+}
+
 void WorldShapes::circle(const sim::Vector3& centre, f32 radius, u32 color, f32 thickness) {
     const f32 half = width(centre, thickness);
     const f32 inner = radius - half;

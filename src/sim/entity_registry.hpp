@@ -5,6 +5,7 @@
 #include "sim/sim_random.hpp"
 
 #include <algorithm>
+#include <array>
 #include <deque>
 #include <functional>
 #include <map>
@@ -84,6 +85,11 @@ public:
 
     /// Number of active entities.
     size_t count() const { return live_count_; }
+    /// The registered entities of each of Moho's id families (an id's top
+    /// four bits: 0 unit, 1 projectile, 2 prop, 3 blip, 4 shield, 5 other),
+    /// as Moho's EntityDB counts them for its engine statistics. Reads the
+    /// ids alone.
+    std::array<u32, 16> family_counts() const;
 
     /// Free the entities unregistered since the last call. An unregistered
     /// entity leaves every lookup immediately but its memory lives until
