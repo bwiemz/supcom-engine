@@ -649,6 +649,20 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
             // (a script there that changed the unit's orders took this one)
             if (command_queue_.empty() || &command_queue_.front() != order) return OrderStep::Hold;
         }
+        // Moho's AAS_6: while its target weapon passes over the target (ReTargetOnMiss), the
+        // attack task sends it at the target
+        const auto passed_over = [&] {
+            for (const auto& w : weapons_) {
+                if (w->enabled && w->attacks_on_order() && w->can_pick(*this, *target, ctx.sim)) {
+                    return w->retarget_cooldown != 0;
+                }
+            }
+            return false;
+        };
+        if (is_mobile() && !can_fly() && passed_over()) {
+            close_in();
+            return OrderStep::Hold;
+        }
         // CUnitAttackTargetTask::TaskTick, Complete: AbortNavigation unless Air.CanFly.
         if (can_fly()) {
             close_in();
