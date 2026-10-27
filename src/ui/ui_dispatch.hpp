@@ -147,6 +147,9 @@ private:
     void handle_key(lua_State* L, const UIEvent& ev);
     /// UI_ActivateChat: chat.lua's ActivateChat(modifiers), in a game.
     void activate_chat(lua_State* L, const UIEvent& ev);
+    /// MAUI_ToggleConsole: uimain.lua's ToggleConsole(), the console dialog
+    /// shown or hidden.
+    void toggle_console(lua_State* L);
     /// A Movie control's frame (Moho's CMauiMovie::Frame): OnFrame, then
     /// OnStopped, its movie's clock and frame, or OnFinished at its end.
     void movie_frame(lua_State* L, UIControl* ctrl, f64 dt);
