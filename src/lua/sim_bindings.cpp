@@ -3394,6 +3394,18 @@ static int l_ParseEntityCategory(lua_State* L) {
     return 1;
 }
 
+sim::CategoryExpr parse_entity_category(lua_State* L, const std::string& text) {
+    const int top = lua_gettop(L);
+    lua_pushcfunction(L, l_ParseEntityCategory);
+    lua_pushstring(L, text.c_str());
+    sim::CategoryExpr category;
+    if (lua_pcall(L, 1, 1, 0) == 0) {
+        category = sim::compile_category(L, -1);
+    }
+    lua_settop(L, top);
+    return category;
+}
+
 /// A Rect at `idx` as Moho reads one (SCR_FromLuaCopy<Rect2f>): its x0, y0,
 /// x1 and y1 fields, y being the map's z. A plain {x0, z0, x1, z1} array
 /// (the engine's own callers) is read too.

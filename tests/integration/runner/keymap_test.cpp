@@ -235,6 +235,16 @@ void test_session_commands(TestContext& ctx, ui::UIControlRegistry& registry,
                         "selects so ({}; {}; {}), and needs its five arguments ({})",
                         by_lua, lua_added, lua_one, short_of));
 
+    // FAF's key actions write "AIR + MOBILE" and "FACTORY * LAND", and its similar-units
+    // action joins a unit's categories and id with " * ": Moho's parse leaves out the words no
+    // blueprint has
+    const std::string star = text("ui_select('DIRECTFIRE * TECH1', false, false, false, false)");
+    const std::string plus = text("ui_select('ENGINEER + TECH1', false, false, false, false)");
+    const std::string by_id = text("ui_select('uel0105 * NOSUCH', false, false, false, false)");
+    t.check(star == "uel0201" && plus == "uel0105,uel0105" && by_id == "uel0105,uel0105",
+            fmt::format("Test 3c: a word that is no category is left out ({}; {}; {})", star, plus,
+                        by_id));
+
     // A busy engineer isn't idle; an unselectable one isn't selected.
     sim_lua(R"(
         local p = session_eng1:GetPosition()
