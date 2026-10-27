@@ -334,9 +334,16 @@ static int entity_GetHealth(lua_State* L) {
     return 1;
 }
 
-// faf-re Entity::AdjustHealth; Lua's SetHealth goes through it too.
-static void adjust_health(sim::Entity& e, f32 delta) {
+// faf-re Entity::AdjustHealth (0x00679860); Lua's SetHealth goes through it
+// too. The NoDamage sim variable refuses a loss, and a dead unit takes no
+// healing.
+static void adjust_health(lua_State* L, sim::Entity& e, f32 delta) {
     if (delta == 0.0f) {
+        return;
+    }
+    const auto* sim = get_sim(L);
+    const bool dead = e.is_unit() && static_cast<const sim::Unit&>(e).is_dying();
+    if ((sim && sim->con_vars().no_damage && delta < 0.0f) || (dead && delta > 0.0f)) {
         return;
     }
     e.set_health(std::min(e.health() + delta, e.max_health()));
@@ -347,7 +354,7 @@ static int entity_SetHealth(lua_State* L) {
     if (!e) return 0;
     // SetHealth(self, instigator, health)
     f32 h = static_cast<f32>(lua_tonumber(L, 3));
-    adjust_health(*e, h - e->health());
+    adjust_health(L, *e, h - e->health());
     return 0;
 }
 
@@ -370,7 +377,7 @@ static int entity_AdjustHealth(lua_State* L) {
     if (!e) return 0;
     // AdjustHealth(self, instigator, delta)
     f32 delta = static_cast<f32>(lua_tonumber(L, 3));
-    adjust_health(*e, delta);
+    adjust_health(L, *e, delta);
     return 0;
 }
 

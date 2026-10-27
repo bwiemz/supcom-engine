@@ -187,6 +187,8 @@ public:
     /// original game does. Kept apart because update_economy recounts the
     /// units' part every tick; applied to max_storage at once too, so a
     /// GiveResource in the same script call can fill it.
+    f64 extra_storage_mass() const { return extra_storage_mass_; }
+    f64 extra_storage_energy() const { return extra_storage_energy_; }
     void set_extra_storage(f64 mass, f64 energy) {
         economy_.mass.max_storage += static_cast<f32>(mass - extra_storage_mass_);
         economy_.energy.max_storage += static_cast<f32>(energy - extra_storage_energy_);
