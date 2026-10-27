@@ -225,7 +225,8 @@ public:
     f32 heading() const { return heading_; } // radians
     f32 pitch() const { return pitch_; }     // radians
     bool on_target() const { return on_target_; }
-    void set_reset_pose_time(f32 t) { reset_pose_time_ = t; }
+    /// SetResetPoseTime's, in ticks (0: its weapon's)
+    void set_reset_pose_ticks(i32 t) { reset_pose_ticks_ = t; }
     void set_aim_heading_offset(f32 o) { aim_heading_offset_ = o; }
 
     void set_yaw_bone(i32 b) { yaw_bone_ = b; }
@@ -279,6 +280,9 @@ public:
     }
 
 private:
+    /// Moho's mResetTime as it tracks: SetResetPoseTime's, else its weapon's
+    i32 hold_ticks(const Unit& unit) const;
+
     i32 yaw_bone_ = -1;
     i32 pitch_bone_ = -1;
     i32 muzzle_bone_ = -1;
@@ -289,13 +293,13 @@ private:
     // Arc in radians; speeds in radians per second.
     f32 yaw_min_ = -3.14159265f, yaw_max_ = 3.14159265f, yaw_speed_ = 3.14159265f;
     f32 pitch_min_ = -1.5707963f, pitch_max_ = 1.5707963f, pitch_speed_ = 3.14159265f;
-    f32 reset_pose_time_ = 2.0f;
+    i32 reset_pose_ticks_ = 0;
     f32 aim_heading_offset_ = 0;
     Vector3 target_;
     std::optional<f32> elevation_;
     bool unsolved_ = false;
     f32 tolerance_ = 0;
-    f32 idle_time_ = 0;
+    i32 reset_ticks_ = 0; // mResetTime
     bool has_target_ = false;
     bool on_target_ = false;
     bool builder_arm_ = false;

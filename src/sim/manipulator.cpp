@@ -580,6 +580,18 @@ void AimManipulator::set_heading_pitch(f32 h, f32 p) {
     pitch_ = std::clamp(p, pitch_min_, pitch_max_);
 }
 
+i32 AimManipulator::hold_ticks(const Unit& unit) const {
+    if (reset_pose_ticks_ > 0) {
+        return reset_pose_ticks_;
+    }
+    for (const auto& weapon : unit.weapons()) {
+        if (weapon->weapon_index == weapon_index_) {
+            return weapon->aim_reset_ticks;
+        }
+    }
+    return 1;
+}
+
 void AimManipulator::tick(f32 dt) {
     const Unit* unit = owner_;
     const bool bones = unit && unit->bone_data() && unit->bone_data()->is_valid(yaw_bone_);
@@ -596,7 +608,7 @@ void AimManipulator::tick(f32 dt) {
         return;
     }
     if (tracks && unsolved_) {
-        idle_time_ = 0;
+        reset_ticks_ = hold_ticks(*unit);
         on_target_ = false;
         return;
     }
@@ -605,7 +617,7 @@ void AimManipulator::tick(f32 dt) {
     f32 want_pitch = 0;
     bool reachable = true;
     if (tracks) {
-        idle_time_ = 0;
+        reset_ticks_ = hold_ticks(*unit);
         // The target in the yaw bone's rest frame: heading about its Y axis
         // from its forward (+Z); pitch from the pitch bone, once turned.
         const BonePose yaw = rest_frame_world(*unit, yaw_bone_);
@@ -663,11 +675,9 @@ void AimManipulator::tick(f32 dt) {
     } else {
         // Hold the pose for the reset time, then return to rest.
         on_target_ = false;
-        if (!builder_arm_) {
-            idle_time_ += dt;
-            if (idle_time_ < reset_pose_time_) {
-                return;
-            }
+        if (!builder_arm_ && reset_ticks_ > 0) {
+            --reset_ticks_;
+            return;
         }
         want_heading = full_circle ? 0.0f : std::clamp(0.0f, yaw_min_, yaw_max_);
         want_pitch = std::clamp(0.0f, pitch_min_, pitch_max_);

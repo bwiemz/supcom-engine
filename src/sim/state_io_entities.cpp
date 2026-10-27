@@ -673,6 +673,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.b(wp.stop_on_primary_weapon_busy);
     w.b(wp.retarget_on_miss);
     w.u32v(wp.target_check_period);
+    w.i32v(wp.aim_reset_ticks);
     w.b(wp.cannot_attack_ground);
     w.i32v(wp.attack_ground_tries);
     w.i32v(wp.weapon_priorities_ref);
@@ -769,6 +770,7 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.stop_on_primary_weapon_busy = r.b();
     wp.retarget_on_miss = r.b();
     wp.target_check_period = r.u32v();
+    wp.aim_reset_ticks = r.i32v();
     wp.cannot_attack_ground = r.b();
     wp.attack_ground_tries = r.i32v();
     wp.weapon_priorities_ref = r.i32v();
@@ -887,14 +889,14 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         w.f32v(x.pitch_min_);
         w.f32v(x.pitch_max_);
         w.f32v(x.pitch_speed_);
-        w.f32v(x.reset_pose_time_);
+        w.i32v(x.reset_pose_ticks_);
         w.f32v(x.aim_heading_offset_);
         w.vec3(x.target_);
         w.b(x.elevation_.has_value());
         w.f32v(x.elevation_.value_or(0.0f));
         w.b(x.unsolved_);
         w.f32v(x.tolerance_);
-        w.f32v(x.idle_time_);
+        w.i32v(x.reset_ticks_);
         w.b(x.has_target_);
         w.b(x.on_target_);
         w.b(x.builder_arm_);
@@ -1040,7 +1042,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         x->pitch_min_ = r.f32v();
         x->pitch_max_ = r.f32v();
         x->pitch_speed_ = r.f32v();
-        x->reset_pose_time_ = r.f32v();
+        x->reset_pose_ticks_ = r.i32v();
         x->aim_heading_offset_ = r.f32v();
         x->target_ = r.vec3();
         const bool has_elevation = r.b();
@@ -1048,7 +1050,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         x->elevation_ = has_elevation ? std::optional<f32>(elevation) : std::nullopt;
         x->unsolved_ = r.b();
         x->tolerance_ = r.f32v();
-        x->idle_time_ = r.f32v();
+        x->reset_ticks_ = r.i32v();
         x->has_target_ = r.b();
         x->on_target_ = r.b();
         x->builder_arm_ = r.b();
