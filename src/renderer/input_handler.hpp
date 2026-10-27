@@ -98,6 +98,14 @@ std::vector<u32> highest_selection_priority(const std::vector<std::pair<u32, int
 /// is 6, after every other (FA-Binary-Patches section/selectionPriority.cpp).
 int drag_selection_priority(const sim::Unit& unit, bool faf_exe);
 
+/// A Script order as UserScriptCommand.lua's VerifyScriptCommand let it go:
+/// its AuthorizedUnits, and the rest of its answer, the task's data, as
+/// sim::lua_to_bytes writes it.
+struct VerifiedScript {
+    std::vector<u32> units;
+    std::string args;
+};
+
 struct CommandMode {
     std::string mode; ///< "build", "order", "ping"...; empty for none
     std::string name; ///< blueprint id (build) or order cap, e.g. RULEUCC_Attack
@@ -107,10 +115,14 @@ struct CommandMode {
     f32 drag_spacing = 0.0f; ///< build: the line's spacing, its skirt
     /// build: Physics.BuildRestriction's deposit, which the cursor snaps to
     sim::PlacementRules::Deposit deposit = sim::PlacementRules::Deposit::None;
-    /// An ability's order (RULEUCC_Script, M206w): the Script order's table
-    /// for a click at a point -- the mode's own (TaskName, AbilityName) with
-    /// the point as Location -- as sim::lua_to_bytes writes it.
-    std::function<std::string(const sim::Vector3&)> script_args_at{};
+    /// An ability's order (RULEUCC_Script, M206w): Moho's
+    /// UI_VerifyScriptCommand, given the selection, the target (a unit, else
+    /// 0 and the point) and whether the order replaces the units' queues.
+    /// Its verdict, VerifyScriptCommand's in /lua/user/UserScriptCommand.lua:
+    /// none, or the units it goes to and the task's data.
+    std::function<std::optional<VerifiedScript>(const std::vector<u32>& units, u32 target_id,
+                                                const sim::Vector3& at, bool clear)>
+        verify_script{};
 };
 
 /// A command a command-mode click issued, as FA's OnCommandIssued sees it.

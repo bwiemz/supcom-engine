@@ -288,6 +288,10 @@ public:
     /// the cartographic minimap draws no meshes (FA-Binary-Patches
     /// MinimapMesh.cpp), as FAF's minimap toggle has it.
     void set_faf_exe(bool on) { faf_exe_ = on; }
+    /// What placing a structure asks of each structure beside it before its
+    /// outline lights (gamemain.OnDetectAdjacencyBonus, through the app); none:
+    /// nothing lights, as Moho's with no session
+    void set_adjacency_bonus(AdjacencyBonus bonus) { adjacency_bonus_ = std::move(bonus); }
     /// The cartographic minimap's meshes the last frame (minimap_meshes.hpp):
     /// whether they were gathered (not without a cartographic minimap, or
     /// with FAF's toggle off), the minimap camera's LOD metric, the instances
@@ -1059,6 +1063,7 @@ private:
     f32 minimap_lod_metric_ = 0.0f;
     u32 minimap_fi_ = 0; ///< the slot the last gather filled
     bool faf_exe_ = false;
+    AdjacencyBonus adjacency_bonus_;
     VisionRenderer vision_renderer_; ///< the world's fog of war (scene pass)
     bool fog_on_ = false;            ///< this frame's: a focus army, fog of war
     std::vector<RangeRing> fog_circles_;

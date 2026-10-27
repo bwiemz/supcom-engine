@@ -3296,10 +3296,22 @@ void Renderer::update_world_shapes(lua_State* L, const sim::FrameView& frame,
             return lod_metric(p, eye, forward, fov) / width;
         });
 
-        // Placing a structure: its pad and the pads of the structures standing or
-        // under way, outlined on the ground, those in view (build_outlines)
+        // Placing a structure: its pad and the pads of the focus army's structures
+        // standing or under way, outlined on the ground, those in view
+        // (build_outlines). As Moho's DrawBuildDragAdjacencyHighlights, only those
+        // its camera lists in view, and none at or past the depth of the build's
+        // mesh's IconFadeInZoom: one out of view lights nothing.
         if (ghost) {
-            for (const PadOutline& o : build_outlines(structure_pads(frame, &recon_), *ghost)) {
+            const f32 fade = strategic_icon_renderer_.fade_in_zoom(ghost->blueprint_id, L);
+            std::vector<StructurePad> pads = structure_pads(frame, player_army_);
+            std::erase_if(pads, [&](const StructurePad& pad) {
+                const f32 cx = (pad.site.x0 + pad.site.x1) * 0.5f;
+                const f32 cz = (pad.site.z0 + pad.site.z1) * 0.5f;
+                const f32 reach = std::max(pad.site.x1 - pad.site.x0, pad.site.z1 - pad.site.z0);
+                return !frustum.is_sphere_visible(cx, pad.y, cz, reach) ||
+                       lod_metric({pad.x, pad.y, pad.z}, eye, forward, fov) >= fade;
+            });
+            for (const PadOutline& o : build_outlines(pads, *ghost, adjacency_bonus_)) {
                 const f32 cx = (o.site.x0 + o.site.x1) * 0.5f;
                 const f32 cz = (o.site.z0 + o.site.z1) * 0.5f;
                 const f32 reach = std::max(o.site.x1 - o.site.x0, o.site.z1 - o.site.z0);

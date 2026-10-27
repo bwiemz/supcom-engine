@@ -361,6 +361,21 @@ void show_ui_cursor(lua_State* uiL, bool shown);
 void cancel_command_mode(lua_State* uiL);
 void call_command_graph(lua_State* uiL, const char* name, int nargs);
 void sync_build_ghost(sim::SimState& sim, const renderer::CommandMode& m, bool& ghost_from_mode);
+/// Moho's UI_VerifyScriptCommand (faf-re CWldSession.cpp, 0x0083E640): a
+/// Script order (Units, Blueprint, Target, CommandType, Clear) handed to
+/// /lua/user/UserScriptCommand.lua's VerifyScriptCommand. None unless its
+/// answer sets UserValidated; else the answer's AuthorizedUnits, and the
+/// answer without them as the task's data. An error is logged, and lets
+/// nothing go.
+std::optional<renderer::VerifiedScript> verify_script_command(lua_State* uiL,
+                                                              const std::vector<u32>& units,
+                                                              u32 target_id, const sim::Vector3& at,
+                                                              bool clear);
+/// Moho's UserUnit::DoOnDetectAdjacencyBonusFor (faf-re UserUnit.cpp,
+/// 0x0083EEC0): /lua/ui/game/gamemain.lua's OnDetectAdjacencyBonus(unit,
+/// blueprint), whether `unit` gives a structure of `blueprint` placed beside
+/// it a bonus. An error is logged, and gives none.
+bool detect_adjacency_bonus(lua_State* uiL, u32 unit, const std::string& blueprint);
 
 // ui_globals.cpp
 /// Register the session's UI globals (FlushEvents, SessionIsReplay, ...) on

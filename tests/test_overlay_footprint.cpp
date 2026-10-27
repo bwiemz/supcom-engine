@@ -8,6 +8,9 @@
 #include "sim/world_snapshot.hpp"
 
 #include <cmath>
+#include <string>
+#include <utility>
+#include <vector>
 
 using osc::f32;
 using osc::renderer::convex_rows;
@@ -38,9 +41,10 @@ TEST_CASE("A footprint on screen is filled row by row, within its edges", "[over
 TEST_CASE("Placing a structure outlines its pad and the standing pads, lit where adjacent",
           "[overlay]") {
     using osc::renderer::BuildGhost;
-    using osc::sim::StructureSite;
-    const std::vector<std::pair<StructureSite, osc::f32>> pads = {
-        {{26.5f, 36.5f, 34.5f, 44.5f}, 4.0f}, {{60.0f, 60.0f, 68.0f, 68.0f}, 2.0f}};
+    using osc::renderer::StructurePad;
+    const std::vector<StructurePad> pads = {{{26.5f, 36.5f, 34.5f, 44.5f}, 30.5f, 4.0f, 40.5f, 1},
+                                            {{60.0f, 60.0f, 68.0f, 68.0f}, 64.0f, 2.0f, 64.0f, 2}};
+    const auto any = [](osc::u32, const std::string&) { return true; };
     BuildGhost ghost;
     ghost.blueprint_id = "ueb0101";
     ghost.y = 5.0f;
@@ -49,7 +53,7 @@ TEST_CASE("Placing a structure outlines its pad and the standing pads, lit where
     ghost.pad_x1 = 36.5f;
     ghost.pad_z1 = 41.5f;
     // Beside the first pad: both lit; the other dim
-    auto out = osc::renderer::build_outlines(pads, ghost);
+    auto out = osc::renderer::build_outlines(pads, ghost, any);
     REQUIRE(out.size() == 3);
     CHECK(out[0].site.x0 == Catch::Approx(34.5f));
     CHECK(out[0].y == Catch::Approx(5.0f));
@@ -59,10 +63,10 @@ TEST_CASE("Placing a structure outlines its pad and the standing pads, lit where
     CHECK(out[2].color == osc::renderer::kOutlineDim);
     // A site that can't be built lights nothing and is red
     ghost.valid = false;
-    out = osc::renderer::build_outlines(pads, ghost);
+    out = osc::renderer::build_outlines(pads, ghost, any);
     CHECK(out[0].color == osc::renderer::kOutlineInvalid);
     CHECK(out[1].color == osc::renderer::kOutlineDim);
-    // A drag's line: each site its own outline, a pad lit by any of them
+    // A drag's line: each site its own outline, a pad lit by one of them
     ghost.valid = true;
     ghost.pad_x0 = 0;
     ghost.pad_z0 = 0;
@@ -74,7 +78,7 @@ TEST_CASE("Placing a structure outlines its pad and the standing pads, lit where
     beside.pad_x1 = 70.0f;
     beside.pad_z1 = 64.0f;
     ghost.line.push_back(beside);
-    out = osc::renderer::build_outlines(pads, ghost);
+    out = osc::renderer::build_outlines(pads, ghost, any);
     REQUIRE(out.size() == 4);
     CHECK(out[0].color == osc::renderer::kOutlineDim);
     CHECK(out[1].color == osc::renderer::kOutlineLit);
@@ -82,10 +86,54 @@ TEST_CASE("Placing a structure outlines its pad and the standing pads, lit where
     CHECK(out[3].color == osc::renderer::kOutlineLit);
 }
 
-TEST_CASE("Placing a structure outlines the pads of those standing", "[overlay]") {
+TEST_CASE("A placed structure is lit by the first structure beside it that gives it a bonus, as "
+          "Moho's",
+          "[overlay]") {
+    // DrawBuildDragAdjacencyHighlights (0x00854B70): each structure tries the
+    // previews still dim, and gamemain.OnDetectAdjacencyBonus decides; a
+    // preview once lit is passed over (cmp of its colour, 0x00854DA0)
+    using osc::renderer::BuildGhost;
+    using osc::renderer::StructurePad;
+    const std::vector<StructurePad> pads = {{{26.5f, 36.5f, 34.5f, 44.5f}, 30.5f, 4.0f, 40.5f, 1},
+                                            {{36.5f, 36.5f, 44.5f, 44.5f}, 40.5f, 4.0f, 40.5f, 2}};
+    BuildGhost ghost;
+    ghost.blueprint_id = "ueb1101";
+    ghost.pad_x0 = 34.5f;
+    ghost.pad_z0 = 39.5f;
+    ghost.pad_x1 = 36.5f;
+    ghost.pad_z1 = 41.5f;
+    std::vector<std::pair<osc::u32, std::string>> asked;
+    bool from_first = true;
+    const auto bonus = [&](osc::u32 unit, const std::string& bp) {
+        asked.emplace_back(unit, bp);
+        return unit != 1 || from_first;
+    };
+    // Both beside it: the first lights it, the second finds it lit
+    auto out = osc::renderer::build_outlines(pads, ghost, bonus);
+    REQUIRE(out.size() == 3);
+    CHECK(out[0].color == osc::renderer::kOutlineLit);
+    CHECK(out[1].color == osc::renderer::kOutlineLit);
+    CHECK(out[2].color == osc::renderer::kOutlineDim);
+    CHECK(asked == std::vector<std::pair<osc::u32, std::string>>{{1, "ueb1101"}});
+    // The first gives no bonus: the second lights it
+    asked.clear();
+    from_first = false;
+    out = osc::renderer::build_outlines(pads, ghost, bonus);
+    CHECK(out[0].color == osc::renderer::kOutlineLit);
+    CHECK(out[1].color == osc::renderer::kOutlineDim);
+    CHECK(out[2].color == osc::renderer::kOutlineLit);
+    CHECK(asked.size() == 2);
+    // With nothing to ask, nothing lights
+    out = osc::renderer::build_outlines(pads, ghost, {});
+    CHECK(out[0].color == osc::renderer::kOutlineDim);
+    CHECK(out[1].color == osc::renderer::kOutlineDim);
+}
+
+TEST_CASE("Placing a structure outlines the focus army's live structures", "[overlay]") {
     osc::sim::WorldSnapshot world;
     osc::sim::EntityRecord factory;
     factory.id = 1;
+    factory.army = 0;
     factory.is_unit = true;
     factory.is_structure = true;
     factory.position = {30.5f, 4.0f, 40.5f};
@@ -95,33 +143,40 @@ TEST_CASE("Placing a structure outlines the pads of those standing", "[overlay]"
     world.entities.push_back(factory);
     osc::sim::EntityRecord tank;
     tank.id = 2;
+    tank.army = 0;
     tank.is_unit = true;
     tank.position = {10, 0, 10};
     world.entities.push_back(tank);
+    osc::sim::EntityRecord theirs = factory;
+    theirs.id = 3;
+    theirs.army = 1;
+    world.entities.push_back(theirs);
+    osc::sim::EntityRecord dying = factory;
+    dying.id = 4;
+    dying.is_dying = true;
+    world.entities.push_back(dying);
 
-    const auto pads =
-        osc::renderer::structure_pads(osc::sim::FrameView(&world, &world, 1.0f), nullptr);
+    const osc::sim::FrameView view(&world, &world, 1.0f);
+    const auto pads = osc::renderer::structure_pads(view, 0);
     REQUIRE(pads.size() == 1);
-    CHECK(pads[0].first.x0 == Catch::Approx(26.5f));
-    CHECK(pads[0].first.x1 == Catch::Approx(34.5f));
-    CHECK(pads[0].first.z0 == Catch::Approx(36.5f));
-    CHECK(pads[0].second == Catch::Approx(4.0f));
+    CHECK(pads[0].id == 1);
+    CHECK(pads[0].site.x0 == Catch::Approx(26.5f));
+    CHECK(pads[0].site.x1 == Catch::Approx(34.5f));
+    CHECK(pads[0].site.z0 == Catch::Approx(36.5f));
+    CHECK(pads[0].y == Catch::Approx(4.0f));
+    CHECK(osc::renderer::structure_pads(view, -1).empty()); // an observer's: none
 }
 
-TEST_CASE("A ghost lights the pads it touches edge on, its span inside", "[overlay]") {
+TEST_CASE("A ghost touches the pads beside it edge on, its span inside", "[overlay]") {
     using osc::sim::StructureSite;
     const StructureSite factory{26.5f, 36.5f, 34.5f, 44.5f};
     const StructureSite beside{34.5f, 39.5f, 36.5f, 41.5f};
-    CHECK(osc::renderer::adjacency_lit({factory}, beside) == std::vector<bool>{true});
-    CHECK(osc::renderer::adjacency_lit({factory}, {34.5f, 43.5f, 36.5f, 45.5f}) ==
-          std::vector<bool>{false});
-    CHECK(osc::renderer::adjacency_lit({factory}, {35.5f, 39.5f, 37.5f, 41.5f}) ==
-          std::vector<bool>{false});
-    CHECK(osc::renderer::adjacency_lit({factory}, {34.5f, 30.0f, 42.5f, 50.0f}) ==
-          std::vector<bool>{true});
-
+    CHECK(factory.touches(beside));
+    CHECK_FALSE(factory.touches({34.5f, 43.5f, 36.5f, 45.5f}));
+    CHECK_FALSE(factory.touches({35.5f, 39.5f, 37.5f, 41.5f}));
+    CHECK(factory.touches({34.5f, 30.0f, 42.5f, 50.0f}));
     const StructureSite other{36.5f, 36.5f, 44.5f, 44.5f};
-    CHECK(osc::renderer::adjacency_lit({factory, other}, beside) == std::vector<bool>{true, true});
+    CHECK(other.touches(beside));
 }
 
 TEST_CASE("A silo's stored missiles draw nothing over it", "[overlay]") {

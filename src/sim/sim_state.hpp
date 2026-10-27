@@ -176,6 +176,15 @@ public:
     /// the cells as CAiPathNavigator does. Off by default for now.
     bool moho_pathing() const { return moho_pathing_; }
     void set_moho_pathing(bool on) { moho_pathing_ = on; }
+    /// How far along its path, in cells, a navigator may pick a target to
+    /// slide straight to: Moho's 50 (TryAdvanceTargetPoint), which FAF's
+    /// patched exe makes a global that SetNavigatorPersonalPosMaxDistance sets
+    /// (FA-Binary-Patches section/PathfindingTweaks.cpp). No save holds it
+    /// there: FAF's simInit sets it each session and again in OnPostLoad.
+    f32 navigator_personal_pos_max_distance() const { return nav_personal_pos_max_distance_; }
+    void set_navigator_personal_pos_max_distance(f32 cells) {
+        nav_personal_pos_max_distance_ = cells;
+    }
     /// Whether the game runs on FAF's data, so the engine plays FAF's
     /// patched exe (FA-Binary-Patches) where it changes Moho's rules:
     /// ChangeUnitArmy gives commanders and units being built
@@ -1190,6 +1199,7 @@ private:
     bool faf_exe_ = false; // see faf_exe
     bool run_opponent_ai_ = true;                 // see run_opponent_ai
     std::optional<AiPersonality> ai_personality_; // see ai_personality
+    f32 nav_personal_pos_max_distance_ = 50.0f;   // see navigator_personal_pos_max_distance
     /// Stored units whose carrier is gone, destroyed at a safe point of the
     /// tick (destroy_orphaned_stored_units).
     std::vector<u32> stored_to_destroy_;

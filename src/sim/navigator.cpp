@@ -304,6 +304,7 @@ void Navigator::navigate(Unit& unit) {
                           default_pathcap(std::max(map->map_width(), map->map_height()))};
     world.blockers = &sim_->unit_blockers();
     world.owner = unit.entity_id();
+    world.personal_pos_max_distance = sim_->navigator_personal_pos_max_distance();
     moho_.update(nav, world, army->path_queue());
     const State st = moho_.state();
     if (st == State::Idle || st == State::Failed) {

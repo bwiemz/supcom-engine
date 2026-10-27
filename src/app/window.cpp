@@ -191,6 +191,9 @@ std::optional<int> App::Window::set_up() {
                                                 at, facing);
          },
          [this] { return osc::core::ui_nis_mode(ui_lua_state.raw()); }});
+    renderer.set_adjacency_bonus([this](osc::u32 unit, const std::string& bp) {
+        return detect_adjacency_bonus(ui_lua_state.raw(), unit, bp);
+    });
     prev_time = std::chrono::high_resolution_clock::now();
 
     // --screenshot <png> [--screenshot-frame N]: render N frames on a

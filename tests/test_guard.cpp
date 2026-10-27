@@ -366,6 +366,53 @@ TEST_CASE("Engineers assisting a shield generator regenerate its bubble while it
     CHECK(std::abs(bubble->health() - before - 0.5f) < 1e-3f);
 }
 
+TEST_CASE("On FAF's data an engineer repairing a damaged shield generator leaves its bubble "
+          "alone while it is off",
+          "[guard]") {
+    // FA-Binary-Patches hooks/ShieldRepairRegenFix.hook: Moho asks ShieldIsOn
+    // only of an undamaged generator, so a damaged one's off bubble regains
+    // health; FAF's exe always asks, and repairs only the hull
+    for (const bool faf : {false, true}) {
+        INFO("FAF's exe " << faf);
+        LuaGuard g;
+        SimState sim(g.L, nullptr);
+        flat(sim);
+        sim.set_faf_exe(faf);
+        run_lua(g.L, "__blueprints = { gen = { Economy = { BuildTime = 100 },"
+                     " Defense = { Shield = { RegenAssistMult = 60 } } } }");
+        Unit* gen = still(sim, 0, 50.0f, 50.0f);
+        gen->set_unit_id("gen");
+        gen->add_category("SHIELD");
+        gen->set_lua_table_ref(lua_ref_of(g.L, "{ ShieldIsOn = function() return false end }"));
+        gen->set_health(50.0f);
+        auto bubble_owned = std::make_unique<osc::sim::Shield>();
+        osc::sim::Shield* bubble = bubble_owned.get();
+        bubble->set_army(0);
+        bubble->set_max_health(9000.0f);
+        bubble->set_health(1000.0f);
+        sim.entity_registry().register_entity(std::move(bubble_owned));
+        bubble->set_lua_table_ref(lua_ref_of(g.L, "{ RegenRate = 120 }"));
+        gen->set_focus_entity_id(bubble->entity_id());
+
+        Unit* eng = walker(sim, 0, 53.0f, 50.0f);
+        eng->add_category("ENGINEER");
+        eng->add_category("REPAIR");
+        eng->set_build_rate(5.0f);
+        eng->set_max_build_distance(5.0f);
+        eng->push_command(guard(gen, 1), true);
+        for (int t = 0; t < 10; ++t) {
+            sim.tick();
+        }
+        CHECK(eng->repair_target_id() == gen->entity_id());
+        CHECK(gen->health() > 50.0f);
+        if (faf) {
+            CHECK(bubble->health() == 1000.0f);
+        } else {
+            CHECK(bubble->health() > 1000.0f);
+        }
+    }
+}
+
 namespace {
 
 struct FactoryAtWork {

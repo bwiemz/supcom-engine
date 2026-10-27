@@ -2249,11 +2249,17 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
     auto& target_unit = static_cast<Unit&>(*target);
     Entity* bubble = shield_focus(target_unit, registry);
     if (bubble) {
-        if (!damaged && !script_bool(L, target_unit, "ShieldIsOn")) {
+        // Moho asks ShieldIsOn only of an undamaged unit, so a damaged one's
+        // bubble regains health while off. FAF's patched exe always asks, and
+        // repairs only the hull of a damaged one that is off
+        // (FA-Binary-Patches hooks/ShieldRepairRegenFix.hook).
+        const bool on =
+            (damaged && !registry.faf_exe()) || script_bool(L, target_unit, "ShieldIsOn");
+        if (!damaged && !on) {
             stop_repairing(L, registry);
             return false;
         }
-        if (bubble->health() < bubble->max_health()) {
+        if (on && bubble->health() < bubble->max_health()) {
             f32 mult = blueprint_regen_assist_mult(L, target_unit.unit_id());
             if (mult != 0.0f) {
                 if (damaged) {
