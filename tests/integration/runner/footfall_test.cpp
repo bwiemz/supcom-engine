@@ -172,7 +172,11 @@ void test_footfall(TestContext& ctx) {
     // against the terrain (retail's scripts); each one reaching the ground
     // deals 1000 in 5 there. Each bone is told once, however long it lies.
     // (FAF's CZAR keeps the explosions but no longer deals that damage, so
-    // Test 8 holds of retail's data, as the gate runs it.)
+    // Test 8 holds of retail's data, as the gate runs it.) Each is sent off
+    // and shot down in flight, some 25 over the ground. Made by script, an
+    // experimental aircraft starts on the ground, and an idle one lands again;
+    // from a few units up a heavy flier's tumble barely turns it, and no bone
+    // goes under.
     lua("setup: a CZAR and an Ahwassa in flight, killed", R"(
         __osc_crashes = {}
         local function flier(bp, dx)
@@ -186,6 +190,7 @@ void test_footfall(TestContext& ctx) {
                 return crash(self, bone, bx, by, bz)
             end
             table.insert(__osc_crashes, rec)
+            IssueMove({u}, {x, 0, z - 200})
         end
         flier('uaa0310', -45)
         flier('xsa0402', 45)
@@ -200,7 +205,7 @@ void test_footfall(TestContext& ctx) {
             return damage_area(instigator, pos, radius, amount, kind, friendly, selfdamage)
         end
     )");
-    run(20);
+    run(80);
     lua("setup: both are shot down", R"(
         for _, rec in __osc_crashes do rec.unit:Kill() end
     )");

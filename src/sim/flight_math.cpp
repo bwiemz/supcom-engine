@@ -321,10 +321,16 @@ Vector3 momentum_of(const Quaternion& body, const Vector3& spin, const Vector3& 
 
 SpinStep air_spin_step(const Quaternion& body, const Vector3& momentum, const Vector3& inertia,
                        const Vector3& accel, f32 dt) {
-    const Vector3 push =
-        quat_rotate(body, {accel.x * inertia.x, accel.y * inertia.y, accel.z * inertia.z});
+    return air_torque_step(
+        body, momentum, inertia,
+        quat_rotate(body, {accel.x * inertia.x, accel.y * inertia.y, accel.z * inertia.z}), dt);
+}
+
+SpinStep air_torque_step(const Quaternion& body, const Vector3& momentum, const Vector3& inertia,
+                         const Vector3& torque, f32 dt) {
     SpinStep out;
-    out.momentum = {momentum.x + push.x * dt, momentum.y + push.y * dt, momentum.z + push.z * dt};
+    out.momentum = {momentum.x + torque.x * dt, momentum.y + torque.y * dt,
+                    momentum.z + torque.z * dt};
     const f32 half = dt * 0.5f;
     const Vector3 avg{(out.momentum.x + momentum.x) * half, (out.momentum.y + momentum.y) * half,
                       (out.momentum.z + momentum.z) * half};
@@ -339,6 +345,27 @@ SpinStep air_spin_step(const Quaternion& body, const Vector3& momentum, const Ve
     const f32 len = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
     out.orientation = {q.x / len, q.y / len, q.z / len, q.w / len};
     return out;
+}
+
+Vector3 tumble_range(f32 mass, const Vector3& inertia) {
+    // comiss against 4 then 0.25: a NaN passes the cap and is floored.
+    const auto clamp_axis = [](f32 inverse) {
+        const f32 capped = inverse > 4.0f ? 4.0f : inverse;
+        return capped > 0.25f ? capped : 0.25f;
+    };
+    return {clamp_axis(1.0f / (mass * inertia.x)), clamp_axis(1.0f / (mass * inertia.y)),
+            clamp_axis(1.0f / (mass * inertia.z))};
+}
+
+Vector3 tumble_torque(const Quaternion& body, f32 mass, const Vector3& inertia,
+                      const Vector3& drawn) {
+    // Moho's draw over its inverse inertia, mass x inertia x draw, is a torque on the whole
+    // body; the engine's angular momentum is per unit mass. With no mass, Moho's inverse is
+    // infinite and the torque none.
+    if (!(mass > 0.0f)) {
+        return {};
+    }
+    return quat_rotate(body, {drawn.x * inertia.x, drawn.y * inertia.y, drawn.z * inertia.z});
 }
 
 } // namespace osc::sim

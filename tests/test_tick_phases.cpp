@@ -1693,6 +1693,7 @@ TEST_CASE("A downed aircraft's OnImpact runs in its own step: a shot it makes mo
                   " end"));
     w.projectile_class("/shell", "");
     plane.set_layer("Air");
+    plane.set_motion_type("RULEUMT_Air"); // a flier: only one falls (Moho's CalcMoveAir)
     plane.set_position({100.0f, 11.0f, 100.0f});
     plane.place_now();
     plane.begin_dying();

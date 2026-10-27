@@ -541,13 +541,6 @@ void Unit::begin_dying() {
     economy_.dock_repair_energy = 0;
     dock_repair_asked_ = false;
     refuel_started_ = false;
-    // Killed in flight: it falls, tumbling, until it lands.
-    if (is_air_unit()) {
-        crashing_ = true;
-        crash_velocity_y_ = 0;
-        crash_spin_rate_ =
-            (static_cast<f32>(EntityRegistry::moho_id(entity_id()) % 100) / 100.0f - 0.5f) * 4.0f;
-    }
 }
 
 void Unit::kill_cleanup(lua_State* L) {
@@ -601,43 +594,6 @@ void Unit::update_speed_through() {
         }
     }
     navigator_.set_speed_through_goal(through);
-}
-
-bool Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
-    if (!dying_) {
-        return false;
-    }
-
-    if (crashing_) {
-        // Gravity acceleration
-        crash_velocity_y_ += -9.8f * dt;
-
-        // Spin and tumble
-        heading_ += crash_spin_rate_ * dt;
-        bank_angle_ += crash_spin_rate_ * 0.7f * dt;
-        pitch_ = std::clamp(pitch_ - 0.3f * dt, -1.0f, 0.3f);
-        set_orientation(euler_to_quat(heading_, pitch_, bank_angle_));
-
-        // Move forward (decaying) and down
-        auto p = pending_position();
-        f32 fwd = current_airspeed_ * 0.5f;
-        p.x += osc::dmath::sin(heading_) * fwd * dt;
-        p.z += osc::dmath::cos(heading_) * fwd * dt;
-        p.y += crash_velocity_y_ * dt;
-
-        // It lands on the ground, or on the water over it.
-        f32 ground = terrain ? terrain->get_surface_height(p.x, p.z) : 0.0f;
-        if (p.y <= ground) {
-            p.y = ground;
-            set_position(p);
-            crashing_ = false;
-            return true;
-        }
-
-        set_position(p);
-        current_airspeed_ *= (1.0f - 0.5f * dt); // decelerate forward speed
-    }
-    return false;
 }
 
 bool Unit::nav_update(f32 speed_cap) {
@@ -1031,8 +987,12 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
         return;
     }
     if (dying_) {
-        if (tick_dying(static_cast<f32>(dt), ctx.terrain) && ctx.sim) {
-            ctx.sim->crash_impact(*this);
+        // Moho's Unit::MotionTick runs on for a dead unit: the stun counts down, then its motion.
+        if (stun_ticks_ > 0) {
+            --stun_ticks_;
+        }
+        if (ctx.sim) {
+            step_dead_motion(ctx.terrain, ctx.sim->random(), ctx.L, ctx.sim);
         }
         if (ctx.sim && in_registry()) {
             ctx.sim->step_economy_events(*this);
@@ -1227,8 +1187,8 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     }
     // Moho's CUnitMotion::CalcMoveCommon: a unit on a layer its motion type can't be on loses 1%
     // of its health a tick, moving or not, unless being built, carried, falling or flying.
-    if (is_mobile() && !can_fly() && !is_being_built() && !crashing_ && parent_entity_id() == 0 &&
-        !on_valid_layer()) {
+    if (is_mobile() && !can_fly() && !is_being_built() && !is_crashing() &&
+        parent_entity_id() == 0 && !on_valid_layer()) {
         set_health(health() - max_health() * 0.0099999998f);
         if (health() <= 0.0f && ctx.sim) {
             ctx.sim->kill_unit(*this, "");
@@ -1276,7 +1236,7 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     // orientation, standing or not (CUnitMotion::MoveTo, 0x006B92E0).
     // (A hover's comes after its hover tick, which tilts it.)
     if (ctx.sim && ctx.sim->moho_pathing() && is_mobile() && !can_fly() && !immobile() &&
-        parent_entity_id() == 0 && !crashing_ && !is_hover())
+        parent_entity_id() == 0 && !is_crashing() && !is_hover())
         set_orientation(quat_normalized_moho(pending_orientation()));
 
     // A sub dives or surfaces, moving or not (M206o).
@@ -4066,7 +4026,7 @@ bool Unit::tick_idle_landing(f64 dt, SimContext& ctx, bool flown) {
 }
 
 void Unit::fly_unflown_tick(f64 dt, SimContext& ctx) {
-    if (!ctx.sim || !is_air_unit() || !can_fly() || dying_ || crashing_ || is_being_built() ||
+    if (!ctx.sim || !is_air_unit() || !can_fly() || dying_ || is_crashing() || is_being_built() ||
         parent_entity_id() != 0 || transport_id_ != 0 || is_stunned() || immobile_) {
         return;
     }

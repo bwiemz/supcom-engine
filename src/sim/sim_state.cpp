@@ -646,7 +646,7 @@ void SimState::refollow_attached() {
     }
 }
 
-void SimState::crash_impact(Unit& unit) {
+void SimState::crash_impact(Unit& unit, const char* surface) {
     if (unit.destroyed()) {
         return;
     }
@@ -654,14 +654,6 @@ void SimState::crash_impact(Unit& unit) {
     if (!L_ || unit.lua_table_ref() < 0) {
         entity_registry_.destroy(unit);
         return;
-    }
-    const Vector3 p = unit.pending_position();
-    const bool water = terrain_ && terrain_->has_water() &&
-                       terrain_->get_terrain_height(p.x, p.z) < terrain_->water_elevation();
-    // On the ground it is a land unit now: its wreck follows the
-    // blueprint's WreckageLayers.Land.
-    if (!water) {
-        unit.set_layer_with_callback("Land", L_);
     }
     Entity* e = entity_registry_.find(id);
     if (!e || e->destroyed() || e->lua_table_ref() < 0) {
@@ -674,7 +666,7 @@ void SimState::crash_impact(Unit& unit) {
     bool handled = false;
     if (lua_isfunction(L_, -1)) {
         lua_pushvalue(L_, top + 1);
-        lua_pushstring(L_, water ? "Water" : "Terrain");
+        lua_pushstring(L_, surface);
         lua_pushnil(L_);
         if (lua_pcall(L_, 3, 0, 0) == 0) {
             handled = true;

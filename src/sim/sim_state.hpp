@@ -849,8 +849,10 @@ public:
 
     /// Global sim generation — incremented each time a SimState is constructed.
     /// Used by entity handle safety to detect stale references across reloads.
-    /// A downed aircraft landing: its OnImpact (Moho's CUnitMotion::CalcMoveBallistic).
-    void crash_impact(Unit& unit);
+    /// A downed aircraft meeting `surface` ("Terrain" or "Water"): its OnImpact (Moho's
+    /// CUnitMotion::CalcMoveBallistic). A unit whose script can't play the death out (no
+    /// OnImpact, or one that failed) is destroyed.
+    void crash_impact(Unit& unit, const char* surface);
     /// Destroy the stored units of carriers that went this tick (M206q).
     void destroy_orphaned_stored_units();
     /// Moho's KillCleanup for the units killed this tick, army by army.
