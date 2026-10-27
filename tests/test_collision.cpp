@@ -11,6 +11,7 @@
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
+#include "sim/prop.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/shield.hpp"
@@ -18,11 +19,13 @@
 #include "sim/weapon.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -255,6 +258,43 @@ TEST_CASE("a beam stops at a dying unit as at a living one", "[collision]") {
         osc::sim::check_collision_beam(sim, nullptr, beam_id, false);
         CHECK(reg.find(beam_id)->beam_endpoint().z == Approx(104.0f));
     }
+}
+
+TEST_CASE("a beam passes what has no OnCollisionCheckWeapon or fails it", "[collision]") {
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    osc::sim::SimState sim{L, nullptr};
+    EntityRegistry& reg = sim.entity_registry();
+    reg.init_spatial_grid(512, 512);
+    const auto script = [&](const char* code) {
+        REQUIRE(luaL_loadbuffer(L, code, std::strlen(code), "script") == 0);
+        REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
+        return luaL_ref(L, LUA_REGISTRYINDEX);
+    };
+    const u32 shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->lua_table_ref = script("return {}");
+    static_cast<Unit*>(reg.find(shooter))->add_weapon(std::move(gun));
+    // A tree: retail's props have no OnCollisionCheckWeapon
+    auto tree = std::make_unique<osc::sim::Prop>();
+    tree->set_position({100, 0, 104});
+    tree->set_default_collision_shape(box(1, 2, 1));
+    tree->set_lua_table_ref(script("return {}"));
+    reg.register_entity(std::move(tree));
+    const u32 broken = add_unit(reg, {100, 0, 107}, box(0.5f, 2, 0.5f));
+    reg.find(broken)->set_lua_table_ref(
+        script("return {OnCollisionCheckWeapon = function() error('broken') end}"));
+    const u32 tank = add_unit(reg, {100, 0, 110}, box(1, 2, 1));
+    reg.find(tank)->set_lua_table_ref(
+        script("return {OnCollisionCheckWeapon = function() return true end}"));
+    auto beam = std::make_unique<osc::sim::Entity>();
+    beam->set_collision_beam(true);
+    beam->set_beam_launcher_id(shooter);
+    beam->beam_setup().weapon = 0;
+    beam->beam_setup().length = 20;
+    const u32 beam_id = reg.register_entity(std::move(beam));
+    osc::sim::check_collision_beam(sim, L, beam_id, false);
+    CHECK(reg.find(beam_id)->beam_endpoint().z == Approx(109.0f));
 }
 
 TEST_CASE("a shot with entity collision off flies through", "[collision]") {
