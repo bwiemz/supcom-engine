@@ -1820,6 +1820,8 @@ private:
     bool hover_low(f64 dt, SimContext& ctx);
     /// A transport flies to the point and drops all its cargo.
     OrderStep order_transport_unload(UnitCommand& cmd, SimContext& ctx);
+    /// A cheat's DestroySelf order: the unit destroyed.
+    OrderStep order_destroy_self(SimContext& ctx);
     /// An aircraft's refuel at a staging platform (M206r, Moho's CUnitRefuel):
     /// a slot, the flight to its bone, docking, and the climb away once full.
     OrderStep order_refuel(UnitCommand& cmd, SimContext& ctx);

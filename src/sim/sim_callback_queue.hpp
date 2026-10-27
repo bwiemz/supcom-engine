@@ -68,6 +68,9 @@ inline constexpr const char* kSetCommandTypeCallback = "__osc_SetCommandType";
 /// cheat making a complete unit of `Blueprint` for `Army` (0-based) at X, Z,
 /// facing `Heading` (radians).
 inline constexpr const char* kCreateUnitCallback = "__osc_CreateUnit";
+/// Func name of Moho's CMDST_WarpEntity, as TeleportSelectedUnits sends it:
+/// a cheat warping unit `Entity` to X, Y, Z (as Unit::Warp places it).
+inline constexpr const char* kWarpEntityCallback = "__osc_WarpEntity";
 
 /// Func name of Moho's CMDST_DecreaseCommandCount, as DeleteCommand sends it:
 /// order `Command` made `Count` fewer; an order at none leaves every queue.
