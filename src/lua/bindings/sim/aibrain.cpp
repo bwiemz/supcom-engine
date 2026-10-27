@@ -204,7 +204,7 @@ static int brain_GetNoRushTicks(lua_State* L) {
 // SimState::run_opponent_ai). Retail's brain and platoon scripts skip their AI when it is false.
 static int brain_IsOpponentAIRunning(lua_State* L) {
     const auto* sim = get_sim(L);
-    lua_pushboolean(L, !sim || sim->run_opponent_ai() ? 1 : 0);
+    lua_pushboolean(L, !sim || sim->opponent_ai_running() ? 1 : 0);
     return 1;
 }
 

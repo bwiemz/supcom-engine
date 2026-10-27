@@ -14,6 +14,7 @@
 #include "sim/occupancy.hpp"
 #include "sim/replay.hpp"
 #include "sim/resource_deposit.hpp"
+#include "sim/sim_console.hpp"
 #include "sim/thread_manager.hpp"
 #include "sim/unit_blocking.hpp"
 
@@ -205,6 +206,12 @@ public:
     /// AI_RunOpponentAI, true by default, has no console here). The host's, not saved.
     bool run_opponent_ai() const { return run_opponent_ai_; }
     void set_run_opponent_ai(bool on) { run_opponent_ai_ = on; }
+    /// The sim console's variables (Moho's TSimConVar instances): NoDamage,
+    /// AI_RunOpponentAI. Saved with the game.
+    SimConVars& con_vars() { return con_vars_; }
+    const SimConVars& con_vars() const { return con_vars_; }
+    /// CAiBrain::IsOpponentAIRunning: no /noai, and AI_RunOpponentAI on.
+    bool opponent_ai_running() const { return run_opponent_ai_ && con_vars_.run_opponent_ai; }
     /// The AI brains' personality (CAiPersonality), the same for every
     /// brain: read from /lua/aipersonality.lua as the first is asked for
     /// (lua/bindings/sim/aipersonality.cpp); nullptr until then.
@@ -1216,6 +1223,7 @@ private:
     bool moho_pathing_ = false;
     bool faf_exe_ = false; // see faf_exe
     bool run_opponent_ai_ = true;                 // see run_opponent_ai
+    SimConVars con_vars_;                         // see con_vars
     std::optional<AiPersonality> ai_personality_; // see ai_personality
     f32 nav_personal_pos_max_distance_ = 50.0f;   // see navigator_personal_pos_max_distance
     /// Stored units whose carrier is gone, destroyed at a safe point of the

@@ -1277,22 +1277,13 @@ static int platoon_SetPlatoonFormationOverride(lua_State* L) {
     return 0;
 }
 
-// platoon:IsOpponentAIRunning() — true if any non-defeated, non-civilian enemy brain exists
+// platoon:IsOpponentAIRunning(): Moho's cfunc_CPlatoonIsOpponentAIRunningL
+// (0x0072B890) answers the AI_RunOpponentAI sim variable alone (not /noai,
+// unlike the brain's).
 static int platoon_IsOpponentAIRunning(lua_State* L) {
     auto* p = check_platoon(L);
     auto* sim = get_sim(L);
-    if (!p || !sim) { lua_pushboolean(L, 0); return 1; }
-    i32 my_army = p->army_index();
-    for (size_t i = 0; i < sim->army_count(); ++i) {
-        if (static_cast<i32>(i) == my_army) continue;
-        auto* brain = sim->get_army(static_cast<i32>(i));
-        if (!brain) continue;
-        if (brain->is_civilian()) continue;
-        if (brain->is_defeated()) continue;
-        lua_pushboolean(L, 1);
-        return 1;
-    }
-    lua_pushboolean(L, 0);
+    lua_pushboolean(L, p && sim && sim->con_vars().run_opponent_ai ? 1 : 0);
     return 1;
 }
 

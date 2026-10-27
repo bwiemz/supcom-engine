@@ -82,6 +82,10 @@ inline constexpr const char* kSaveGameCallback = "__osc_SaveGame";
 /// cheats on, the sim's global function `Func` called with the one value
 /// lua_args holds.
 inline constexpr const char* kExecLuaInSimCallback = "__osc_ExecLuaInSim";
+/// Func name of Moho's CMDST_ExecuteDebugCommand, as DoSimCommand sends it:
+/// the sim console's `Command` line, run with the cursor at X, Y, Z, the
+/// `FocusArmy` (0-based, -1 for none) and the selection (unit_ids).
+inline constexpr const char* kDebugCommandCallback = "__osc_DebugCommand";
 
 /// The engine's own callbacks start with this; a script may not issue one.
 inline constexpr const char* kEngineCallbackPrefix = "__osc_";

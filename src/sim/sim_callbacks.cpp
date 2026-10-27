@@ -7,6 +7,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/lua_bytes.hpp"
+#include "sim/sim_console.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/work_range.hpp"
@@ -19,7 +20,6 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <cmath>
 #include <optional>
@@ -558,24 +558,6 @@ void SimState::retarget_command(const SimCallbackEntry& cb,
 
 namespace {
 
-/// Lua's base library loaders: dofile and require run a file from this
-/// machine's own disk, the others make code of data. Whether the function at
-/// `idx` is one, by name or under another (`x = dofile`).
-bool is_base_loader(lua_State* L, const std::string& name, int idx) {
-    constexpr std::array<const char*, 5> kLoaders{"dofile", "require", "loadfile", "loadstring",
-                                                  "loadlib"};
-    const lua_CFunction f = lua_tocfunction(L, idx);
-    for (const char* loader : kLoaders) {
-        if (name == loader) return true;
-        lua_pushstring(L, loader);
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        const bool same = f && lua_tocfunction(L, -1) == f;
-        lua_pop(L, 1);
-        if (same) return true;
-    }
-    return false;
-}
-
 /// Moho's Sim::ExecuteLuaInSim (0x00749A70): with cheats on, the sim's global
 /// `Func` called with the value lua_args holds; an error, or a name that
 /// isn't a function, logged. Moho calls any global; here a base library
@@ -603,6 +585,22 @@ void exec_lua_in_sim(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     }
 }
 
+/// Moho's Sim::ExecuteDebugCommand (0x00749DA0): the sim console's line.
+void debug_command(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
+    const auto* command = arg<std::string>(cb, "Command");
+    if (!command) return;
+    const auto number = [&](const char* name) {
+        const auto* v = arg<f64>(cb, name);
+        return v ? *v : 0.0;
+    };
+    const Vector3 at{static_cast<f32>(number("X")), static_cast<f32>(number("Y")),
+                     static_cast<f32>(number("Z"))};
+    const f64 focus = number("FocusArmy");
+    // (a NaN or a number past an int is no army)
+    const i32 army = focus > -1e9 && focus < 1e9 ? static_cast<i32>(focus) : -1;
+    execute_debug_command(sim, L, *command, at, army, cb.unit_ids);
+}
+
 } // namespace
 
 void SimState::run_sim_callback(const SimCallbackEntry& cb) {
@@ -625,6 +623,7 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     else if (cb.func_name == kSetCommandTypeCallback) set_command_type(*this, cb);
     else if (cb.func_name == kCreateUnitCallback) create_unit(*this, L, cb);
     else if (cb.func_name == kExecLuaInSimCallback) exec_lua_in_sim(*this, L, cb);
+    else if (cb.func_name == kDebugCommandCallback) debug_command(*this, L, cb);
     else if (cb.func_name == kDecreaseCommandCountCallback) decrease_command_count(*this, L, cb);
     else do_callback(*this, L, cb);
     lua_settop(L, top);

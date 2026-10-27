@@ -31,6 +31,7 @@
 #include "sim/category_expr.hpp"
 #include "sim/lua_bytes.hpp"
 #include "sim/sim_callback_queue.hpp"
+#include "sim/sim_console.hpp"
 #include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/thread_manager.hpp"
@@ -2758,6 +2759,66 @@ void show_army_stats(lua_State* L, const std::vector<std::string>& args) {
     lua_settop(L, top);
 }
 
+/// Moho's CON_UnparseCommand: `tokens` as one line, a token with whitespace,
+/// `#`, `;` or `"` (or none at all) quoted, its `\` and `"` escaped.
+std::string unparse_console_command(const std::vector<std::string>& tokens) {
+    std::string line;
+    for (const std::string& token : tokens) {
+        if (!line.empty()) line.push_back(' ');
+        bool quote = token.empty();
+        for (const char c : token) {
+            if (c == '#' || c == ';' || c == '"' || std::isspace(static_cast<unsigned char>(c))) {
+                quote = true;
+            }
+        }
+        if (!quote) {
+            line += token;
+            continue;
+        }
+        line.push_back('"');
+        for (const char c : token) {
+            if (c == '\\' || c == '"') line.push_back('\\');
+            line.push_back(c);
+        }
+        line.push_back('"');
+    }
+    return line;
+}
+
+/// Moho's DoSimCommand (0x0088E440): `command`, a sim command's name and its
+/// arguments, to the sim's console through the command stream, with the
+/// cursor's place, the focus army and the selection, so every peer runs it
+/// (Sim::ExecuteDebugCommand). Without a session nothing goes.
+void send_sim_command(lua_State* L, const std::vector<std::string>& command) {
+    auto* queue = get_callback_queue(L);
+    if (!queue || !session_active(L)) {
+        spdlog::info("No session is running");
+        return;
+    }
+    sim::SimCallbackEntry entry;
+    entry.func_name = sim::kDebugCommandCallback;
+    entry.args["Command"] = unparse_console_command(command);
+    sim::Vector3 at{}; // (none without a world view)
+    cursor_world_pos(L, at);
+    entry.args["X"] = static_cast<f64>(at.x);
+    entry.args["Y"] = static_cast<f64>(at.y);
+    entry.args["Z"] = static_cast<f64>(at.z);
+    entry.args["FocusArmy"] = static_cast<f64>(focus_army(L));
+    if (auto* ih = get_input_handler(L)) {
+        for (const u32 id : ih->selected()) entry.unit_ids.push_back(id);
+    }
+    queue->push(std::move(entry));
+}
+
+/// DoSimCommand command args...
+void do_sim_command(lua_State* L, const std::vector<std::string>& args) {
+    if (args.size() <= 1) {
+        spdlog::info("usage: DoSimCommand command args...");
+        return;
+    }
+    send_sim_command(L, {args.begin() + 1, args.end()});
+}
+
 } // namespace
 
 void register_session_console_commands(ui::Console& console) {
@@ -2769,6 +2830,16 @@ void register_session_console_commands(ui::Console& console) {
     console.add("RenameUnit", rename_unit);
     console.add("UI_TrackUnit", track_unit);
     console.add("ShowArmyStats", show_army_stats);
+    console.add("DoSimCommand", do_sim_command);
+    // Each sim command's CConAlias: its name runs "DoSimCommand <name> ...".
+    for (const sim::SimConCommand& command : sim::sim_commands()) {
+        const char* name = command.name;
+        console.add(name, [name](lua_State* L, const std::vector<std::string>& args) {
+            std::vector<std::string> line{name};
+            line.insert(line.end(), args.begin() + 1, args.end());
+            send_sim_command(L, line);
+        });
+    }
 }
 
 } // namespace osc::lua

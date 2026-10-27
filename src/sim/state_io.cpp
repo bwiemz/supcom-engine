@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 96; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 97; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -128,6 +128,7 @@ constexpr u32 kVersion = 96; // 2: entities' wanted loops (M216b); 3: emitter ov
                              //     again every tick)
                              // 96: a unit's motion state and its fall's tumble, not the
                              //     invented crash's fields
+                             // 97: the sim console's variables (NoDamage, AI_RunOpponentAI)
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -485,6 +486,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     enum8(w, sim.fog_mode_);
     w.f32v(sim.no_rush_seconds_);
     w.f32v(sim.no_rush_radius_);
+    w.b(sim.con_vars_.no_damage);
+    w.b(sim.con_vars_.run_opponent_ai);
     // camera_shake_events_, camera_follow_events_, death_events_,
     // intel_flush_events_, sound_requests_: the renderer's and the audio's,
     // emptied each tick
@@ -730,6 +733,8 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.fog_mode_ = enum8<FogMode>(r);
     sim.no_rush_seconds_ = r.f32v();
     sim.no_rush_radius_ = r.f32v();
+    sim.con_vars_.no_damage = r.b();
+    sim.con_vars_.run_opponent_ai = r.b();
     sim.camera_shake_events_.clear();
     sim.camera_follow_events_.clear();
     sim.death_events_.clear();
