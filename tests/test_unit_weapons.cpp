@@ -108,6 +108,33 @@ TEST_CASE("A weapon blueprint's TargetCheckInterval left out is Moho's 3 seconds
     CHECK(weapons[1]->target_check_period == 5);
 }
 
+TEST_CASE("A weapon's aim holds a lost target's pose for its TargetCheckInterval, rounded up",
+          "[weapons]") {
+    WeaponWorld w;
+    lua_State* L = w.state.raw();
+    REQUIRE(w.state
+                .do_string("return {BlueprintId = 'odd', Defense = {MaxHealth = 100}, Weapon = {"
+                           " {Label = 'Gun', TargetCheckInterval = 0.625}}}")
+                .ok());
+    w.store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+    lua_pop(L, 1);
+    w.store.expose_to_lua(L);
+    lua_pushstring(L, "__osc_unit_script_classes");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "odd");
+    lua_getglobal(L, "Plain");
+    lua_rawset(L, -3);
+    lua_pop(L, 1);
+    REQUIRE(w.check("real = CreateUnit('real', 1, 0, 0, 0) odd = CreateUnit('odd', 1, 5, 0, 0)"));
+    const auto& real = w.unit("real")->weapons();
+    REQUIRE(real.size() == 3);
+    CHECK(real[0]->aim_reset_ticks == 30);
+    CHECK(real[1]->aim_reset_ticks == 5);
+    const auto& odd = w.unit("odd")->weapons();
+    REQUIRE(odd.size() == 1);
+    CHECK(odd[0]->aim_reset_ticks == 7);
+}
+
 TEST_CASE("A unit's GetWeaponClass that raises is reported as a script warning", "[weapons]") {
     WeaponWorld w;
     lua_State* L = w.state.raw();

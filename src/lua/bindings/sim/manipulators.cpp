@@ -443,8 +443,8 @@ static int aim_OnTarget(lua_State* L) {
 static int aim_SetResetPoseTime(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) {
-        static_cast<sim::AimManipulator*>(m)->set_reset_pose_time(
-            static_cast<f32>(lua_tonumber(L, 2)));
+        static_cast<sim::AimManipulator*>(m)->set_reset_pose_ticks(
+            static_cast<i32>(static_cast<f32>(lua_tonumber(L, 2)) * 10.0f));
     }
     lua_pushvalue(L, 1); // setters return self for chaining
     return 1;

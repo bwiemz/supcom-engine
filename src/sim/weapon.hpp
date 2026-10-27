@@ -140,6 +140,8 @@ public:
     /// (see note_impact).
     bool retarget_on_miss = false;
     u32 target_check_period = 30;          // TargetCheckInterval, in ticks
+    /// TargetCheckInterval's ticks rounded up, at least 1: its aim controller's reset time
+    i32 aim_reset_ticks = 30;
     bool cannot_attack_ground = false;     // CannotAttackGround
     /// AttackGroundTries: shots at a ground attack's point before the order
     /// goes to the back of the queue, when another follows (Moho's default 3)
