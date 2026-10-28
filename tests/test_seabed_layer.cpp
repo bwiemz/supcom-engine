@@ -13,6 +13,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -31,6 +32,7 @@ using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
 using osc::sim::Vector3;
+using osc::test::tick_until;
 
 namespace {
 
@@ -93,14 +95,14 @@ TEST_CASE("An amphibious unit walks the seabed under the water, and comes back o
     lake(sim);
     Unit* u = mover(sim, "RULEUMT_Amphibious", 70.0f, 64.0f);
     u->push_command(move_to({30.0f, 0.0f, 64.0f}), true);
-    ticks(sim, 120);
-    REQUIRE(std::abs(u->position().x - 30.0f) < 1.0f);
+    tick_until([&] { sim.tick(); }, "the unit reaches the lake bed", 240,
+               [&] { return std::abs(u->position().x - 30.0f) < 1.0f; });
     CHECK(u->layer() == "Seabed");
     CHECK(u->position().y < 0.5f); // on the bed, not the water at 5
 
     u->push_command(move_to({75.0f, 0.0f, 64.0f}), true);
-    ticks(sim, 120);
-    REQUIRE(std::abs(u->position().x - 75.0f) < 1.0f);
+    tick_until([&] { sim.tick(); }, "the unit comes back onto land", 240,
+               [&] { return std::abs(u->position().x - 75.0f) < 1.0f; });
     CHECK(u->layer() == "Land");
     CHECK(std::abs(u->position().y - kLand) < 0.01f);
 }
@@ -113,15 +115,19 @@ TEST_CASE("Hover and floating units ride the water's surface on the Water layer"
     Unit* floater = mover(sim, "RULEUMT_AmphibiousFloating", 70.0f, 90.0f);
     hover->push_command(move_to({30.0f, 0.0f, 40.0f}), true);
     floater->push_command(move_to({30.0f, 0.0f, 90.0f}), true);
-    ticks(sim, 120);
+    tick_until([&] { sim.tick(); }, "the hover and the floater cross the lake", 240,
+               [&] {
+                   return std::abs(hover->position().x - 30.0f) < 1.0f &&
+                          std::abs(floater->position().x - 30.0f) < 1.0f;
+               });
     for (const Unit* u : {hover, floater}) {
-        REQUIRE(std::abs(u->position().x - 30.0f) < 1.0f);
         CHECK(u->layer() == "Water");
         CHECK(std::abs(u->position().y - kWater) < 0.01f);
     }
 
     hover->push_command(move_to({75.0f, 0.0f, 40.0f}), true);
-    ticks(sim, 120);
+    tick_until([&] { sim.tick(); }, "the hover comes back onto land", 240,
+               [&] { return std::abs(hover->position().x - 75.0f) < 1.0f; });
     CHECK(hover->layer() == "Land");
 }
 
@@ -151,7 +157,11 @@ TEST_CASE("LayerChangeOffsetHeight moves where the water begins for a land footp
     // The default, -0.1: under water as soon as the ground is.
     Unit* plain = mover(sim, "RULEUMT_Amphibious", 70.0f, 100.0f);
     plain->push_command(move_to({30.0f, 0.0f, 100.0f}), true);
-    ticks(sim, 120);
+    tick_until([&] { sim.tick(); }, "both waders cross the lake", 240,
+               [&] {
+                   return std::abs(deep->position().x - 30.0f) < 1.0f &&
+                          std::abs(plain->position().x - 30.0f) < 1.0f;
+               });
     CHECK(deep->layer() == "Land");
     CHECK(plain->layer() == "Seabed");
 }
@@ -197,33 +207,19 @@ TEST_CASE("A unit's layer changes on the tick after the step that takes it over 
     };
     u->push_command(move_to({30.0f, 0.0f, 64.0f}), true);
     bool crossed = false;
-    for (int t = 0; t < 120 && !crossed; ++t) {
-        const bool was_under = under(u->position());
-        sim.tick();
-        crossed = !was_under && under(u->position());
-    }
-    REQUIRE(crossed);
+    tick_until(
+        [&] {
+            const bool was_under = under(u->position());
+            sim.tick();
+            crossed = !was_under && under(u->position());
+        },
+        "the unit steps over the shore", 120, [&] { return crossed; });
     CHECK(u->layer() == "Land");
     CHECK(changes() == 0);
     sim.tick();
     CHECK(u->layer() == "Seabed");
     CHECK(changes() == 1);
 }
-
-namespace {
-
-/// Ticks until `u`'s layer is `layer` (at most 200): where it stood on the
-/// tick before, and whether it got there.
-bool tick_until_layer(SimState& sim, Unit* u, const std::string& layer, Vector3& before) {
-    for (int t = 0; t < 200; ++t) {
-        before = u->position();
-        sim.tick();
-        if (u->layer() == layer) return true;
-    }
-    return false;
-}
-
-} // namespace
 
 TEST_CASE("A floating unit settles onto the water over its LayerTransitionDuration",
           "[seabed][layer-transition]") {
@@ -249,11 +245,12 @@ TEST_CASE("A floating unit settles onto the water over its LayerTransitionDurati
     };
 
     Vector3 from;
-    for (int t = 0; t < 200 && slow->layer() != "Water"; ++t) {
-        from = slow->position();
-        step();
-    }
-    REQUIRE(slow->layer() == "Water");
+    tick_until(
+        [&] {
+            from = slow->position();
+            step();
+        },
+        "the slow one's layer becomes Water", 200, [&] { return slow->layer() == "Water"; });
     REQUIRE(slow->in_layer_transition());
     const f32 ground = sim.terrain()->get_terrain_height(from.x, from.z);
     const f32 to_y = std::max(ground + 0.25f, kWater);
@@ -272,9 +269,7 @@ TEST_CASE("A floating unit settles onto the water over its LayerTransitionDurati
     CHECK(osc::sim::quat_rotate(slow->orientation(), {0.0f, 1.0f, 0.0f}).y > 0.9999f);
 
     // Then it goes on, and arrives the crossing's 39 ticks or so after the other
-    for (int t = 0; t < 400 && (!slow_at || !plain_at); ++t) step();
-    REQUIRE(slow_at != 0);
-    REQUIRE(plain_at != 0);
+    tick_until(step, "both reach the far side", 400, [&] { return slow_at != 0 && plain_at != 0; });
     CHECK(slow->layer() == "Water");
     CHECK(std::abs(slow->position().y - kWater) < 0.01f);
     const int late = static_cast<int>(slow_at) - static_cast<int>(plain_at);
@@ -296,7 +291,12 @@ TEST_CASE("A floating unit climbs onto the land it is heading for over its Layer
     u->push_command(move_to({80.0f, 0.0f, 64.0f}), true);
 
     Vector3 from;
-    REQUIRE(tick_until_layer(sim, u, "Land", from));
+    tick_until(
+        [&] {
+            from = u->position();
+            sim.tick();
+        },
+        "the unit's layer becomes Land", 200, [&] { return u->layer() == "Land"; });
     REQUIRE(u->in_layer_transition());
     const Vector3 v = u->velocity();
     REQUIRE(v.x > 1.0f);
@@ -324,7 +324,61 @@ TEST_CASE("Without a LayerTransitionDuration a floating unit crosses the shore a
     Unit* u = mover(sim, "RULEUMT_AmphibiousFloating", 70.0f, 64.0f);
     u->push_command(move_to({30.0f, 0.0f, 64.0f}), true);
     Vector3 from;
-    REQUIRE(tick_until_layer(sim, u, "Water", from));
+    tick_until(
+        [&] {
+            from = u->position();
+            sim.tick();
+        },
+        "the unit's layer becomes Water", 200, [&] { return u->layer() == "Water"; });
     CHECK_FALSE(u->in_layer_transition());
     CHECK(u->position().x != from.x); // it moved on the same tick
+}
+
+TEST_CASE("A floating unit is stopped while it crosses the shore", "[seabed][layer-transition]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    lake(sim);
+    // (a bare lua_open state has no table library)
+    const char* code = "heard = {} "
+                       "return { OnMotionHorzEventChange = function(self, new, old) "
+                       "local n = 1 while heard[n] do n = n + 1 end heard[n] = new .. '<' .. old "
+                       "end }";
+    REQUIRE(luaL_loadbuffer(g.L, code, std::strlen(code), "mover") == 0);
+    REQUIRE(lua_pcall(g.L, 0, 1, 0) == 0);
+    Unit* u = mover(sim, "RULEUMT_AmphibiousFloating", 70.0f, 64.0f);
+    u->set_lua_table_ref(luaL_ref(g.L, LUA_REGISTRYINDEX));
+    u->set_layer_transition_duration(4.0f);
+    const auto heard = [&] {
+        std::vector<std::string> out;
+        lua_getglobal(g.L, "heard");
+        for (int i = 1;; ++i) {
+            lua_rawgeti(g.L, -1, i);
+            if (lua_isnil(g.L, -1)) {
+                lua_pop(g.L, 1);
+                break;
+            }
+            out.emplace_back(lua_tostring(g.L, -1));
+            lua_pop(g.L, 1);
+        }
+        lua_pop(g.L, 1);
+        return out;
+    };
+    u->push_command(move_to({30.0f, 0.0f, 64.0f}), true);
+    tick_until([&] { sim.tick(); }, "the unit's layer becomes Water", 200,
+               [&] { return u->layer() == "Water"; });
+    REQUIRE(u->in_layer_transition());
+    std::vector<std::string> events = heard();
+    REQUIRE_FALSE(events.empty());
+    CHECK(events.back().rfind("Stopped<", 0) == 0);
+    const size_t at_crossing = events.size();
+
+    for (int k = 1; k < 39; ++k) {
+        sim.tick();
+    }
+    REQUIRE_FALSE(u->in_layer_transition());
+    CHECK(heard().size() == at_crossing);
+    sim.tick();
+    events = heard();
+    REQUIRE(events.size() == at_crossing + 1);
+    CHECK((events.back() == "Cruise<Stopped" || events.back() == "TopSpeed<Stopped"));
 }

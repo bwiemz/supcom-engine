@@ -17,6 +17,7 @@
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -31,6 +32,7 @@ using osc::map::Heightmap;
 using osc::map::PathfindingGrid;
 using osc::sim::SimState;
 using osc::sim::Unit;
+using osc::test::tick_until;
 
 namespace {
 
@@ -191,9 +193,9 @@ TEST_CASE("a crashed aircraft is removed from the registry", "[lifetime][m183]")
     const size_t before = sim.entity_registry().count();
 
     plane->begin_dying(); // killed in flight; with no script it goes on landing
-    for (int t = 0; t < 300 && sim.entity_registry().find(id); ++t) sim.tick();
+    tick_until([&] { sim.tick(); }, "the crashed aircraft is removed", 300,
+               [&] { return sim.entity_registry().find(id) == nullptr; });
 
-    CHECK(sim.entity_registry().find(id) == nullptr); // impacted and removed
     CHECK(sim.entity_registry().count() == before - 1);
 }
 

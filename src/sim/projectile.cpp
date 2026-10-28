@@ -366,6 +366,7 @@ std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
     // in (retail) or either way (FAF's); the ground, if nearer, instead.
     f32 surface_t = 2.0f;
     const char* surface_type = nullptr;
+    bool ground = false;
     if (terrain && collide_surface) {
         const bool faf = registry.faf_exe();
         const f32 water = terrain->water_elevation();
@@ -392,6 +393,7 @@ std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
             if (destroy_on_water && (faf || crossing == Crossing::Enter) && water_t >= 0.0f) {
                 surface_t = water_t;
                 surface_type = "Water";
+                ground = false;
             }
         }
         bool ground_first = false;
@@ -399,6 +401,7 @@ std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
             t && (surface_t > 1.0f || *t < surface_t)) {
             surface_t = *t;
             surface_type = nullptr;
+            ground = true;
             ground_first = !(*t > water_t);
         }
         if (crossing != Crossing::None && faf && !ground_first && !change_layer())
@@ -422,6 +425,7 @@ std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
         if (mx * mx + my * my + mz * mz <= kArrived * kArrived && t < surface_t) {
             surface_t = t;
             surface_type = nullptr;
+            ground = false;
         }
     }
 
@@ -472,7 +476,7 @@ std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
     if (surface_type && terrain) {
         at.y = terrain->water_elevation();
     }
-    return PathImpact{at, surface_t, nullptr, surface_type};
+    return PathImpact{at, surface_t, nullptr, ground ? "Terrain" : surface_type};
 }
 
 std::optional<Projectile::PathImpact> Projectile::detonate_band(const Vector3& from,
@@ -509,6 +513,7 @@ std::optional<Projectile::PathImpact> Projectile::detonate_band(const Vector3& f
 
 void Projectile::record_impact(const Vector3& at, f32 interpolation, const Entity* hit,
                                const char* type, const map::Terrain* terrain) {
+    set_position(at);
     const std::string kind = type ? type : impact_type(hit, terrain);
     // Moho's MotionTick: a hit of the ground (IMPACT_Terrain) counts, and one within its bounce
     // limit is no impact. Its velocity, damped, is reflected about the ground's normal there,
@@ -527,7 +532,6 @@ void Projectile::record_impact(const Vector3& at, f32 interpolation, const Entit
         set_position({at.x + back.x * 0.05f, at.y + back.y * 0.05f, at.z + back.z * 0.05f});
         return;
     }
-    set_position(at);
     impact_interpolation = interpolation;
     impact_entity_id = hit ? hit->entity_id() : 0;
     impact_kind = kind;

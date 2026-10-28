@@ -105,3 +105,18 @@ TEST_CASE("ParseEntityCategory gives one category per string while it's held", "
     )")
                 .ok());
 }
+
+TEST_CASE("The engine tests units against a string as ParseEntityCategory parses it",
+          "[category]") {
+    CategoryWorld w;
+    lua_State* L = w.state.raw();
+    const int top = lua_gettop(L);
+    const auto star = osc::lua::parse_entity_category(L, "MASSEXTRACTION * TECH1");
+    CHECK(star.matches({"MASSEXTRACTION", "TECH1", "STRUCTURE"}));
+    CHECK_FALSE(star.matches({"MASSEXTRACTION", "TECH2"}));
+    const auto by_id = osc::lua::parse_entity_category(L, "tank + FOOBAR");
+    CHECK(by_id.matches({"LAND", "tank"}));
+    CHECK_FALSE(by_id.matches({"LAND"}));
+    CHECK(osc::lua::parse_entity_category(L, "tech1").empty());
+    CHECK(lua_gettop(L) == top);
+}

@@ -18,6 +18,7 @@
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -32,6 +33,7 @@ using osc::sim::BrainState;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::VictoryMode;
+using osc::test::tick_until;
 
 namespace {
 
@@ -155,12 +157,15 @@ TEST_CASE("Supremacy: a structure keeps you alive, a lone wall does not",
         sim.add_army("ARMY_2", "ARMY_2");
 
         spawn(sim, 0, {"COMMAND", "ENGINEER"}); // ACU counts (it is an ENGINEER)
-        spawn(sim, 1, {"STRUCTURE", "FACTORY"}); // no ACU, but a factory
+        osc::u32 factory = spawn(sim, 1, {"STRUCTURE", "FACTORY"}); // no ACU, but a factory
 
         tick_n(sim, kPastGrace);
         // Domination cares about structures/units, not the commander.
         CHECK(sim.get_army(1)->state() == BrainState::InProgress);
         CHECK_FALSE(sim.game_ended());
+        destroy(sim, factory);
+        tick_n(sim, 2);
+        CHECK(sim.get_army(1)->state() == BrainState::Defeat);
     }
 
     SECTION("a lone wall is not significant → eliminated") {
@@ -173,8 +178,8 @@ TEST_CASE("Supremacy: a structure keeps you alive, a lone wall does not",
         spawn(sim, 0, {"COMMAND", "ENGINEER"});
         spawn(sim, 1, {"WALL", "STRUCTURE"}); // walls don't count for domination
 
-        tick_n(sim, kPastGrace + 2);
-        CHECK(sim.get_army(1)->state() == BrainState::Defeat);
+        tick_until([&] { sim.tick(); }, "the army with a lone wall is eliminated", 120,
+                   [&] { return sim.get_army(1)->state() == BrainState::Defeat; });
         CHECK(sim.game_ended());
     }
 
@@ -188,8 +193,8 @@ TEST_CASE("Supremacy: a structure keeps you alive, a lone wall does not",
         spawn(sim, 0, {"COMMAND", "ENGINEER"});
         spawn(sim, 1, {"MOBILE", "LAND", "DIRECTFIRE"}); // a tank, no structure/engineer
 
-        tick_n(sim, kPastGrace + 2);
-        CHECK(sim.get_army(1)->state() == BrainState::Defeat);
+        tick_until([&] { sim.tick(); }, "the army with a lone tank is eliminated", 120,
+                   [&] { return sim.get_army(1)->state() == BrainState::Defeat; });
     }
 
     SECTION("an engineer keeps you alive") {
@@ -200,11 +205,14 @@ TEST_CASE("Supremacy: a structure keeps you alive, a lone wall does not",
         sim.add_army("ARMY_2", "ARMY_2");
 
         spawn(sim, 0, {"COMMAND", "ENGINEER"});
-        spawn(sim, 1, {"MOBILE", "ENGINEER"}); // engineer counts for domination
+        osc::u32 engineer = spawn(sim, 1, {"MOBILE", "ENGINEER"}); // engineer counts for domination
 
         tick_n(sim, kPastGrace + 2);
         CHECK(sim.get_army(1)->state() == BrainState::InProgress);
         CHECK_FALSE(sim.game_ended());
+        destroy(sim, engineer);
+        tick_n(sim, 2);
+        CHECK(sim.get_army(1)->state() == BrainState::Defeat);
     }
 }
 
@@ -219,8 +227,8 @@ TEST_CASE("Annihilation: a lone wall does not keep you alive (ALLUNITS - WALL)",
     spawn(sim, 0, {"COMMAND"});
     spawn(sim, 1, {"WALL", "STRUCTURE"}); // only a wall → eliminated under eradication
 
-    tick_n(sim, kPastGrace + 2);
-    CHECK(sim.get_army(1)->state() == BrainState::Defeat);
+    tick_until([&] { sim.tick(); }, "the army with a lone wall is eliminated", 120,
+               [&] { return sim.get_army(1)->state() == BrainState::Defeat; });
     CHECK(sim.game_ended());
 }
 
@@ -324,7 +332,7 @@ TEST_CASE("Grace: an army that never spawned keeps the game open",
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2"); // never gets any units
 
-    spawn(sim, 0, {"COMMAND"});
+    osc::u32 acu = spawn(sim, 0, {"COMMAND"});
 
     tick_n(sim, kPastGrace + 10);
 
@@ -334,6 +342,9 @@ TEST_CASE("Grace: an army that never spawned keeps the game open",
     CHECK(sim.get_army(1)->state() == BrainState::InProgress);
     CHECK_FALSE(sim.game_ended());
     CHECK(sim.player_result() == 0);
+    destroy(sim, acu);
+    tick_n(sim, 2);
+    CHECK(sim.get_army(0)->state() == BrainState::Defeat);
 }
 
 TEST_CASE("Grace: an ACU killed during the grace window is honored after it",
@@ -353,8 +364,8 @@ TEST_CASE("Grace: an ACU killed during the grace window is honored after it",
     CHECK(sim.get_army(1)->state() == BrainState::InProgress);
     CHECK_FALSE(sim.game_ended());
 
-    tick_n(sim, kPastGrace); // cross the grace boundary
-    CHECK(sim.get_army(1)->state() == BrainState::Defeat);
+    tick_until([&] { sim.tick(); }, "the army is defeated once the grace is over", 120,
+               [&] { return sim.get_army(1)->state() == BrainState::Defeat; });
     CHECK(sim.game_ended());
 }
 

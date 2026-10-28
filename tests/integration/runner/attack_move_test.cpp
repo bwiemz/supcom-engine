@@ -17,6 +17,7 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "sim/sim_state.hpp"
@@ -76,19 +77,23 @@ void test_attack_move(TestContext& ctx) {
             "Test 1: the order is an AggressiveMove, and scripts see the tanks Patrolling");
 
     bool broke_off = false;
-    bool arrived = false;
-    for (int i = 0; i < 1200 && !arrived; ++i) {
-        ctx.sim.tick();
-        arrived = true;
-        for (const u32 id : tanks) {
-            const sim::Unit* u = unit(id);
-            if (!u) continue;
-            const auto& q = u->command_queue();
-            if (!q.empty() && q.front().from_patrol && q.front().type == sim::CommandType::Attack)
-                broke_off = true;
-            arrived = arrived && q.empty();
-        }
-    }
+    const auto arrived =
+        tick_until(ctx, "Test 3: the attack-move ends, their queues empty", 1200, [&] {
+            bool empty = true;
+            for (const u32 id : tanks) {
+                const sim::Unit* u = unit(id);
+                if (!u) {
+                    continue;
+                }
+                const auto& q = u->command_queue();
+                if (!q.empty() && q.front().from_patrol &&
+                    q.front().type == sim::CommandType::Attack) {
+                    broke_off = true;
+                }
+                empty = empty && q.empty();
+            }
+            return empty;
+        });
     t.check(broke_off && !unit(enemies[0]) && !unit(enemies[1]),
             fmt::format("Test 2: they break off to attack ({}), and both engineers die ({}, {})",
                         broke_off, !unit(enemies[0]), !unit(enemies[1])));

@@ -13,6 +13,7 @@
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
 #include "sim/world_snapshot.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -32,6 +33,7 @@ using osc::sim::SimCallbackEntry;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
+using osc::test::tick_until;
 
 namespace {
 
@@ -120,9 +122,8 @@ TEST_CASE("Moving an order's target sends every unit given it there", "[order_ed
     w.ticks(1);
     CHECK(a.command_queue().front().target_pos.x == 30.0f);
     CHECK(b.command_queue().front().target_pos.z == 90.0f);
-    w.ticks(300);
-    CHECK(distance(a, 30, 90) < 3.0f);
-    CHECK(distance(b, 30, 90) < 3.0f);
+    tick_until([&] { w.sim->tick(); }, "both units reach the moved target", 600,
+               [&] { return distance(a, 30, 90) < 3.0f && distance(b, 30, 90) < 3.0f; });
 }
 
 TEST_CASE("Another army's player can't move an order", "[order_edit]") {
@@ -136,6 +137,10 @@ TEST_CASE("Another army's player can't move an order", "[order_edit]") {
     w.sim->schedule_callback(1, retarget(id, {a.entity_id()}, 30, 90));
     w.ticks(2);
     CHECK(a.command_queue().front().target_pos.x == 100.0f);
+    w.sim->set_command_source(0, 1, true);
+    w.sim->schedule_callback(1, retarget(id, {a.entity_id()}, 30, 90));
+    w.ticks(2);
+    CHECK(a.command_queue().front().target_pos.x == 30.0f);
 }
 
 TEST_CASE("A moved order's target is kept to the playable area", "[order_edit]") {
@@ -338,8 +343,8 @@ TEST_CASE("Taking off the order under way sends the unit on to the next", "[orde
     const auto before = ids_of(a);
     REQUIRE(before.size() == 2);
     w.sim->submit_callback(removal(before[0], {a.entity_id()}));
-    w.ticks(300);
-    CHECK(distance(a, 10, 60) < 3.0f);
+    tick_until([&] { w.sim->tick(); }, "the unit reaches the next order's point", 300,
+               [&] { return distance(a, 10, 60) < 3.0f; });
     CHECK(a.position().x < 40.0f);
 }
 
@@ -354,6 +359,10 @@ TEST_CASE("Another army's player can't take an order off", "[order_edit]") {
     w.sim->schedule_callback(1, removal(before[0], {a.entity_id()}));
     w.ticks(2);
     CHECK(ids_of(a) == before);
+    w.sim->set_command_source(0, 1, true);
+    w.sim->schedule_callback(1, removal(before[0], {a.entity_id()}));
+    w.ticks(2);
+    CHECK(ids_of(a).empty());
 }
 
 TEST_CASE("A factory's rally order can be taken off", "[order_edit]") {
@@ -623,6 +632,148 @@ TEST_CASE("A queue with more than moves, or not holding the waypoint, starts no 
     CHECK(ui.sent.empty());
 }
 
+namespace {
+
+struct CursorText {
+    std::string text;
+    std::string color;
+    osc::f32 x = 0;
+    osc::f32 y = 0;
+    osc::f32 seconds = 0;
+    bool flash = false;
+};
+
+void hear_cursor_text(osc::renderer::InputHandler& input, std::vector<CursorText>& heard) {
+    osc::renderer::CommandModeHooks hooks;
+    hooks.start_cursor_text = [&heard](osc::f32 x, osc::f32 y, const char* text, const char* color,
+                                       osc::f32 seconds, bool flash) {
+        heard.push_back({text, color, x, y, seconds, flash});
+    };
+    hooks.stop_cursor_text = [&heard] { heard.push_back({}); };
+    input.set_command_mode_hooks(std::move(hooks));
+}
+
+} // namespace
+
+TEST_CASE("Over a waypoint that starts a patrol the cursor text says which click does it",
+          "[order_edit][input][patrol]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    Unit& b = w.walker(10, 20);
+    const std::vector<osc::u32> both = {a.entity_id(), b.entity_id()};
+    w.order(both, CommandType::Move, 60, 10);
+    w.order(both, CommandType::Move, 60, 60, false);
+    w.order(both, CommandType::Move, 10, 60, false);
+    w.ticks(2);
+    const auto ids = ids_of(a);
+    REQUIRE(ids.size() == 3);
+    Ui ui(*w.sim);
+    std::vector<CursorText> heard;
+    hear_cursor_text(ui.input, heard);
+    ui.input.set_selected({a.entity_id(), b.entity_id()});
+    osc::renderer::CommandMode order;
+    order.mode = "order";
+    order.name = "RULEUCC_Move";
+
+    ui.input.set_hovered_command(ids[1]);
+    ui.input.world_mouse_event(*w.sim, {}, 300, 200);
+    CHECK(ui.input.converts_to_patrol());
+    ui.input.world_mouse_event(*w.sim, order, 310, 210);
+    ui.input.set_hovered_command(ids[2]);
+    ui.input.world_mouse_event(*w.sim, {}, 320, 220);
+    CHECK_FALSE(ui.input.converts_to_patrol());
+    ui.input.set_hovered_command(0);
+    ui.input.world_mouse_event(*w.sim, {}, 330, 230);
+
+    REQUIRE(heard.size() == 4);
+    CHECK(heard[0].text == "<LOC Engine0010>Right-click to convert moves into patrol");
+    CHECK(heard[0].color == "ffffffff");
+    CHECK(heard[0].x == 300.0f);
+    CHECK(heard[0].y == 200.0f);
+    CHECK(heard[0].seconds == -1.0f);
+    CHECK_FALSE(heard[0].flash);
+    CHECK(heard[1].text == "<LOC Engine0009>Left-click to convert moves into patrol");
+    CHECK(heard[1].x == 310.0f);
+    CHECK(heard[2].text.empty());
+    CHECK(heard[3].text.empty());
+}
+
+TEST_CASE("A right button that starts a patrol says so at the cursor, any other gives its order",
+          "[order_edit][input][patrol]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    w.order({a.entity_id()}, CommandType::Move, 60, 10);
+    w.order({a.entity_id()}, CommandType::Move, 60, 60, false);
+    w.order({a.entity_id()}, CommandType::Move, 10, 60, false);
+    w.ticks(2);
+    const auto ids = ids_of(a);
+    REQUIRE(ids.size() == 3);
+    Ui ui(*w.sim);
+    std::vector<CursorText> heard;
+    hear_cursor_text(ui.input, heard);
+    ui.input.set_selected({a.entity_id()});
+
+    ui.input.set_hovered_command(ids[2]);
+    ui.input.world_mouse_event(*w.sim, {}, 300, 200);
+    ui.input.right_button_down(*w.sim, 10, 60, false);
+    CHECK(ui.sent.empty());
+    REQUIRE(heard.size() == 1);
+    CHECK(heard[0].text.empty());
+
+    ui.input.set_hovered_command(ids[1]);
+    ui.input.world_mouse_event(*w.sim, {}, 400, 250);
+    ui.input.right_button_down(*w.sim, 60, 60, false);
+    REQUIRE(ui.sent.size() == 2);
+    CHECK(ui.sent[0].func_name == osc::sim::kSetCommandTypeCallback);
+    REQUIRE(heard.size() == 3);
+    CHECK(heard[2].text == "<LOC Engine0012>Patrol Initiated to location!");
+    CHECK(heard[2].color == "ff00ff00");
+    CHECK(heard[2].x == 400.0f);
+    CHECK(heard[2].y == 250.0f);
+    CHECK(heard[2].seconds == 3.0f);
+    CHECK(heard[2].flash);
+}
+
+TEST_CASE("A Move order click on a waypoint that starts a patrol makes it one and issues nothing",
+          "[order_edit][input][patrol]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    a.add_command_cap("RULEUCC_Move");
+    w.order({a.entity_id()}, CommandType::Move, 60, 10);
+    w.order({a.entity_id()}, CommandType::Move, 60, 60, false);
+    w.order({a.entity_id()}, CommandType::Move, 10, 60, false);
+    w.ticks(2);
+    const auto ids = ids_of(a);
+    REQUIRE(ids.size() == 3);
+    Ui ui(*w.sim);
+    std::vector<CursorText> heard;
+    hear_cursor_text(ui.input, heard);
+    ui.input.set_selected({a.entity_id()});
+    osc::renderer::CommandMode move;
+    move.mode = "order";
+    move.name = "RULEUCC_Move";
+
+    ui.input.set_hovered_command(ids[1]);
+    ui.input.world_mouse_event(*w.sim, move, 400, 250);
+    CHECK_FALSE(ui.input.click_in_command_mode(*w.sim, move, 60, 60, true));
+    CHECK(w.sim->queues_with_pending().empty());
+    REQUIRE(ui.sent.size() == 2);
+    CHECK(ui.sent[0].func_name == osc::sim::kSetCommandTypeCallback);
+    REQUIRE(heard.size() == 2);
+    CHECK(heard[1].text == "<LOC Engine0012>Patrol Initiated to location!");
+    CHECK(heard[1].x == 400.0f);
+    CHECK(heard[1].y == 250.0f);
+
+    ui.input.set_hovered_command(0);
+    ui.input.world_mouse_event(*w.sim, move, 410, 250);
+    const auto issued = ui.input.click_in_command_mode(*w.sim, move, 60, 60, true);
+    REQUIRE(issued);
+    CHECK(issued->type == "Move");
+    CHECK_FALSE(w.sim->queues_with_pending().empty());
+    CHECK(ui.sent.size() == 2);
+    CHECK(heard.size() == 3);
+}
+
 TEST_CASE("Only a move is made a patrol, and only of the sender's units", "[order_edit][patrol]") {
     World w;
     Unit& a = w.walker(10, 10);
@@ -652,6 +803,11 @@ TEST_CASE("Only a move is made a patrol, and only of the sender's units", "[orde
     CHECK(a.command_queue()[0].type == CommandType::Move);
     CHECK(a.command_queue()[1].type == CommandType::Attack);
     CHECK(theirs.command_queue()[0].type == CommandType::Move);
+    w.sim->schedule_callback(
+        1, patrol(a.command_queue()[0].command_id, a.entity_id(), CommandType::Patrol));
+    w.ticks(2);
+    CHECK(std::any_of(a.command_queue().begin(), a.command_queue().end(),
+                      [](const UnitCommand& c) { return c.type == CommandType::Patrol; }));
 }
 
 namespace {

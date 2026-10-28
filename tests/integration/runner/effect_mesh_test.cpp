@@ -16,6 +16,7 @@
 #include "support/temp_path.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
@@ -259,25 +260,26 @@ void test_effect_meshes(TestContext& ctx) {
         f32 seen_x = 0.0f;
         f32 seen_z = 0.0f;
         int seen_n = 0;
-        for (int i = 0; i < 300; ++i) {
-            ctx.sim.tick();
-            if (i % 10 != 9) continue;
-            ctx.sim.entity_registry().for_each([&](const sim::Entity& e) {
-                if (e.destroyed() || !e.is_projectile()) return;
-                const std::string id = lower(e.blueprint_id());
-                for (Effect& effect : effects)
-                    if (id.find(effect.name) != std::string::npos) {
-                        effect.found = true;
-                        effect.seen = r.mesh_technique(e.blueprint_id(), ctx.L);
-                        seen_x += e.position().x;
-                        seen_z += e.position().z;
-                        ++seen_n;
-                    }
-            });
-            if (std::all_of(std::begin(effects), std::end(effects),
-                            [](const Effect& e) { return e.found; }))
-                break;
-        }
+        tick_until([&] { tick_for(ctx, 10); }, "Test 1: the build effects are made", 30,
+                   [&] {
+                       ctx.sim.entity_registry().for_each([&](const sim::Entity& e) {
+                           if (e.destroyed() || !e.is_projectile()) {
+                               return;
+                           }
+                           const std::string id = lower(e.blueprint_id());
+                           for (Effect& effect : effects) {
+                               if (id.find(effect.name) != std::string::npos) {
+                                   effect.found = true;
+                                   effect.seen = r.mesh_technique(e.blueprint_id(), ctx.L);
+                                   seen_x += e.position().x;
+                                   seen_z += e.position().z;
+                                   ++seen_n;
+                               }
+                           }
+                       });
+                       return std::all_of(std::begin(effects), std::end(effects),
+                                          [](const Effect& e) { return e.found; });
+                   });
         // The frame's instances, with the projectiles' colours: amid the
         // effects.
         const f32 n = static_cast<f32>(std::max(1, seen_n));

@@ -13,6 +13,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -33,6 +34,7 @@ using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
 using osc::sim::Vector3;
+using osc::test::tick_until;
 namespace oc = osc::blueprints::occupancy;
 
 namespace {
@@ -259,11 +261,13 @@ TEST_CASE("With Moho pathing a FAVORSWATER unit sails round a strip of land it c
     u->push_command(move_to({90.0f, 0.0f, 40.0f}), true);
     bool landed = false;
     bool moho = false;
-    for (int t = 0; t < 600 && !u->command_queue().empty(); ++t) {
-        w.sim.tick();
-        landed = landed || dry(u->position().x, u->position().z);
-        moho = moho || u->navigator().moho_active();
-    }
+    tick_until(
+        [&] {
+            w.sim.tick();
+            landed = landed || dry(u->position().x, u->position().z);
+            moho = moho || u->navigator().moho_active();
+        },
+        "the unit finishes its move", 600, [&] { return u->command_queue().empty(); });
     CHECK(moho);
     CHECK(u->position().x > 85.0f);
     CHECK_FALSE(landed);

@@ -7,10 +7,12 @@
 // 2. on the tick its layer becomes Water it starts a 39-tick blend onto the
 //    water's surface, its place on the map fixed meanwhile;
 // 3. sent back, on the tick its layer becomes Land it starts one up the
-//    shore, moving on toward the ground it is heading for.
+//    shore, moving on toward the ground it is heading for;
+// 4. moving on, it walks.
 
 #include "integration_tests.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "sim/script_class.hpp"
@@ -43,15 +45,13 @@ Crossing cross(sim::SimState& sim, sim::EntityRegistry& registry, u32 id, const 
         sim::Entity* e = registry.find(id);
         return e && e->is_unit() && !e->destroyed() ? static_cast<sim::Unit*>(e) : nullptr;
     };
-    for (int t = 0; t < 400; ++t) {
-        sim.tick();
-        sim::Unit* u = unit();
-        if (!u) return c;
-        if (u->layer() == layer) {
-            c.crossed = true;
-            break;
-        }
-    }
+    const auto crossed =
+        tick_until([&] { sim.tick(); }, fmt::format("the Salem's layer becomes {}", layer), 400,
+                   [&] {
+                       const sim::Unit* u = unit();
+                       return u && u->layer() == layer;
+                   });
+    c.crossed = crossed.has_value();
     sim::Unit* u = unit();
     if (!c.crossed || !u) return c;
     const sim::Vector3 start = u->position();
@@ -146,6 +146,24 @@ void test_layer_transition(TestContext& ctx) {
     t.check(out.crossed && out.blend_ticks == 39 && out.moved > 0.5f,
             fmt::format("3: up the shore in 39 ticks ({}), moving on toward the land ({:.2f})",
                         out.blend_ticks, out.moved));
+
+    // 4. Its script starts AnimationWalk only on a start from Stopped
+    for (int k = 0; k < 10; ++k) {
+        ctx.sim.tick();
+    }
+    const auto walks = ctx.lua_state.do_string(
+        fmt::format("local u = GetEntityById('{}')\n"
+                    "__osc_lt_walk = u and string.format('%s %s %s', tostring(u.Walking),"
+                    " tostring(u.SwitchAnims), tostring(u.IsWaiting)) or 'gone'",
+                    sim::EntityRegistry::moho_id(id)));
+    lua_pushstring(L, "__osc_lt_walk");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const std::string walk =
+        walks ? (lua_isstring(L, -1) ? lua_tostring(L, -1) : "?") : walks.error().message;
+    lua_pop(L, 1);
+    t.check(walk == "true false false",
+            fmt::format("4: on the land it plays its walk (Walking, SwitchAnims, IsWaiting: {})",
+                        walk));
     spdlog::info("Layer transition test: {} passed, {} failed", t.pass, t.fail);
 }
 

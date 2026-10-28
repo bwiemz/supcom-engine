@@ -6,6 +6,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -22,6 +23,7 @@ using osc::sim::Prop;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
+using osc::test::tick_until;
 
 namespace {
 
@@ -165,10 +167,7 @@ TEST_CASE("A wreck of another structure is reclaimed before the build starts", "
     REQUIRE(w.engineer->command_queue().size() == 1);
     CHECK(w.engineer->command_queue().front().type == CommandType::BuildMobile);
     CHECK(w.engineer->reclaim_target_id() == wreck);
-    for (int i = 0; i < 20 && !w.built(); ++i) {
-        w.sim.tick();
-    }
-    REQUIRE(w.built());
+    tick_until([&] { w.sim.tick(); }, "the build starts", 20, [&] { return w.built() != nullptr; });
     CHECK(w.sim.entity_registry().find(wreck) == nullptr);
     CHECK(w.built()->fraction_complete() < 0.05f);
 }
@@ -199,10 +198,7 @@ TEST_CASE("A wreck worth nothing is reclaimed off the site all the same", "[buil
     WreckSite w("Engineer.GetReclaimCosts = function(self, target) return 1, 0, 0 end");
     const osc::u32 wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
     w.build("uab1103");
-    for (int i = 0; i < 20 && !w.built(); ++i) {
-        w.sim.tick();
-    }
-    REQUIRE(w.built());
+    tick_until([&] { w.sim.tick(); }, "the build starts", 20, [&] { return w.built() != nullptr; });
     CHECK(w.sim.entity_registry().find(wreck) == nullptr);
 }
 
@@ -212,21 +208,16 @@ TEST_CASE("A paused engineer clears its site, then makes its frame only on a ret
     const osc::u32 wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
     w.engineer->set_paused(true);
     w.build("uab1103");
-    for (int i = 0; i < 40 && w.sim.entity_registry().find(wreck); ++i) {
-        w.sim.tick();
-    }
-    CHECK(w.sim.entity_registry().find(wreck) == nullptr);
+    tick_until([&] { w.sim.tick(); }, "the paused engineer reclaims the wreck", 40,
+               [&] { return w.sim.entity_registry().find(wreck) == nullptr; });
     for (int i = 0; i < 15; ++i) {
         w.sim.tick();
     }
     CHECK_FALSE(w.built());
     REQUIRE(w.engineer->command_queue().size() == 1);
     w.engineer->set_paused(false);
-    int ticks = 0;
-    while (!w.built() && ticks < 20) {
-        w.sim.tick();
-        ++ticks;
-    }
+    const int ticks = tick_until([&] { w.sim.tick(); }, "the engineer makes its frame", 20,
+                                 [&] { return w.built() != nullptr; });
     CHECK(ticks <= 10);
 }
 
@@ -252,10 +243,8 @@ TEST_CASE("A paused engineer's frame decays while it holds it, and builds on aft
     osc::f32 last = w.built()->fraction_complete();
     w.sim.tick();
     CHECK(w.built()->fraction_complete() < last);
-    for (int i = 0; i < 10; ++i) {
-        w.sim.tick();
-    }
-    CHECK(w.built()->fraction_complete() > last);
+    tick_until([&] { w.sim.tick(); }, "the frame builds on", 20,
+               [&] { return w.built()->fraction_complete() > last; });
 }
 
 TEST_CASE("A builder that must face its site turns to it before it builds", "[build][face]") {
@@ -268,10 +257,8 @@ TEST_CASE("A builder that must face its site turns to it before it builds", "[bu
     w.build("ueb1103");
     w.sim.tick();
     CHECK_FALSE(w.built());
-    for (int i = 0; i < 30 && !w.built(); ++i) {
-        w.sim.tick();
-    }
-    REQUIRE(w.built());
+    tick_until([&] { w.sim.tick(); }, "the engineer turns to its site and builds", 30,
+               [&] { return w.built() != nullptr; });
     CHECK(std::abs(osc::sim::quat_yaw(w.engineer->orientation())) < 0.32f);
 }
 
@@ -296,9 +283,8 @@ std::string heard(lua_State* L) {
 TEST_CASE("A mobile build tells OnStartBuild and OnStopBuild its order", "[build]") {
     WreckSite w(kHeard);
     w.build("ueb1103");
-    for (int i = 0; i < 200 && !w.engineer->command_queue().empty(); ++i) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the engineer finishes its build", 200,
+               [&] { return w.engineer->command_queue().empty(); });
     REQUIRE(w.built());
     CHECK_FALSE(w.built()->is_being_built());
     CHECK(heard(w.L) == "start MobileBuild stop MobileBuild ");
@@ -428,11 +414,8 @@ TEST_CASE("A build callback can clear its orders without stopping the build twic
             lua_rawset(w.L, -3);
             lua_pop(w.L, 1);
         }
-        for (int tick = 0; tick < 200 && (!w.built() || w.built()->is_being_built()); ++tick) {
-            w.sim.tick();
-        }
-        REQUIRE(w.built());
-        CHECK_FALSE(w.built()->is_being_built());
+        tick_until([&] { w.sim.tick(); }, "the build finishes", 200,
+                   [&] { return w.built() && !w.built()->is_being_built(); });
         lua_getglobal(w.L, "__replace");
         if (lua_toboolean(w.L, -1)) {
             REQUIRE(w.engineer->command_queue().size() == 1);

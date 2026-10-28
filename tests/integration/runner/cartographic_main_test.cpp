@@ -15,6 +15,7 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "core/image.hpp"
 #include "core/ui_registry_keys.hpp"
@@ -29,6 +30,7 @@
 #include "renderer/texture_cache.hpp"
 #include "sim/category_expr.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
 #include "ui/ui_control.hpp"
 
 #include <fmt/format.h>
@@ -341,7 +343,10 @@ void test_cartographic_main(TestContext& ctx) {
     // first plays out: the commander's bones hold it at no size, then it
     // wears the phase shield's mesh, which a cartographic view draws as a
     // shield's highlight, until its own comes back.)
-    for (int i = 0; i < 250; ++i) ctx.sim.tick();
+    tick_until(ctx, "the commander's warp-in plays out", 250, [&] {
+        const auto& u = static_cast<const sim::Unit&>(*acu_entity);
+        return !u.is_bone_hidden(0) && u.mesh_override().find("PhaseShield") == std::string::npos;
+    });
     (void)ctx.lua_state.do_string(set_cartographic("__osc_cm_main", false));
     // (cam_Free off from here: with it on Moho draws no strategic icons or
     // unit bars; this near, no deposit icon shows either way)

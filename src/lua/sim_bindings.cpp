@@ -228,6 +228,15 @@ static void count_made(sim::SimState& sim, u32 id) {
     }
 }
 
+/// Moho's Unit ctor: UpdateTerrainType after OnPreCreate, so its script hears
+/// the type it is made on.
+static void tell_terrain_type(lua_State* L, sim::SimState& sim, u32 id) {
+    auto* made = sim.entity_registry().find(id);
+    if (made && made->is_unit()) {
+        static_cast<sim::Unit*>(made)->update_terrain_type(sim.terrain(), made->position(), L);
+    }
+}
+
 /// Moho's Unit, as it is made: SetAutoMode(AI.InitialAutoMode) just before
 /// OnPreCreate, which tells the script OnAutoModeOn or OnAutoModeOff either
 /// way (Unit::SetAutoMode always does). `tbl` is the unit's table.
@@ -559,6 +568,7 @@ static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_
     } else {
         lua_pop(L, 1);
     }
+    tell_terrain_type(L, sim, id);
 
     create_unit_weapons(L, tbl, "Unit");
     set_up_initial_rally(sim, id);
@@ -701,6 +711,9 @@ static int l_create_building_unit(lua_State* L) {
         }
     } else {
         lua_pop(L, 1);
+    }
+    if (auto* sim = get_sim(L)) {
+        tell_terrain_type(L, *sim, id);
     }
 
     create_unit_weapons(L, tbl, "Building");
@@ -3379,6 +3392,18 @@ static int l_ParseEntityCategory(lua_State* L) {
     lua_pushvalue(L, -2);
     lua_rawset(L, cache);
     return 1;
+}
+
+sim::CategoryExpr parse_entity_category(lua_State* L, const std::string& text) {
+    const int top = lua_gettop(L);
+    lua_pushcfunction(L, l_ParseEntityCategory);
+    lua_pushstring(L, text.c_str());
+    sim::CategoryExpr category;
+    if (lua_pcall(L, 1, 1, 0) == 0) {
+        category = sim::compile_category(L, -1);
+    }
+    lua_settop(L, top);
+    return category;
 }
 
 /// A Rect at `idx` as Moho reads one (SCR_FromLuaCopy<Rect2f>): its x0, y0,

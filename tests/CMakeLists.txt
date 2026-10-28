@@ -40,7 +40,9 @@ add_executable(osc_tests
     test_map_border.cpp
     test_minimap_meshes.cpp
     test_seabed_layer.cpp
+    test_speed_mult.cpp
     test_terrain_type.cpp
+    test_dive_lean.cpp
     test_raised_platforms.cpp
     test_favors_water.cpp
     test_ground_snap.cpp

@@ -534,13 +534,7 @@ int entity_Kill(lua_State* L) {
                                    ? sim->entity_registry().find(unit->transport_id())
                                    : nullptr;
         if (carrier && carrier->is_unit()) {
-            // CAiTransportImpl::TransportDetachUnit: an aircraft keeps a unit whose footprint
-            // can't stand where it hangs; it hears OnAttachedKilled below.
-            auto* transport = static_cast<sim::Unit*>(carrier);
-            const bool held = transport->layer() == "Air" &&
-                              sim->footprint_fits_at(unit->footprint(), unit->position().x,
-                                                     unit->position().z) == 0;
-            if (!held) transport->detach_cargo({unit->entity_id()}, sim->entity_registry(), L);
+            sim->transport_detach_unit(static_cast<sim::Unit&>(*carrier), *unit);
         }
         if (carrier || (unit->is_being_built() && unit->fraction_complete() < 0.5f)) {
             lua_pushnumber(L, 10);
@@ -694,11 +688,11 @@ static sim::Vector3 spread(const sim::Vector3& base, const sim::Vector3& range,
 }
 
 /// Point a new projectile along `dir`, at `speed` (Moho's COORDS_Orient of its launch direction,
-/// its velocity forward); a zero direction leaves it as it was.
+/// its velocity forward); a zero direction is the identity, forward along +z.
 static void aim_projectile(sim::Projectile& p, const sim::Vector3& dir, f32 speed) {
     const f32 len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-    if (len < 1e-6f) return;
-    const sim::Vector3 d{dir.x / len, dir.y / len, dir.z / len};
+    const sim::Vector3 d =
+        len > 1e-6f ? sim::Vector3{dir.x / len, dir.y / len, dir.z / len} : sim::Vector3{0, 0, 1};
     p.set_orientation(sim::euler_to_quat(osc::dmath::atan2(d.x, d.z),
                                          osc::dmath::atan2(-d.y, std::sqrt(d.x * d.x + d.z * d.z)),
                                          0.0f));
@@ -1106,7 +1100,7 @@ static int entity_DetachFrom(lua_State* L) {
         sim::Entity* transport = sim ? sim->entity_registry().find(unit->transport_id()) : nullptr;
         if (transport && transport->is_unit()) {
             static_cast<sim::Unit*>(transport)->detach_cargo(
-                {unit->entity_id()}, sim->entity_registry(), L, sim->terrain());
+                {unit->entity_id()}, sim->entity_registry(), L, sim->terrain(), false);
         }
     }
     return 0;

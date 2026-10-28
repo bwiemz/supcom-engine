@@ -14,6 +14,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -28,6 +29,7 @@ using osc::sim::ScheduledCommand;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
+using osc::test::tick_until;
 
 namespace {
 
@@ -172,11 +174,12 @@ TEST_CASE("A replay's game ends on the tick that ended it, and its beats go on t
     end_at_tick_5(b);
     osc::sim::ReplayPlayback playback(a.recorded_replay());
     playback.start(b);
-    for (int i = 0; i < 20 && !playback.finished(b); ++i) {
-        b.tick();
-        CHECK(playback.check(b));
-    }
-    CHECK(playback.finished(b));
+    tick_until(
+        [&] {
+            b.tick();
+            CHECK(playback.check(b));
+        },
+        "the playback plays every recorded beat", 20, [&] { return playback.finished(b); });
     CHECK(b.beat_count() == 10);
     CHECK(b.tick_count() == 5);
 }
@@ -213,16 +216,18 @@ TEST_CASE("A replay holds the pauses it recorded and runs the commands given in 
     osc::sim::ReplayPlayback playback(recorded);
     playback.start(b);
     std::vector<osc::u32> ticks;
-    while (!playback.finished(b)) {
-        b.tick();
-        CHECK(playback.check(b));
-        ticks.push_back(b.tick_count());
-        if (b.beat_count() == 4) {
-            CHECK(b.paused());
-            const auto* mover = static_cast<const Unit*>(b.entity_registry().find(bids[0]));
-            CHECK(mover->command_queue().size() == 1);
-        }
-    }
+    tick_until(
+        [&] {
+            b.tick();
+            CHECK(playback.check(b));
+            ticks.push_back(b.tick_count());
+            if (b.beat_count() == 4) {
+                CHECK(b.paused());
+                const auto* mover = static_cast<const Unit*>(b.entity_registry().find(bids[0]));
+                CHECK(mover->command_queue().size() == 1);
+            }
+        },
+        "the playback plays every recorded beat", 20, [&] { return playback.finished(b); });
     CHECK(ticks == std::vector<osc::u32>{1, 2, 2, 2, 2, 3, 4, 5, 6});
     CHECK(b.compute_sync_checksum() == a.compute_sync_checksum());
 }
@@ -241,17 +246,18 @@ TEST_CASE("A lockstep peer's recording holds the other peers' commands", "[repla
     a.set_local_command_sink([&](const std::vector<osc::u32>& u, const UnitCommand& c, bool clear) {
         sa.submit_local(u, c, clear);
     });
-    for (int round = 0; round < 6; ++round) {
-        if (round == 1) {
-            a.set_human_input_active(true); // A's player orders a move
-            a.route_command({ids[0]}, move_to(80.0f, 0.0f), true);
-            a.set_human_input_active(false);
-        }
+    const auto exchange = [&] {
         sa.send_frame();
         sb.send_frame();
         sa.receive_and_advance();
         sb.receive_and_advance();
-    }
+    };
+    exchange();
+    a.set_human_input_active(true); // A's player orders a move
+    a.route_command({ids[0]}, move_to(80.0f, 0.0f), true);
+    a.set_human_input_active(false);
+    tick_until(exchange, "B's recording holds A's move", 10,
+               [&] { return !b.recorded_replay().commands.empty(); });
     REQUIRE(b.recorded_replay().commands.size() == 1);
     CHECK(b.recorded_replay().commands[0].source == 0);
 }
@@ -284,10 +290,13 @@ TEST_CASE("Playback checks every tick against the recording", "[replay][sync]") 
         b.set_human_input_active(true);
         b.route_command({ids[2]}, move_to(-300.0f, 0.0f), true);
         b.set_human_input_active(false);
-        while (!playback.finished(b)) {
-            b.tick();
-            if (!playback.check(b)) break;
-        }
+        tick_until(
+            [&] {
+                b.tick();
+                playback.check(b);
+            },
+            "the playback ends or diverges", 60,
+            [&] { return playback.finished(b) || playback.diverged_at() != 0; });
         return playback.diverged_at();
     };
     CHECK(play(recorded) == 0);

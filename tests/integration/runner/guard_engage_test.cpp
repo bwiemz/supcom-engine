@@ -20,6 +20,7 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "sim/sim_state.hpp"
@@ -69,42 +70,38 @@ void test_guard_engage(TestContext& ctx) {
     const sim::Vector3 idle_at = unit(idle_id)->position();
     run_lua(ctx, "IssueGuard({__osc_ge_guard}, __osc_ge_ward)");
 
-    bool engaged = false;
-    for (int i = 0; i < 40 && !engaged && unit(guard_id); ++i) {
-        ctx.sim.tick();
-        const auto& q = unit(guard_id)->command_queue();
-        engaged = !q.empty() && q.front().from_guard &&
-                  q.front().type == sim::CommandType::Attack && q.front().target_id == enemy_id;
-    }
-    t.check(engaged, "Test 1: the guard breaks off to attack the engineer 23 off");
+    const auto engaged =
+        tick_until(ctx, "Test 1: the guard breaks off to attack the engineer 23 off", 40, [&] {
+            const sim::Unit* g = unit(guard_id);
+            if (!g) {
+                return false;
+            }
+            const auto& q = g->command_queue();
+            return !q.empty() && q.front().from_guard &&
+                   q.front().type == sim::CommandType::Attack && q.front().target_id == enemy_id;
+        });
     t.check(engaged && lua_ok("if not __osc_ge_guard:IsUnitState('Guarding') or "
                               "not __osc_ge_guard:IsUnitState('Attacking') or "
                               "__osc_ge_guard:GetGuardedUnit() ~= __osc_ge_ward then "
                               "error('states') end"),
             "Test 1: fighting, it is Guarding and Attacking, and guards the T2 tank");
 
-    bool killed = false;
-    for (int i = 0; i < 600 && !killed; ++i) {
-        ctx.sim.tick();
-        killed = !unit(enemy_id);
-    }
+    const auto killed =
+        tick_until(ctx, "Test 2: it kills the engineer", 600, [&] { return !unit(enemy_id); });
     guard = unit(guard_id);
     t.check(killed && guard && !guard->command_queue().empty() &&
                 guard->command_queue().front().type == sim::CommandType::Guard &&
                 guard->command_queue().front().target_id == ward_id,
             "Test 2: it kills the engineer, and its Guard is its order again");
 
-    bool home = false;
-    for (int i = 0; i < 300 && !home && guard; ++i) {
-        ctx.sim.tick();
+    tick_until(ctx, "Test 3: it goes home to the T2 tank", 300, [&] {
         guard = unit(guard_id);
         const sim::Unit* ward = unit(ward_id);
-        home = guard && ward &&
+        return guard && ward &&
                std::hypot(guard->position().x - ward->position().x,
                           guard->position().z - ward->position().z) <= 10.5f &&
                !guard->command_queue().front().guard_returning;
-    }
-    t.check(home, "Test 3: it goes home to the T2 tank");
+    });
 
     const sim::Unit* idle = unit(idle_id);
     const f32 idle_moved =
@@ -116,15 +113,13 @@ void test_guard_engage(TestContext& ctx) {
             fmt::format("__osc_ge_bait:Destroy()\n"
                         "IssueGuard({{__osc_ge_idle}}, {{{0}, GetTerrainHeight({0}, {1}), {1}}})",
                         sx + 20, sz - 30));
-    bool there = false;
-    for (int i = 0; i < 600 && !there && unit(idle_id); ++i) {
-        ctx.sim.tick();
+    const auto there = tick_until(ctx, "Test 5: the tank guarding a position goes there", 600, [&] {
         const sim::Unit* u = unit(idle_id);
-        there = !u->command_queue().empty() &&
-                u->command_queue().front().type == sim::CommandType::Guard &&
-                u->command_queue().front().target_id == 0 &&
-                std::hypot(u->position().x - (sx + 20), u->position().z - (sz - 30)) <= 2.5f;
-    }
+        return u && !u->command_queue().empty() &&
+               u->command_queue().front().type == sim::CommandType::Guard &&
+               u->command_queue().front().target_id == 0 &&
+               std::hypot(u->position().x - (sx + 20), u->position().z - (sz - 30)) <= 2.5f;
+    });
     t.check(there && lua_ok("if not __osc_ge_idle:IsUnitState('Guarding') or "
                             "__osc_ge_idle:GetGuardedUnit() ~= nil then error('states') end"),
             "Test 5: IssueGuard at a position: the tank goes there and guards it");

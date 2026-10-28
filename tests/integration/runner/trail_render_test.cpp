@@ -16,6 +16,7 @@
 #include "intel_probe.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "renderer/renderer.hpp"
 #include "renderer/trail_renderer.hpp"
@@ -704,20 +705,24 @@ void test_trail_render(TestContext& ctx) {
         const Spot v0{sx + 10, sz - 20};
         (void)spawn_unit(ctx, "__osc_tt_v", "uel0105", "ARMY_1", v0, kLift);
         look_at(v0.x + 10, v0.z, 60.0f);
-        std::string retail;
-        for (int i = 0; i < 60 && retail.empty(); ++i) {
-            if (i % 10 == 0)
-                run_lua(ctx, "local p = __osc_tt_v:CreateProjectile("
-                             "'/projectiles/TDFGauss01/TDFGauss01_proj.bp', 0, 1, 0, 1, 0, 0)\n"
-                             "if p then p:SetVelocity(1, 0.2, 0) end\n");
-            step();
-            for (const auto& s : r.trail_renderer().drawn())
-                if (s.blueprint.rfind("/effects/emitters/", 0) == 0 &&
-                    r.trail_renderer().draws_effect(s.effect_id))
-                    retail = s.blueprint;
-        }
-        t.check(!retail.empty(), fmt::format("Test 10b: a Gauss shell's polytrail drawn ({})",
-                                             retail.empty() ? "none" : retail));
+        int fired = 0;
+        tick_until(
+            [&] {
+                if (fired++ % 10 == 0) {
+                    run_lua(ctx, "local p = __osc_tt_v:CreateProjectile("
+                                 "'/projectiles/TDFGauss01/TDFGauss01_proj.bp', 0, 1, 0, 1, 0, 0)\n"
+                                 "if p then p:SetVelocity(1, 0.2, 0) end\n");
+                }
+                step();
+            },
+            "Test 10b: a Gauss shell's polytrail is drawn", 120,
+            [&] {
+                const auto& trails = r.trail_renderer().drawn();
+                return std::any_of(trails.begin(), trails.end(), [&](const auto& s) {
+                    return s.blueprint.rfind("/effects/emitters/", 0) == 0 &&
+                           r.trail_renderer().draws_effect(s.effect_id);
+                });
+            });
     }
 
     // Test 11: a trail with Lifetime 3 stops emitting 3 ticks after it

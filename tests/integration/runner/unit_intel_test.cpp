@@ -14,6 +14,7 @@
 #include "support/temp_path.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "map/terrain.hpp"
@@ -22,6 +23,7 @@
 #include "renderer/particle_system.hpp"
 #include "renderer/recon_view.hpp"
 #include "sim/entity.hpp"
+#include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/world_snapshot.hpp"
 #include "vfs/directory_mount.hpp"
@@ -419,8 +421,17 @@ void test_effect_intel(TestContext& ctx) {
                  "s:DisableIntel('Vision') s:DisableIntel('Omni')\n"
                  "s:InitIntel(1, 'Radar', 90) s:DisableIntel('Radar')\n"
                  "__osc_fx_own:DisableIntel('Vision')\n");
-    // Its shield comes up once it's finished.
-    for (int i = 0; i < 20; ++i) ctx.sim.tick();
+    tick_until(ctx, "the shield generator's shield comes up once it's finished", 60, [&] {
+        bool up = false;
+        ctx.sim.entity_registry().for_each([&](sim::Entity& e) {
+            if (e.is_shield() && !e.destroyed()) {
+                const auto& shield = static_cast<const sim::Shield&>(e);
+                up = up ||
+                     (shield.owner_id == shield_id && (shield.is_on || !e.mesh_override().empty()));
+            }
+        });
+        return up;
+    });
 
     OffscreenShots shots(ctx);
     if (!shots.ok()) {

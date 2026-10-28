@@ -13,6 +13,7 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "sim/entity_registry.hpp"
@@ -49,9 +50,6 @@ void test_binding_tail(TestContext& ctx) {
         const auto& queue = static_cast<const sim::Unit*>(e)->command_queue();
         if (queue.empty()) return std::nullopt;
         return queue.front().type;
-    };
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
 
     const u32 transport = spawn_unit(ctx, "__osc_bt_transport", "uea0107", "ARMY_1", {sx, sz});
@@ -153,7 +151,9 @@ void test_binding_tail(TestContext& ctx) {
         if not __osc_bt_near:GetBlip(1):IsSeenEver(1) then error('not seen ever') end
     )");
     scrying = false;
-    run(10);
+    tick_until(ctx, "both generators go out of sight", 20,
+               "not __osc_bt_near:GetBlip(1):IsSeenNow(1) and "
+               "not __osc_bt_far:GetBlip(1):IsSeenNow(1)");
     check("out of sight, both are remembered", R"(
         for _, u in {__osc_bt_near, __osc_bt_far} do
             local blip = u:GetBlip(1)
@@ -255,7 +255,7 @@ void test_binding_tail(TestContext& ctx) {
     check("a factory builds a tank", R"(
         IssueBuildFactory({__osc_bt_factory}, 'uel0201', 1)
     )");
-    run(20);
+    tick_until(ctx, "the factory starts the tank", 40, "__osc_bt_factory:GetFocusUnit() ~= nil");
     check("GetListOfUnits(category, needToBeIdle, requireBuilt = true)", R"(
         local brain = ArmyBrains[1]
         local function has(list, unit)

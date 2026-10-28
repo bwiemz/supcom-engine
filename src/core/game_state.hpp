@@ -346,6 +346,21 @@ inline void call_on_command_graph_show(lua_State* L, bool show) {
     call_imported_ui_callback(L, "/lua/ui/game/commandgraph.lua", "OnCommandGraphShow", 1);
 }
 
+inline void call_start_cursor_text(lua_State* L, f32 x, f32 y, const char* text, const char* color,
+                                   f32 seconds, bool flash) {
+    lua_pushnumber(L, x);
+    lua_pushnumber(L, y);
+    lua_pushstring(L, text);
+    lua_pushstring(L, color);
+    lua_pushnumber(L, seconds);
+    lua_pushboolean(L, flash ? 1 : 0);
+    call_imported_ui_callback(L, kUiMainModule, "StartCursorText", 6);
+}
+
+inline void call_stop_cursor_text(lua_State* L) {
+    call_imported_ui_callback(L, kUiMainModule, "StopCursorText", 0);
+}
+
 /// The engine's own per-UI-frame heartbeat: a global OnBeat(dt) if a
 /// script defined one. (Retail has none; its beat is call_game_beat.)
 inline void call_on_beat(lua_State* L, f64 dt) {

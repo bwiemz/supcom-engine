@@ -18,6 +18,7 @@
 // script's units or a transfer.
 
 #include "integration_tests.hpp"
+#include "tick_until.hpp"
 
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
@@ -43,9 +44,6 @@ void test_unit_cap(TestContext& ctx) {
             test_status::fail("[FAIL] {}: {}", what, r.error().message);
         }
         return static_cast<bool>(r);
-    };
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
 
     if (!check("setup", R"(
@@ -139,7 +137,7 @@ void test_unit_cap(TestContext& ctx) {
         IssueBuildFactory({__cap_factory}, 'uel0201', 1)
     )"))
         return;
-    run(35);
+    tick_for(ctx, 35);
     check("Test 5: a factory at the cap keeps its order, trying every 10 ticks", R"(
         local tries = __cap_heard - __cap_heard_before
         if tries < 3 or tries > 4 then error(tries .. ' tries in 35 ticks') end
@@ -147,7 +145,7 @@ void test_unit_cap(TestContext& ctx) {
         if __cap_factory:IsUnitState('Building') then error('building at the cap') end
         SetArmyUnitCap(1, GetArmyUnitCap(1) + 1)
     )");
-    run(12);
+    tick_for(ctx, 12);
     check("Test 5: with room the factory builds", R"(
         if not __cap_factory:IsUnitState('Building') then error('not building') end
     )");
@@ -157,7 +155,7 @@ void test_unit_cap(TestContext& ctx) {
         IssueUpgrade({__cap_upgrader}, 'ueb0201')
     )"))
         return;
-    run(5);
+    tick_for(ctx, 5);
     check("Test 6: an upgrade isn't held to the cap", R"(
         if not __cap_upgrader:IsUnitState('Upgrading') then error('not upgrading') end
     )");

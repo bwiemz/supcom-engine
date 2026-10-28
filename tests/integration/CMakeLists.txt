@@ -27,6 +27,7 @@ add_executable(osc_integration
     runner/unitview_sweep_test.cpp
     runner/lighting_test.cpp
     runner/render_probe.cpp
+    runner/tick_until.cpp
     runner/strata_test.cpp
     runner/meshless_test.cpp
     runner/scroll_render_test.cpp

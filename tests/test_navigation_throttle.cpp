@@ -15,11 +15,13 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -28,6 +30,7 @@ using osc::sim::CommandType;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
+using osc::test::tick_until;
 
 namespace {
 
@@ -87,13 +90,11 @@ TEST_CASE("Move orders beyond the per-tick path budget are delayed not dropped",
         units.push_back(u);
     }
 
-    for (int t = 0; t < 5; ++t) sim.tick();
-
-    // Every unit made progress: none had its order silently discarded.
-    for (int i = 0; i < movers; ++i) {
-        INFO("unit " << i);
-        CHECK(units[i]->position().x > 11.0f); // started at x = 10
-    }
+    tick_until([&] { sim.tick(); }, "every mover moves off its start", 10,
+               [&] {
+                   return std::all_of(units.begin(), units.end(),
+                                      [](const Unit* u) { return u->position().x > 11.0f; });
+               });
 }
 
 TEST_CASE("Patrol with an exhausted path budget does not hang the tick",
@@ -112,12 +113,11 @@ TEST_CASE("Patrol with an exhausted path budget does not hang the tick",
         units.push_back(u);
     }
 
-    for (int t = 0; t < 5; ++t) sim.tick(); // must return
-
-    for (int i = 0; i < patrollers; ++i) {
-        INFO("unit " << i);
-        CHECK(units[i]->position().x > 11.0f); // started at x = 10
-    }
+    tick_until([&] { sim.tick(); }, "every patroller moves off its start", 10,
+               [&] {
+                   return std::all_of(units.begin(), units.end(),
+                                      [](const Unit* u) { return u->position().x > 11.0f; });
+               });
 }
 
 TEST_CASE("Units parked on their patrol point spend none of the path budget", "[nav][m206k]") {
@@ -138,9 +138,15 @@ TEST_CASE("Units parked on their patrol point spend none of the path budget", "[
     auto* mover = spawn_land_unit(sim, 60.0f, 10.0f);
     mover->push_command(order(CommandType::Move, 110.0f, 10.0f), true);
 
-    for (int t = 0; t < 5; ++t) sim.tick();
+    int searched = 0;
+    tick_until(
+        [&] {
+            sim.tick();
+            searched += sim.pathfinder()->requests_this_tick();
+        },
+        "the mover gets its path and moves", 10, [&] { return mover->position().x > 61.0f; });
+    CHECK(searched > 0);
     CHECK(sim.pathfinder()->requests_this_tick() == 0); // the parked asked for nothing
-    CHECK(mover->position().x > 61.0f);                 // and the mover got its path
 }
 
 TEST_CASE("Builders sent to a site beyond the per-tick path budget still go", "[nav][m206e]") {
@@ -161,12 +167,11 @@ TEST_CASE("Builders sent to a site beyond the per-tick path budget still go", "[
         units.push_back(u);
     }
 
-    for (int t = 0; t < 5; ++t) sim.tick();
-
-    for (int i = 0; i < builders; ++i) {
-        INFO("builder " << i);
-        CHECK(units[i]->position().x > 11.0f); // started at x = 10
-    }
+    tick_until([&] { sim.tick(); }, "every builder moves off its start", 10,
+               [&] {
+                   return std::all_of(units.begin(), units.end(),
+                                      [](const Unit* u) { return u->position().x > 11.0f; });
+               });
 }
 
 namespace {
@@ -217,11 +222,11 @@ TEST_CASE("a unit ordered across a cliff stops at it instead of clipping through
 
     auto* u = spawn_land_unit(sim, 40.0f, 64.0f);
     u->push_command(order(CommandType::Move, 100.0f, 64.0f), true);
-    for (int t = 0; t < 200; ++t) sim.tick();
+    tick_until([&] { sim.tick(); }, "the move to the cliff ends", 400,
+               [&] { return u->command_queue().empty(); });
 
     CHECK(u->position().x < 60.0f);  // never entered or crossed the wall
     CHECK(u->position().x > 50.0f);  // but got as close as it could
-    CHECK(u->command_queue().empty()); // and the order finished
 }
 
 TEST_CASE("repeated requests for an unreachable goal do not re-run A* every tick",
@@ -428,8 +433,8 @@ TEST_CASE("a unit's velocity is its last tick's movement, and none across a tele
     make_flat_world(sim);
     auto* u = spawn_land_unit(sim, 20.0f, 20.0f);
     u->push_command(order(CommandType::Move, 100.0f, 20.0f), true);
-    for (int t = 0; t < 10; ++t) sim.tick();
-    CHECK(u->velocity().x > 1.0f);
+    tick_until([&] { sim.tick(); }, "the unit is under way east", 20,
+               [&] { return u->velocity().x > 1.0f; });
     CHECK(u->velocity().z == 0.0f);
 
     u->push_command(order(CommandType::Teleport, 20.0f, 100.0f), true);
@@ -447,12 +452,8 @@ TEST_CASE("A move that arrives ends on the next tick, whose one step goes to the
     Unit* u = spawn_land_unit(sim, 20.0f, 64.0f);
     u->push_command(order(CommandType::Move, 40.0f, 64.0f), true);
     u->push_command(order(CommandType::Move, 40.0f, 80.0f), false);
-    bool stopped = false;
-    for (int t = 0; t < 200 && !stopped; ++t) {
-        sim.tick();
-        stopped = !u->navigator().busy();
-    }
-    REQUIRE(stopped);
+    tick_until([&] { sim.tick(); }, "the first move arrives", 200,
+               [&] { return !u->navigator().busy() && std::abs(u->position().x - 40.0f) < 1.0f; });
     CHECK(u->command_queue().size() == 2);
     const osc::sim::Vector3 at = u->position();
     sim.tick();

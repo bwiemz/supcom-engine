@@ -17,6 +17,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -36,6 +37,7 @@ using osc::sim::Unit;
 using osc::sim::UnitCommand;
 using osc::sim::Vector3;
 using osc::sim::Weapon;
+using osc::test::tick_until;
 
 namespace {
 
@@ -182,11 +184,11 @@ TEST_CASE("The first slaved weapon with a target decides", "[hull-facing]") {
     right->set_position(at_bearing(*u, 40.0f, 20.0f));
     right->place_now();
     gun(*u, 1).set_target_entity(right->entity_id());
-    ticks(sim, 10);
-    CHECK(std::abs(heading_deg(*u) - 40.0f) < 0.5f); // only the second has one
+    tick_until([&] { sim.tick(); }, "the hull turns to the second's target, the only one", 20,
+               [&] { return std::abs(heading_deg(*u) - 40.0f) < 0.5f; });
     gun(*u, 0).set_target_entity(left->entity_id());
-    ticks(sim, 20);
-    CHECK(std::abs(heading_deg(*u) + 40.0f) < 0.5f); // the first, in blueprint order
+    tick_until([&] { sim.tick(); }, "the hull turns to the first's target, in blueprint order", 40,
+               [&] { return std::abs(heading_deg(*u) + 40.0f) < 0.5f; });
 }
 
 TEST_CASE("Moving, the hull faces its path; arrived, it turns to the target", "[hull-facing]") {
@@ -203,24 +205,30 @@ TEST_CASE("Moving, the hull faces its path; arrived, it turns to the target", "[
     u->push_command(move, true);
     // While it drives, its hull is along its travel, not turned to the target.
     bool faced_path = false;
-    for (int t = 0; t < 60 && !u->command_queue().empty(); ++t) {
-        sim.tick();
-        const Vector3& v = u->velocity();
-        if (u->ground_speed() < 4.0f) continue;
-        const f32 travel = osc::dmath::atan2(v.x, v.z) / kDeg;
-        const f32 to_foe = osc::dmath::atan2(foe->position().x - u->position().x,
-                                             foe->position().z - u->position().z) /
-                           kDeg;
-        faced_path = std::abs(wrap_deg(heading_deg(*u) - travel)) < 1.0f &&
-                     std::abs(wrap_deg(heading_deg(*u) - to_foe)) > 30.0f;
-    }
+    tick_until(
+        [&] {
+            sim.tick();
+            const Vector3& v = u->velocity();
+            if (u->ground_speed() < 4.0f) {
+                return;
+            }
+            const f32 travel = osc::dmath::atan2(v.x, v.z) / kDeg;
+            const f32 to_foe = osc::dmath::atan2(foe->position().x - u->position().x,
+                                                 foe->position().z - u->position().z) /
+                               kDeg;
+            faced_path = std::abs(wrap_deg(heading_deg(*u) - travel)) < 1.0f &&
+                         std::abs(wrap_deg(heading_deg(*u) - to_foe)) > 30.0f;
+        },
+        "it finishes its move", 120, [&] { return u->command_queue().empty(); });
     CHECK(faced_path);
-    ticks(sim, 30);
-    const f32 bearing = osc::dmath::atan2(foe->position().x - u->position().x,
-                                          foe->position().z - u->position().z) /
-                        kDeg;
     // Faced as rotate_yaw_toward counts it: within a dot of 0.9999, 0.81 degrees.
-    CHECK(std::abs(wrap_deg(heading_deg(*u) - bearing)) < 0.82f);
+    tick_until([&] { sim.tick(); }, "arrived, it turns to the target", 60,
+               [&] {
+                   const f32 bearing = osc::dmath::atan2(foe->position().x - u->position().x,
+                                                         foe->position().z - u->position().z) /
+                                       kDeg;
+                   return std::abs(wrap_deg(heading_deg(*u) - bearing)) < 0.82f;
+               });
 }
 
 TEST_CASE("AttackAngle puts the target that far off the bow, on its own side", "[hull-facing]") {
@@ -244,11 +252,15 @@ TEST_CASE("AttackAngle puts the target that far off the bow, on its own side", "
         ships.push_back(u);
         x += 30.0f;
     }
-    ticks(sim, 20);
-    for (size_t i = 0; i < ships.size(); ++i) {
-        INFO("case " << i);
-        CHECK(std::abs(wrap_deg(heading_deg(*ships[i]) - cases[i].heading)) < 0.5f);
-    }
+    tick_until([&] { sim.tick(); }, "each ship turns its target AttackAngle off the bow", 40,
+               [&] {
+                   for (size_t i = 0; i < ships.size(); ++i) {
+                       if (std::abs(wrap_deg(heading_deg(*ships[i]) - cases[i].heading)) >= 0.5f) {
+                           return false;
+                       }
+                   }
+                   return true;
+               });
 }
 
 TEST_CASE("A parked attack's AttackAngle faces the target off the bow, every 9 ticks",
@@ -305,10 +317,9 @@ TEST_CASE("A mobile unit's slaved weapon holds a target out of its arc and fires
         CHECK_FALSE(gun(*u).can_fire(*u, sim.entity_registry()));
         CHECK_FALSE(gun(*u).in_heading_arc(*u, behind->position()));
     }
-    // The slaved tank turns it into the arc, and can fire then.
-    ticks(sim, 25);
+    tick_until([&] { sim.tick(); }, "the slaved tank turns its target into the arc", 50,
+               [&] { return gun(*tank).can_fire(*tank, sim.entity_registry()); });
     CHECK(gun(*tank).has_target());
-    CHECK(gun(*tank).can_fire(*tank, sim.entity_registry()));
 }
 
 TEST_CASE("Held still or stunned it turns; an aircraft doesn't", "[hull-facing]") {
@@ -344,8 +355,16 @@ TEST_CASE("A landed aircraft doesn't turn to its slaved weapon's target", "[hull
     foe->set_position(at_bearing(*plane, 120.0f, 20.0f));
     foe->place_now();
     gun(*plane).set_target_entity(foe->entity_id());
+    Unit* tank = hull(sim, 20.0f, 40.0f);
+    gun(*tank).slaved_to_body = true;
+    gun(*tank).slaved_arc_range = 50.0f;
+    Unit* tank_foe = dummy(sim, 0, 0);
+    tank_foe->set_position(at_bearing(*tank, 120.0f, 20.0f));
+    tank_foe->place_now();
+    gun(*tank).set_target_entity(tank_foe->entity_id());
     ticks(sim, 20);
     CHECK(std::abs(heading_deg(*plane)) < 0.01f);
+    CHECK(heading_deg(*tank) > 90.0f);
 }
 
 TEST_CASE("A turn in place is a move: Cruise, then Stopping, then Stopped", "[hull-facing]") {
@@ -407,14 +426,15 @@ TEST_CASE("A unit that stops to fire brakes straight on while its hull turns", "
     attack.target_id = foe->entity_id();
     attack.target_pos = foe->position();
     u->push_command(attack, true);
-    for (int t = 0; t < 15; ++t) sim.tick();
-    CHECK(u->ground_speed() == 0.0f);
+    tick_until([&] { sim.tick(); }, "it stops, turned to the target behind it", 30,
+               [&] {
+                   const f32 bearing = osc::dmath::atan2(foe->position().x - u->position().x,
+                                                         foe->position().z - u->position().z) /
+                                       kDeg;
+                   return u->ground_speed() == 0.0f &&
+                          std::abs(wrap_deg(heading_deg(*u) - bearing)) < 1.0f;
+               });
     CHECK(std::abs(u->position().z - z) < 0.05f); // on its line
-    // ...and has turned to the target, behind it now as it coasted on
-    const f32 bearing = osc::dmath::atan2(foe->position().x - u->position().x,
-                                          foe->position().z - u->position().z) /
-                        kDeg;
-    CHECK(std::abs(wrap_deg(heading_deg(*u) - bearing)) < 1.0f);
 }
 
 TEST_CASE("A turret on a turning hull fires along its aim", "[hull-facing][weapons]") {

@@ -18,6 +18,7 @@
 #include "sim/platoon.hpp"
 #include "sim/projectile.hpp"
 #include "sim/entity_registry.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -27,6 +28,8 @@ extern "C" {
 #include <memory>
 #include <tuple>
 #include <vector>
+
+using osc::test::tick_until;
 
 TEST_CASE("SmokeTestHarness records and deduplicates entries", "[smoke]") {
     osc::lua::SmokeTestHarness harness;
@@ -384,22 +387,21 @@ TEST_CASE("A repeating factory sends each finished build to the back of its queu
         const auto q = f->factory_queue();
         return q.empty() ? std::string() : q.front().blueprint_id;
     };
-    auto finish_head = [&] {
-        const std::string first = head();
-        for (int i = 0; i < 50 && head() == first; ++i) h.sim.tick();
-    };
-    finish_head();
+    tick_until([&] { h.sim.tick(); }, "the tank is built", 50,
+               [&] { return head() != "test_tank"; });
     CHECK(factory_orders(*f) == "test_experimental test_tank");
     CHECK(finished_units(h) == 1);
     CHECK_FALSE(f->is_building()); // the next build starts next tick, as Moho's does
     h.sim.tick();
     CHECK(f->is_building());
 
-    finish_head();
+    tick_until([&] { h.sim.tick(); }, "the experimental is built", 50,
+               [&] { return head() != "test_experimental"; });
     CHECK(factory_orders(*f) == "test_tank test_experimental");
     CHECK(finished_units(h) == 2);
 
-    finish_head(); // round again: a second tank
+    tick_until([&] { h.sim.tick(); }, "round again, a second tank is built", 50,
+               [&] { return head() != "test_tank"; });
     CHECK(factory_orders(*f) == "test_experimental test_tank");
     CHECK(finished_units(h) == 3);
 }
@@ -410,8 +412,8 @@ TEST_CASE("A factory not repeating its queue builds each order once", "[session]
                               "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
     osc::sim::Unit* f = find_factory(h);
     REQUIRE(f);
-    for (int i = 0; i < 50 && !f->factory_queue().empty(); ++i) h.sim.tick();
-    CHECK(factory_orders(*f).empty());
+    tick_until([&] { h.sim.tick(); }, "the tank is built", 50,
+               [&] { return f->factory_queue().empty(); });
     CHECK(finished_units(h) == 1);
     for (int i = 0; i < 20; ++i) h.sim.tick();
     CHECK(finished_units(h) == 1);
@@ -445,7 +447,8 @@ TEST_CASE("A raised factory order builds its count as one order, then goes", "[s
     f->increase_build_count(1, 2); // IncreaseBuildCountInQueue: one order of three
     REQUIRE(f->command_queue().size() == 1);
     CHECK(factory_orders(*f) == "test_tank test_tank test_tank");
-    for (int i = 0; i < 200 && !f->factory_queue().empty(); ++i) h.sim.tick();
+    tick_until([&] { h.sim.tick(); }, "the three tanks are built", 200,
+               [&] { return f->factory_queue().empty(); });
     CHECK(finished_units(h) == 3);
     CHECK(f->command_queue().empty());
 }
@@ -468,15 +471,16 @@ TEST_CASE("A repeating factory's raised order goes round whole, its count back a
 
     // The first tank done, the next starts at once from the same order
     // (Moho dispatches it again that tick).
-    for (int i = 0; i < 100 && f->command_queue().front().count == 2; ++i) h.sim.tick();
+    tick_until([&] { h.sim.tick(); }, "the first tank is built", 100,
+               [&] { return f->command_queue().front().count != 2; });
     CHECK(f->command_queue().front().count == 1);
     CHECK(f->is_building());
     CHECK(finished_units(h) == 1);
 
     // Both built, the order goes to the back whole, four again; not two
     // orders of one, as a copy per unit would go.
-    for (int i = 0; i < 100 && f->command_queue().front().blueprint_id == "test_tank"; ++i)
-        h.sim.tick();
+    tick_until([&] { h.sim.tick(); }, "the second tank is built", 100,
+               [&] { return f->command_queue().front().blueprint_id != "test_tank"; });
     CHECK(finished_units(h) == 2);
     REQUIRE(f->command_queue().size() == 2);
     CHECK(f->command_queue().back().blueprint_id == "test_tank");
@@ -590,7 +594,8 @@ TEST_CASE("A unit a factory finishes takes the factory's rally orders", "[sessio
     osc::sim::Unit* tank = find_unit(h, "test_tank");
     REQUIRE(tank);
     CHECK(tank->command_queue().empty()); // nothing while it is being built
-    for (int i = 0; i < 50 && !f->factory_queue().empty(); ++i) h.sim.tick();
+    tick_until([&] { h.sim.tick(); }, "the tank is built", 50,
+               [&] { return f->factory_queue().empty(); });
     REQUIRE_FALSE(tank->is_being_built());
 
     // The move went first; the guard, the factory's own command, stays.
@@ -870,19 +875,13 @@ TEST_CASE("Air crash physics: gravity pulls unit down", "[m159]") {
     CHECK(unit.is_crashing());
     CHECK(unit.is_dying());
 
-    // Simulate crash
     bool landed = false;
-    for (int i = 0; i < 100; i++) {
-        landed = unit.tick_dying(0.1f, nullptr);
-        if (!unit.is_crashing()) {
-            break;
-        }
-    }
+    tick_until([&] { landed = unit.tick_dying(0.1f, nullptr); }, "the plane's crash ends", 100,
+               [&] { return !unit.is_crashing(); });
 
     // Should have fallen and impacted, and reports the landing once
     CHECK(unit.position().y <= 0.1f);
     CHECK(landed);
-    CHECK_FALSE(unit.is_crashing());
     CHECK_FALSE(unit.tick_dying(0.1f, nullptr));
 }
 
@@ -909,15 +908,9 @@ TEST_CASE("Air unit full lifecycle: spawn, fly, die, crash", "[m159]") {
     unit.begin_dying();
     CHECK(unit.is_crashing());
 
-    // Run crash ticks
     bool hit_ground = false;
-    for (int i = 0; i < 200; i++) {
-        if (unit.tick_dying(0.1f, nullptr)) {
-            hit_ground = true;
-            break;
-        }
-    }
-    CHECK(hit_ground);
+    tick_until([&] { hit_ground = unit.tick_dying(0.1f, nullptr); }, "the plane hits the ground",
+               200, [&] { return hit_ground; });
     CHECK(unit.position().y <= 0.1f);
 }
 
@@ -1674,10 +1667,8 @@ TEST_CASE("A factory's build and an upgrade tell OnStartBuild and OnStopBuild th
                            "end")
                 .ok());
     h.queue(type, bp);
-    for (int i = 0; i < 100 && !h.factory->command_queue().empty(); ++i) {
-        h.sim.tick();
-    }
-    CHECK(h.factory->command_queue().empty());
+    tick_until([&] { h.sim.tick(); }, "the factory finishes its order", 200,
+               [&] { return h.factory->command_queue().empty(); });
     lua_pushstring(L, "__heard");
     lua_gettable(L, LUA_GLOBALSINDEX);
     CHECK(std::string(lua_tostring(L, -1)) ==
@@ -1781,10 +1772,8 @@ TEST_CASE("IssueStop queues a Stop behind the build under way, which finishes",
     CHECK(h.factory->command_queue().back().type == osc::sim::CommandType::Stop);
     CHECK(h.factory->build_target_id() == frame);
 
-    for (int i = 0; i < 100 && !h.factory->command_queue().empty(); ++i) {
-        h.sim.tick();
-    }
-    CHECK(h.factory->command_queue().empty());
+    tick_until([&] { h.sim.tick(); }, "the build finishes and the Stop runs", 100,
+               [&] { return h.factory->command_queue().empty(); });
     const auto* built = static_cast<const osc::sim::Unit*>(h.sim.entity_registry().find(frame));
     REQUIRE(built);
     CHECK_FALSE(built->destroyed());

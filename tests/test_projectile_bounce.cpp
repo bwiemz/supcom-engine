@@ -14,6 +14,7 @@
 #include "sim/sim_random.hpp"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 using Catch::Approx;
@@ -96,4 +97,60 @@ TEST_CASE("A projectile bounces off the ground as often as its limit, then impac
     const auto* gone = reg.find(id);
     CHECK((!gone || gone->destroyed()));
     CHECK(p->ground_hits == 3);
+}
+
+TEST_CASE("A ground hit is a Terrain impact where it crosses the ground, though its step ends over "
+          "the water",
+          "[projectile][bounce]") {
+    std::vector<osc::u16> heights(65 * 65, 1536);
+    for (int z = 0; z < 65; ++z) {
+        for (int x = 33; x < 65; ++x) {
+            heights[static_cast<size_t>(z) * 65 + static_cast<size_t>(x)] = 640;
+        }
+    }
+    osc::map::Heightmap hm(64, 64, 1.0f / 128.0f, std::move(heights));
+    const osc::map::Terrain terrain(std::move(hm), 8.0f, true);
+    EntityRegistry reg;
+    reg.init_spatial_grid(64, 64);
+    auto shot = std::make_unique<Projectile>();
+    shot->set_position({30.5f, 12.2f, 20.0f});
+    shot->velocity = {30.0f, -10.0f, 0.0f};
+    auto* p = static_cast<Projectile*>(reg.find(reg.register_entity(std::move(shot))));
+    p->update(0.1, reg, nullptr, &terrain, 1);
+    REQUIRE(p->impact_waiting());
+    CHECK(p->impact_kind == "Terrain");
+    CHECK(p->pending_position().x < 32.0f);
+}
+
+TEST_CASE("A projectile bounces off the seabed too, and its hit there is a Terrain impact",
+          "[projectile][bounce]") {
+    osc::map::Heightmap hm(64, 64, 1.0f / 128.0f, std::vector<osc::u16>(65 * 65, 512));
+    const osc::map::Terrain terrain(std::move(hm), 10.0f, true);
+    EntityRegistry reg;
+    reg.init_spatial_grid(64, 64);
+    auto shot = std::make_unique<Projectile>();
+    shot->set_position({20.0f, 9.0f, 20.0f});
+    shot->velocity = {2.0f, -5.0f, 0.0f};
+    shot->ballistic_accel = -Projectile::GRAVITY;
+    shot->bounce_limit = 2;
+    auto* p = static_cast<Projectile*>(reg.find(reg.register_entity(std::move(shot))));
+    const osc::u32 id = p->entity_id();
+    int bounces = 0;
+    std::string kind;
+    for (osc::u32 tick = 1; tick < 200; ++tick) {
+        if (!reg.find(id) || reg.find(id)->destroyed()) {
+            break;
+        }
+        const bool was_pending = p->bounce_pending;
+        p->update(0.1, reg, nullptr, &terrain, tick);
+        if (was_pending) {
+            ++bounces;
+        }
+        if (p->impact_waiting()) {
+            kind = p->impact_kind;
+        }
+        reg.advance_coords();
+    }
+    CHECK(bounces == 2);
+    CHECK(kind == "Terrain");
 }

@@ -5,6 +5,7 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "sim/army_brain.hpp"
 #include "sim/prop.hpp"
@@ -90,11 +91,14 @@ void test_patrol(TestContext& ctx) {
     run_lua(ctx, fmt::format("IssuePatrol({{__osc_pt_eng}}, {{{0}, {1}, {2}}})\n"
                              "IssuePatrol({{__osc_pt_eng}}, {{{3}, {4}, {2}}})\n",
                              sx + 40, y(sx + 40, sz), sz, sx - 20, y(sx - 20, sz)));
-    for (int i = 0; i < 6000 && prop_of(ctx, crystal); ++i) {
-        economy.mass.stored = 0;
-        economy.energy.stored = 0;
-        ctx.sim.tick();
-    }
+    tick_until(
+        [&] {
+            economy.mass.stored = 0;
+            economy.energy.stored = 0;
+            ctx.sim.tick();
+        },
+        "the patrolling engineer reclaims the crystal", 6000,
+        [&] { return !prop_of(ctx, crystal); });
     run_lua(ctx, fmt::format("__osc_pt_got = ''\n"
                              "for _, id in __osc_pt_reclaims do\n"
                              "    if id == {0} then __osc_pt_got = __osc_pt_got .. 'crystal ' end\n"
@@ -114,14 +118,15 @@ void test_patrol(TestContext& ctx) {
     const u32 enemy_id = spawn_unit(ctx, "__osc_pt_enemy", "uel0201", "ARMY_2", {sx + 10, sz + 55});
     run_lua(ctx, fmt::format("IssuePatrol({{__osc_pt_tank}}, {{{0}, {1}, {2}}})", sx + 40,
                              y(sx + 40, sz + 40), sz + 40));
-    bool attacked = false;
-    for (int i = 0; i < 300 && !attacked && unit(tank_id); ++i) {
-        ctx.sim.tick();
-        const auto& q = unit(tank_id)->command_queue();
-        attacked = !q.empty() && q.front().from_patrol &&
-                   q.front().type == sim::CommandType::Attack && q.front().target_id == enemy_id;
-    }
-    t.check(attacked, "a patrolling tank breaks off for an enemy 15 off its route");
+    tick_until(ctx, "a patrolling tank breaks off for an enemy 15 off its route", 300, [&] {
+        const sim::Unit* tank = unit(tank_id);
+        if (!tank) {
+            return false;
+        }
+        const auto& q = tank->command_queue();
+        return !q.empty() && q.front().from_patrol && q.front().type == sim::CommandType::Attack &&
+               q.front().target_id == enemy_id;
+    });
 
     spdlog::info("=== PATROL TEST: {} passed, {} failed ===", t.pass, t.fail);
 }

@@ -12,6 +12,7 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "core/image.hpp"
 #include "map/terrain.hpp"
@@ -19,6 +20,7 @@
 #include "renderer/renderer.hpp"
 #include "renderer/unit_renderer.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
@@ -132,15 +134,27 @@ void test_shield_render(TestContext& ctx) {
     const Spot aeon_at{spot->x, spot->z + 50};
     const Spot seraphim_at{spot->x + 40, spot->z + 50};
     const u32 uef = spawn_unit(ctx, "__osc_sh_uef", "ueb4202", "ARMY_1", uef_at);
-    (void)spawn_unit(ctx, "__osc_sh_cybran", "urb4202", "ARMY_1", cybran_at);
-    (void)spawn_unit(ctx, "__osc_sh_aeon", "uab4202", "ARMY_1", aeon_at);
-    (void)spawn_unit(ctx, "__osc_sh_seraphim", "xsb4202", "ARMY_1", seraphim_at);
-    // Power to spare: a shield short of energy goes down (shield.lua's
-    // OnState). Their shields come up once they're finished.
+    const u32 cybran = spawn_unit(ctx, "__osc_sh_cybran", "urb4202", "ARMY_1", cybran_at);
+    const u32 aeon = spawn_unit(ctx, "__osc_sh_aeon", "uab4202", "ARMY_1", aeon_at);
+    const u32 seraphim = spawn_unit(ctx, "__osc_sh_seraphim", "xsb4202", "ARMY_1", seraphim_at);
+    // Power to spare: a shield short of energy goes down (shield.lua's OnState).
     run_lua(ctx, "ForkThread(function()\n"
                  "  while true do ArmyBrains[1]:GiveResource('ENERGY', 5000) WaitTicks(1) end\n"
                  "end)\n");
-    for (int i = 0; i < 20; ++i) ctx.sim.tick();
+    const auto shield_up = [&](u32 generator) {
+        bool up = false;
+        ctx.sim.entity_registry().for_each([&](sim::Entity& e) {
+            if (e.is_shield() && !e.destroyed()) {
+                const auto& shield = static_cast<const sim::Shield&>(e);
+                up = up ||
+                     (shield.owner_id == generator && (shield.is_on || !e.mesh_override().empty()));
+            }
+        });
+        return up;
+    };
+    tick_until(ctx, "the generators' shields come up once they're finished", 60, [&] {
+        return shield_up(uef) && shield_up(cybran) && shield_up(aeon) && shield_up(seraphim);
+    });
 
     OffscreenShots shots(ctx);
     if (!shots.ok()) {
@@ -346,8 +360,12 @@ void test_shield_render(TestContext& ctx) {
     // down, its own mesh again.
     {
         const Spot obsidian_at{spot->x + 20, spot->z + 25};
-        (void)spawn_unit(ctx, "__osc_sh_obsidian", "ual0202", "ARMY_1", obsidian_at);
-        tick(20);
+        const u32 obsidian = spawn_unit(ctx, "__osc_sh_obsidian", "ual0202", "ARMY_1", obsidian_at);
+        tick_until(ctx, "Test 5: the Obsidian's shield is up: it wears its shield mesh", 40, [&] {
+            const sim::Entity* e = registry.find(obsidian);
+            return e && e->mesh_override().find("personalshield") != std::string::npos;
+        });
+        shots.recapture();
         const ImageRGBA8 frame = shots.shoot_frame(*terrain, obsidian_at.x, obsidian_at.z, 6.0f);
         keep("obsidian", frame);
         const Pixels on = centre_pixels(frame);
@@ -397,12 +415,17 @@ void test_shield_render(TestContext& ctx) {
         // SeraphimPersonalShield mesh, the unit as Seraphim, then its shell
         // from the secondary texture
         const Spot scu_at{spot->x + 20, spot->z + 40};
-        (void)spawn_unit(ctx, "__osc_sh_scu", "xsl0301", "ARMY_1", scu_at);
+        const u32 scu = spawn_unit(ctx, "__osc_sh_scu", "xsl0301", "ARMY_1", scu_at);
         tick(2);
         const ImageRGBA8 bare = shots.shoot_frame(*terrain, scu_at.x, scu_at.z, 6.0f);
         const u32 bare_seraphim = r.mesh_draws(MeshTechnique::Seraphim);
         run_lua(ctx, "__osc_sh_scu:CreateEnhancement('Shield')\n");
-        tick(20);
+        tick_until(ctx, "Test 5: the SCU's Shield enhancement is up: it wears its shield mesh", 40,
+                   [&] {
+                       const sim::Entity* e = registry.find(scu);
+                       return e && e->mesh_override().find("personalshield") != std::string::npos;
+                   });
+        shots.recapture();
         const ImageRGBA8 shielded = shots.grab();
         keep("scu", shielded);
         const u32 scu_worn = instances_of(r, MeshTechnique::SeraphimPersonalShield);

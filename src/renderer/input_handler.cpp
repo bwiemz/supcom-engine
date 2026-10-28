@@ -292,6 +292,9 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
     // the button as up throughout, so neither the press nor its release.
     const bool lmb_down = lmb_raw && !lmb_raw_prev_;
     const bool rmb_down = rmb_raw && !rmb_raw_prev_;
+    const bool mouse_event = lmb_raw != lmb_raw_prev_ || rmb_raw != rmb_raw_prev_ ||
+                             mx != mouse_at_[0] || my != mouse_at_[1];
+    mouse_at_ = {mx, my};
     if (lmb_down || rmb_down) {
         const bool over_ui = mouse_over_ui && mouse_over_ui();
         if (lmb_down) lmb_on_ui_ = over_ui;
@@ -333,7 +336,8 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
         hovered_command_ = 0;
     }
     camera_zoom_ = renderer.camera().zoom();
-    if (!scrubbing && !on_minimap && !(mouse_over_ui && mouse_over_ui())) {
+    const bool in_view = !(mouse_over_ui && mouse_over_ui());
+    if (!scrubbing && !on_minimap && in_view) {
         f32 wx = 0;
         f32 wz = 0;
         if (world_at(renderer, sim, mx, my, wx, wz)) {
@@ -361,7 +365,10 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
     if (order_drag_) {
         hovered_command_ = order_drag_->command_id;
     }
-    converts_to_patrol_ = !moves_to_patrol(sim, hovered_command_).empty();
+    if (mouse_event && (in_view || in_view_)) {
+        world_mouse_event(sim, mode, mx, my);
+    }
+    in_view_ = in_view;
     if (dropped_) {
         dropped_for_ += dt;
         const auto node = graph_node(dropped_->command_id);
@@ -558,13 +565,7 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
             // Right-click leaves the command mode, as in FA.
             if (mode_hooks_.cancel) mode_hooks_.cancel();
         } else if (!selected_.empty() && cursor_world_) {
-            const f32 wx = (*cursor_world_)[0];
-            const f32 wz = (*cursor_world_)[1];
-            if (converts_to_patrol_ && right_button_order(sim, wx, wz) == sim::CommandType::Move) {
-                restart_as_patrol(sim, hovered_command_);
-            } else {
-                right_press(sim, wx, wz, shift_held);
-            }
+            right_button_down(sim, (*cursor_world_)[0], (*cursor_world_)[1], shift_held);
         }
     }
     rmb_was_pressed_ = rmb;
@@ -784,6 +785,42 @@ std::vector<sim::SimCallbackEntry> InputHandler::restart_as_patrol(sim::SimState
         sent.push_back(std::move(cb));
     }
     return sent;
+}
+
+void InputHandler::world_mouse_event(sim::SimState& sim, const CommandMode& mode, f32 mx, f32 my) {
+    mouse_at_ = {mx, my};
+    converts_to_patrol_ = !moves_to_patrol(sim, hovered_command_).empty();
+    if (converts_to_patrol_) {
+        if (mode_hooks_.start_cursor_text) {
+            mode_hooks_.start_cursor_text(
+                mx, my,
+                mode.mode == "order" ? "<LOC Engine0009>Left-click to convert moves into patrol"
+                                     : "<LOC Engine0010>Right-click to convert moves into patrol",
+                "ffffffff", -1.0f, false);
+        }
+    } else if (mode_hooks_.stop_cursor_text) {
+        mode_hooks_.stop_cursor_text();
+    }
+}
+
+bool InputHandler::patrol_click(sim::SimState& sim) {
+    if (!converts_to_patrol_) {
+        return false;
+    }
+    restart_as_patrol(sim, hovered_command_);
+    if (mode_hooks_.start_cursor_text) {
+        mode_hooks_.start_cursor_text(mouse_at_[0], mouse_at_[1],
+                                      "<LOC Engine0012>Patrol Initiated to location!", "ff00ff00",
+                                      3.0f, true);
+    }
+    return true;
+}
+
+void InputHandler::right_button_down(sim::SimState& sim, f32 wx, f32 wz, bool shift) {
+    if (!converts_to_patrol_ || right_button_order(sim, wx, wz) != sim::CommandType::Move ||
+        !patrol_click(sim)) {
+        right_press(sim, wx, wz, shift);
+    }
 }
 
 bool InputHandler::world_at(const Renderer& renderer, const sim::SimState& sim, f32 mx, f32 my,
@@ -1449,6 +1486,9 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         for (const auto& o : kOrders)
             if (mode.name == o.cap) { spec = &o; break; }
         if (!spec) return std::nullopt;
+        if (spec->type == sim::CommandType::Move && patrol_click(sim)) {
+            return std::nullopt;
+        }
         cmd.type = spec->type;
         out.type = spec->fa_type;
         cmd.target_id = target_under(sim, wx, wz, spec->type);

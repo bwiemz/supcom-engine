@@ -307,6 +307,8 @@ static std::unique_ptr<sim::Weapon> read_weapon(lua_State* L, int we, i32 index)
     if (lua_isnumber(L, -1)) {
         const f64 ticks = std::floor(lua_tonumber(L, -1) * 10.0 + 0.5);
         weapon->target_check_period = static_cast<u32>(std::clamp(ticks, 1.0, 1.0e4));
+        const auto interval = static_cast<f32>(lua_tonumber(L, -1));
+        weapon->aim_reset_ticks = std::max(1, static_cast<i32>(std::ceil(interval * 10.0f)));
     }
     lua_pop(L, 1);
     lua_pushstring(L, "AttackGroundTries");
@@ -1000,9 +1002,6 @@ static void resolve_footprints(lua_State* L, const sim::SimState& sim, const Blu
         unit.set_layer(sim::starting_layer(unit.footprint().caps, unit.has_category("EXPERIMENTAL"),
                                            *sim.terrain(), x, z, unit.has_category("FERRYBEACON")));
     }
-    // ...and the terrain type under it (Moho's Unit ctor: UpdateTerrainType after
-    // SetCurrentLayer), its script not yet there to hear it
-    unit.update_terrain_type(sim.terrain(), {x, 0.0f, z}, nullptr);
 }
 
 /// A ship's or sub's Physics.Elevation (negative: its draft below the

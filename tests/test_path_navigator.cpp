@@ -12,6 +12,7 @@
 #include "sim/path_search.hpp"
 #include "sim/path_tables.hpp"
 #include "sim/path_walk.hpp"
+#include "support/tick_until.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -31,6 +32,7 @@ using osc::sim::path::NavUnit;
 using osc::sim::path::PathNavigator;
 using osc::sim::path::PathQueue;
 using osc::sim::path::PathWorld;
+using osc::test::tick_until;
 namespace oc = osc::blueprints::occupancy;
 namespace path = osc::sim::path;
 using State = PathNavigator::State;
@@ -319,7 +321,8 @@ TEST_CASE("Strayed from its last cell with a unit standing there, a navigator wa
         Walk w;
         w.blockers = &fake;
         w.start(0, 10.5f, 20.5f, {20, 20});
-        while (w.ticks < 400 && w.x < 18.5f) w.step();
+        tick_until([&] { w.step(); }, "the unit walks up to the goal", 400,
+                   [&] { return w.x >= 18.5f; });
         w.frozen = true;
         w.x = 18.5f;
         w.step();

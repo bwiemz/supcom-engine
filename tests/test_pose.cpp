@@ -10,6 +10,7 @@
 #include "sim/sca_parser.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
+#include "sim/weapon.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -356,7 +357,7 @@ TEST_CASE("A disabled aim controller of an AimsStraightOnDisable weapon turns ba
         aim.set_yaw_bone(0);
         aim.set_pitch_bone(1);
         aim.set_firing_arc(-180.0f, 180.0f, 90.0f, -90.0f, 90.0f, 90.0f);
-        aim.set_reset_pose_time(0.5f);
+        aim.set_reset_pose_ticks(5);
         aim.set_aims_straight_on_disable(straight);
         const f32 side = 100.0f * std::sin(0.5235988f);
         const f32 ahead = 100.0f * std::cos(0.5235988f);
@@ -376,6 +377,46 @@ TEST_CASE("A disabled aim controller of an AimsStraightOnDisable weapon turns ba
         } else {
             CHECK_THAT(aim.heading(), WithinAbs(0.5235988, 2.0 * 0.0174533));
         }
+    }
+}
+
+TEST_CASE("An aim controller holds a lost target's pose for its weapon's ticks, then turns back",
+          "[pose][aim]") {
+    // Moho's CAimManipulator::ManipulatorUpdate (mResetTime)
+    for (const int set : {0, 3}) {
+        BoneData bd = make_two_bones();
+        Unit unit;
+        unit.set_bone_data(&bd);
+        unit.init_animated_bones();
+        auto gun = std::make_unique<Weapon>();
+        gun->weapon_index = 0;
+        gun->aim_reset_ticks = 5;
+        unit.add_weapon(std::move(gun));
+        auto& aim =
+            static_cast<AimManipulator&>(*unit.add_manipulator(std::make_unique<AimManipulator>()));
+        aim.set_yaw_bone(0);
+        aim.set_pitch_bone(1);
+        aim.set_weapon(0, "Gun");
+        aim.set_firing_arc(-180.0f, 180.0f, 90.0f, -90.0f, 90.0f, 90.0f);
+        aim.set_reset_pose_ticks(set);
+        const f32 side = 100.0f * std::sin(0.5235988f);
+        const f32 ahead = 100.0f * std::cos(0.5235988f);
+        aim.set_target({side, 1.0f, ahead}, 2.0f * 0.0174533f);
+        for (int t = 0; t < 10; ++t) {
+            unit.tick_manipulators(0.1f, nullptr);
+        }
+        const f32 held = aim.heading();
+        REQUIRE_THAT(held, WithinAbs(0.5235988, 2.0 * 0.0174533));
+
+        aim.clear_target();
+        const int hold = set > 0 ? set : 5;
+        INFO("hold " << hold);
+        for (int t = 0; t < hold; ++t) {
+            unit.tick_manipulators(0.1f, nullptr);
+            CHECK(aim.heading() == held);
+        }
+        unit.tick_manipulators(0.1f, nullptr);
+        CHECK(aim.heading() < held);
     }
 }
 

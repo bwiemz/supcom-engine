@@ -190,7 +190,13 @@ std::optional<int> App::Window::set_up() {
                                                 sim_state ? sim_state->terrain() : nullptr, script,
                                                 at, facing);
          },
-         [this] { return osc::core::ui_nis_mode(ui_lua_state.raw()); }});
+         [this] { return osc::core::ui_nis_mode(ui_lua_state.raw()); },
+         [this](osc::f32 x, osc::f32 y, const char* text, const char* color, osc::f32 seconds,
+                bool flash) {
+             osc::core::call_start_cursor_text(ui_lua_state.raw(), x, y, text, color, seconds,
+                                               flash);
+         },
+         [this] { osc::core::call_stop_cursor_text(ui_lua_state.raw()); }});
     renderer.set_adjacency_bonus([this](osc::u32 unit, const std::string& bp) {
         return detect_adjacency_bonus(ui_lua_state.raw(), unit, bp);
     });

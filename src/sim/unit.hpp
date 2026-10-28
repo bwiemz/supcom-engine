@@ -534,8 +534,8 @@ public:
     /// `moving`: it had a spline node to stand on (CUnitMotion::IsMoving).
     void add_impulse(const Vector3& impulse, bool moving);
     /// CalcMoveCommon with no spline node, on its velocity vector: damped to 0.8 and
-    /// braked; under 0.001 a tick it stops.
-    void coast_moho(const map::Terrain* terrain);
+    /// braked; under 0.001 a tick it stops. False if it stood still.
+    bool coast_moho(const map::Terrain* terrain);
 
     /// What the navigator drove it at this tick: the speed, the speed it was
     /// steering for (0 braking to a stop), its top speed, and how it turned.
@@ -1128,7 +1128,7 @@ public:
     u8 current_terrain_type() const { return terrain_type_; }
     /// Moho's Unit::UpdateTerrainType: the terrain type under it at `at`. A
     /// change calls its script's OnTerrainTypeChange(new, old), the two
-    /// TerrainTypes.lua entries (none with `L` null: a unit being made).
+    /// TerrainTypes.lua entries, old nil as it is made (none with `L` null).
     void update_terrain_type(const map::Terrain* terrain, const Vector3& at, lua_State* L);
     /// Moho's Unit::IsMobile: a blueprint that moves (a structure's
     /// MotionType is RULEUMT_None).
@@ -1416,8 +1416,9 @@ public:
     bool launches_on_unload() const;
     /// Drop those of `ids` still aboard, in cargo order: each is set down
     /// where it hung, level, and on the ground when `terrain` is given (M206n).
+    /// Moho's Unit::DetachFrom (`heard` false) leaves out OnTransportDetach.
     void detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L,
-                      const map::Terrain* terrain = nullptr);
+                      const map::Terrain* terrain = nullptr, bool heard = true);
     /// Whether the unit's footprint fits the ground where it is (Moho's
     /// SFootprint::FitsAt): every cell under it passable for it.
     bool footprint_fits(const map::PathfindingGrid& grid) const;
@@ -1768,8 +1769,9 @@ private:
     void start_dive(lua_State* L);
     void start_surfacing(lua_State* L);
     /// A tick of a dive or surfacing, stationary or not (Moho's
-    /// HandleDivingAndSurfacing), and a sub held at its depth.
-    void tick_dive(const map::Terrain* terrain, lua_State* L);
+    /// HandleDivingAndSurfacing), and a sub held at its depth; then a unit on the
+    /// water leans into its dive (SnapToWater).
+    void tick_dive(const map::Terrain* terrain, lua_State* L, bool moved, bool normalize);
     /// An idle aircraft's landing (Moho's CUnitMotion landing phase):
     /// AutoLandTime after its orders ran out, near where it is, it finds a
     /// place (PrepareMove), reserves it and comes down onto it. True if it
@@ -1941,7 +1943,7 @@ private:
     bool being_captured_ = false; // is this unit currently being captured?
     bool paused_ = false;
     MotionHorz motion_horz_ = MotionHorz::Stopped;
-    void update_motion_horz(lua_State* L);
+    void update_motion_horz(lua_State* L, bool crossing);
     MotionTurn motion_turn_ = MotionTurn::Straight;
     MotionTurn motion_turn_next_ = MotionTurn::Straight;
     void update_motion_turn(lua_State* L);
@@ -1951,8 +1953,11 @@ private:
     f32 top_speed_ = 0;
     bool drove_ = false; ///< the navigator drove it this tick
     bool jostled_ = false;
-    /// With no navigator driving it, it brakes to a stop along its heading.
-    void coast(f64 dt, const map::Terrain* terrain);
+    /// With no navigator driving it, it brakes to a stop along its heading. False if it
+    /// stood still.
+    bool coast(f64 dt, const map::Terrain* terrain);
+    /// Moho's CUnitMotion::CalcRollHack, without the recoil: no blueprint sets ShipRock.
+    Vector3 dive_lean_normal(f32 diving_speed);
     u32 shield_entity_id_ = 0;       // entity ID of shield (set by _c_CreateShield)
     bool busy_ = false;
     i32 stun_ticks_ = 0; ///< ticks of stun left (set_stunned)
@@ -2184,6 +2189,7 @@ private:
     VertMotion vert_motion_ = VertMotion::None;
     f32 sub_elevation_ = 0.0f;
     f32 dive_surface_speed_ = 1.0f; // Physics.DiveSurfaceSpeed
+    Vector3 dive_lean_;
     std::string vert_event_ = "Top";
     // Air crash state
     bool crashing_ = false;

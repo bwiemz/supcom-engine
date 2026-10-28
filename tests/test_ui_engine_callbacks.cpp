@@ -52,3 +52,19 @@ TEST_CASE("The command graph shown reaches commandgraph.lua's OnCommandGraphShow
     osc::core::call_on_command_graph_show(ui.lua.raw(), false);
     CHECK(ui.check("heard[1] == 'true' and heard[2] == 'false'"));
 }
+
+TEST_CASE("The world view's cursor text reaches uimain's StartCursorText and StopCursorText",
+          "[ui][lua]") {
+    UiState ui;
+    ui.run("modules['/lua/ui/uimain.lua'] = {"
+           "  StartCursorText = function(x, y, text, color, time, flash) "
+           "    table.insert(heard, x .. ',' .. y .. ' ' .. text .. ' ' .. color .. ' ' .. time .. "
+           "      ' ' .. tostring(flash)) end, "
+           "  StopCursorText = function() table.insert(heard, 'stop') end}");
+    osc::core::call_start_cursor_text(ui.lua.raw(), 300, 200,
+                                      "<LOC Engine0012>Patrol Initiated to location!", "ff00ff00",
+                                      3, true);
+    osc::core::call_stop_cursor_text(ui.lua.raw());
+    CHECK(ui.check("heard[1] == '300,200 <LOC Engine0012>Patrol Initiated to location! ff00ff00 "
+                   "3 true' and heard[2] == 'stop'"));
+}

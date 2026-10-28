@@ -9,6 +9,7 @@
 
 #include "integration_tests.hpp"
 #include "render_probe.hpp" // Tally
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "sim/sim_state.hpp"
@@ -24,9 +25,6 @@ void test_footfall(TestContext& ctx) {
         auto r = ctx.lua_state.do_string(code);
         t.check(static_cast<bool>(r),
                 r ? std::string(what) : std::string(what) + ": " + r.error().message);
-    };
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
 
     lua("setup: a Galactic Colossus on open, level ground", R"(
@@ -63,7 +61,7 @@ void test_footfall(TestContext& ctx) {
             return damage_area(instigator, pos, radius, amount, kind, friendly, selfdamage)
         end
     )");
-    run(30);
+    tick_for(ctx, 30);
     lua("Test 1: standing, it has no footfalls (its detector waits to be enabled)", R"(
         if table.getn(__osc_falls) ~= 0 then error(table.getn(__osc_falls) .. ' footfalls standing still') end
     )");
@@ -71,7 +69,7 @@ void test_footfall(TestContext& ctx) {
         local x, z = __osc_ground[1], __osc_ground[2]
         IssueMove({__osc_gc}, {x, GetTerrainHeight(x, z + 60), z + 60})
     )");
-    run(150);
+    tick_for(ctx, 150);
     lua("Test 2: walking, the feet fall in turn, the left at positive x, the right negative", R"(
         local n = table.getn(__osc_falls)
         if n < 4 then error(n .. ' footfalls in 15 s of walking') end
@@ -110,12 +108,11 @@ void test_footfall(TestContext& ctx) {
             error(__osc_footfall_damage .. ' footfall damage calls for ' .. table.getn(__osc_falls) .. ' footfalls')
         end
     )");
-    run(400); // it arrives and stops
+    tick_until(ctx, "setup: it arrives and stops", 1000, "not __osc_gc:IsUnitState('Moving')");
     lua("setup: it has stopped", R"(
-        if __osc_gc:IsUnitState('Moving') then error('still moving') end
         __osc_falls_stopped = table.getn(__osc_falls)
     )");
-    run(60);
+    tick_for(ctx, 60);
     lua("Test 4: stopped, its detector is disabled and no foot falls", R"(
         if table.getn(__osc_falls) ~= __osc_falls_stopped then
             error((table.getn(__osc_falls) - __osc_falls_stopped) .. ' footfalls after it stopped')
@@ -143,21 +140,21 @@ void test_footfall(TestContext& ctx) {
         __osc_sunk = watched(true)
         __osc_never = watched(false)
     )");
-    run(5);
+    tick_for(ctx, 5);
     lua("setup: both sink below the ground", R"(
         for _, tank in {__osc_sunk, __osc_never} do
             local p = tank:GetPosition()
             tank:SetPosition({p[1], GetTerrainHeight(p[1], p[3]) - 3, p[3]}, true)
         end
     )");
-    run(1);
+    tick_for(ctx, 1);
     lua("setup: and rise above it", R"(
         for _, tank in {__osc_sunk, __osc_never} do
             local p = tank:GetPosition()
             tank:SetPosition({p[1], GetTerrainHeight(p[1], p[3]) + 3, p[3]}, true)
         end
     )");
-    run(3);
+    tick_for(ctx, 3);
     lua("Test 5: a bone sinking below the surface and back is told once each way", R"(
         local e = table.concat(__osc_sunk.__osc_events, ' ')
         if e ~= 'down up' then error('events: [' .. e .. ']') end
@@ -200,11 +197,19 @@ void test_footfall(TestContext& ctx) {
             return damage_area(instigator, pos, radius, amount, kind, friendly, selfdamage)
         end
     )");
-    run(20);
+    tick_for(ctx, 20);
     lua("setup: both are shot down", R"(
         for _, rec in __osc_crashes do rec.unit:Kill() end
     )");
-    run(200);
+    tick_until(ctx, "setup: both crash to the ground", 400, R"(
+        (function()
+            for _, rec in __osc_crashes do
+                if not next(rec.bones) then return false end
+            end
+            return true
+        end)()
+    )");
+    tick_for(ctx, 100);
     lua("Test 7: a crashing flier's bones are told on reaching the ground, each once", R"(
         for _, rec in __osc_crashes do
             local told = 0

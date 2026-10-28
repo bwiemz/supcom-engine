@@ -33,12 +33,13 @@ struct DeathWorld {
     osc::blueprints::BlueprintStore store{state.raw()};
     osc::sim::SimState sim{state.raw(), &store};
 
-    DeathWorld() {
+    explicit DeathWorld(bool under_water = false) {
         osc::lua::register_moho_bindings(state, sim);
         osc::lua::register_sim_bindings(state, sim);
         std::vector<osc::u16> heights(static_cast<size_t>(257) * 257, 1280);
         osc::map::Heightmap hm(256, 256, 1.0f / 128.0f, std::move(heights));
-        sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
+        const float water = under_water ? 20.0f : 0.0f;
+        sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), water, under_water));
         sim.build_pathfinding_grid();
         sim.add_army("ARMY_1", "ARMY_1");
         sim.add_army("ARMY_2", "ARMY_2");
@@ -80,6 +81,12 @@ struct DeathWorld {
                 end,
                 SetDead = function(self)
                     table.insert(heard, self.name .. ' dead')
+                end,
+                OnAttachedKilled = function(self, attached)
+                    table.insert(heard, self.name .. ': attached ' .. attached.name .. ' killed')
+                    if self.lets_go then
+                        attached:DetachFrom()
+                    end
                 end,
             }, {__index = function(_, k) return moho.unit_methods[k] or moho.entity_methods[k] end})
             Kept.__index = Kept
@@ -223,4 +230,76 @@ TEST_CASE("A transport's passengers die in its Kill after its SetDead, each let 
         CHECK_FALSE(w.unit("a")->is_dying());
         CHECK(w.unit("a")->transport_id() == 0);
     }
+}
+
+TEST_CASE("A transport killed where its passengers cannot stand keeps those its kill spares, "
+          "unheard",
+          "[kill][transport]") {
+    const bool over_water = GENERATE(false, true);
+    CAPTURE(over_water);
+    DeathWorld w(over_water);
+    REQUIRE(w.run("t = make('lift', 1, 't') a = make('tank', 1, 'a') b = make('tank', 1, 'b')"));
+    REQUIRE(w.run("a.killable = false b.killable = false"));
+    osc::sim::Unit& lift = *w.unit("t");
+    lift.set_transport_capacity(4);
+    lift.set_position({lift.position().x, 30.0f, lift.position().z});
+    for (const char* name : {"a", "b"}) {
+        w.unit(name)->attach_to_transport(&lift, w.sim.entity_registry(), w.state.raw());
+    }
+    REQUIRE(w.run("t:Kill()"));
+    const char* expected =
+        over_water ? "t dead, t killed" : "t dead, t drops a, t drops b, t killed";
+    CHECK(w.run(std::string("assert(heard_as_text() == '") + expected + "', heard_as_text())"));
+    CHECK(lift.cargo_ids().size() == (over_water ? 2U : 0U));
+    CHECK(w.unit("a")->transport_id() == (over_water ? lift.entity_id() : 0U));
+    CHECK(w.unit("a")->has_unit_state("Attached") == over_water);
+    REQUIRE(w.run("t:Destroy()"));
+    w.sim.run_deletion_queue();
+    CHECK(w.run("assert(heard_as_text() == '" + std::string(expected) + "', heard_as_text())"));
+    CHECK(w.unit("a")->transport_id() == 0U);
+    CHECK_FALSE(w.unit("a")->has_unit_state("Attached"));
+    CHECK(w.unit("a")->position().y < 15.0f);
+}
+
+TEST_CASE("A script's DetachFrom lets a carried unit go without the transport's "
+          "OnTransportDetach, as Moho's Unit::DetachFrom",
+          "[kill][transport]") {
+    const bool killed = GENERATE(false, true);
+    CAPTURE(killed);
+    DeathWorld w(killed);
+    REQUIRE(w.run("t = make('lift', 1, 't') a = make('tank', 1, 'a') b = make('tank', 1, 'b')"));
+    REQUIRE(w.run("t.lets_go = true"));
+    osc::sim::Unit& lift = *w.unit("t");
+    lift.set_transport_capacity(4);
+    for (const char* name : {"a", "b"}) {
+        w.unit(name)->attach_to_transport(&lift, w.sim.entity_registry(), w.state.raw());
+    }
+    REQUIRE(w.run(killed ? "a:Kill()" : "a:DetachFrom()"));
+    const char* expected = killed ? "a dead, t: attached a killed, a killed" : "";
+    CHECK(w.run(std::string("assert(heard_as_text() == '") + expected + "', heard_as_text())"));
+    CHECK(lift.cargo_ids().size() == 1U);
+    CHECK(w.unit("a")->transport_id() == 0U);
+    CHECK_FALSE(w.unit("a")->has_unit_state("Attached"));
+    CHECK(w.unit("b")->transport_id() == lift.entity_id());
+}
+
+TEST_CASE("A unit killed in its carrier's storage leaves it unheard, but stays in an aircraft's "
+          "storage where it cannot stand",
+          "[kill][transport]") {
+    const bool aircraft = GENERATE(false, true);
+    CAPTURE(aircraft);
+    DeathWorld w(true);
+    REQUIRE(w.run(std::string("c = make('") + (aircraft ? "lift" : "pgen") +
+                  "', 1, 'c') a = make('tank', 1, 'a')"));
+    osc::sim::Unit& carrier = *w.unit("c");
+    osc::sim::Unit& stored = *w.unit("a");
+    carrier.set_storage_slots(2);
+    carrier.add_to_storage(stored, w.sim.entity_registry(), w.state.raw());
+    REQUIRE(carrier.is_stored_unit(stored.entity_id()));
+    REQUIRE(w.run("a:Kill()"));
+    const char* expected = aircraft ? "a dead, c: attached a killed, a killed" : "a dead, a killed";
+    CHECK(w.run(std::string("assert(heard_as_text() == '") + expected + "', heard_as_text())"));
+    CHECK(w.run("assert(a.ratio == 10, a.ratio)"));
+    CHECK(carrier.is_stored_unit(stored.entity_id()) == aircraft);
+    CHECK(stored.transport_id() == (aircraft ? carrier.entity_id() : 0U));
 }

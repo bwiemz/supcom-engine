@@ -335,6 +335,12 @@ TEST_CASE("A player's frame can't end a source or defeat an army", "[sources][dr
     w.sim.tick();
     CHECK(w.sim.army_command_sources(0) == std::vector<osc::u32>{0});
     CHECK_FALSE(w.sim.army_at(0)->is_defeated());
+
+    w.sim.schedule_callback(osc::sim::kEngineSource, end);
+    w.sim.schedule_callback(osc::sim::kEngineSource, defeat);
+    w.sim.tick();
+    CHECK(w.sim.army_command_sources(0).empty());
+    CHECK(w.sim.army_at(0)->is_defeated());
 }
 
 TEST_CASE("A lobby's game gives each army its owner's source, as the lobby numbered them",

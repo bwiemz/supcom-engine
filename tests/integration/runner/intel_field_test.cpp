@@ -18,6 +18,7 @@
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
@@ -50,9 +51,6 @@ std::string senses(u8 recon) {
 void test_intel_fields(TestContext& ctx) {
     spdlog::info("=== INTEL FIELD TEST: Moho's intel grids with retail's units (M215g) ===");
     Tally t;
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
-    };
     const auto lua = [&](const std::string& code) { run_lua(ctx, code); };
     // ARMY_1's recon of a unit now
     const auto recon = [&](u32 id) -> u8 {
@@ -72,14 +70,14 @@ void test_intel_fields(TestContext& ctx) {
     }
     const f32 sx = spot->x;
     const f32 sz = spot->z;
-    run(1);
+    tick_for(ctx, 1);
     lua("GetArmyBrain('ARMY_2'):GiveResource('ENERGY', 4000)\n");
     const u32 generator = spawn_unit(ctx, "__osc_if_gen", "ueb4203", "ARMY_2", {sx, sz});
     const u32 near = spawn_unit(ctx, "__osc_if_near", "uel0105", "ARMY_2", {sx + 10, sz});
     const u32 far = spawn_unit(ctx, "__osc_if_far", "uel0105", "ARMY_2", {sx + 50, sz});
     (void)spawn_unit(ctx, "__osc_if_radar", "ueb3101", "ARMY_1", {sx, sz + 60});
     lua("__osc_if_near:SetImmobile(true) __osc_if_far:SetImmobile(true)\n");
-    run(5);
+    tick_for(ctx, 5);
     const auto* gen = static_cast<const sim::Unit*>(ctx.sim.entity_registry().find(generator));
     t.check(gen && gen->is_intel_enabled("RadarStealthField"),
             "retail's SetupIntel switched the generator's field on");
@@ -89,19 +87,19 @@ void test_intel_fields(TestContext& ctx) {
                         senses(recon(far)), senses(recon(near)), senses(recon(generator))));
 
     lua(fmt::format("CreateVisibleAreaAtPoint(1, {}, 0, {}, 12, 5)\n", sx + 10, sz));
-    run(2);
+    tick_for(ctx, 2);
     t.check(recon(near) == kLOS,
             fmt::format("seen, the engineer in the field is in sight, still off radar ({})",
                         senses(recon(near))));
 
     lua("__osc_if_radar:InitIntel(1, 'Omni', 90) __osc_if_radar:EnableIntel('Omni')\n");
-    run(2);
+    tick_for(ctx, 2);
     t.check((recon(near) & (kRadar | kOmni)) == (kRadar | kOmni),
             fmt::format("under omni, the field hides nothing ({})", senses(recon(near))));
     lua("__osc_if_radar:DisableIntel('Omni')\n");
-    run(2);
+    tick_for(ctx, 2);
     lua("__osc_if_gen:DisableIntel('RadarStealthField')\n");
-    run(2);
+    tick_for(ctx, 2);
     t.check((recon(near) & kRadar) != 0 && (recon(generator) & kRadar) != 0,
             fmt::format("the field off, the radar finds the engineer ({}) and the generator ({})",
                         senses(recon(near)), senses(recon(generator))));
@@ -142,8 +140,8 @@ void test_intel_fields(TestContext& ctx) {
         const sim::Entity* e = ctx.sim.entity_registry().find(id);
         return e && e->is_unit() ? static_cast<const sim::Unit*>(e)->layer() : "gone";
     };
-    for (int i = 0; i < 100 && layer_of(sub) != "Sub"; ++i) run(1);
-    run(2);
+    tick_until(ctx, "the sub dives", 100, [&] { return layer_of(sub) == "Sub"; });
+    tick_for(ctx, 2);
     const auto* frig = static_cast<const sim::Unit*>(ctx.sim.entity_registry().find(frigate));
     t.check(layer_of(sub) == "Sub" && frig && frig->is_intel_enabled("WaterVision"),
             fmt::format("the sub dived ({}); on the water, the frigate's WaterVision is on",
@@ -153,7 +151,7 @@ void test_intel_fields(TestContext& ctx) {
                         senses(recon(sub))));
     lua("local p = __osc_if_sea\n"
         "Warp(__osc_if_frigate, Vector(p[1] + 24, GetSurfaceHeight(p[1] + 24, p[2]), p[2]))\n");
-    run(2);
+    tick_for(ctx, 2);
     t.check(recon(sub) == kSonar,
             fmt::format("24 off, past its WaterVision, only its sonar hears it ({})",
                         senses(recon(sub))));

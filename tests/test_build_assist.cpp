@@ -6,6 +6,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -21,6 +22,7 @@ using osc::sim::CommandType;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
+using osc::test::tick_until;
 
 namespace {
 
@@ -171,10 +173,8 @@ TEST_CASE("A guard builds its unfinished target and keeps guarding when the work
     AssistSim w;
     Unit* eng = w.engineer("eng", 16.0f);
     eng->push_command(order(CommandType::Guard, *w.site, 1), true);
-    for (int tick = 0; tick < 20 && !eng->is_building(); ++tick) {
-        w.sim.tick();
-    }
-    REQUIRE(eng->is_building());
+    tick_until([&] { w.sim.tick(); }, "the guard starts building its target", 40,
+               [&] { return eng->is_building(); });
     CHECK(eng->build_target_id() == w.site->entity_id());
     CHECK(w.log() == "eng arm,eng start Repair");
     const osc::f32 before = w.site->fraction_complete();
@@ -182,10 +182,8 @@ TEST_CASE("A guard builds its unfinished target and keeps guarding when the work
     CHECK(w.site->fraction_complete() > before);
 
     SECTION("completion keeps the guard and ends the build effects once") {
-        for (int tick = 0; tick < 150 && w.site->is_being_built(); ++tick) {
-            w.sim.tick();
-        }
-        REQUIRE_FALSE(w.site->is_being_built());
+        tick_until([&] { w.sim.tick(); }, "the site is built", 300,
+                   [&] { return !w.site->is_being_built(); });
         CHECK(w.site->fraction_complete() == 1.0f);
         CHECK(w.log() == "eng stop");
         REQUIRE(eng->command_queue().size() == 1);
@@ -261,10 +259,8 @@ TEST_CASE("A guard's help ends with OnStopBuild when what it guards is gone", "[
     Unit* helper = w.engineer("helper", 14.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
     helper->push_command(order(CommandType::Guard, *eng, 2), true);
-    for (int i = 0; i < 3; ++i) {
-        w.sim.tick();
-    }
-    REQUIRE(helper->is_building());
+    tick_until([&] { w.sim.tick(); }, "the helper starts building", 10,
+               [&] { return helper->is_building(); });
     w.log();
     const osc::u32 id = eng->entity_id();
     eng->mark_destroyed();
@@ -323,9 +319,7 @@ TEST_CASE("A paused repairer of a unit under construction holds it without work"
     AssistSim w;
     Unit* eng = w.engineer("eng", 16.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
-    w.sim.tick();
-    w.sim.tick();
-    REQUIRE(eng->is_building());
+    tick_until([&] { w.sim.tick(); }, "the repair starts", 10, [&] { return eng->is_building(); });
     const osc::f32 frac = w.site->fraction_complete();
     eng->set_paused(true);
     for (int i = 0; i < 20; ++i) {
@@ -412,10 +406,8 @@ TEST_CASE("A paused guard helping a build holds it and adds nothing", "[build][a
     Unit* helper = w.engineer("helper", 14.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
     helper->push_command(order(CommandType::Guard, *eng, 2), true);
-    for (int i = 0; i < 3; ++i) {
-        w.sim.tick();
-    }
-    REQUIRE(helper->is_building());
+    tick_until([&] { w.sim.tick(); }, "the helper starts building", 10,
+               [&] { return helper->is_building(); });
     helper->set_paused(true);
     const osc::f32 before = w.site->fraction_complete();
     w.sim.tick();
@@ -434,9 +426,7 @@ TEST_CASE("A paused repairer of a damaged unit holds it without work", "[build][
     w.site->set_health(50.0f);
     Unit* eng = w.engineer("eng", 16.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
-    w.sim.tick();
-    w.sim.tick();
-    REQUIRE(eng->is_repairing());
+    tick_until([&] { w.sim.tick(); }, "the repair starts", 10, [&] { return eng->is_repairing(); });
     const osc::f32 hp = w.site->health();
     REQUIRE(hp > 50.0f);
     eng->set_paused(true);
@@ -462,12 +452,9 @@ TEST_CASE("A builder that must face its target turns to it before it repairs",
     w.sim.tick();
     CHECK(w.log() == "eng arm");
     CHECK_FALSE(eng->is_building());
-    int ticks = 1;
-    for (; ticks < 30 && !eng->is_building(); ++ticks) {
-        w.sim.tick();
-    }
+    const int ticks = 1 + tick_until([&] { w.sim.tick(); }, "the builder turns to it and starts",
+                                     60, [&] { return eng->is_building(); });
     CHECK(ticks > 5);
-    REQUIRE(eng->is_building());
     CHECK(w.log() == "eng start Repair");
     CHECK(osc::sim::quat_yaw(eng->orientation()) > 1.2f);
     CHECK(eng->attack_facing().x == 0.0f);
@@ -487,10 +474,8 @@ TEST_CASE("A guard that must face what it helps build turns to it first", "[buil
     w.sim.tick();
     w.sim.tick();
     CHECK_FALSE(helper->is_building());
-    for (int i = 0; i < 30 && !helper->is_building(); ++i) {
-        w.sim.tick();
-    }
-    CHECK(helper->is_building());
+    tick_until([&] { w.sim.tick(); }, "the helper turns to the build and starts", 60,
+               [&] { return helper->is_building(); });
     CHECK(osc::sim::quat_yaw(helper->orientation()) > 1.2f);
 }
 
@@ -503,22 +488,16 @@ TEST_CASE("Repairing a script set goes when a repair of a damaged unit ends, don
     w.site->set_health(50.0f);
     Unit* eng = w.engineer("eng", 16.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
-    for (int i = 0; i < 3 && !eng->is_repairing(); ++i) {
-        w.sim.tick();
-    }
-    REQUIRE(eng->is_repairing());
+    tick_until([&] { w.sim.tick(); }, "the repair starts", 10, [&] { return eng->is_repairing(); });
     REQUIRE(eng->has_unit_state("Repairing"));
-    for (int i = 0; i < 200 && eng->is_repairing(); ++i) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the repair ends", 200, [&] { return !eng->is_repairing(); });
     REQUIRE(w.site->health() == w.site->max_health());
     CHECK_FALSE(eng->has_unit_state("Repairing"));
 
     w.site->set_health(50.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 2), true);
-    for (int i = 0; i < 3 && !eng->is_repairing(); ++i) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the second repair starts", 10,
+               [&] { return eng->is_repairing(); });
     REQUIRE(eng->has_unit_state("Repairing"));
     eng->push_command(order(CommandType::Stop, *w.site, 3), true);
     w.sim.tick();
@@ -535,29 +514,22 @@ TEST_CASE("Repairing a script set goes when a repair of a unit under constructio
     Unit* helper = w.engineer("helper", 14.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
     helper->push_command(order(CommandType::Guard, *eng, 2), true);
-    for (int i = 0; i < 3; ++i) {
-        w.sim.tick();
-    }
-    REQUIRE(eng->is_building());
-    REQUIRE(helper->is_building());
+    tick_until([&] { w.sim.tick(); }, "the repair and its help start", 10,
+               [&] { return eng->is_building() && helper->is_building(); });
     REQUIRE(eng->has_unit_state("Repairing"));
     REQUIRE(helper->has_unit_state("Repairing"));
     eng->push_command(order(CommandType::Stop, *w.site, 3), true);
-    w.sim.tick();
-    w.sim.tick();
-    REQUIRE_FALSE(eng->is_building());
-    REQUIRE_FALSE(helper->is_building());
+    tick_until([&] { w.sim.tick(); }, "the repair and its help stop", 10,
+               [&] { return !eng->is_building() && !helper->is_building(); });
     CHECK_FALSE(eng->has_unit_state("Repairing"));
     CHECK_FALSE(helper->has_unit_state("Repairing"));
 
     eng->push_command(order(CommandType::Repair, *w.site, 4), true);
-    for (int i = 0; i < 3 && !eng->is_building(); ++i) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the second repair starts", 10,
+               [&] { return eng->is_building(); });
     REQUIRE(eng->has_unit_state("Repairing"));
-    for (int i = 0; i < 200 && eng->is_building(); ++i) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the second repair ends", 200,
+               [&] { return !eng->is_building(); });
     REQUIRE(w.site->fraction_complete() == 1.0f);
     CHECK_FALSE(eng->has_unit_state("Repairing"));
 }
@@ -570,22 +542,16 @@ TEST_CASE("A repairer's focus is the unit it repairs, and nothing once it is don
     w.site->set_health(50.0f);
     Unit* eng = w.engineer("eng", 16.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
-    for (int i = 0; i < 3 && !eng->is_repairing(); ++i) {
-        w.sim.tick();
-    }
-    REQUIRE(eng->is_repairing());
+    tick_until([&] { w.sim.tick(); }, "the repair starts", 10, [&] { return eng->is_repairing(); });
     CHECK(eng->focus_id() == w.site->entity_id());
-    for (int i = 0; i < 200 && eng->is_repairing(); ++i) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the repair ends", 200, [&] { return !eng->is_repairing(); });
     REQUIRE(w.site->health() == w.site->max_health());
     CHECK(eng->focus_id() == 0);
 
     w.site->set_health(50.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 2), true);
-    for (int i = 0; i < 3 && !eng->is_repairing(); ++i) {
-        w.sim.tick();
-    }
+    tick_until([&] { w.sim.tick(); }, "the second repair starts", 10,
+               [&] { return eng->is_repairing(); });
     REQUIRE(eng->focus_id() == w.site->entity_id());
     eng->push_command(order(CommandType::Stop, *w.site, 3), true);
     w.sim.tick();
@@ -611,10 +577,8 @@ TEST_CASE("A helper with no build rate takes up the build it guards and adds no 
         bot->push_command(order(CommandType::Guard, *eng, 2), true);
         guards_builder = true;
     }
-    for (int tick = 0; tick < 20 && !bot->is_building(); ++tick) {
-        w.sim.tick();
-    }
-    REQUIRE(bot->is_building());
+    tick_until([&] { w.sim.tick(); }, "the bot takes up the build", 40,
+               [&] { return bot->is_building(); });
     CHECK(bot->build_target_id() == w.site->entity_id());
     CHECK(w.log().find("bot start Repair") != std::string::npos);
     CHECK(bot->economy().consumption_mass == 0);
@@ -626,11 +590,14 @@ TEST_CASE("A helper with no build rate takes up the build it guards and adds no 
     CHECK(w.site->fraction_complete() - before == Catch::Approx(0.01f).margin(1e-5f));
     CHECK(bot->work_progress() == Catch::Approx(w.site->fraction_complete()).margin(0.011f));
 
-    for (int tick = 0; tick < 150 && w.site->is_being_built(); ++tick) {
-        w.sim.tick();
-        if (w.site->is_being_built()) CHECK(bot->is_building());
-    }
-    REQUIRE_FALSE(w.site->is_being_built());
+    tick_until(
+        [&] {
+            w.sim.tick();
+            if (w.site->is_being_built()) {
+                CHECK(bot->is_building());
+            }
+        },
+        "the site is built", 300, [&] { return !w.site->is_being_built(); });
     w.sim.tick();
     CHECK(w.log().find("bot stop") != std::string::npos);
     CHECK_FALSE(bot->is_building());
@@ -664,11 +631,8 @@ TEST_CASE("A helper with no build rate leaves the build's completion to a builde
     bot->push_command(order(CommandType::Guard, *w.site, 1), true);
     eng->push_command(order(CommandType::Repair, *w.site, 2), true);
     helper->push_command(order(CommandType::Guard, *eng, 3), true);
-    for (int tick = 0; tick < 20 && !(bot->is_building() && helper->is_building()); ++tick) {
-        w.sim.tick();
-    }
-    REQUIRE(bot->is_building());
-    REQUIRE(helper->is_building());
+    tick_until([&] { w.sim.tick(); }, "the bot and the helper take up the build", 40,
+               [&] { return bot->is_building() && helper->is_building(); });
     w.log();
     w.site->set_fraction_complete(0.985f);
     w.sim.tick();
@@ -688,10 +652,8 @@ TEST_CASE("A repairer with no build rate takes up a damaged unit's repair and he
     Unit* bot = w.engineer("bot", 16.0f);
     bot->set_build_rate(0.0f);
     bot->push_command(order(CommandType::Repair, *w.site, 1), true);
-    for (int tick = 0; tick < 3 && !bot->is_repairing(); ++tick) {
-        w.sim.tick();
-    }
-    REQUIRE(bot->is_repairing());
+    tick_until([&] { w.sim.tick(); }, "the bot takes up the repair", 10,
+               [&] { return bot->is_repairing(); });
     CHECK(w.log() == "bot arm,bot start Repair");
     for (int tick = 0; tick < 30; ++tick) {
         w.sim.tick();
@@ -700,6 +662,9 @@ TEST_CASE("A repairer with no build rate takes up a damaged unit's repair and he
     CHECK(w.site->health() == 50.0f);
     CHECK(bot->focus_id() == w.site->entity_id());
     CHECK(bot->command_queue().size() == 1);
+    bot->set_build_rate(10.0f);
+    w.sim.tick();
+    CHECK(w.site->health() > 50.0f);
 }
 
 TEST_CASE("Each build step brings a unit under construction level with its health first, so a "
@@ -712,9 +677,8 @@ TEST_CASE("Each build step brings a unit under construction level with its healt
     const auto first_steps = [&](osc::f32 rate) {
         eng->set_build_rate(rate);
         eng->push_command(order(CommandType::Repair, *w.site, 1), true);
-        for (int i = 0; i < 5 && w.site->fraction_complete() == 0.0f; ++i) {
-            w.sim.tick();
-        }
+        tick_until([&] { w.sim.tick(); }, "the first build step", 10,
+                   [&] { return w.site->fraction_complete() != 0.0f; });
     };
     SECTION("a step smaller than that hit point's share of 100 lifts it to the share") {
         first_steps(0.5f); // 0.0005 a step against 0.01
@@ -746,10 +710,8 @@ TEST_CASE("A slow helper's step brings the unit it helps build level with its he
     helper->set_build_rate(0.5f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
     helper->push_command(order(CommandType::Guard, *eng, 2), true);
-    for (int i = 0; i < 10 && !helper->is_building(); ++i) {
-        w.sim.tick();
-    }
-    REQUIRE(helper->is_building());
+    tick_until([&] { w.sim.tick(); }, "the helper starts building", 20,
+               [&] { return helper->is_building(); });
     w.sim.tick();
     w.sim.tick();
     // The helper's step of 0.0005 is the last one in front of its health
@@ -807,8 +769,8 @@ TEST_CASE("A builder and what it builds hear each quarter the build passes",
     listen_to_progress(w);
     Unit* eng = w.engineer("eng", 16.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
-    for (int tick = 0; tick < 120 && w.site->is_being_built(); ++tick) w.sim.tick();
-    REQUIRE_FALSE(w.site->is_being_built());
+    tick_until([&] { w.sim.tick(); }, "the site is built", 240,
+               [&] { return !w.site->is_being_built(); });
     CHECK(progress(w) == "eng 0.25,site:eng 0.25,eng 0.5,site:eng 0.5,eng 0.75,site:eng 0.75");
 }
 
@@ -820,7 +782,8 @@ TEST_CASE("A builder that joins a build late hears it passed the quarters behind
     listen_to_progress(w);
     Unit* eng = w.engineer("eng", 16.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
-    for (int tick = 0; tick < 5; ++tick) w.sim.tick();
+    tick_until([&] { w.sim.tick(); }, "the builder's first step", 10,
+               [&] { return w.site->fraction_complete() > 0.6f; });
     CHECK(progress(w) == "eng 0.25 from 0,site:eng 0.25 from 0");
 }
 
@@ -839,15 +802,13 @@ TEST_CASE("A builder paused through a quarter hears it on resuming, but not on F
         Unit* other = w.engineer("other", 24.0f);
         eng->push_command(order(CommandType::Repair, *w.site, 1), true);
         other->push_command(order(CommandType::Repair, *w.site, 2), true);
-        for (int tick = 0; tick < 3; ++tick) w.sim.tick();
-        REQUIRE(eng->is_building());
-        REQUIRE(other->is_building());
+        tick_until([&] { w.sim.tick(); }, "both builders start", 10,
+                   [&] { return eng->is_building() && other->is_building(); });
         REQUIRE(w.site->fraction_complete() < 0.45f);
         progress(w);
         eng->set_paused(true);
-        // The other builder takes it past 0.5 alone
-        for (int tick = 0; tick < 60 && w.site->fraction_complete() < 0.55f; ++tick) w.sim.tick();
-        REQUIRE(w.site->fraction_complete() >= 0.55f);
+        tick_until([&] { w.sim.tick(); }, "the other builder takes it past 0.5 alone", 60,
+                   [&] { return w.site->fraction_complete() >= 0.55f; });
         CHECK(progress(w) == "other 0.5,site:other 0.5");
         eng->set_paused(false);
         w.sim.tick();
@@ -865,8 +826,8 @@ TEST_CASE("A helper with no build rate still hears the quarters others build",
     idle->set_build_rate(0.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
     idle->push_command(order(CommandType::Repair, *w.site, 2), true);
-    for (int tick = 0; tick < 120 && w.site->is_being_built(); ++tick) w.sim.tick();
-    REQUIRE_FALSE(w.site->is_being_built());
+    tick_until([&] { w.sim.tick(); }, "the site is built", 240,
+               [&] { return !w.site->is_being_built(); });
     const std::string heard = progress(w);
     for (const char* band : {"idle 0.25", "idle 0.5", "idle 0.75"}) {
         CAPTURE(band);

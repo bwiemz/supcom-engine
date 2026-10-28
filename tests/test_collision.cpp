@@ -13,11 +13,13 @@
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
+#include "sim/prop.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit.hpp"
 #include "sim/weapon.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -26,6 +28,7 @@ extern "C" {
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
@@ -41,6 +44,7 @@ using osc::sim::Projectile;
 using osc::sim::Quaternion;
 using osc::sim::Unit;
 using osc::sim::Vector3;
+using osc::test::tick_until;
 
 namespace {
 
@@ -261,6 +265,43 @@ TEST_CASE("a beam stops at a dying unit as at a living one", "[collision]") {
     }
 }
 
+TEST_CASE("a beam passes what has no OnCollisionCheckWeapon or fails it", "[collision]") {
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    osc::sim::SimState sim{L, nullptr};
+    EntityRegistry& reg = sim.entity_registry();
+    reg.init_spatial_grid(512, 512);
+    const auto script = [&](const char* code) {
+        REQUIRE(luaL_loadbuffer(L, code, std::strlen(code), "script") == 0);
+        REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
+        return luaL_ref(L, LUA_REGISTRYINDEX);
+    };
+    const u32 shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->lua_table_ref = script("return {}");
+    static_cast<Unit*>(reg.find(shooter))->add_weapon(std::move(gun));
+    // A tree: retail's props have no OnCollisionCheckWeapon
+    auto tree = std::make_unique<osc::sim::Prop>();
+    tree->set_position({100, 0, 104});
+    tree->set_default_collision_shape(box(1, 2, 1));
+    tree->set_lua_table_ref(script("return {}"));
+    reg.register_entity(std::move(tree));
+    const u32 broken = add_unit(reg, {100, 0, 107}, box(0.5f, 2, 0.5f));
+    reg.find(broken)->set_lua_table_ref(
+        script("return {OnCollisionCheckWeapon = function() error('broken') end}"));
+    const u32 tank = add_unit(reg, {100, 0, 110}, box(1, 2, 1));
+    reg.find(tank)->set_lua_table_ref(
+        script("return {OnCollisionCheckWeapon = function() return true end}"));
+    auto beam = std::make_unique<osc::sim::Entity>();
+    beam->set_collision_beam(true);
+    beam->set_beam_launcher_id(shooter);
+    beam->beam_setup().weapon = 0;
+    beam->beam_setup().length = 20;
+    const u32 beam_id = reg.register_entity(std::move(beam));
+    osc::sim::check_collision_beam(sim, L, beam_id, false);
+    CHECK(reg.find(beam_id)->beam_endpoint().z == Approx(109.0f));
+}
+
 TEST_CASE("a shot with entity collision off flies through", "[collision]") {
     EntityRegistry reg;
     reg.init_spatial_grid(512, 512);
@@ -444,10 +485,8 @@ TEST_CASE("a straight weapon lobs its falling shots onto their target", "[collis
     const Vector3 v = shot->velocity;
     const f32 pitch = std::asin(v.y / std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z));
     CHECK(std::sin(2.0f * pitch) == Approx(Projectile::GRAVITY * 30.0f / 400.0f).epsilon(1e-3));
-    for (int tick = 0; tick < 20 && !shot->destroyed(); ++tick) {
-        fly(reg, *shot);
-    }
-    CHECK(shot->destroyed());
+    tick_until([&] { fly(reg, *shot); }, "the shot lands on its target", 40,
+               [&] { return shot->destroyed(); });
     CHECK(shot->position().z == Approx(129.0f).margin(1e-3));
 }
 
@@ -526,12 +565,13 @@ TEST_CASE("a straight weapon's turret pitches up to lob its falling shots", "[co
     const f32 low = std::atan((v2 - std::sqrt(v2 * v2 - g * (g * d * d + 2 * h * v2))) / (g * d));
     CHECK(t.aim->pitch() == Approx(low).margin(1e-4));
     Vector3 was = shot->position();
-    for (int tick = 0; tick < 30 && shot->position().y > 0.0f; ++tick) {
-        was = shot->position();
-        fly(t.reg, *shot);
-    }
+    tick_until(
+        [&] {
+            was = shot->position();
+            fly(t.reg, *shot);
+        },
+        "the shot comes down", 60, [&] { return shot->position().y <= 0.0f; });
     const Vector3 now = shot->position();
-    REQUIRE(now.y <= 0.0f);
     const f32 landed = was.z + (now.z - was.z) * was.y / (was.y - now.y);
     CHECK(landed == Approx(30.0f).margin(0.05f));
 }
@@ -541,6 +581,7 @@ TEST_CASE("a straight weapon's turret holds, off target, where no arc reaches", 
     CHECK(t.fire_at({0, 25, 30}, 30) == nullptr);
     CHECK_FALSE(t.aim->on_target());
     CHECK(t.aim->pitch() == 0.0f);
+    CHECK(t.fire_at({0, 0, 20}, 30) != nullptr);
 }
 
 TEST_CASE("a shot whose projectile gives no Lifetime lives Moho's 15 seconds", "[collision]") {
