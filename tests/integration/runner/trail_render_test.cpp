@@ -714,6 +714,7 @@ void test_trail_render(TestContext& ctx) {
                                  "if p then p:SetVelocity(1, 0.2, 0) end\n");
                 }
                 step();
+                shots.redraw_until_loaded();
             },
             "Test 10b: a Gauss shell's polytrail is drawn", 120,
             [&] {

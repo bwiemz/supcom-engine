@@ -10,6 +10,7 @@
 #include "sim/world_snapshot.hpp"
 
 #include <array>
+#include <functional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -33,6 +34,10 @@ struct Tally {
     int fail = 0;
     void check(bool ok, const std::string& what);
 };
+
+/// Calls `draw`, a frame, until the textures drawn have loaded: tick_until's
+/// wait, at most 600 frames.
+void draw_until_loaded(renderer::Renderer& r, const std::function<void()>& draw);
 
 /// A frame's middle (35%-65% each way), rgb in [0, 1] per pixel.
 using Pixels = std::vector<std::array<f32, 3>>;
@@ -85,6 +90,10 @@ public:
     /// selection; `ghost`: a structure being placed.
     void redraw(const std::unordered_set<u32>* selected = nullptr,
                 const renderer::BuildGhost* ghost = nullptr);
+
+    /// redraw() until the textures it draws have loaded.
+    void redraw_until_loaded(const std::unordered_set<u32>* selected = nullptr,
+                             const renderer::BuildGhost* ghost = nullptr);
 
     /// As redraw(), capturing the whole frame.
     ImageRGBA8 grab(const std::unordered_set<u32>* selected = nullptr,

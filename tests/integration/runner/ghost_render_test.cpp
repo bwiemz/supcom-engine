@@ -73,9 +73,7 @@ void test_ghost_render(TestContext& ctx) {
     ghost.y = ctx.sim.terrain()->get_terrain_height(spot->x, spot->z);
 
     const auto shot = [&](const renderer::BuildGhost* g) {
-        for (int i = 0; i < 10; ++i) {
-            shots.redraw(nullptr, g);
-        }
+        shots.redraw_until_loaded(nullptr, g);
         return centre_pixels(shots.grab(nullptr, g));
     };
     const Pixels bare = shot(nullptr);

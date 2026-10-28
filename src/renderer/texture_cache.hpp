@@ -62,6 +62,8 @@ public:
 
     /// Textures requested but not yet loaded.
     std::size_t loading() const { return pending_.size(); }
+    /// Waits for the files of the textures loading, for flush_uploads().
+    void wait_reads() const;
 
     /// Upload raw RGBA pixels as a cached texture.
     /// Key is used for caching. Pixels must be width*height*4 bytes.

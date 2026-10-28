@@ -125,12 +125,7 @@ void test_selection_render(TestContext& ctx) {
     r.set_player_army(0);
     (void)shots.shoot(*ctx.sim.terrain(), sx, sz, 40.0f);
     const std::unordered_set<u32> selected{own};
-    // A few frames: the textures load in the background
-    const auto draw = [&] {
-        for (int i = 0; i < 10; ++i) {
-            shots.redraw(&selected);
-        }
-    };
+    const auto draw = [&] { shots.redraw_until_loaded(&selected); };
 
     // Test 1: the selected engineer's brackets, its blueprint's box
     draw();
