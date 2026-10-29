@@ -436,7 +436,7 @@ private:
 class BoneEntityManipulator : public Manipulator {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
-    BoneEntityManipulator(SimState* sim, u32 target_id, i32 target_bone)
+    BoneEntityManipulator(SimState* sim, EntityId target_id, i32 target_bone)
         : sim_(sim), target_id_(target_id), target_bone_(target_bone) {}
 
     void tick(f32 /*dt*/) override {}
@@ -446,7 +446,7 @@ public:
 
 private:
     SimState* sim_;
-    u32 target_id_;
+    EntityId target_id_{};
     i32 target_bone_;
 };
 

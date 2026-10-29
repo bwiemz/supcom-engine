@@ -39,9 +39,9 @@ class UnitBlockers final : public path::MobileBlockers {
 public:
     explicit UnitBlockers(const SimState& sim) : sim_(sim) {}
 
-    bool unit_blocked(u32 unit, path::Cell cell, i32 mode) const override;
-    bool unit_blocked_at(u32 unit, f32 x, f32 z, i32 mode) const override;
-    bool swept_blocked(u32 unit, const path::WorldPoint& from, const path::WorldPoint& to,
+    bool unit_blocked(EntityId unit, path::Cell cell, i32 mode) const override;
+    bool unit_blocked_at(EntityId unit, f32 x, f32 z, i32 mode) const override;
+    bool swept_blocked(EntityId unit, const path::WorldPoint& from, const path::WorldPoint& to,
                        i32 mode) const override;
 
 private:

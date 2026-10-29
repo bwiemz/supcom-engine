@@ -96,6 +96,16 @@ bool read_arg(ByteReader& r, SimCallbackArg& out) {
     }
 }
 
+// Before keys (v18) a command carried the engine's number, Moho's id plus one; nothing reused an
+// id then, so each was its first generation.
+EntityId read_id(ByteReader& r, bool key) {
+    if (key) {
+        return EntityId(r.u64v());
+    }
+    const u32 number = r.u32v();
+    return number == 0 ? EntityId() : EntityId::of(number - 1, 1);
+}
+
 } // namespace
 
 void write_command(ByteWriter& w, const ScheduledCommand& c) {
@@ -106,7 +116,7 @@ void write_command(ByteWriter& w, const ScheduledCommand& c) {
     w.f32v(c.command.target_pos.x);
     w.f32v(c.command.target_pos.y);
     w.f32v(c.command.target_pos.z);
-    w.u32v(c.command.target_id);
+    w.u64v(c.command.target_id.key());
     w.u32v(c.command.command_id);
     w.str(c.command.blueprint_id);
     w.str(c.command.formation);
@@ -114,11 +124,15 @@ void write_command(ByteWriter& w, const ScheduledCommand& c) {
     w.f32v(c.command.facing);
     w.u8v(c.command.form_move ? 1 : 0);
     w.u32v(static_cast<u32>(c.command.unload_ids.size()));
-    for (u32 id : c.command.unload_ids) w.u32v(id);
+    for (const EntityId id : c.command.unload_ids) {
+        w.u64v(id.key());
+    }
     w.u8v(c.command.factory ? 1 : 0);
     w.str(c.command.script_args);
     w.u32v(static_cast<u32>(c.unit_ids.size()));
-    for (u32 id : c.unit_ids) w.u32v(id);
+    for (const EntityId id : c.unit_ids) {
+        w.u64v(id.key());
+    }
 
     w.u8v(c.callback ? 1 : 0);
     if (!c.callback) return;
@@ -130,7 +144,9 @@ void write_command(ByteWriter& w, const ScheduledCommand& c) {
         write_arg(w, value);
     }
     w.u32v(static_cast<u32>(cb.unit_ids.size()));
-    for (u32 id : cb.unit_ids) w.u32v(id);
+    for (const EntityId id : cb.unit_ids) {
+        w.u64v(id.key());
+    }
     w.u8v(cb.value ? 1 : 0);
     if (cb.value) write_arg(w, *cb.value);
     w.u8v(cb.lua_args ? 1 : 0);
@@ -141,7 +157,7 @@ void write_command(ByteWriter& w, const ScheduledCommand& c) {
 
 bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool with_formation,
                   bool with_unload, bool with_factory, bool with_value, bool with_script,
-                  bool with_lua_args, bool with_form_move) {
+                  bool with_lua_args, bool with_form_move, bool with_keys) {
     c = ScheduledCommand{};
     c.exec_beat = r.u32v();
     c.source = r.u32v();
@@ -150,7 +166,7 @@ bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool w
     c.command.target_pos.x = r.f32v();
     c.command.target_pos.y = r.f32v();
     c.command.target_pos.z = r.f32v();
-    c.command.target_id = r.u32v();
+    c.command.target_id = read_id(r, with_keys);
     c.command.command_id = r.u32v();
     c.command.blueprint_id = r.str();
     if (with_formation) {
@@ -163,12 +179,16 @@ bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool w
     }
     if (with_unload) {
         const u32 unloads = r.u32v();
-        for (u32 i = 0; i < unloads && r.ok(); ++i) c.command.unload_ids.push_back(r.u32v());
+        for (u32 i = 0; i < unloads && r.ok(); ++i) {
+            c.command.unload_ids.push_back(read_id(r, with_keys));
+        }
     }
     if (with_factory) c.command.factory = r.u8v() != 0;
     if (with_script) c.command.script_args = r.str();
     const u32 n = r.u32v();
-    for (u32 i = 0; i < n && r.ok(); ++i) c.unit_ids.push_back(r.u32v());
+    for (u32 i = 0; i < n && r.ok(); ++i) {
+        c.unit_ids.push_back(read_id(r, with_keys));
+    }
 
     if (!with_callback || r.u8v() == 0) return r.ok();
     SimCallbackEntry cb;
@@ -179,7 +199,9 @@ bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool w
         read_arg(r, cb.args[key]);
     }
     const u32 nunits = r.u32v();
-    for (u32 i = 0; i < nunits && r.ok(); ++i) cb.unit_ids.push_back(r.u32v());
+    for (u32 i = 0; i < nunits && r.ok(); ++i) {
+        cb.unit_ids.push_back(read_id(r, with_keys));
+    }
     if (with_value && r.u8v() != 0) {
         SimCallbackArg value;
         if (read_arg(r, value)) cb.value = std::move(value);

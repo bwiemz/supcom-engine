@@ -90,19 +90,19 @@ void test_spawn_layer(TestContext& ctx) {
                               : fmt::format("the scenes made: {}", made.error().message));
     if (!set || !made) return;
 
-    std::array<u32, kScenes.size()> ids{};
+    std::array<sim::EntityId, kScenes.size()> ids{};
     lua_State* L = ctx.L;
     lua_pushstring(L, "__osc_spawn");
     lua_rawget(L, LUA_GLOBALSINDEX);
     for (size_t i = 0; i < ids.size(); ++i) {
         lua_rawgeti(L, -1, static_cast<int>(i + 1));
-        ids[i] = osc::sim::to_entity_id(L, -1);
+        ids[i] = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 1);
     }
     lua_pop(L, 1);
     auto& registry = ctx.sim.entity_registry();
     const auto unit = [&](size_t i) -> const sim::Unit* {
-        const sim::Entity* e = ids[i] != 0 ? registry.find(ids[i]) : nullptr;
+        const sim::Entity* e = ids[i] ? registry.find(ids[i]) : nullptr;
         return e && e->is_unit() && !e->destroyed() ? static_cast<const sim::Unit*>(e) : nullptr;
     };
     const f32 surface = terrain->water_elevation();

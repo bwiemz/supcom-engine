@@ -44,8 +44,7 @@ void ReconView::update(const sim::FrameView& view, std::span<const sim::IntelFlu
         ghosts_.clear();
         return;
     }
-    // The jammers' fakes it senses: their jammers' records where they are
-    // (entity ids stay under 2^26, so the ids can't meet a real one's).
+    // The jammers' fakes it senses: their jammers' records where they are.
     for (const sim::FakeBlipRecord& f : cur->fake_blips) {
         if (f.viewer != static_cast<u32>(focus_)) continue;
         const sim::EntityRecord* source = cur->find(f.source);
@@ -61,7 +60,7 @@ void ReconView::update(const sim::FrameView& view, std::span<const sim::IntelFlu
 
     // What FlushIntelInRect took from the player's army: its blips of these
     // units, and anything it remembers in the rects that is gone.
-    std::vector<u32> forgotten;
+    std::vector<sim::EntityId> forgotten;
     for (const auto& f : flushes)
         for (const auto& [id, armies] : f.forgotten)
             if ((armies >> static_cast<u32>(focus_) & 1u) != 0) forgotten.push_back(id);
@@ -129,7 +128,7 @@ void ReconView::update(const sim::FrameView& view, std::span<const sim::IntelFlu
     for (auto it = memory_.begin(); it != memory_.end();) {
         Memory& m = it->second;
         if (m.touched != update_count_) {
-            const bool remembered = m.ghost || (m.seen_ever && m.last.id != 0);
+            const bool remembered = m.ghost || (m.seen_ever && m.last.id);
             if (!remembered || seen_there(m.last.position) || flushed_at(m.last.position)) {
                 it = memory_.erase(it);
                 continue;
@@ -145,13 +144,15 @@ void ReconView::update(const sim::FrameView& view, std::span<const sim::IntelFlu
               [](const sim::EntityRecord& a, const sim::EntityRecord& b) { return a.id < b.id; });
 }
 
-bool ReconView::maybe_dead(u32 id) const {
+bool ReconView::maybe_dead(sim::EntityId id) const {
     const auto it = memory_.find(id);
     return it != memory_.end() && it->second.ghost;
 }
 
 Sight ReconView::sight(const sim::EntityRecord& e) const {
-    if ((e.id & kFakeBlip) != 0) return Sight::Blip; // a jammer's fake
+    if (sim::is_fake_blip(e.id)) {
+        return Sight::Blip; // a jammer's fake
+    }
     if (everything_ || !judged(e)) return Sight::Seen;
     const auto it = memory_.find(e.id);
     return it == memory_.end() ? Sight::Hidden : it->second.sight;
@@ -166,14 +167,14 @@ bool ReconView::sees_at(const sim::FrameView& view, i32 army, f32 x, f32 z) cons
     return cur->sight.sees_ground(x, z);
 }
 
-const std::vector<sim::BoneMatrix>* ReconView::frozen_pose(u32 id) const {
+const std::vector<sim::BoneMatrix>* ReconView::frozen_pose(sim::EntityId id) const {
     const auto it = memory_.find(id);
     if (it == memory_.end() || it->second.sight != Sight::Remembered || it->second.pose.empty())
         return nullptr;
     return &it->second.pose;
 }
 
-f32 ReconView::frozen_fraction(u32 id, f32 live) const {
+f32 ReconView::frozen_fraction(sim::EntityId id, f32 live) const {
     const auto it = memory_.find(id);
     if (it == memory_.end() || it->second.sight != Sight::Remembered) return live;
     return it->second.fraction;

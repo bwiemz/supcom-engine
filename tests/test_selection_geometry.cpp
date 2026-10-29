@@ -88,10 +88,12 @@ TEST_CASE("A bracket tile is its box's longer half times its thickness, a few pi
 
 TEST_CASE("A drag box keeps the units of the highest selection priority", "[selection]") {
     using osc::renderer::highest_selection_priority;
-    using Ids = std::vector<osc::u32>;
-    CHECK(highest_selection_priority({{1, 3}, {2, 1}, {3, 5}}) == Ids{2});
-    CHECK(highest_selection_priority({{1, 3}, {3, 5}, {4, 3}}) == Ids{1, 4});
-    CHECK(highest_selection_priority({{3, 5}}) == Ids{3});
+    using Ids = std::vector<osc::sim::EntityId>;
+    const auto eid = [](osc::u32 n) { return osc::sim::EntityId::of(n, 1); };
+    CHECK(highest_selection_priority({{eid(1), 3}, {eid(2), 1}, {eid(3), 5}}) == Ids{eid(2)});
+    CHECK(highest_selection_priority({{eid(1), 3}, {eid(3), 5}, {eid(4), 3}}) ==
+          Ids{eid(1), eid(4)});
+    CHECK(highest_selection_priority({{eid(3), 5}}) == Ids{eid(3)});
     CHECK(highest_selection_priority({}).empty());
 }
 

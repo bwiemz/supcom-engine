@@ -36,7 +36,8 @@ namespace osc::test {
 
 namespace {
 
-const renderer::SelectionRenderer::Bracket* bracket_of(const renderer::Renderer& r, u32 id) {
+const renderer::SelectionRenderer::Bracket* bracket_of(const renderer::Renderer& r,
+                                                       sim::EntityId id) {
     for (const auto& b : r.selection_renderer().brackets()) {
         if (b.unit == id) {
             return &b;
@@ -111,9 +112,9 @@ void test_selection_render(TestContext& ctx) {
     }
     const f32 sx = spot->x;
     const f32 sz = spot->z;
-    const u32 own = spawn_unit(ctx, "__osc_sel_a", "uel0105", "ARMY_1", {sx, sz});
-    const u32 other = spawn_unit(ctx, "__osc_sel_b", "uel0105", "ARMY_1", {sx + 8, sz});
-    const u32 enemy = spawn_unit(ctx, "__osc_sel_c", "uel0105", "ARMY_2", {sx - 8, sz});
+    const sim::EntityId own = spawn_unit(ctx, "__osc_sel_a", "uel0105", "ARMY_1", {sx, sz});
+    const sim::EntityId other = spawn_unit(ctx, "__osc_sel_b", "uel0105", "ARMY_1", {sx + 8, sz});
+    const sim::EntityId enemy = spawn_unit(ctx, "__osc_sel_c", "uel0105", "ARMY_2", {sx - 8, sz});
     ctx.sim.tick();
 
     OffscreenShots shots(ctx);
@@ -124,7 +125,7 @@ void test_selection_render(TestContext& ctx) {
     renderer::Renderer& r = shots.renderer();
     r.set_player_army(0);
     (void)shots.shoot(*ctx.sim.terrain(), sx, sz, 40.0f);
-    const std::unordered_set<u32> selected{own};
+    const std::unordered_set<sim::EntityId> selected{own};
     // A few frames: the textures load in the background
     const auto draw = [&] {
         for (int i = 0; i < 10; ++i) {
@@ -164,7 +165,7 @@ void test_selection_render(TestContext& ctx) {
 
     // Test 3: under the cursor, an own unit's highlighted brackets, an
     // enemy's the enemy's
-    const auto texture_of = [&](u32 id) {
+    const auto texture_of = [&](sim::EntityId id) {
         const auto* b = bracket_of(r, id);
         return b ? b->texture : std::string("none");
     };
@@ -186,30 +187,30 @@ void test_selection_render(TestContext& ctx) {
     seen.capture(ctx.sim);
     input.set_frame_view(sim::FrameView(&seen.prev(), &seen.cur(), 1.0f));
     const sim::Vector3 at = seen.cur().find(other)->position;
-    const u32 on = input.unit_under(ctx.sim, at.x + 0.1f, at.z);
-    const u32 beside = input.unit_under(ctx.sim, at.x + 3.0f, at.z);
-    t.check(on == other && beside == 0,
+    const sim::EntityId on = input.unit_under(ctx.sim, at.x + 0.1f, at.z);
+    const sim::EntityId beside = input.unit_under(ctx.sim, at.x + 3.0f, at.z);
+    t.check(on == other && !beside,
             fmt::format("Test 4: under the cursor: on the unit {}, beside it {}", on, beside));
 
     // Test 5: the drag box
     const f32 y = ctx.sim.terrain()->get_terrain_height(sx, sz);
     r.set_selection_marks(
-        0,
+        sim::EntityId(),
         std::array<sim::Vector3, 4>{
             {{sx - 4, y, sz - 4}, {sx + 4, y, sz - 4}, {sx + 4, y, sz + 4}, {sx - 4, y, sz + 4}}});
     draw();
     t.check(r.selection_renderer().drew_drag_box(), "Test 5: the drag box is drawn");
 
     // Test 6: ren_SelectBoxes off draws none
-    r.set_selection_marks(0, std::nullopt);
+    r.set_selection_marks(sim::EntityId(), std::nullopt);
     r.set_select_boxes(false);
     draw();
     const bool none = r.selection_renderer().brackets().empty();
     r.set_select_boxes(true);
     t.check(none, "Test 6: ren_SelectBoxes off draws no brackets");
 
-    const u32 tank = spawn_unit(ctx, "__osc_sel_d", "uel0201", "ARMY_1", {sx, sz + 8});
-    const auto priority = [&](u32 id) {
+    const sim::EntityId tank = spawn_unit(ctx, "__osc_sel_d", "uel0201", "ARMY_1", {sx, sz + 8});
+    const auto priority = [&](sim::EntityId id) {
         const auto* e = ctx.sim.entity_registry().find(id);
         return e && e->is_unit() ? static_cast<const sim::Unit*>(e)->selection_priority() : 0;
     };
@@ -217,16 +218,18 @@ void test_selection_render(TestContext& ctx) {
             fmt::format("Test 7: selection priority: engineer {}, tank {}", priority(own),
                         priority(tank)));
 
-    const u32 factory = spawn_unit(ctx, "__osc_sel_f", "ueb0101", "ARMY_1", {sx, sz - 20});
+    const sim::EntityId factory =
+        spawn_unit(ctx, "__osc_sel_f", "ueb0101", "ARMY_1", {sx, sz - 20});
     const auto* fe = ctx.sim.entity_registry().find(factory);
     const sim::Vector3 fp = fe ? fe->position() : sim::Vector3{sx, 0, sz - 20};
-    const u32 builder = spawn_unit(ctx, "__osc_sel_g", "uel0105", "ARMY_1", {fp.x + 2.6f, fp.z});
+    const sim::EntityId builder =
+        spawn_unit(ctx, "__osc_sel_g", "uel0105", "ARMY_1", {fp.x + 2.6f, fp.z});
     seen.capture(ctx.sim);
     seen.capture(ctx.sim);
     input.set_frame_view(sim::FrameView(&seen.prev(), &seen.cur(), 1.0f));
     input.set_selected({builder});
     const f32 click_x = fp.x + 2.3f;
-    const u32 under = input.unit_under(ctx.sim, click_x, fp.z);
+    const sim::EntityId under = input.unit_under(ctx.sim, click_x, fp.z);
     input.left_click_at(ctx.sim, click_x, fp.z, false);
     const auto& now = input.selected();
     t.check(under == factory && now.size() == 1 && now.count(factory) == 1,
@@ -238,9 +241,12 @@ void test_selection_render(TestContext& ctx) {
     // Test 9: a double-click on a tank adds every tank of the player's in
     // view (Moho's HandleDoubleClickSelection): not the enemy's, nor one off
     // the screen, nor the engineer.
-    const u32 tank2 = spawn_unit(ctx, "__osc_sel_t2", "uel0201", "ARMY_1", {sx + 6, sz + 8});
-    const u32 far_tank = spawn_unit(ctx, "__osc_sel_t3", "uel0201", "ARMY_1", {sx + 300, sz + 300});
-    const u32 foe_tank = spawn_unit(ctx, "__osc_sel_t4", "uel0201", "ARMY_2", {sx - 6, sz + 8});
+    const sim::EntityId tank2 =
+        spawn_unit(ctx, "__osc_sel_t2", "uel0201", "ARMY_1", {sx + 6, sz + 8});
+    const sim::EntityId far_tank =
+        spawn_unit(ctx, "__osc_sel_t3", "uel0201", "ARMY_1", {sx + 300, sz + 300});
+    const sim::EntityId foe_tank =
+        spawn_unit(ctx, "__osc_sel_t4", "uel0201", "ARMY_2", {sx - 6, sz + 8});
     seen.capture(ctx.sim);
     seen.capture(ctx.sim);
     input.set_frame_view(sim::FrameView(&seen.prev(), &seen.cur(), 1.0f));
@@ -273,7 +279,8 @@ void test_selection_render(TestContext& ctx) {
     // the cursor's ray meets its box short of the ground, and a drag box
     // holds it by where it is on the screen. By the ground under the cursor
     // (as picking had gone) it is missed.
-    const u32 air = spawn_unit(ctx, "__osc_sel_air", "uea0101", "ARMY_1", {sx + 4, sz - 10});
+    const sim::EntityId air =
+        spawn_unit(ctx, "__osc_sel_air", "uea0101", "ARMY_1", {sx + 4, sz - 10});
     // An idle aircraft lands after its AutoLandTime: this one patrols.
     if (auto* plane = static_cast<sim::Unit*>(ctx.sim.entity_registry().find(air))) {
         sim::UnitCommand patrol;
@@ -311,14 +318,14 @@ void test_selection_render(TestContext& ctx) {
     renderer::InputHandler by_ground; // no cursor ray: straight down at (gx, gz)
     by_ground.set_player_army(0);
     by_ground.set_frame_view(sim::FrameView(&seen.prev(), &seen.cur(), 1.0f));
-    const u32 old_pick = by_ground.unit_under(ctx.sim, gx, gz);
+    const sim::EntityId old_pick = by_ground.unit_under(ctx.sim, gx, gz);
     input.set_cursor_ray({eye, dir}, gx, gz);
-    const u32 ray_pick = input.unit_under(ctx.sim, gx, gz);
+    const sim::EntityId ray_pick = input.unit_under(ctx.sim, gx, gz);
     t.check(ap.y - ground > 5.0f && ray_pick == air && old_pick != air,
             fmt::format("Test 11: an aircraft {:.1f} up is picked where it is drawn: by the ray "
                         "{}, by the ground under the cursor {}",
-                        ap.y - ground, ray_pick == air ? "it" : std::to_string(ray_pick),
-                        old_pick == air ? "it" : std::to_string(old_pick)));
+                        ap.y - ground, ray_pick == air ? "it" : std::to_string(ray_pick.moho()),
+                        old_pick == air ? "it" : std::to_string(old_pick.moho())));
 
     const auto vp = r.camera().view_proj(aspect);
     const f32 sw = static_cast<f32>(r.width());
@@ -343,18 +350,20 @@ void test_selection_render(TestContext& ctx) {
                         boxed_air, boxed_ground));
 
     // Test 13: brackets are tested against the scene's depth
-    const u32 walls = spawn_unit(ctx, "__osc_sel_pg", "ueb1301", "ARMY_1", {sx + 30, sz + 40});
+    const sim::EntityId walls =
+        spawn_unit(ctx, "__osc_sel_pg", "ueb1301", "ARMY_1", {sx + 30, sz + 40});
     const auto* we = ctx.sim.entity_registry().find(walls);
     const sim::Vector3 wp = we ? we->position() : sim::Vector3{sx + 30, 0, sz + 40};
-    const u32 inside = spawn_unit(ctx, "__osc_sel_in", "uel0105", "ARMY_1", {wp.x, wp.z});
-    const u32 outside = spawn_unit(ctx, "__osc_sel_out", "uel0105", "ARMY_1", {sx + 30, sz + 50});
+    const sim::EntityId inside = spawn_unit(ctx, "__osc_sel_in", "uel0105", "ARMY_1", {wp.x, wp.z});
+    const sim::EntityId outside =
+        spawn_unit(ctx, "__osc_sel_out", "uel0105", "ARMY_1", {sx + 30, sz + 50});
     ctx.sim.tick();
     shots.recapture();
-    const auto bracket_pixels = [&](u32 id) {
+    const auto bracket_pixels = [&](sim::EntityId id) {
         const auto* e = ctx.sim.entity_registry().find(id);
         const sim::Vector3 p = e ? e->position() : sim::Vector3{};
         (void)shots.shoot_frame(*ctx.sim.terrain(), p.x, p.z, 25.0f);
-        const std::unordered_set<u32> one{id};
+        const std::unordered_set<sim::EntityId> one{id};
         const ImageRGBA8 plain = shots.grab();
         const ImageRGBA8 marked = shots.grab(&one);
         const auto* b = bracket_of(r, id);
@@ -376,7 +385,7 @@ void test_selection_render(TestContext& ctx) {
     };
     const int open = bracket_pixels(outside);
     const int walled = bracket_pixels(inside);
-    t.check(walls != 0 && open > 20 && walled == 0,
+    t.check(walls && open > 20 && walled == 0,
             fmt::format("Test 13: brackets behind a mesh are hidden: {} pixels of an engineer's "
                         "in the open, {} of one's inside a power generator",
                         open, walled));
@@ -385,7 +394,8 @@ void test_selection_render(TestContext& ctx) {
     r.set_unit_bars(false);
     run_lua(ctx, "__osc_sel_air:Destroy()");
     ctx.sim.tick();
-    const u32 wall = spawn_unit(ctx, "__osc_sel_wall", "ueb5101", "ARMY_1", {sx - 25, sz + 65});
+    const sim::EntityId wall =
+        spawn_unit(ctx, "__osc_sel_wall", "ueb5101", "ARMY_1", {sx - 25, sz + 65});
     shots.recapture();
     seen.capture(ctx.sim);
     seen.capture(ctx.sim);
@@ -401,7 +411,7 @@ void test_selection_render(TestContext& ctx) {
         }
     }
     (void)shots.shoot_frame(*ctx.sim.terrain(), wl.x, wl.z, 20.0f);
-    const std::unordered_set<u32> wall_set{wall};
+    const std::unordered_set<sim::EntityId> wall_set{wall};
     r.set_fog_enabled(true);
     const ImageRGBA8 fog_plain = shots.grab();
     const ImageRGBA8 fog_marked = shots.grab(&wall_set);
@@ -429,7 +439,8 @@ void test_selection_render(TestContext& ctx) {
                         unseen ? "unseen" : "seen", dimmed.size(), dim));
 
     // Test 15: the brackets write their depth where their texture shows
-    const u32 high = spawn_unit(ctx, "__osc_sel_hi", "uel0105", "ARMY_1", {sx + 45, sz + 20}, 1.0f);
+    const sim::EntityId high =
+        spawn_unit(ctx, "__osc_sel_hi", "uel0105", "ARMY_1", {sx + 45, sz + 20}, 1.0f);
     shots.recapture();
     const auto* high_e = ctx.sim.entity_registry().find(high);
     const sim::Vector3 hp = high_e ? high_e->position() : sim::Vector3{sx + 45, 0, sz + 20};
@@ -437,17 +448,17 @@ void test_selection_render(TestContext& ctx) {
     r.camera().eye_position(eye.x, eye.y, eye.z);
     const sim::Vector3 ray = {hp.x - eye.x, hp.y - eye.y, hp.z - eye.z};
     const f32 beyond = (hp.y - ctx.sim.terrain()->get_terrain_height(hp.x, hp.z)) / -ray.y;
-    const u32 low = spawn_unit(ctx, "__osc_sel_lo", "uel0105", "ARMY_2",
-                               {hp.x + ray.x * beyond, hp.z + ray.z * beyond});
+    const sim::EntityId low = spawn_unit(ctx, "__osc_sel_lo", "uel0105", "ARMY_2",
+                                         {hp.x + ray.x * beyond, hp.z + ray.z * beyond});
     shots.recapture();
-    const std::unordered_set<u32> upper_set{high};
+    const std::unordered_set<sim::EntityId> upper_set{high};
     const ImageRGBA8 unmarked = shots.grab();
     const ImageRGBA8 upper = shots.grab(&upper_set);
     r.set_selection_marks(low, std::nullopt);
     const ImageRGBA8 lower = shots.grab();
     const ImageRGBA8 stacked = shots.grab(&upper_set);
     const auto* hb = bracket_of(r, high);
-    r.set_selection_marks(0, std::nullopt);
+    r.set_selection_marks(sim::EntityId(), std::nullopt);
     r.set_unit_bars(true);
     int overlap = 0;
     int upper_shown = 0;

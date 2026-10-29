@@ -4,6 +4,7 @@
 // parts that fingerprint their own state into it (the path code).
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 #include <cstring>
 
@@ -16,6 +17,7 @@ struct Fnv {
         h ^= v;
         h *= 1099511628211ULL;
     }
+    void mix(EntityId id) { mix(id.key()); }
     void mix_f32(f32 f) {
         u32 bits;
         std::memcpy(&bits, &f, sizeof(bits));

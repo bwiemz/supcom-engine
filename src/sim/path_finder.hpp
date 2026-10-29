@@ -47,12 +47,12 @@ class MobileBlockers {
 public:
     virtual ~MobileBlockers() = default;
     /// One stands where `unit`'s footprint would at `cell` (its corner).
-    virtual bool unit_blocked(u32 unit, Cell cell, i32 mode) const = 0;
+    virtual bool unit_blocked(EntityId unit, Cell cell, i32 mode) const = 0;
     /// The same at the cell a footprint centred at (x, z) takes (Moho's
     /// UnitIsBlockedAt).
-    virtual bool unit_blocked_at(u32 unit, f32 x, f32 z, i32 mode) const = 0;
+    virtual bool unit_blocked_at(EntityId unit, f32 x, f32 z, i32 mode) const = 0;
     /// One stands across the straight way from `from` to `to`.
-    virtual bool swept_blocked(u32 unit, const WorldPoint& from, const WorldPoint& to,
+    virtual bool swept_blocked(EntityId unit, const WorldPoint& from, const WorldPoint& to,
                                i32 mode) const = 0;
 };
 
@@ -64,7 +64,7 @@ struct PathWorld {
     i32 pathcap = 0;
     /// The mobile units in the way, and the unit whose way it is (its id).
     const MobileBlockers* blockers = nullptr;
-    u32 owner = 0;
+    EntityId owner{};
     /// How far along its path a navigator may pick a target, in cells
     /// (SimState::navigator_personal_pos_max_distance).
     f32 personal_pos_max_distance = 50.0f;
@@ -116,7 +116,7 @@ public:
     bool can_traverse(Cell c) const override;
     bool in_bounds(Cell from, Cell to, f32& cost) const override;
     void on_path(bool reached, std::vector<Cell> cells) override;
-    u32 owner() const override { return world_.owner; }
+    EntityId owner() const override { return world_.owner; }
     /// Its search's settings and last answer, for the sync checksum.
     void fingerprint(Fnv& f) const;
 

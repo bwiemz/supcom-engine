@@ -89,24 +89,25 @@ TEST_CASE("A projectile the camera follows tells it, with what made it", "[bluep
     )")
                 .ok());
     auto launcher = std::make_unique<osc::sim::Entity>();
-    const osc::u32 launcher_id = sim.entity_registry().register_entity(std::move(launcher));
+    const osc::sim::EntityId launcher_id =
+        sim.entity_registry().register_entity(std::move(launcher));
     const auto launch = [&](const char* bp) {
         auto p = std::make_unique<osc::sim::Projectile>();
         p->set_blueprint_id(bp);
         p->launcher_id = launcher_id;
-        const osc::u32 id = sim.entity_registry().register_entity(std::move(p));
+        const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(p));
         osc::sim::create_projectile_object(
             lua.raw(), *static_cast<osc::sim::Projectile*>(sim.entity_registry().find(id)), false,
             true);
         return id;
     };
 
-    const osc::u32 nuke = launch("nuke");
+    const osc::sim::EntityId nuke = launch("nuke");
     lua_setglobal(lua.raw(), "nuke");
     lua_settop(lua.raw(), 0);
     launch("shell");
     lua_settop(lua.raw(), 0);
-    const osc::u32 bomb = launch("bomb");
+    const osc::sim::EntityId bomb = launch("bomb");
     lua_settop(lua.raw(), 0);
     REQUIRE(lua.do_string("moho.projectile_methods.CreateChildProjectile(nuke, 'bomb')").ok());
 
@@ -157,7 +158,7 @@ TEST_CASE("A projectile a script makes lives Moho's 15 seconds unless its bluepr
     lua_State* L = lua.raw();
     auto parent = std::make_unique<osc::sim::Projectile>();
     parent->set_blueprint_id("shell");
-    const osc::u32 id = sim.entity_registry().register_entity(std::move(parent));
+    const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(parent));
     osc::sim::create_projectile_object(
         L, *static_cast<osc::sim::Projectile*>(sim.entity_registry().find(id)), false, true);
     lua_setglobal(L, "parent");

@@ -18,6 +18,7 @@
 using Catch::Approx;
 using osc::f32;
 using osc::u32;
+using osc::sim::EntityId;
 using osc::sim::EntityRegistry;
 using osc::sim::Projectile;
 using osc::sim::Quaternion;
@@ -56,7 +57,7 @@ void fly(EntityRegistry& reg, Projectile& p, u32 tick = 0) {
     reg.advance_coords();
 }
 
-u32 add_unit(EntityRegistry& reg, const Vector3& at) {
+EntityId add_unit(EntityRegistry& reg, const Vector3& at) {
     auto u = std::make_unique<Unit>();
     u->set_position(at);
     u->set_army(1);
@@ -166,7 +167,7 @@ TEST_CASE("A velocity-aligned shot turns after its velocity at TurnRate a tick",
 
 TEST_CASE("A homing shot turns toward its target at a tenth of TurnRate a tick", "[flight]") {
     EntityRegistry reg;
-    const u32 target = add_unit(reg, {100, 10, 0});
+    const EntityId target = add_unit(reg, {100, 10, 0});
     Projectile* missile = add_shot(reg, {0, 10, 0}, {0, 0, 20});
     missile->tracking = true;
     missile->target_entity_id = target;
@@ -191,7 +192,7 @@ TEST_CASE("A homing shot turns toward its target at a tenth of TurnRate a tick",
 
 TEST_CASE("A homing shot whose target is gone stops tracking", "[flight]") {
     EntityRegistry reg;
-    const u32 target = add_unit(reg, {100, 10, 0});
+    const EntityId target = add_unit(reg, {100, 10, 0});
     Projectile* missile = add_shot(reg, {0, 10, 0}, {0, 0, 20});
     missile->tracking = true;
     missile->target_entity_id = target;
@@ -208,7 +209,7 @@ TEST_CASE("A homing shot whose target is gone stops tracking", "[flight]") {
                         osc::sim::forward_of(facing)) == Approx(0.0f).margin(1e-5));
 
     // With it (a target on the ground), it turned once more at the last aim
-    const u32 tank = add_unit(reg, {100, 10, 0});
+    const EntityId tank = add_unit(reg, {100, 10, 0});
     static_cast<Unit*>(reg.find(tank))->set_layer("Land");
     Projectile* second = add_shot(reg, {0, 10, 0}, {0, 0, 20});
     second->tracking = true;
@@ -228,7 +229,7 @@ TEST_CASE("A homing shot whose target is gone stops tracking", "[flight]") {
 
 TEST_CASE("Only a target neither in the air nor under the water arms the latch", "[flight]") {
     EntityRegistry reg;
-    const u32 plane = add_unit(reg, {100, 30, 0});
+    const EntityId plane = add_unit(reg, {100, 30, 0});
     static_cast<Unit*>(reg.find(plane))->set_layer("Air");
     Projectile* aa = add_shot(reg, {0, 10, 0}, {0, 0, 20});
     aa->tracking = true;
@@ -236,7 +237,7 @@ TEST_CASE("Only a target neither in the air nor under the water arms the latch",
     aa->arm_lost_target_aim(reg);
     CHECK_FALSE(aa->keep_last_aim);
     // Nor does a shot that doesn't track
-    const u32 tank = add_unit(reg, {100, 10, 0});
+    const EntityId tank = add_unit(reg, {100, 10, 0});
     Projectile* shell = add_shot(reg, {0, 10, 0}, {0, 0, 20});
     shell->target_entity_id = tank;
     shell->arm_lost_target_aim(reg);
@@ -247,7 +248,7 @@ TEST_CASE("A leading shot aims where its target will be", "[flight]") {
     EntityRegistry reg;
     // Its target 100 ahead, crossing at 10/s; the shot's top speed 50:
     // about 2 s to get there, so about 20 to the side
-    const u32 target = add_unit(reg, {0, 10, 100});
+    const EntityId target = add_unit(reg, {0, 10, 100});
     static_cast<Unit*>(reg.find(target))->set_velocity({10, 0, 0});
     Projectile* missile = add_shot(reg, {0, 10, 0}, {0, 0, 20});
     missile->tracking = true;
@@ -265,7 +266,7 @@ TEST_CASE("A leading shot aims where its target will be", "[flight]") {
 
 TEST_CASE("Zig-zag: an offset redrawn every ZigZagFrequency, kept above the ground", "[flight]") {
     EntityRegistry reg;
-    const u32 target = add_unit(reg, {0, 10, 1000});
+    const EntityId target = add_unit(reg, {0, 10, 1000});
     Projectile* missile = add_shot(reg, {0, 10, 0}, {0, 0, 20});
     missile->tracking = true;
     missile->target_entity_id = target;

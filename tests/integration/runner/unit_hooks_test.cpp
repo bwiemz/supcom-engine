@@ -69,7 +69,7 @@ void test_unit_hooks(TestContext& ctx) {
             lua_gettable(L, -2);
             lua_pushvalue(L, -2);
             if (lua_pcall(L, 1, 1, 0) == 0) {
-                const auto id = osc::sim::to_entity_id(L, -1);
+                const auto id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
                 auto* e = ctx.sim.entity_registry().find(id);
                 if (e && e->is_unit() && !e->destroyed()) u = static_cast<sim::Unit*>(e);
             }

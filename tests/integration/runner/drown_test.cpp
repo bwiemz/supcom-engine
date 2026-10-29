@@ -87,18 +87,18 @@ void test_drown(TestContext& ctx) {
                                 : fmt::format("the scenes made: {}", spawn.error().message));
     if (!set || !spawn) return;
 
-    std::array<u32, kScenes.size()> ids{};
+    std::array<sim::EntityId, kScenes.size()> ids{};
     lua_State* L = ctx.L;
     lua_pushstring(L, "__osc_drown");
     lua_rawget(L, LUA_GLOBALSINDEX);
     for (size_t i = 0; i < ids.size(); ++i) {
         lua_rawgeti(L, -1, static_cast<int>(i + 1));
-        ids[i] = osc::sim::to_entity_id(L, -1);
+        ids[i] = osc::sim::to_entity_id(L, -1, registry);
         lua_pop(L, 1);
     }
     lua_pop(L, 1);
-    const auto unit = [&](u32 id) -> sim::Unit* {
-        sim::Entity* e = id != 0 ? registry.find(id) : nullptr;
+    const auto unit = [&](sim::EntityId id) -> sim::Unit* {
+        sim::Entity* e = id ? registry.find(id) : nullptr;
         return e && e->is_unit() && !e->destroyed() ? static_cast<sim::Unit*>(e) : nullptr;
     };
 

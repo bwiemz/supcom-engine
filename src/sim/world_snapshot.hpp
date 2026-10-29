@@ -30,7 +30,7 @@ enum class IconClass : u8 { Land, Air, Naval, Engineer, Commander, Structure, Ge
 /// A queued order, as the renderer draws its line.
 struct CommandRecord {
     CommandType type = CommandType::Stop;
-    u32 target_id = 0;
+    EntityId target_id{};
     Vector3 target_pos;
     std::string blueprint_id; ///< what a build order builds
     bool pending = false;
@@ -40,7 +40,7 @@ struct CommandRecord {
 };
 
 struct PendingQueue {
-    u32 id = 0;
+    EntityId id{};
     u32 offset = 0, count = 0; ///< into WorldSnapshot::pending_commands
 };
 
@@ -61,7 +61,7 @@ struct WeaponRangeRecord {
 /// One entity at the end of a beat: its pose, and everything the renderer
 /// draws it with.
 struct EntityRecord {
-    u32 id = 0;
+    EntityId id{};
 
     // Pose (interpolated between two ticks by FrameView)
     Vector3 position;
@@ -121,10 +121,10 @@ struct EntityRecord {
     /// sense (stealth defeats radar and sonar; radar reaches it only above
     /// the water, sonar only in or under it).
     u32 los_now = 0, detected = 0;
-    u32 build_target_id = 0;    ///< building when non-zero
-    u32 reclaim_target_id = 0;
-    u32 repair_target_id = 0;
-    u32 capture_target_id = 0;
+    EntityId build_target_id{}; ///< building when non-zero
+    EntityId reclaim_target_id{};
+    EntityId repair_target_id{};
+    EntityId capture_target_id{};
     f32 work_progress = 0;
     u8 vet_level = 0;
     u32 cargo_count = 0;
@@ -156,7 +156,7 @@ struct EntityRecord {
     bool being_upgraded = false; ///< unit state BeingUpgraded
     bool attached = false;       ///< on a transport (Moho's IsBusy)
     f32 build_rate = 0;
-    u32 creator_id = 0;
+    EntityId creator_id{};
     f32 mass_produced = 0, energy_produced = 0;   ///< per second, when producing
     f32 mass_consumed = 0, energy_consumed = 0;   ///< per second, when consuming
     f32 mass_requested = 0, energy_requested = 0; ///< per second, asked
@@ -164,14 +164,14 @@ struct EntityRecord {
     i32 nuke_silo_builds = 0, tactical_silo_builds = 0;
 
     // Shields
-    u32 shield_owner_id = 0;
+    EntityId shield_owner_id{};
     bool shield_on = false; ///< up: turned on, or wearing its mesh (retail)
     f32 shield_size = 0;
 
-    bool is_building() const { return build_target_id != 0; }
-    bool is_reclaiming() const { return reclaim_target_id != 0; }
-    bool is_repairing() const { return repair_target_id != 0; }
-    bool is_capturing() const { return capture_target_id != 0; }
+    bool is_building() const { return static_cast<bool>(build_target_id); }
+    bool is_reclaiming() const { return static_cast<bool>(reclaim_target_id); }
+    bool is_repairing() const { return static_cast<bool>(repair_target_id); }
+    bool is_capturing() const { return static_cast<bool>(capture_target_id); }
 };
 
 /// A visual effect (IEffect) at the end of a beat.
@@ -179,8 +179,8 @@ struct EffectRecord {
     u32 id = 0;
     EffectType type = EffectType::EMITTER_AT_ENTITY;
     std::string blueprint_path;
-    u32 entity_id = 0;
-    u32 target_entity_id = 0;
+    EntityId entity_id{};
+    EntityId target_entity_id{};
     f32 offset_x = 0, offset_y = 0, offset_z = 0;
     f32 scale = 1;
     i32 army = -1;
@@ -237,16 +237,19 @@ struct ArmyRecord {
 
 /// A jammer's fake blip an army senses and doesn't know fake (M215e): the
 /// jammer, the army (0-based), which of its fakes, and where it is.
-/// A jammer's fake blip's id of its own: the high bit set, its jammer's id
-/// (entity ids stay under 2^26) and which fake, so it meets no entity's.
+/// A jammer's fake blip's id of its own: a Moho id with the high bit set, which
+/// no entity's has, its jammer's below it, and which fake as its generation.
 /// The army's influence map keys it so (M215f), and the renderer draws it.
 constexpr u32 kFakeBlipBit = 0x80000000u;
-constexpr u32 fake_blip_id(u32 source, u32 index) {
-    return kFakeBlipBit | ((source & 0x03FFFFFFu) << 5) | (index & 31u);
+constexpr EntityId fake_blip_id(EntityId source, u32 index) {
+    return EntityId::of(kFakeBlipBit | source.moho(), (index & 31u) + 1);
+}
+constexpr bool is_fake_blip(EntityId id) {
+    return (id.moho() & kFakeBlipBit) != 0;
 }
 
 struct FakeBlipRecord {
-    u32 source = 0;
+    EntityId source{};
     u8 viewer = 0;
     u8 index = 0;
     Vector3 position;
@@ -288,7 +291,7 @@ struct WorldSnapshot {
     std::vector<CommandRecord> commands;
     std::vector<IntelRecord> intel;
     std::vector<WeaponRangeRecord> weapon_ranges;
-    std::vector<u32> adjacent;
+    std::vector<EntityId> adjacent;
     std::vector<EffectRecord> effects;  ///< live effects, in creation order
     std::vector<ArmyRecord> armies;
     SightMap sight;        ///< the sight army's (WorldHistory::set_sight_army)
@@ -315,7 +318,7 @@ struct WorldSnapshot {
     u64 previous_serial = 0;
     static constexpr u32 kNoPrevious = 0xFFFFFFFFu;
 
-    const EntityRecord* find(u32 id) const;
+    const EntityRecord* find(EntityId id) const;
     const ArmyRecord* army(i32 index) const {
         return index >= 0 && static_cast<size_t>(index) < armies.size()
                    ? &armies[static_cast<size_t>(index)]
@@ -338,7 +341,7 @@ struct WorldSnapshot {
     std::span<const WeaponRangeRecord> weapon_ranges_of(const EntityRecord& e) const {
         return {weapon_ranges.data() + e.weapon_range_offset, e.weapon_range_count};
     }
-    std::span<const u32> adjacent_of(const EntityRecord& e) const {
+    std::span<const EntityId> adjacent_of(const EntityRecord& e) const {
         return {adjacent.data() + e.adjacent_offset, e.adjacent_count};
     }
     void clear();
@@ -369,15 +372,15 @@ struct ShakeEventRecord {
     f32 min_shake = 0;
 };
 struct CameraFollowRecord {
-    u32 source = 0;
-    u32 projectile = 0;
+    EntityId source{};
+    EntityId projectile{};
     f32 timeout = 1.0f;
 };
 /// A FlushIntelInRect (SimState::IntelFlushEvent): the rect, and each unit
 /// whose blips were lost, with a bit per army that lost one, in id order.
 struct IntelFlushRecord {
     i32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
-    std::vector<std::pair<u32, u32>> forgotten;
+    std::vector<std::pair<EntityId, u32>> forgotten;
 };
 /// A script's one-shot world sound (SimState::SoundRequest) and its tick,
 /// for the audio side.
@@ -386,7 +389,7 @@ struct SoundEventRecord {
     std::string bank, cue, lod_cutoff;
     Vector3 pos;
     bool underwater = false;
-    u32 entity_id = 0;
+    EntityId entity_id{};
 };
 /// Events of every tick captured since the renderer (and, for sounds, the
 /// audio) last took them.
@@ -484,7 +487,7 @@ public:
     std::span<const EntityRecord> entities() const {
         return cur_ ? std::span<const EntityRecord>(cur_->entities) : std::span<const EntityRecord>();
     }
-    const EntityRecord* find(u32 id) const { return cur_ ? cur_->find(id) : nullptr; }
+    const EntityRecord* find(EntityId id) const { return cur_ ? cur_->find(id) : nullptr; }
 
     Vector3 position(const EntityRecord& e) const;
     Quaternion orientation(const EntityRecord& e) const;
@@ -497,7 +500,7 @@ public:
 
     /// The entity's animated bone pose for this frame, into `out`. False
     /// when the snapshots hold no pose for it.
-    bool bones(u32 id, std::vector<BoneMatrix>& out) const;
+    bool bones(EntityId id, std::vector<BoneMatrix>& out) const;
 
 private:
     /// The two records to blend. `from` is null when the entity should be
@@ -506,7 +509,7 @@ private:
         const EntityRecord* from = nullptr;
         const EntityRecord* to = nullptr;
     };
-    Pair lookup(u32 id) const;
+    Pair lookup(EntityId id) const;
     Pair pair_for(const EntityRecord& e) const;
 
     const WorldSnapshot* prev_ = nullptr;

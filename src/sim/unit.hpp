@@ -217,7 +217,7 @@ struct CircleAround {
 struct AirCourse {
     enum class Kind : u8 { None, Run, Circle, Winged, Hold, HoverLow, Settle };
     Kind kind = Kind::None;
-    u32 target_id = 0;
+    EntityId target_id{};
     Vector3 at{};
     f32 altitude = 0.0f;
     f32 heading = 0.0f;
@@ -374,15 +374,15 @@ public:
     bool rally_point(lua_State* L, Vector3& out) const;
 
     // Build state (builder side) — tracks what this unit is constructing
-    u32 build_target_id() const { return build_target_id_; }
-    void set_build_target_id(u32 id) {
+    EntityId build_target_id() const { return build_target_id_; }
+    void set_build_target_id(EntityId id) {
         build_target_id_ = id;
         build_repairs_ = false;
     }
-    bool is_building() const { return build_target_id_ != 0; }
+    bool is_building() const { return static_cast<bool>(build_target_id_); }
     /// Its build is help to an unfinished unit, which Moho's CUnitRepairTask
     /// runs: Repairing, not Building.
-    bool build_repairs() const { return build_target_id_ != 0 && build_repairs_; }
+    bool build_repairs() const { return build_target_id_ && build_repairs_; }
     /// This factory's build came from the queue of a factory it guards
     /// (M206h): the guard order runs it, and cancels it when it ends.
     bool factory_assist_build() const { return factory_assist_build_; }
@@ -414,8 +414,8 @@ public:
     void pause(lua_State* L, bool p);
 
     // Shield back-reference (entity ID, set by _c_CreateShield)
-    u32 shield_entity_id() const { return shield_entity_id_; }
-    void set_shield_entity_id(u32 id) { shield_entity_id_ = id; }
+    EntityId shield_entity_id() const { return shield_entity_id_; }
+    void set_shield_entity_id(EntityId id) { shield_entity_id_ = id; }
 
     // State flags
     bool busy() const { return busy_; }
@@ -581,18 +581,18 @@ public:
     void cancel_upgrade(EntityRegistry& registry, lua_State* L);
     /// True while a factory order is under way.
     bool building_factory_order() const {
-        return build_target_id_ != 0 && !command_queue_.empty() &&
+        return build_target_id_ && !command_queue_.empty() &&
                command_queue_.front().type == CommandType::BuildFactory;
     }
     bool upgrading() const {
-        return build_target_id_ != 0 && !command_queue_.empty() &&
+        return build_target_id_ && !command_queue_.empty() &&
                command_queue_.front().type == CommandType::Upgrade;
     }
 
     // Command queue
     /// A ferry takes this unit, waiting at its beacon (its head order a
     /// WaitForFerry): it boards that ferry.
-    void board_ferry(u32 ferry_id) {
+    void board_ferry(EntityId ferry_id) {
         if (!command_queue_.empty() && command_queue_.front().type == CommandType::WaitForFerry)
             command_queue_.front().assigned_id = ferry_id;
     }
@@ -602,9 +602,9 @@ public:
     /// The unit this one guards (GetGuardedUnit): its current order's
     /// target when that is a Guard, else 0. Fighting for its guard, it still
     /// guards (Moho keeps the guarded unit while the attack task runs).
-    u32 guarded_unit_id() const {
+    EntityId guarded_unit_id() const {
         const UnitCommand* guard = guard_order();
-        return guard ? guard->target_id : 0;
+        return guard ? guard->target_id : EntityId();
     }
     /// The Guard it is carrying out: the head order, or the one beneath a
     /// fight it broke off for (null: it guards nothing).
@@ -695,18 +695,18 @@ public:
     /// crosses a quarter, a half or three quarters since this builder last saw it (0 as its work
     /// on it begins), its script hears OnBuildProgress(unit, old, new) and the unit's
     /// OnBeingBuiltProgress(builder, old, new), errors logged.
-    void report_build_progress(lua_State* L, EntityRegistry& registry, u32 target_id);
+    void report_build_progress(lua_State* L, EntityRegistry& registry, EntityId target_id);
     /// Paused, retail's build task leaves what its builder last saw; FAF's executable copies the
     /// build's fraction in (FA-Binary-Patches, CBuildTaskHelper::UpdateWorkProgress).
     void seen_while_paused(lua_State* L, f32 fraction);
 
     /// Reclaim helpers
-    u32 reclaim_target_id() const { return reclaim_target_id_; }
-    void set_reclaim_target_id(u32 id) { reclaim_target_id_ = id; }
-    bool is_reclaiming() const { return reclaim_target_id_ != 0; }
+    EntityId reclaim_target_id() const { return reclaim_target_id_; }
+    void set_reclaim_target_id(EntityId id) { reclaim_target_id_ = id; }
+    bool is_reclaiming() const { return static_cast<bool>(reclaim_target_id_); }
     i32 reclaim_wait() const { return reclaim_wait_; }
     void set_reclaim_wait(i32 ticks) { reclaim_wait_ = ticks; }
-    void begin_reclaim(u32 target_id, lua_State* L, EntityRegistry& registry);
+    void begin_reclaim(EntityId target_id, lua_State* L, EntityRegistry& registry);
     void stop_reclaiming(lua_State* L = nullptr, EntityRegistry* registry = nullptr);
     bool progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L);
     bool progress_reclaim_assist(f64 dt, EntityRegistry& registry);
@@ -716,12 +716,12 @@ public:
     bool turns_to_face(const Vector3& at);
     bool arm_awaited() const { return arm_awaited_; }
     bool wear_down(Unit& target) const;
-    u32 reclaim_into_wreck(u32 target_id, EntityRegistry& registry, lua_State* L);
+    EntityId reclaim_into_wreck(EntityId target_id, EntityRegistry& registry, lua_State* L);
 
     /// Repair helpers
-    u32 repair_target_id() const { return repair_target_id_; }
-    void set_repair_target_id(u32 id) { repair_target_id_ = id; }
-    bool is_repairing() const { return repair_target_id_ != 0; }
+    EntityId repair_target_id() const { return repair_target_id_; }
+    void set_repair_target_id(EntityId id) { repair_target_id_ = id; }
+    bool is_repairing() const { return static_cast<bool>(repair_target_id_); }
     bool start_repair(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L);
     bool progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
                           f32 efficiency = 1.0f);
@@ -729,9 +729,9 @@ public:
     bool shield_needs_repair(EntityRegistry& registry, lua_State* L);
 
     /// Capture helpers
-    u32 capture_target_id() const { return capture_target_id_; }
-    void set_capture_target_id(u32 id) { capture_target_id_ = id; }
-    bool is_capturing() const { return capture_target_id_ != 0; }
+    EntityId capture_target_id() const { return capture_target_id_; }
+    void set_capture_target_id(EntityId id) { capture_target_id_ = id; }
+    bool is_capturing() const { return static_cast<bool>(capture_target_id_); }
     bool is_being_captured() const { return being_captured_; }
     void set_being_captured(bool v) { being_captured_ = v; }
     bool capturable() const { return capturable_; }
@@ -827,16 +827,16 @@ public:
     /// An assisting engineer's build power, `rate`, on the missile under way.
     void assist_silo_build(f32 rate, f64 dt, f32 efficiency);
     /// The silo whose missile this unit's Guard helps build, else 0.
-    u32 silo_assist_id() const { return silo_assist_id_; }
+    EntityId silo_assist_id() const { return silo_assist_id_; }
     /// What it works on (Moho's CBuildTaskHelper focus), else 0.
-    u32 focus_id() const {
-        if (build_target_id_ != 0) {
+    EntityId focus_id() const {
+        if (build_target_id_) {
             return build_target_id_;
         }
-        if (capture_target_id_ != 0) {
+        if (capture_target_id_) {
             return capture_target_id_;
         }
-        if (silo_assist_id_ != 0) {
+        if (silo_assist_id_) {
             return silo_assist_id_;
         }
         return repair_target_id_;
@@ -866,8 +866,10 @@ public:
     bool auto_initiate_allowed(const EntityRegistry& registry) const;
     /// A weapon with AutoInitiateAttackCommand picked `target`: the unit
     /// attacks it once its weapons are done this tick (the first pick wins).
-    void request_auto_attack(u32 target) {
-        if (auto_attack_target_ == 0) auto_attack_target_ = target;
+    void request_auto_attack(EntityId target) {
+        if (!auto_attack_target_) {
+            auto_attack_target_ = target;
+        }
     }
     void set_unit_state(const std::string& state, bool v) {
         if (v) unit_states_.insert(state);
@@ -891,14 +893,14 @@ public:
     void set_shield_ratio(f32 r) { shield_ratio_ = r; }
 
     // Transport system
-    const std::vector<u32>& cargo_ids() const { return cargo_ids_; }
-    void add_cargo(u32 id) { cargo_ids_.push_back(id); }
-    void remove_cargo(u32 id);
+    const std::vector<EntityId>& cargo_ids() const { return cargo_ids_; }
+    void add_cargo(EntityId id) { cargo_ids_.push_back(id); }
+    void remove_cargo(EntityId id);
     void clear_cargo() { cargo_ids_.clear(); }
 
-    u32 transport_id() const { return transport_id_; }
-    void set_transport_id(u32 id) { transport_id_ = id; }
-    bool is_loaded() const { return transport_id_ != 0; }
+    EntityId transport_id() const { return transport_id_; }
+    void set_transport_id(EntityId id) { transport_id_ = id; }
+    bool is_loaded() const { return static_cast<bool>(transport_id_); }
 
     f32 speed_mult() const { return speed_mult_; }
     void set_speed_mult(f32 m) { speed_mult_ = m; }
@@ -1153,7 +1155,7 @@ public:
     f32 crash_spin_rate() const { return crash_spin_rate_; }
 
     // Misc flags
-    u32 creator_id() const { return creator_id_; }
+    EntityId creator_id() const { return creator_id_; }
     /// Whether its last commit moved it (Moho's current position against the last).
     bool moved_last_tick() const {
         return position().x != last_position().x || position().y != last_position().y ||
@@ -1161,7 +1163,7 @@ public:
     }
     /// Moho's CAnimationManipulator motion scaling (CreateAnimator(unit, true)).
     f32 anim_motion_scale(f32 dt) const;
-    void set_creator_id(u32 id) { creator_id_ = id; }
+    void set_creator_id(EntityId id) { creator_id_ = id; }
     bool auto_overcharge() const { return auto_overcharge_; }
     void set_auto_overcharge(bool b) { auto_overcharge_ = b; }
     bool overcharge_paused() const { return overcharge_paused_; }
@@ -1187,8 +1189,8 @@ public:
     /// do not surface by themselves yet.
     bool auto_surface_mode() const { return auto_surface_mode_; }
     void set_auto_surface_mode(bool v) { auto_surface_mode_ = v; }
-    u32 focus_entity_id() const { return focus_entity_id_; }
-    void set_focus_entity_id(u32 id) { focus_entity_id_ = id; }
+    EntityId focus_entity_id() const { return focus_entity_id_; }
+    void set_focus_entity_id(EntityId id) { focus_entity_id_ = id; }
 
     /// Dead: Moho's Kill hands the death to the unit's script, whose death
     /// thread plays it out (animation, death weapon, wreck) and destroys the
@@ -1208,8 +1210,8 @@ public:
     void set_can_take_damage(bool b) { can_take_damage_ = b; }
     bool can_be_killed() const { return can_be_killed_; }
     void set_can_be_killed(bool b) { can_be_killed_ = b; }
-    u32 last_attacker_id() const { return last_attacker_id_; }
-    void set_last_attacker_id(u32 id) { last_attacker_id_ = id; }
+    EntityId last_attacker_id() const { return last_attacker_id_; }
+    void set_last_attacker_id(EntityId id) { last_attacker_id_ = id; }
 
     // Command caps (RULEUCC_* command capabilities)
     void add_command_cap(const std::string& cap) { command_caps_.insert(cap); }
@@ -1282,7 +1284,7 @@ public:
     bool is_staging_platform() const;
     /// Whether the unit's head order is a refuel at that platform that holds
     /// a slot there (M206r): the platform keeps the slot while it comes.
-    bool docks_at(u32 platform_id) const;
+    bool docks_at(EntityId platform_id) const;
     i32 transport_capacity() const { return transport_capacity_; }
     void set_transport_capacity(i32 c) { transport_capacity_ = c; }
     void set_transport_layout(const TransportLayout& layout) { transport_layout_ = layout; }
@@ -1341,14 +1343,14 @@ public:
     void free_landing_reservation(SimState& sim);
     /// A transport's pickup (M206m): the units given slots, not yet aboard;
     /// whether it is at their centre; the ticks it has waited there.
-    const std::vector<u32>& pickup_ids() const { return pickup_ids_; }
+    const std::vector<EntityId>& pickup_ids() const { return pickup_ids_; }
     bool pickup_ready() const { return pickup_phase_ == PickupPhase::Waiting; }
     bool pickup_running() const { return pickup_phase_ != PickupPhase::None; }
     i32 pickup_ticks() const { return pickup_ticks_; }
     /// Ticks left of a unit's beam up into its transport (0: not beaming).
     i32 beam_up_ticks() const { return beam_up_ticks_; }
     /// Whether the unit's head order is a load onto that transport.
-    bool calls_transport(u32 transport_id) const;
+    bool calls_transport(EntityId transport_id) const;
 
     void attach_to_transport(Unit* transport, EntityRegistry& registry, lua_State* L);
     /// Hang from the transport's bone that holds our slot (or sit at its
@@ -1362,8 +1364,8 @@ public:
     // to the carrier, so it neither moves nor fights.
     void set_storage_slots(i32 n) { storage_slots_ = n; }
     i32 storage_slots() const { return storage_slots_; }
-    const std::vector<u32>& stored_ids() const { return stored_ids_; }
-    bool is_stored_unit(u32 id) const;
+    const std::vector<EntityId>& stored_ids() const { return stored_ids_; }
+    bool is_stored_unit(EntityId id) const;
     /// Whether another unit fits in storage (Transport.StorageSlots).
     bool transport_has_available_storage() const;
     /// Store `unit`: its script hears OnAddToStorage(carrier) first.
@@ -1374,7 +1376,7 @@ public:
     void remove_from_storage(Unit& unit, EntityRegistry& registry, lua_State* L,
                              const map::Terrain* terrain = nullptr);
     /// Forget a stored unit that is gone.
-    void forget_stored(u32 id);
+    void forget_stored(EntityId id);
     /// A place in a carrier's storage an aircraft lands at (M206s; Moho's
     /// TransportReserveStorage): the attach point it comes down onto, the
     /// way the point faces, its height over the carrier, and the ticks the
@@ -1387,18 +1389,18 @@ public:
     };
     /// Reserve the carrier's next generic attach point, round robin, for
     /// `unit_id`; nothing without any. Reserved places count as taken.
-    std::optional<StoragePlace> reserve_storage(u32 unit_id);
-    void clear_storage_reservation(u32 unit_id);
+    std::optional<StoragePlace> reserve_storage(EntityId unit_id);
+    void clear_storage_reservation(EntityId unit_id);
     /// The round robin starts over (Moho's TransportResetReservation).
     void reset_storage_reservation();
-    const std::vector<u32>& storage_reserved_ids() const { return storage_reserved_; }
+    const std::vector<EntityId>& storage_reserved_ids() const { return storage_reserved_; }
     /// The round robin's next point and wait (for the checksum).
     u32 next_storage_point() const { return next_generic_; }
     i32 storage_overflow() const { return generic_overflow_; }
     /// A carrier's retrieve under way: its phase (0: none), the units it
     /// waits for, its wait (for the checksum).
     u32 retrieve_phase() const { return static_cast<u32>(retrieve_phase_); }
-    const std::vector<u32>& retrieve_ids() const { return retrieve_ids_; }
+    const std::vector<EntityId>& retrieve_ids() const { return retrieve_ids_; }
     i32 retrieve_wait() const { return retrieve_wait_; }
     /// A landing under way (for the checksum): phase (0: none) and wait.
     u32 landing_phase() const { return static_cast<u32>(landing_.phase); }
@@ -1407,7 +1409,7 @@ public:
     const StoragePlace& landing_place() const { return landing_.place; }
     const Vector3& landing_approach() const { return landing_.approach; }
     /// Whether this unit is landing on that carrier (M206s).
-    bool lands_on(u32 carrier_id) const {
+    bool lands_on(EntityId carrier_id) const {
         return landing_.phase != LandPhase::None && landing_.carrier == carrier_id;
     }
     /// Whether an unload order launches this carrier's stored units rather
@@ -1417,7 +1419,7 @@ public:
     /// Drop those of `ids` still aboard, in cargo order: each is set down
     /// where it hung, level, and on the ground when `terrain` is given (M206n).
     /// Moho's Unit::DetachFrom (`heard` false) leaves out OnTransportDetach.
-    void detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L,
+    void detach_cargo(std::vector<EntityId> ids, EntityRegistry& registry, lua_State* L,
                       const map::Terrain* terrain = nullptr, bool heard = true);
     /// Whether the unit's footprint fits the ground where it is (Moho's
     /// SFootprint::FitsAt): every cell under it passable for it.
@@ -1557,9 +1559,9 @@ public:
 
     // Adjacency system
     /// Adjacent structures in id order: their callbacks fire in this order.
-    const std::set<u32>& adjacent_unit_ids() const { return adjacent_unit_ids_; }
-    void add_adjacent(u32 id) { adjacent_unit_ids_.insert(id); }
-    void remove_adjacent(u32 id) { adjacent_unit_ids_.erase(id); }
+    const std::set<EntityId>& adjacent_unit_ids() const { return adjacent_unit_ids_; }
+    void add_adjacent(EntityId id) { adjacent_unit_ids_.insert(id); }
+    void remove_adjacent(EntityId id) { adjacent_unit_ids_.erase(id); }
     void clear_adjacents() { adjacent_unit_ids_.clear(); }
 
     f32 skirt_size_x() const { return skirt_size_x_; }
@@ -1590,7 +1592,7 @@ public:
     void clear_on_unit_built_callbacks(lua_State* L);
 
 private:
-    void call_on_reclaimed(u32 target_id, EntityRegistry& registry, lua_State* L);
+    void call_on_reclaimed(EntityId target_id, EntityRegistry& registry, lua_State* L);
     void run_on_reclaimed(Entity& target, lua_State* L);
     /// Ask for this tick's step along the navigator's path, no faster than
     /// `speed_cap` if set (a formation keeping its slowest unit's pace). True
@@ -1761,7 +1763,7 @@ private:
     /// The unit this factory just finished takes the rally orders of
     /// `rally_id` (itself, or the factory it built the unit for); Moho's
     /// CFactoryBuildTask::InheritQueuedCommandsTo.
-    void hand_over_rally_orders(u32 built_id, u32 rally_id, SimContext& ctx);
+    void hand_over_rally_orders(EntityId built_id, EntityId rally_id, SimContext& ctx);
     /// A submarine dives or surfaces.
     OrderStep order_dive(lua_State* L);
     /// Set off down (Water to Sub) or up (Sub to Water): the layer changes
@@ -1811,7 +1813,7 @@ private:
     /// down to its hover height, then sets down the cargo (`ids`, or all of
     /// it) whose footprint fits the ground under it; the rest stays aboard.
     /// True once it has set them down.
-    bool unload_step(SimContext& ctx, const std::vector<u32>& ids);
+    bool unload_step(SimContext& ctx, const std::vector<EntityId>& ids);
     /// A beam up cut short: back down on the ground, level, and the script
     /// told it has stopped.
     void abandon_beam_up(const map::Terrain* terrain, lua_State* L);
@@ -1920,23 +1922,23 @@ private:
     std::optional<std::pair<u32, CommandType>> noted_head_;
     std::vector<std::unique_ptr<Weapon>> weapons_;
     std::vector<UnitCommand> rally_orders_; // see rally_orders()
-    u32 build_target_id_ = 0;     // entity ID of unit being built
+    EntityId build_target_id_{};            // entity ID of unit being built
     f64 build_time_ = 0;          // target's Economy.BuildTime
     f64 build_cost_mass_ = 0;     // target's Economy.BuildCostMass
     f64 build_cost_energy_ = 0;   // target's Economy.BuildCostEnergy
     f32 work_progress_ = 0.0f;
     f32 build_progress_seen_ = 0.0f; // Moho's CBuildTaskHelper mFractionComplete
-    u32 reclaim_target_id_ = 0;   // entity ID being reclaimed
+    EntityId reclaim_target_id_{};   // entity ID being reclaimed
     f32 reclaim_rate_ = 0;        // fraction_complete decrease per second
     i32 reclaim_wait_ = 0;
     bool builder_on_target_ = true;
     bool arm_awaited_ = false;
     bool reclaim_held_ = false;   // this tick's reclaim banks nothing (FAF's paused rule)
-    u32 repair_target_id_ = 0;    // entity ID of unit being repaired
+    EntityId repair_target_id_{}; // entity ID of unit being repaired
     f64 repair_build_time_ = 0;   // target's Economy.BuildTime
     f64 repair_cost_mass_ = 0;    // target's Economy.BuildCostMass
     f64 repair_cost_energy_ = 0;  // target's Economy.BuildCostEnergy
-    u32 capture_target_id_ = 0;   // entity ID of unit being captured
+    EntityId capture_target_id_{}; // entity ID of unit being captured
     f64 capture_time_ = 0;        // total seconds to capture
     f64 capture_energy_cost_ = 0; // total energy drain
     bool capturable_ = true;      // can this unit be captured?
@@ -1958,7 +1960,7 @@ private:
     bool coast(f64 dt, const map::Terrain* terrain);
     /// Moho's CUnitMotion::CalcRollHack, without the recoil: no blueprint sets ShipRock.
     Vector3 dive_lean_normal(f32 diving_speed);
-    u32 shield_entity_id_ = 0;       // entity ID of shield (set by _c_CreateShield)
+    EntityId shield_entity_id_{}; // entity ID of shield (set by _c_CreateShield)
     bool busy_ = false;
     i32 stun_ticks_ = 0; ///< ticks of stun left (set_stunned)
     bool block_command_queue_ = false;
@@ -1989,7 +1991,7 @@ private:
     std::string enhance_slot_; // blueprint Slot of enhance_name_, "" if none
     bool immobile_ = false;
     bool factory_assist_build_ = false;           // see factory_assist_build()
-    u32 auto_attack_target_ = 0;                  // request_auto_attack's, used the same tick
+    EntityId auto_attack_target_{};               // request_auto_attack's, used the same tick
     /// The order a build (build_target_id_) is for, and whether the builder
     /// lets it go once that order is no longer the head (M206u): a mobile
     /// build, a repair's or a guard's help. A factory's build is cancelled
@@ -2024,26 +2026,26 @@ private:
     /// The renderer's matrices from pose_ (update_pose's end, and a load's).
     void refresh_bone_matrices();
     // Transport system
-    std::vector<u32> cargo_ids_;      // entity IDs of units loaded on this transport
+    std::vector<EntityId> cargo_ids_; // entity IDs of units loaded on this transport
     i32 storage_slots_ = 0;           // Transport.StorageSlots (M206q)
-    std::vector<u32> stored_ids_;     // stored units, in the order they were stored
+    std::vector<EntityId> stored_ids_; // stored units, in the order they were stored
     u32 launch_index_ = 0;            // the launch bone used last
     // Landing on carriers (M206s): the units with a place reserved, the
     // next generic point, and the queue's wait for the next pass round.
-    std::vector<u32> storage_reserved_;
+    std::vector<EntityId> storage_reserved_;
     u32 next_generic_ = 0;
     i32 generic_overflow_ = 0;
     // A carrier taking in aircraft ordered aboard (Moho's
     // CUnitCarrierRetrieve): those it waits for, and where it is.
     enum class RetrievePhase : u8 { None, Gather, Surface, Watch };
     RetrievePhase retrieve_phase_ = RetrievePhase::None;
-    std::vector<u32> retrieve_ids_;
+    std::vector<EntityId> retrieve_ids_;
     i32 retrieve_wait_ = 0;
     // An aircraft landing on a carrier (Moho's CUnitCarrierLand): its place,
     // the point it comes in from, and where it is.
     enum class LandPhase : u8 { None, Approach, Hold, Descend };
     struct CarrierLanding {
-        u32 carrier = 0;
+        EntityId carrier{};
         LandPhase phase = LandPhase::None;
         StoragePlace place{};
         Vector3 approach{};
@@ -2052,7 +2054,7 @@ private:
         bool deck_set = false; // its turn and the deck's height fixed
     };
     CarrierLanding landing_;
-    u32 transport_id_ = 0;           // entity ID of transport this unit is on (0 = not loaded)
+    EntityId transport_id_{};        // entity ID of transport this unit is on (0 = not loaded)
     f32 speed_mult_ = 1.0f;          // speed multiplier (reduced when carrying cargo)
     i32 transport_class_ = 1;        // cargo TransportClass (1=small, 2=medium, 3=large)
     i32 transport_capacity_ = 0;     // transport Class1Capacity (max small slots)
@@ -2082,7 +2084,7 @@ private:
     std::deque<bool> silo_orders_; // builds ordered, oldest first (true: a nuke)
     SiloBuild silo_build_;
     i32 silo_blocks_ = 0;
-    u32 silo_assist_id_ = 0;           // the silo a Guard lends its build power, Repairing it
+    EntityId silo_assist_id_{};        // the silo a Guard lends its build power, Repairing it
     bool silo_assist_renewed_ = false; // ...lent this tick
     // Orders handed to the script (M206d): a teleport charging (and the snap
     // count its warp will change), an OverCharge weapon switched on.
@@ -2095,7 +2097,7 @@ private:
     // aboard yet, their centre, and the ticks it has waited there.
     enum class PickupPhase : u8 { None, Holding, Flying, Landing, Waiting };
     PickupPhase pickup_phase_ = PickupPhase::None;
-    std::vector<u32> pickup_ids_;
+    std::vector<EntityId> pickup_ids_;
     Vector3 pickup_center_{};
     Quaternion pickup_facing_{};
     i32 pickup_ticks_ = 0;
@@ -2115,10 +2117,10 @@ private:
     FerryPhase ferry_phase_ = FerryPhase::Load;
     i32 ferry_index_ = 0;
     bool ferry_leg_set_ = false;
-    u32 ferry_for_ = 0; // the beacon the cycle runs from: a new route starts afresh
+    EntityId ferry_for_{}; // the beacon the cycle runs from: a new route starts afresh
     /// The beacon a ferry route loads at: the one a transport of its army
     /// already keeps there, else a new one from AI.BeaconName. 0 without one.
-    u32 ferry_beacon(SimContext& ctx, UnitCommand& head);
+    EntityId ferry_beacon(SimContext& ctx, UnitCommand& head);
     /// Fly a ferry leg toward `to`; true while under way.
     bool ferry_fly(SimContext& ctx, const Vector3& to, bool through = false);
     /// A teleport or an OverCharge whose order went unfinished: the script
@@ -2135,7 +2137,7 @@ private:
     void end_silo_build(lua_State* L);
     f64 silo_blocks_progress(i32 blocks) const;
     // Adjacency system
-    std::set<u32> adjacent_unit_ids_;
+    std::set<EntityId> adjacent_unit_ids_;
     int selection_priority_ = 1;
     f32 skirt_size_x_ = 0;
     f32 skirt_size_z_ = 0;
@@ -2198,7 +2200,7 @@ private:
     f32 crash_velocity_y_ = 0;
     f32 crash_spin_rate_ = 0;
     // Misc flags
-    u32 creator_id_ = 0;
+    EntityId creator_id_{};
     bool lifts_off_ = false;
     /// The order running as a Warp aborted its move (its command id, 0:
     /// none): a Move order so tagged ends (warp()).
@@ -2211,11 +2213,11 @@ private:
     bool auto_mode_ = false;
     bool repeat_queue_ = false;
     bool auto_surface_mode_ = false;
-    u32 focus_entity_id_ = 0;
+    EntityId focus_entity_id_{};
     // Damage/kill flags
     bool can_take_damage_ = true;
     bool can_be_killed_ = true;
-    u32 last_attacker_id_ = 0;
+    EntityId last_attacker_id_{};
     // Command caps
     std::unordered_set<std::string> command_caps_;
     std::unordered_set<std::string> original_command_caps_;

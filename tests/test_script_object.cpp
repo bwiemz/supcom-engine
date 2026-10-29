@@ -219,7 +219,7 @@ TEST_CASE("An entity's spec names its army as Moho's _c_CreateEntity reads it", 
         lua_getglobal(L, "e");
         lua_pushstring(L, "_entity_id");
         lua_rawget(L, -2);
-        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        const auto id = osc::sim::to_entity_key(L, -1);
         lua_pop(L, 2);
         const osc::sim::Entity* e = w.sim.entity_registry().find(id);
         REQUIRE(e != nullptr);

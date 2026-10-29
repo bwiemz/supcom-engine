@@ -360,7 +360,7 @@ void PathSearch::fingerprint(Fnv& f) const {
     }
     // Its nodes are what its expansions made from the anchor; how many,
     // how many are open, and the nearest found tell a search's progress.
-    f.mix(static_cast<u64>(traveler_->owner()) + 1);
+    f.mix(traveler_->owner().key() + 1);
     f.mix(nodes_.size());
     f.mix(open_.entries().size());
     f.mix(static_cast<u32>(expand_count_));

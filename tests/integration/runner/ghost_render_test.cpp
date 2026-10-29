@@ -120,7 +120,7 @@ void test_ghost_render(TestContext& ctx) {
                         "factory for a generator changes {} pixels)",
                         both, factory.pixels));
 
-    const u32 generator =
+    const sim::EntityId generator =
         spawn_unit(ctx, "__osc_ghost_shield", "ueb4202", "ARMY_1", {spot->x + 9.0f, spot->z});
     run_lua(ctx, "ForkThread(function()\n"
                  "  while true do ArmyBrains[1]:GiveResource('ENERGY', 5000) WaitTicks(1) end\n"

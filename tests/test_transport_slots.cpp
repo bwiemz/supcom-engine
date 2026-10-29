@@ -50,9 +50,15 @@ TransportLayout t2_layout() {
     return layout;
 }
 
+EntityId eid(u32 n) {
+    return EntityId::of(n, 1);
+}
+
 int fill(TransportSlots& slots, i32 transport_class, u32 first_id) {
     int n = 0;
-    while (slots.assign(first_id + static_cast<u32>(n), transport_class, -1)) ++n;
+    while (slots.assign(eid(first_id + static_cast<u32>(n)), transport_class, -1)) {
+        ++n;
+    }
     return n;
 }
 
@@ -70,30 +76,30 @@ TEST_CASE("A transport's slots come from its attach bones, as Moho's", "[transpo
     SECTION("6 medium units, each holding 2 small bones; 2 small ones still fit") {
         TransportSlots slots(bones, t2_layout());
         CHECK(fill(slots, 2, 100) == 6);
-        CHECK(slots.slot_of(100)->bones.size() == 2);
+        CHECK(slots.slot_of(eid(100))->bones.size() == 2);
         CHECK(fill(slots, 1, 200) == 2);
     }
     SECTION("3 large units, each holding 4 small bones") {
         TransportSlots slots(bones, t2_layout());
         CHECK(fill(slots, 3, 100) == 3);
-        CHECK(slots.slot_of(100)->bones.size() == 4);
+        CHECK(slots.slot_of(eid(100))->bones.size() == 4);
         CHECK(fill(slots, 2, 200) == 0); // every medium pair is taken
         CHECK(fill(slots, 1, 300) == 2);
     }
     SECTION("A large unit shuts out the medium points that share its bones") {
         TransportSlots slots(bones, t2_layout());
-        REQUIRE(slots.assign(1, 3, -1));
+        REQUIRE(slots.assign(eid(1), 3, -1));
         CHECK(fill(slots, 2, 100) == 4);
     }
     SECTION("A released slot is free again; a unit keeps the slot it holds") {
         TransportSlots slots(bones, t2_layout());
-        const auto bone = slots.assign(1, 3, 7);
+        const auto bone = slots.assign(eid(1), 3, 7);
         REQUIRE(bone);
-        CHECK(slots.assign(1, 3, 7) == bone);
-        CHECK(slots.slot_of(1)->unit_bone == 7);
+        CHECK(slots.assign(eid(1), 3, 7) == bone);
+        CHECK(slots.slot_of(eid(1))->unit_bone == 7);
         CHECK(fill(slots, 3, 100) == 2);
-        slots.release(1);
-        CHECK(slots.slot_of(1) == nullptr);
+        slots.release(eid(1));
+        CHECK(slots.slot_of(eid(1)) == nullptr);
         CHECK(slots.has_space_for(3));
     }
 }
@@ -104,13 +110,13 @@ TEST_CASE("Transport slot rules at the edges", "[transport]") {
         layout.class_generic_up_to = 2;
         TransportSlots slots(t2_skeleton(), layout);
         CHECK(fill(slots, 2, 100) == 20); // 14 small + 6 medium points
-        CHECK(slots.slot_of(100)->bones.size() == 1);
+        CHECK(slots.slot_of(eid(100))->bones.size() == 1);
         CHECK(fill(slots, 3, 200) == 0); // its hooks are the generic points, all held
         // Large points aren't pooled; their hooks are the nearest generic
         // points, two medium and two small each.
         TransportSlots fresh(t2_skeleton(), layout);
         CHECK(fill(fresh, 3, 200) == 3);
-        CHECK(fresh.slot_of(200)->bones == std::vector<i32>{15, 16, 1, 2}); // nearest first
+        CHECK(fresh.slot_of(eid(200))->bones == std::vector<i32>{15, 16, 1, 2}); // nearest first
     }
     SECTION("Too few small bones for a large unit's hooks") {
         const BoneData bones = skeleton({{"Attachpoint01", {0, 0, 0}},
@@ -127,9 +133,9 @@ TEST_CASE("Transport slot rules at the edges", "[transport]") {
         TransportLayout layout;
         layout.class3_attach_size = 2;
         TransportSlots slots(t2_skeleton(), layout);
-        REQUIRE(slots.assign(1, 3, -1));
+        REQUIRE(slots.assign(eid(1), 3, -1));
         // Lrg_01 is as near Left01, Right01, Left02 and Right02: bones 1-4.
-        CHECK(slots.slot_of(1)->bones == std::vector<i32>{1, 2});
+        CHECK(slots.slot_of(eid(1))->bones == std::vector<i32>{1, 2});
     }
     SECTION("Names are tested case-sensitively, the first match winning") {
         CHECK_FALSE(TransportSlots(skeleton({{"attachpoint01", {}}}), {}).has_points());

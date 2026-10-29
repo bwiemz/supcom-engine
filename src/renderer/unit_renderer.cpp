@@ -84,13 +84,13 @@ f32 team_color_lookup(const sim::ArmyRecord* army, const sim::GameColors& colors
     return (static_cast<f32>(index) + 0.5f) / static_cast<f32>(count);
 }
 
-u32 MeshBirths::tick(u32 id, u32 mesh_changes, u32 now) {
+u32 MeshBirths::tick(sim::EntityId id, u32 mesh_changes, u32 now) {
     // Below an id passed (a ghost's, after the entities): looked for afresh.
     if (cursor_ > 0 && births_[cursor_ - 1].id >= id)
-        cursor_ =
-            static_cast<size_t>(std::lower_bound(births_.begin(), births_.end(), id,
-                                                 [](const Birth& b, u32 v) { return b.id < v; }) -
-                                births_.begin());
+        cursor_ = static_cast<size_t>(
+            std::lower_bound(births_.begin(), births_.end(), id,
+                             [](const Birth& b, sim::EntityId v) { return b.id < v; }) -
+            births_.begin());
     while (cursor_ < births_.size() && births_[cursor_].id < id) ++cursor_;
     Birth birth{id, mesh_changes, now};
     if (cursor_ < births_.size() && births_[cursor_].id == id &&
@@ -288,7 +288,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
 
     // Per-instance bone info (parallel to mesh_groups entries)
     struct InstanceBones {
-        u32 id = 0;          // 0 = no bones (props, projectiles)
+        sim::EntityId id{};  // none = no bones (props, projectiles)
         u32 bone_count = 0;  // 0 = no skinning
         u64 hidden = 0;      // bones Unit:HideBone hid (bit i, bone i)
         const std::vector<sim::BoneMatrix>* frozen = nullptr; // a remembered structure's pose
@@ -299,7 +299,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         std::vector<MeshInstance> instances;
         std::vector<InstanceBones> bones;
         u32 bones_per_instance = 0; // the most any of its instances has
-        u32 first_entity = 0;
+        sim::EntityId first_entity{};
     };
     // Opaque instances (0), then blended ones (1): a build technique's or a
     // build effect's, which blend by their own alpha with pipelines of their
@@ -474,7 +474,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
                                     remembered ? recon_->frozen_pose(entity.id) : nullptr});
                 gd.bones_per_instance = std::max(gd.bones_per_instance, bc);
             } else {
-                gd.bones.push_back({0, 0});
+                gd.bones.push_back({});
             }
 
             mesh_count++;

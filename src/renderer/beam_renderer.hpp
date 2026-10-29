@@ -65,7 +65,7 @@ public:
     /// beam's), or left it out at this fidelity: the overlay leaves those to
     /// it.
     bool drew_effect(u32 id) const { return drawn_effects_.count(id) > 0; }
-    bool drew_on_entity(u32 id) const { return drawn_entities_.count(id) > 0; }
+    bool drew_on_entity(sim::EntityId id) const { return drawn_entities_.count(id) > 0; }
     /// graphics_Fidelity (0 low, 1 medium, 2 high). Beams are drawn afresh
     /// each frame, so one its blueprint leaves out is left out while the
     /// fidelity does (Moho decides as it makes the beam).
@@ -93,7 +93,8 @@ private:
     void* vertex_mapped_[FRAMES_IN_FLIGHT] = {};
     std::vector<Group> groups_;
     std::vector<Drawn> drawn_;
-    std::unordered_set<u32> drawn_effects_, drawn_entities_;
+    std::unordered_set<u32> drawn_effects_;
+    std::unordered_set<sim::EntityId> drawn_entities_;
     /// Last tick's beams by effect id, sorted, to draw each between its two
     /// ticks' ends: made once a tick (for the snapshot `before_serial_`),
     /// not each frame.

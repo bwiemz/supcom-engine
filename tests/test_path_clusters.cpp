@@ -35,6 +35,7 @@ using osc::u16;
 using osc::u32;
 using osc::u8;
 using osc::blueprints::NamedFootprint;
+using osc::sim::EntityId;
 using osc::sim::OccupancyGrid;
 using osc::sim::OccupancyRect;
 using osc::sim::path::Cluster;
@@ -549,7 +550,7 @@ TEST_CASE("The sim keeps a map a class: one budget a tick in class order, dirtie
     osc::sim::GroundOccupant claim;
     claim.caps = oc::kLand;
     claim.rects.push_back({40, 40, 44, 44});
-    sim.occupy_ground(9, claim);
+    sim.occupy_ground(EntityId::of(9, 1), claim);
     CHECK(small.dirty(1, 5, 5));
     CHECK(big.dirty(1, 4, 4)); // (40 - 3) >> 3
     CHECK_FALSE(sim.path_tables()->done());
@@ -570,7 +571,7 @@ TEST_CASE("The sim keeps a map a class: one budget a tick in class order, dirtie
     // rest built again as they were.
     sim.set_recording(true);
     sim.tick();
-    sim.release_ground(9);
+    sim.release_ground(EntityId::of(9, 1));
     CHECK(big.dirty(1, 4, 4));
     const osc::sim::SavedGame save = osc::sim::save_game(sim, "clusters");
     REQUIRE_FALSE(save.snapshot.empty());

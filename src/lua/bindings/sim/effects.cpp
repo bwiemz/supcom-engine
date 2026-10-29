@@ -224,7 +224,7 @@ static int collision_beam_init(lua_State* L) {
     // fires from (M206c): the weapon, spec.OtherBone on the launcher (the
     // retail engine's own note: "bone of weapon's unit to attach to"), and
     // spec.CollisionCheckInterval in ticks.
-    u32 launcher_id = 0;
+    sim::EntityId launcher_id{};
     i32 army = 0;
     sim::Entity::BeamSetup setup;
     if (lua_istable(L, 2)) {
@@ -279,7 +279,7 @@ static int collision_beam_init(lua_State* L) {
         if (launcher) entity->set_position(launcher->position());
     }
 
-    u32 id = reg.register_entity(std::move(entity));
+    sim::EntityId id = reg.register_entity(std::move(entity));
     auto* ent = reg.find(id);
     if (!ent) return luaL_error(L, "CollisionBeamEntity.__init: failed to register entity");
 
@@ -398,7 +398,7 @@ static int collision_beam_SetBeamFx(lua_State* L) {
 /// GetLauncher() → unit Lua table or nil
 static int collision_beam_GetLauncher(lua_State* L) {
     auto* ent = check_entity(L);
-    if (!ent || !ent->is_collision_beam() || ent->beam_launcher_id() == 0) {
+    if (!ent || !ent->is_collision_beam() || !ent->beam_launcher_id()) {
         lua_pushnil(L);
         return 1;
     }

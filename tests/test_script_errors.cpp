@@ -37,7 +37,7 @@ TEST_CASE("An ability order's click reports an error in VerifyScriptCommand", "[
     )")
                 .ok());
     LogCapture log;
-    CHECK_FALSE(osc::app::verify_script_command(state.raw(), {}, 0, {1, 2, 3}, true));
+    CHECK_FALSE(osc::app::verify_script_command(state.raw(), {}, {}, {1, 2, 3}, true));
     CHECK(log.count("Error running '/lua/UserScriptCommand.lua:VerifyScriptCommand': ") == 1);
     CHECK(log.count("boom") == 1);
 }

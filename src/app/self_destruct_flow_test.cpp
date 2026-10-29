@@ -33,16 +33,17 @@ constexpr const char* kLaunch = R"(
 
 } // namespace
 
-u32 self_destruct_commander(lua::LuaState& ui, const sim::SimState& sim, i32 army,
-                            std::string& why) {
-    u32 acu = 0;
+sim::EntityId self_destruct_commander(lua::LuaState& ui, const sim::SimState& sim, i32 army,
+                                      std::string& why) {
+    sim::EntityId acu{};
     sim.entity_registry().for_each_unit([&](const sim::Entity& e) {
-        if (acu == 0 && e.army() == army && e.blueprint_id().ends_with("l0001"))
+        if (!acu && e.army() == army && e.blueprint_id().ends_with("l0001")) {
             acu = e.entity_id();
+        }
     });
-    if (acu == 0) {
+    if (!acu) {
         why = fmt::format("army {} has no commander", army);
-        return 0;
+        return {};
     }
     const auto ctrl_k =
         fmt::format("SelectUnits({{GetUnitById({})}}) "
@@ -50,7 +51,7 @@ u32 self_destruct_commander(lua::LuaState& ui, const sim::SimState& sim, i32 arm
                     osc::sim::EntityRegistry::moho_id(acu));
     if (auto r = ui.do_string(ctrl_k); !r) {
         why = "self-destructing: " + r.error().message;
-        return 0;
+        return {};
     }
     return acu;
 }
@@ -72,20 +73,20 @@ void SelfDestructFlowTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
     }
     if (!sim) return;
     const u32 tick = sim->tick_count();
-    if (acu_ == 0 && tick >= kSelfDestructTick) {
+    if (!acu_ && tick >= kSelfDestructTick) {
         if (sim->focus_army() != kPlayerArmy) {
             fail(fmt::format("the game focuses army {}, not the player's", sim->focus_army()));
             return;
         }
         std::string why;
         acu_ = self_destruct_commander(ui, *sim, kPlayerArmy, why);
-        if (acu_ == 0) {
+        if (!acu_) {
             fail(why);
             return;
         }
         spdlog::info("self-destruct-flow: commander {} self-destructs at tick {}", acu_, tick);
     }
-    if (acu_ != 0 && (tick >= kEndTick || sim->game_over())) {
+    if (acu_ && (tick >= kEndTick || sim->game_over())) {
         const auto* acu = sim->entity_registry().find(acu_);
         if (acu && !acu->destroyed() && !static_cast<const sim::Unit*>(acu)->is_dying()) {
             fail(fmt::format("the commander still lives at tick {}", tick));

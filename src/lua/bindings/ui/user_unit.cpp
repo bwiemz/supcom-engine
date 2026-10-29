@@ -69,31 +69,35 @@ UiWorld& ui_world_holder(lua_State* L) {
 }
 
 /// The unit object's id, or 0 for a handle from an earlier game.
-u32 user_unit_id(lua_State* L, int idx = 1) {
-    if (!lua_istable(L, idx)) return 0;
+sim::EntityId user_unit_id(lua_State* L, int idx = 1) {
+    if (!lua_istable(L, idx)) {
+        return sim::EntityId();
+    }
     lua_pushstring(L, "_c_sim_gen");
     lua_rawget(L, idx);
     const bool stale = lua_isnumber(L, -1) &&
                        static_cast<u32>(lua_tonumber(L, -1)) != sim::SimState::sim_generation();
     lua_pop(L, 1);
-    if (stale) return 0;
+    if (stale) {
+        return sim::EntityId();
+    }
     lua_pushstring(L, "_c_entity_id");
     lua_rawget(L, idx);
-    const u32 id = lua_isnumber(L, -1) ? static_cast<u32>(lua_tonumber(L, -1)) : 0u;
+    const sim::EntityId id = sim::to_entity_key(L, -1);
     lua_pop(L, 1);
     return id;
 }
 
 /// The unit as the UI's tick shows it: null once it is gone.
 const sim::EntityRecord* record(lua_State* L, int idx = 1) {
-    const u32 id = user_unit_id(L, idx);
+    const sim::EntityId id = user_unit_id(L, idx);
     const sim::WorldSnapshot* world = id ? ui_world(L) : nullptr;
     const sim::EntityRecord* r = world ? world->find(id) : nullptr;
     return r && r->is_unit ? r : nullptr;
 }
 
 /// The unit `id` if the UI's tick shows it, as a unit object; else nil.
-void push_user_unit_or_nil(lua_State* L, u32 id) {
+void push_user_unit_or_nil(lua_State* L, sim::EntityId id) {
     const sim::WorldSnapshot* world = id ? ui_world(L) : nullptr;
     const sim::EntityRecord* r = world ? world->find(id) : nullptr;
     if (r && r->is_unit) push_user_unit(L, id, r->army);
@@ -111,9 +115,12 @@ bool push_blueprint(lua_State* L, const std::string& bp_id) {
 }
 
 /// Queue a ProcessInfo pair for the unit, as Moho's UserUnit sends it.
-void queue_process_info(lua_State* L, u32 id, const std::string& action, const char* value) {
+void queue_process_info(lua_State* L, sim::EntityId id, const std::string& action,
+                        const char* value) {
     auto* queue = get_callback_queue(L);
-    if (!queue || id == 0) return;
+    if (!queue || !id) {
+        return;
+    }
     sim::SimCallbackEntry entry;
     entry.func_name = sim::kProcessInfoCallback;
     entry.args["Action"] = action;
@@ -124,7 +131,7 @@ void queue_process_info(lua_State* L, u32 id, const std::string& action, const c
 
 /// This unit's selection-set table (name -> true), made if `create`; else
 /// nil when it has none. The UI's own bookkeeping.
-void push_selection_sets(lua_State* L, u32 id, bool create) {
+void push_selection_sets(lua_State* L, sim::EntityId id, bool create) {
     lua_pushstring(L, kSelectionSetsKey);
     lua_rawget(L, LUA_REGISTRYINDEX);
     if (!lua_istable(L, -1)) {
@@ -134,12 +141,14 @@ void push_selection_sets(lua_State* L, u32 id, bool create) {
         lua_pushvalue(L, -2);
         lua_rawset(L, LUA_REGISTRYINDEX);
     }
-    lua_rawgeti(L, -1, static_cast<int>(id));
+    sim::push_entity_key(L, id);
+    lua_rawget(L, -2);
     if (!lua_istable(L, -1) && create) {
         lua_pop(L, 1);
         lua_newtable(L);
-        lua_pushvalue(L, -1);
-        lua_rawseti(L, -3, static_cast<int>(id));
+        sim::push_entity_key(L, id);
+        lua_pushvalue(L, -2);
+        lua_rawset(L, -4);
     }
     lua_remove(L, -2);
 }
@@ -391,7 +400,7 @@ int uu_GetCommandQueue(lua_State* L) {
         lua_pushstring(L, command_lexical(c.type));
         lua_rawset(L, -3);
         sim::Vector3 at = c.target_pos;
-        if (c.target_id > 0) {
+        if (c.target_id) {
             if (const sim::EntityRecord* target = world->find(c.target_id)) {
                 at = target->position;
             }
@@ -419,7 +428,7 @@ int uu_GetCommandQueue(lua_State* L) {
             lua_pushnumber(L, c.target_pos.z);
             lua_rawset(L, -3);
         }
-        if (c.target_id > 0) {
+        if (c.target_id) {
             lua_pushstring(L, "targetId");
             sim::push_entity_id(L, c.target_id);
             lua_rawset(L, -3);
@@ -442,14 +451,14 @@ int uu_HasUnloadCommandQueuedUp(lua_State* L) {
 
 int uu_GetFocus(lua_State* L) {
     const auto* r = record(L);
-    push_user_unit_or_nil(L, r ? r->build_target_id : 0);
+    push_user_unit_or_nil(L, r ? r->build_target_id : sim::EntityId());
     return 1;
 }
 
 int uu_GetGuardedEntity(lua_State* L) {
     const auto* r = record(L);
     const sim::WorldSnapshot* world = r ? ui_world(L) : nullptr;
-    u32 guarded = 0;
+    sim::EntityId guarded{};
     if (world) {
         // Fighting for its guard, it still guards (as Unit::guard_order)
         for (const sim::CommandRecord& c : world->commands_of(*r)) {
@@ -464,15 +473,17 @@ int uu_GetGuardedEntity(lua_State* L) {
 
 int uu_GetCreator(lua_State* L) {
     const auto* r = record(L);
-    push_user_unit_or_nil(L, r ? r->creator_id : 0);
+    push_user_unit_or_nil(L, r ? r->creator_id : sim::EntityId());
     return 1;
 }
 
 // --- Selection sets: the UI's own bookkeeping ------------------------------
 
 int uu_AddSelectionSet(lua_State* L) {
-    const u32 id = user_unit_id(L);
-    if (id == 0 || lua_type(L, 2) != LUA_TSTRING) return 0;
+    const sim::EntityId id = user_unit_id(L);
+    if (!id || lua_type(L, 2) != LUA_TSTRING) {
+        return 0;
+    }
     push_selection_sets(L, id, true);
     lua_pushvalue(L, 2);
     lua_pushboolean(L, 1);
@@ -482,8 +493,10 @@ int uu_AddSelectionSet(lua_State* L) {
 }
 
 int uu_RemoveSelectionSet(lua_State* L) {
-    const u32 id = user_unit_id(L);
-    if (id == 0 || lua_type(L, 2) != LUA_TSTRING) return 0;
+    const sim::EntityId id = user_unit_id(L);
+    if (!id || lua_type(L, 2) != LUA_TSTRING) {
+        return 0;
+    }
     push_selection_sets(L, id, false);
     if (lua_istable(L, -1)) {
         lua_pushvalue(L, 2);
@@ -495,9 +508,9 @@ int uu_RemoveSelectionSet(lua_State* L) {
 }
 
 int uu_HasSelectionSet(lua_State* L) {
-    const u32 id = user_unit_id(L);
+    const sim::EntityId id = user_unit_id(L);
     bool has = false;
-    if (id != 0 && lua_type(L, 2) == LUA_TSTRING) {
+    if (id && lua_type(L, 2) == LUA_TSTRING) {
         push_selection_sets(L, id, false);
         if (lua_istable(L, -1)) {
             lua_pushvalue(L, 2);
@@ -512,9 +525,11 @@ int uu_HasSelectionSet(lua_State* L) {
 }
 
 int uu_GetSelectionSets(lua_State* L) {
-    const u32 id = user_unit_id(L);
+    const sim::EntityId id = user_unit_id(L);
     lua_newtable(L);
-    if (id == 0) return 1;
+    if (!id) {
+        return 1;
+    }
     const int out = lua_gettop(L);
     push_selection_sets(L, id, false);
     if (lua_istable(L, -1)) {

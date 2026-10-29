@@ -407,7 +407,7 @@ std::vector<RangeBatch> range_batches(const RangeOverlays& overlays, const Range
             const auto& f = overlays.filters();
             return std::find(f.begin(), f.end(), name) != f.end();
         };
-        std::unordered_set<u32> picked;
+        std::unordered_set<sim::EntityId> picked;
         for (const auto& unit : scene.selected) picked.insert(unit.id);
         constexpr std::array<std::pair<const char*, f32 RangeUnit::*>, 3> kIntel = {
             {{"Radar", &RangeUnit::radar},

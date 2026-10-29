@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 #include "sim/econ_request.hpp"
+#include "sim/entity_id.hpp"
 #include "sim/waitable.hpp"
 
 #include <algorithm>
@@ -18,7 +19,7 @@ namespace osc::sim {
 class EconomyEvent : public Waitable {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
-    EconomyEvent(u32 unit_id, f64 mass_drain, f64 energy_drain, f64 duration)
+    EconomyEvent(EntityId unit_id, f64 mass_drain, f64 energy_drain, f64 duration)
         : unit_id_(unit_id), total_mass_(mass_drain), total_energy_(energy_drain),
           duration_(duration),
           ticks_(std::max(1, static_cast<i32>(static_cast<f32>(duration) * 10.0f))),
@@ -32,7 +33,7 @@ public:
     bool is_done() const override { return remaining_ == 0; }
     bool is_cancelled() const override { return cancelled_; }
 
-    u32 unit_id() const { return unit_id_; }
+    EntityId unit_id() const { return unit_id_; }
     f64 total_mass() const { return total_mass_; }
     f64 total_energy() const { return total_energy_; }
     f64 duration() const { return duration_; }
@@ -60,7 +61,7 @@ public:
     int lua_table_ref() const { return lua_table_ref_; }
     void set_lua_table_ref(int ref) { lua_table_ref_ = ref; }
 private:
-    u32 unit_id_ = 0;
+    EntityId unit_id_{};
     f64 total_mass_ = 0.0;
     f64 total_energy_ = 0.0;
     f64 duration_ = 0.0;
@@ -76,7 +77,7 @@ private:
 class EconomyEventRegistry {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
-    EconomyEvent* create(u32 unit_id, f64 mass, f64 energy, f64 duration) {
+    EconomyEvent* create(EntityId unit_id, f64 mass, f64 energy, f64 duration) {
         auto evt = std::make_unique<EconomyEvent>(unit_id, mass, energy, duration);
         auto* ptr = evt.get();
         events_.push_back(std::move(evt));

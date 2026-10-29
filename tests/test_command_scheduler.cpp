@@ -32,7 +32,7 @@ struct LuaGuard {
     ~LuaGuard() { lua_close(L); }
 };
 
-osc::u32 spawn_mover(SimState& sim, int army, osc::f32 speed) {
+osc::sim::EntityId spawn_mover(SimState& sim, int army, osc::f32 speed) {
     auto u = std::make_unique<Unit>();
     u->set_army(army);
     u->set_max_speed(speed);
@@ -124,7 +124,7 @@ TEST_CASE("Scheduled order lands in the unit queue on its exec beat", "[cmd][sim
     LuaGuard g;
     SimState sim(g.L, nullptr);
     // Positive speed + far goal so the unit stays en route (order persists).
-    osc::u32 id = spawn_mover(sim, 0, 5.0f);
+    osc::sim::EntityId id = spawn_mover(sim, 0, 5.0f);
 
     // Submitted before beat 1 → executes at beat_count+1 = 1.
     osc::u32 exec = sim.schedule_command(0, {id}, move_to(500.0f, 0.0f), true);
@@ -143,7 +143,7 @@ TEST_CASE("command_delay defers execution", "[cmd][sim]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     sim.set_command_delay(3);
-    osc::u32 id = spawn_mover(sim, 0, 5.0f);
+    osc::sim::EntityId id = spawn_mover(sim, 0, 5.0f);
 
     osc::u32 exec = sim.schedule_command(0, {id}, move_to(500.0f, 0.0f), true);
     CHECK(exec == 4); // beat_count(0) + 1 + delay(3)
@@ -161,7 +161,7 @@ TEST_CASE("clear_existing replaces, queued appends", "[cmd][sim]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     // Far goals so nothing arrives / pops during the test.
-    osc::u32 id = spawn_mover(sim, 0, 5.0f);
+    osc::sim::EntityId id = spawn_mover(sim, 0, 5.0f);
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
 
     sim.schedule_command(0, {id}, move_to(100.0f, 0.0f), true);  // fresh
@@ -184,8 +184,8 @@ TEST_CASE("Identical command streams keep two sims in sync (replay/determinism)"
     SimState a(ga.L, nullptr);
     SimState b(gb.L, nullptr);
 
-    osc::u32 ida = spawn_mover(a, 0, 5.0f);
-    osc::u32 idb = spawn_mover(b, 0, 5.0f);
+    osc::sim::EntityId ida = spawn_mover(a, 0, 5.0f);
+    osc::sim::EntityId idb = spawn_mover(b, 0, 5.0f);
     REQUIRE(ida == idb); // same id assignment → same stream applies to same unit
 
     // Feed both the identical command stream.
@@ -207,8 +207,8 @@ TEST_CASE("A divergent command stream desyncs the checksum", "[cmd][sim][sync]")
     LuaGuard ga, gb;
     SimState a(ga.L, nullptr);
     SimState b(gb.L, nullptr);
-    osc::u32 ida = spawn_mover(a, 0, 5.0f);
-    osc::u32 idb = spawn_mover(b, 0, 5.0f);
+    osc::sim::EntityId ida = spawn_mover(a, 0, 5.0f);
+    osc::sim::EntityId idb = spawn_mover(b, 0, 5.0f);
 
     a.schedule_command(0, {ida}, move_to(100.0f, 0.0f), true);
     b.schedule_command(0, {idb}, move_to(-100.0f, 0.0f), true); // different target

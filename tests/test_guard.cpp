@@ -87,7 +87,7 @@ Unit* still(SimState& sim, int army, f32 x, f32 z) {
 UnitCommand guard(const Unit* of, osc::u32 id, osc::sim::Vector3 point = {}) {
     UnitCommand c;
     c.type = CommandType::Guard;
-    c.target_id = of ? of->entity_id() : 0;
+    c.target_id = of ? of->entity_id() : osc::sim::EntityId();
     c.target_pos = of ? of->position() : point;
     c.command_id = id;
     return c;
@@ -177,7 +177,7 @@ TEST_CASE("A guard's ward moved while the guard fights moves, before its tick to
     osc::sim::SimCallbackEntry cb;
     cb.func_name = osc::sim::kSetCommandTargetCallback;
     cb.args["Command"] = 7.0;
-    cb.args["Target"] = static_cast<double>(other->entity_id());
+    cb.args["Target"] = static_cast<double>(other->entity_id().key());
     cb.unit_ids = {tank->entity_id()};
     sim.submit_callback(cb);
     const auto pending = sim.queues_with_pending();
@@ -259,10 +259,10 @@ TEST_CASE("A guard of a point goes there and takes on enemies near it", "[guard]
                [&] { return fight(*tank) != nullptr; });
     const UnitCommand* f = fight(*tank);
     CHECK(f->target_id == enemy->entity_id());
-    CHECK(f->leash_anchor_id == 0);
+    CHECK_FALSE(f->leash_anchor_id);
     CHECK(f->leash_anchor_pos.x == 60.0f);
     CHECK(f->leash_anchor_pos.z == 60.0f);
-    CHECK(tank->guarded_unit_id() == 0);
+    CHECK_FALSE(tank->guarded_unit_id());
     CHECK(tank->guard_order() != nullptr);
 
     sim.entity_registry().unregister_entity(enemy->entity_id());
@@ -351,7 +351,7 @@ TEST_CASE("Engineers assisting a shield generator regenerate its bubble while it
     for (int t = 0; t < 10; ++t) {
         sim.tick();
     }
-    CHECK(eng->repair_target_id() == 0);
+    CHECK_FALSE(eng->repair_target_id());
     CHECK(bubble->health() == off_at);
 
     run_lua(g.L, "on = true");
@@ -542,7 +542,7 @@ TEST_CASE("A guarding engineer displaced between a factory's builds walks back t
     tick_until([&] { sim.tick(); }, "the engineer starts helping", 400,
                [&] { return eng->is_building(); });
 
-    factory->set_build_target_id(0);
+    factory->set_build_target_id({});
     first->set_is_being_built(false);
     sim.tick();
     REQUIRE_FALSE(eng->is_building());

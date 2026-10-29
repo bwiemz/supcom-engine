@@ -125,7 +125,7 @@ const std::vector<StructureSite>& StructurePlacement::reserved() const {
         }
     };
     const auto pending =
-        scheduled_ ? sim_.queues_with_pending() : std::map<u32, SimState::QueueWithPending>();
+        scheduled_ ? sim_.queues_with_pending() : std::map<EntityId, SimState::QueueWithPending>();
     sim_.entity_registry().for_each_unit([&](const Entity& e) {
         if (e.destroyed() || !e.is_unit() || e.army() != army_) return;
         if (const auto it = pending.find(e.entity_id()); it != pending.end()) {

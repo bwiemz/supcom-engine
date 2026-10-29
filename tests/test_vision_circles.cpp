@@ -24,7 +24,7 @@ struct World {
     /// A unit of `army` at (x, z) with a vision radius (none for 0).
     sim::EntityRecord& unit(u32 id, i32 army, f32 x, f32 z, f32 vision, bool enabled = true) {
         sim::EntityRecord e;
-        e.id = id;
+        e.id = sim::EntityId::of(id, 1);
         e.army = army;
         e.is_unit = true;
         e.position = {x, 0, z};

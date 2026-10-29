@@ -115,7 +115,10 @@ static int weapon_GetBlueprint(lua_State* L) {
 
 static int weapon_GetCurrentTarget(lua_State* L) {
     auto* w = check_weapon(L);
-    if (!w || w->target_entity_id == 0) { lua_pushnil(L); return 1; }
+    if (!w || !w->target_entity_id) {
+        lua_pushnil(L);
+        return 1;
+    }
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
     auto* target = sim->entity_registry().find(w->target_entity_id);
@@ -133,7 +136,7 @@ static int weapon_GetCurrentTargetPos(lua_State* L) {
     auto* sim = get_sim(L);
     auto at = w && sim ? w->target_point(sim->entity_registry()) : std::nullopt;
     if (!at) { lua_pushnil(L); return 1; }
-    if (w->target_entity_id != 0) {
+    if (w->target_entity_id) {
         const auto* target = sim->entity_registry().find(w->target_entity_id);
         if (target && target->is_unit())
             at = static_cast<const sim::Unit*>(target)->target_point(w->current_aim_spot());
@@ -144,7 +147,7 @@ static int weapon_GetCurrentTargetPos(lua_State* L) {
 
 static int weapon_WeaponHasTarget(lua_State* L) {
     auto* w = check_weapon(L);
-    lua_pushboolean(L, w && w->target_entity_id > 0);
+    lua_pushboolean(L, w && w->target_entity_id);
     return 1;
 }
 
@@ -191,7 +194,7 @@ static int weapon_SetTargetEntity(lua_State* L) {
     if (target && !target->destroyed() && !w->can_attack(*target, sim)) {
         return 0;
     }
-    w->set_target_entity((target && !target->destroyed()) ? target->entity_id() : 0);
+    w->set_target_entity((target && !target->destroyed()) ? target->entity_id() : sim::EntityId());
     if (sim && w->aim_spot_target != w->target_entity_id) {
         w->pick_aim_spot(sim->entity_registry(), sim);
     }
@@ -203,7 +206,7 @@ static int weapon_SetTargetEntity(lua_State* L) {
 static int weapon_ResetTarget(lua_State* L) {
     auto* w = check_weapon(L);
     if (w) {
-        w->set_target_entity(0);
+        w->set_target_entity(sim::EntityId());
         w->target_check_clock = 0;
     }
     return 0;
@@ -264,7 +267,7 @@ static int weapon_CreateProjectile(lua_State* L) {
     if (bone >= 0 && unit->bone_data()) muzzle_dir = unit->bone_world_forward(bone);
 
     const sim::Entity* target = nullptr;
-    if (w->target_entity_id > 0) {
+    if (w->target_entity_id) {
         target = sim->entity_registry().find(w->target_entity_id);
         if (target && target->destroyed()) target = nullptr;
     }
@@ -395,9 +398,11 @@ static int weapon_TransferTarget(lua_State* L) {
     auto* dst = check_weapon(L, 2);
     auto* sim = get_sim(L);
     if (!src || !dst) return 0;
-    if (src->target_entity_id == 0 && src->has_ground_target)
+    if (!src->target_entity_id && src->has_ground_target) {
         dst->set_target_ground(src->ground_target);
-    else dst->set_target_entity(src->target_entity_id);
+    } else {
+        dst->set_target_entity(src->target_entity_id);
+    }
     dst->shots_at_target = 0;
     if (sim) dst->pick_aim_spot(sim->entity_registry(), sim);
     return 0;

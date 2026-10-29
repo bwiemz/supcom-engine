@@ -830,7 +830,9 @@ void IntegrationModes::frame_rendered(Engine& e, app::Frame& frame) {
     if (render_dump_path_.empty()) return;
     render_dump_->on_frame(
         *e.sim_state, [&](const char* code) { return run_sim_lua(e, code); },
-        [&](const std::vector<u32>& ids) { frame.input.set_selected({ids.begin(), ids.end()}); },
+        [&](const std::vector<sim::EntityId>& ids) {
+            frame.input.set_selected({ids.begin(), ids.end()});
+        },
         [&](std::ostream& out) {
             std::ostringstream dump;
             frame.renderer.dump_frame(dump);
@@ -1316,8 +1318,8 @@ void IntegrationModes::headless(Engine& e) {
         // Selection is input-handler state; a headless one lets the test
         // select units (SelectUnits) and drive the selection UI.
         osc::renderer::InputHandler headless_input;
-        std::unordered_set<osc::u32> prev_sel;
-        std::vector<std::pair<osc::u32, osc::u32>> prev_sel_upgrades;
+        std::unordered_set<osc::sim::EntityId> prev_sel;
+        std::vector<std::pair<osc::sim::EntityId, osc::u32>> prev_sel_upgrades;
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_input_handler");
         lua_pushlightuserdata(uL, &headless_input);

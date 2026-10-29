@@ -38,6 +38,7 @@ extern "C" {
 #include <variant>
 #include <vector>
 
+using osc::sim::EntityId;
 using osc::sim::LockstepSession;
 using osc::sim::LoopbackHub;
 using osc::sim::LoopbackTransport;
@@ -114,7 +115,7 @@ struct CallbackSim {
     }
     ~CallbackSim() { lua_close(L); }
 
-    osc::u32 spawn() {
+    EntityId spawn() {
         auto u = std::make_unique<Unit>();
         u->set_army(0);
         u->add_command_cap("RULEUCC_Pause");
@@ -126,7 +127,7 @@ struct CallbackSim {
         return sim.entity_registry().register_entity(std::move(u));
     }
 
-    Unit& unit(osc::u32 id) { return *static_cast<Unit*>(sim.entity_registry().find(id)); }
+    Unit& unit(EntityId id) { return *static_cast<Unit*>(sim.entity_registry().find(id)); }
 
     /// The hooks called so far, in order, comma-separated.
     std::string hooks() {
@@ -158,7 +159,7 @@ struct CallbackSim {
     }
 };
 
-SimCallbackEntry toggle(osc::u32 unit) {
+SimCallbackEntry toggle(EntityId unit) {
     SimCallbackEntry cb;
     cb.func_name = "ToggleThing";
     cb.args["Mode"] = std::string("fast");
@@ -169,7 +170,7 @@ SimCallbackEntry toggle(osc::u32 unit) {
 }
 
 /// The request the orders panel's SetPaused, SetFireState, ... make.
-SimCallbackEntry setting(const char* name, osc::sim::SimCallbackArg value, osc::u32 unit,
+SimCallbackEntry setting(const char* name, osc::sim::SimCallbackArg value, EntityId unit,
                          std::optional<double> bit = std::nullopt) {
     SimCallbackEntry cb;
     cb.func_name = osc::sim::kUnitSettingCallback;
@@ -185,7 +186,7 @@ SimCallbackEntry setting(const char* name, osc::sim::SimCallbackArg value, osc::
 TEST_CASE("A SimCallback runs in the next beat, before its tick, not when submitted",
           "[simcallback]") {
     CallbackSim w;
-    const osc::u32 unit = w.spawn();
+    const EntityId unit = w.spawn();
     w.sim.tick();                       // tick 1
     w.sim.set_human_input_active(true); // as while the UI is handled
 
@@ -210,7 +211,7 @@ TEST_CASE("A recorded SimCallback replays on the same tick", "[simcallback][repl
     Replay replay;
     {
         CallbackSim rec;
-        const osc::u32 unit = rec.spawn();
+        const EntityId unit = rec.spawn();
         rec.sim.set_recording(true);
         for (int i = 0; i < 4; ++i) rec.sim.tick();
         rec.sim.submit_callback(toggle(unit)); // runs before tick 5
@@ -234,7 +235,7 @@ TEST_CASE("Commands with callbacks survive the codec, and bad ones are refused",
     ScheduledCommand c;
     c.exec_beat = 9;
     c.source = 2;
-    c.callback = toggle(41);
+    c.callback = toggle(EntityId::of(41, 1));
     std::vector<osc::u8> bytes;
     osc::sim::ByteWriter w(bytes);
     osc::sim::write_command(w, c);
@@ -248,7 +249,7 @@ TEST_CASE("Commands with callbacks survive the codec, and bad ones are refused",
     CHECK(std::get<std::string>(back.callback->args.at("Mode")) == "fast");
     CHECK(std::get<double>(back.callback->args.at("Level")) == 3.0);
     CHECK(std::get<bool>(back.callback->args.at("On")));
-    CHECK(back.callback->unit_ids == std::vector<osc::u32>{41});
+    CHECK(back.callback->unit_ids == std::vector<EntityId>{EntityId::of(41, 1)});
 
     // An unknown value tag, or bytes that run out, is refused whole.
     std::vector<osc::u8> truncated(bytes.begin(), bytes.end() - 3);
@@ -325,9 +326,10 @@ TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][
     std::vector<osc::u8> bytes;
     size_t script_at = 0; // where the command's Script table sits in the file
     size_t form_move_at = 0;
+    size_t target_at = 0;
     {
         CallbackSim rec;
-        const osc::u32 unit = rec.spawn();
+        const EntityId unit = rec.spawn();
         rec.sim.set_recording(true);
         rec.sim.tick();
         rec.sim.submit_callback(toggle(unit));
@@ -351,16 +353,26 @@ TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][
         const auto form = std::mismatch(marked.begin(), marked.end(), paced.begin());
         form_move_at =
             bytes.size() - plain.size() + static_cast<size_t>(form.first - marked.begin());
+        c.command.target_id = EntityId(1);
+        std::vector<osc::u8> aimed;
+        osc::sim::ByteWriter wt(aimed);
+        osc::sim::write_command(wt, c);
+        const auto target = std::mismatch(paced.begin(), paced.end(), aimed.begin());
+        target_at = bytes.size() - plain.size() + static_cast<size_t>(target.first - paced.begin());
     }
     // The callback is the last command, its "no value" and "no Lua args"
-    // bytes the file's last: v7 wrote neither, nor its (empty) Script table
+    // bytes the file's last, its unit's id before them: v7 wrote neither,
+    // nor its (empty) Script table, and an id in four bytes, not eight
     REQUIRE(bytes.back() == 0);
     bytes.pop_back();
     REQUIRE(bytes.back() == 0);
     bytes.pop_back();
+    bytes.resize(bytes.size() - 4);
     bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(script_at),
                 bytes.begin() + static_cast<std::ptrdiff_t>(script_at) + 4);
     bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(form_move_at));
+    bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(target_at) + 4,
+                bytes.begin() + static_cast<std::ptrdiff_t>(target_at) + 8);
     const osc::u32 v7 = 7;
     std::memcpy(bytes.data() + 4, &v7, 4); // after "OSCR"
     Replay back;
@@ -431,7 +443,7 @@ TEST_CASE("A UI SimCallback's nested Args reach the sim, recorded, replayed and 
 
 TEST_CASE("Lockstep peers run a SimCallback on the same tick", "[simcallback][lockstep]") {
     CallbackSim a, b;
-    const osc::u32 ua = a.spawn();
+    const EntityId ua = a.spawn();
     REQUIRE(b.spawn() == ua);
 
     LoopbackHub hub;
@@ -459,7 +471,7 @@ TEST_CASE("Lockstep peers run a SimCallback on the same tick", "[simcallback][lo
 
 TEST_CASE("The UI's unit settings apply in a beat, with their script hooks", "[simcallback]") {
     CallbackSim w;
-    const osc::u32 id = w.spawn();
+    const EntityId id = w.spawn();
     w.unit(id).economy().consumption_active = true;
 
     w.sim.submit_callback(setting("Paused", true, id));
@@ -495,7 +507,7 @@ TEST_CASE("The UI's unit settings apply in a beat, with their script hooks", "[s
 
 TEST_CASE("Unit settings out of range are ignored", "[simcallback]") {
     CallbackSim w;
-    const osc::u32 id = w.spawn();
+    const EntityId id = w.spawn();
     w.sim.submit_callback(setting("FireState", 7.0, id));
     w.sim.submit_callback(setting("FireState", 1.5, id));
     w.sim.submit_callback(setting("ScriptBit", true, id, 9.0));
@@ -514,7 +526,7 @@ TEST_CASE("Unit settings out of range are ignored", "[simcallback]") {
 
 TEST_CASE("ProcessInfo's pause and auto mode call the same hooks", "[simcallback]") {
     CallbackSim w;
-    const osc::u32 id = w.spawn();
+    const EntityId id = w.spawn();
     SimCallbackEntry cb;
     cb.func_name = osc::sim::kProcessInfoCallback;
     cb.args["Action"] = std::string("SetPaused");
@@ -545,9 +557,9 @@ TEST_CASE("The UI pauses only a unit with RULEUCC_Pause or RULEUTC_GenericToggle
     for (const Case c : {Case{nullptr, nullptr, false}, Case{"RULEUCC_Pause", nullptr, true},
                          Case{nullptr, "RULEUTC_GenericToggle", true},
                          Case{"RULEUCC_Stop", "RULEUTC_ProductionToggle", false}}) {
-        const osc::u32 by_setting = w.spawn();
-        const osc::u32 by_info = w.spawn();
-        for (const osc::u32 id : {by_setting, by_info}) {
+        const EntityId by_setting = w.spawn();
+        const EntityId by_info = w.spawn();
+        for (const EntityId id : {by_setting, by_info}) {
             w.unit(id).remove_command_cap("RULEUCC_Pause");
             if (c.command_cap) {
                 w.unit(id).add_command_cap(c.command_cap);
@@ -575,7 +587,7 @@ TEST_CASE("ProcessInfo's CustomName names the unit at the tick", "[simcallback]"
     // (ProcessInfoPair(id, "CustomName", name)): the rename dialog, and the
     // commander named for its player as the game starts.
     CallbackSim w;
-    const osc::u32 id = w.spawn();
+    const EntityId id = w.spawn();
     SimCallbackEntry cb;
     cb.func_name = osc::sim::kProcessInfoCallback;
     cb.args["Action"] = std::string("CustomName");
@@ -598,7 +610,7 @@ TEST_CASE("ProcessInfo's staging platform voices reach the unit's brain", "[simc
     REQUIRE(luaL_loadbuffer(w.L, code, std::strlen(code), "brain") == 0);
     REQUIRE(lua_pcall(w.L, 0, 1, 0) == 0);
     w.sim.army_at(0)->set_lua_table_ref(luaL_ref(w.L, LUA_REGISTRYINDEX));
-    const osc::u32 id = w.spawn();
+    const EntityId id = w.spawn();
     for (const char* action : {"PlayNoStagingPlatformsVO", "PlayBusyStagingPlatformsVO"}) {
         SimCallbackEntry cb;
         cb.func_name = osc::sim::kProcessInfoCallback;
@@ -613,7 +625,7 @@ TEST_CASE("ProcessInfo's staging platform voices reach the unit's brain", "[simc
 
 TEST_CASE("The sync checksum sees a unit setting", "[simcallback][sync]") {
     CallbackSim a, b;
-    const osc::u32 ua = a.spawn();
+    const EntityId ua = a.spawn();
     b.spawn();
     CHECK(a.sim.compute_sync_checksum() == b.sim.compute_sync_checksum());
     a.unit(ua).set_fire_state(1);
@@ -628,7 +640,7 @@ TEST_CASE("The sync checksum sees a unit setting", "[simcallback][sync]") {
 
 TEST_CASE("A factory's queue is its build orders; decreasing takes the newest", "[simcallback]") {
     CallbackSim w;
-    const osc::u32 id = w.spawn();
+    const EntityId id = w.spawn();
     Unit& f = w.unit(id);
     osc::sim::UnitCommand build;
     build.type = osc::sim::CommandType::BuildFactory;
@@ -677,7 +689,7 @@ TEST_CASE("A factory's queue is its build orders; decreasing takes the newest", 
 
 TEST_CASE("Increasing a factory's queue counts up one group's newest order", "[simcallback]") {
     CallbackSim w;
-    const osc::u32 id = w.spawn();
+    const EntityId id = w.spawn();
     Unit& f = w.unit(id);
     osc::sim::UnitCommand build;
     build.type = osc::sim::CommandType::BuildFactory;
@@ -752,7 +764,7 @@ TEST_CASE("A callback's NaN or infinite numbers change nothing", "[simcallback]"
     CallbackSim w;
     w.sim.add_army("ARMY_1", "ARMY_1");
     w.sim.add_army("ARMY_2", "ARMY_2");
-    const osc::u32 id = w.spawn();
+    const EntityId id = w.spawn();
     Unit& f = w.unit(id);
     osc::sim::UnitCommand build;
     build.type = osc::sim::CommandType::BuildFactory;
@@ -801,8 +813,8 @@ TEST_CASE("A callback's NaN or infinite numbers change nothing", "[simcallback]"
 TEST_CASE("Cancelling a factory's build under way destroys the unit it was building",
           "[simcallback]") {
     CallbackSim w;
-    const osc::u32 id = w.spawn();
-    const osc::u32 partial = w.spawn(); // the unit on the factory's floor
+    const EntityId id = w.spawn();
+    const EntityId partial = w.spawn(); // the unit on the factory's floor
     Unit& f = w.unit(id);
     w.unit(partial).set_is_being_built(true);
     osc::sim::UnitCommand build;
@@ -828,14 +840,14 @@ TEST_CASE("Cancelling a factory's build under way destroys the unit it was build
     // the partial unit's script destroys it.
     w.sim.run_sim_callback(cb);
     CHECK(f.factory_queue().empty());
-    CHECK(f.build_target_id() == 0);
+    CHECK_FALSE(f.build_target_id());
     CHECK(w.hooks() == "OnFailedToBuild,OnFailedToBeBuilt,Destroy");
 }
 
 TEST_CASE("Taking a factory's build under way off its queue cancels it", "[simcallback]") {
     CallbackSim w;
-    const osc::u32 id = w.spawn();
-    const osc::u32 partial = w.spawn();
+    const EntityId id = w.spawn();
+    const EntityId partial = w.spawn();
     Unit& f = w.unit(id);
     w.unit(partial).set_is_being_built(true);
     osc::sim::UnitCommand build;
@@ -854,7 +866,7 @@ TEST_CASE("Taking a factory's build under way off its queue cancels it", "[simca
     w.sim.run_sim_callback(cb);
     REQUIRE(f.command_queue().size() == 1);
     CHECK(f.command_queue().front().command_id == 5);
-    CHECK(f.build_target_id() == 0);
+    CHECK_FALSE(f.build_target_id());
     CHECK(w.hooks() == "OnFailedToBuild,OnFailedToBeBuilt,Destroy");
 }
 
@@ -862,9 +874,9 @@ TEST_CASE("DeleteCommand's DecreaseCommandCount takes one off an order", "[simca
     // Moho's Sim::DecreaseCommandCount: a factory build of more makes one
     // fewer; any other order (one unit each) leaves every queue holding it.
     CallbackSim w;
-    const osc::u32 factory = w.spawn();
-    const osc::u32 a = w.spawn();
-    const osc::u32 b = w.spawn();
+    const EntityId factory = w.spawn();
+    const EntityId a = w.spawn();
+    const EntityId b = w.spawn();
     osc::sim::UnitCommand build;
     build.type = osc::sim::CommandType::BuildFactory;
     build.blueprint_id = "x";

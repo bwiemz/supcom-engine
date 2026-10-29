@@ -39,7 +39,8 @@ struct Crossing {
     f32 moved = 0;
 };
 
-Crossing cross(sim::SimState& sim, sim::EntityRegistry& registry, u32 id, const char* layer) {
+Crossing cross(sim::SimState& sim, sim::EntityRegistry& registry, sim::EntityId id,
+               const char* layer) {
     Crossing c;
     const auto unit = [&]() -> sim::Unit* {
         sim::Entity* e = registry.find(id);
@@ -106,7 +107,7 @@ void test_layer_transition(TestContext& ctx) {
     lua_pushstring(L, "__osc_lt");
     lua_rawget(L, LUA_GLOBALSINDEX);
     lua_rawgeti(L, -1, 1);
-    const u32 id = osc::sim::to_entity_id(L, -1);
+    const sim::EntityId id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
     lua_pop(L, 1);
     lua_rawgeti(L, -1, 2);
     const auto x = static_cast<f32>(lua_tonumber(L, -1));

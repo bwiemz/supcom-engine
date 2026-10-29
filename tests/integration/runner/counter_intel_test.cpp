@@ -49,11 +49,12 @@ void test_counter_intel(TestContext& ctx) {
     const Spot diver_at{sx - 30, sz};
     const Spot plain_at{sx, sz + 30};
     const Spot gen_at{sx + 30, sz + 30};
-    const u32 cloaked = spawn_unit(ctx, "__osc_ci_cloak", "uel0105", "ARMY_2", cloak_at);
-    const u32 stealthy = spawn_unit(ctx, "__osc_ci_stealth", "uel0105", "ARMY_2", stealth_at);
-    const u32 diver = spawn_unit(ctx, "__osc_ci_diver", "uel0105", "ARMY_2", diver_at);
-    const u32 plain = spawn_unit(ctx, "__osc_ci_plain", "uel0105", "ARMY_2", plain_at);
-    const u32 gen = spawn_unit(ctx, "__osc_ci_gen", "ueb1101", "ARMY_2", gen_at);
+    const sim::EntityId cloaked = spawn_unit(ctx, "__osc_ci_cloak", "uel0105", "ARMY_2", cloak_at);
+    const sim::EntityId stealthy =
+        spawn_unit(ctx, "__osc_ci_stealth", "uel0105", "ARMY_2", stealth_at);
+    const sim::EntityId diver = spawn_unit(ctx, "__osc_ci_diver", "uel0105", "ARMY_2", diver_at);
+    const sim::EntityId plain = spawn_unit(ctx, "__osc_ci_plain", "uel0105", "ARMY_2", plain_at);
+    const sim::EntityId gen = spawn_unit(ctx, "__osc_ci_gen", "ueb1101", "ARMY_2", gen_at);
     (void)spawn_unit(ctx, "__osc_ci_sensor", "ueb1101", "ARMY_1", {sx, sz - 40});
     run_lua(ctx,
             "__osc_ci_cloak:InitIntel(2, 'Cloak', 1) __osc_ci_cloak:EnableIntel('Cloak')\n"
@@ -102,7 +103,7 @@ void test_counter_intel(TestContext& ctx) {
         seen.capture(ctx.sim);
         return drawn(r);
     };
-    const auto sight = [&](u32 id) {
+    const auto sight = [&](sim::EntityId id) {
         const sim::EntityRecord* e = seen.cur().find(id);
         return e ? r.recon().sight(*e) : renderer::Sight::Hidden;
     };

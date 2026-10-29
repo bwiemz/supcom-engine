@@ -267,11 +267,9 @@ bool mp_attach_session(osc::sim::SimState& sim) {
     auto* session = s.session.get();
     set_game_speed(sim, *session);
     // Route local human orders through the session (broadcast + schedule).
-    sim.set_local_command_sink(
-        [session](const std::vector<osc::u32>& ids,
-                  const osc::sim::UnitCommand& cmd, bool clear) {
-            session->submit_local(ids, cmd, clear);
-        });
+    sim.set_local_command_sink([session](const std::vector<osc::sim::EntityId>& ids,
+                                         const osc::sim::UnitCommand& cmd,
+                                         bool clear) { session->submit_local(ids, cmd, clear); });
     // And the UI's SimCallbacks, so every peer runs them in the same beat.
     sim.set_local_callback_sink([session](osc::sim::SimCallbackEntry cb) {
         session->submit_local_callback(std::move(cb));

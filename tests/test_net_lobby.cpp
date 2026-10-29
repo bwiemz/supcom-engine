@@ -1070,7 +1070,7 @@ TEST_CASE("A resumed lobby retains saved source ids for continued whole-game rep
         w.sim.set_command_source(0, 0, true);
         w.sim.set_command_source(1, 1, true);
         w.sim.set_pause_holds(true);
-        std::vector<osc::u32> ids;
+        std::vector<osc::sim::EntityId> ids;
         for (osc::i32 army = 0; army < 2; ++army) {
             auto unit = std::make_unique<osc::sim::Unit>();
             unit->set_army(army);

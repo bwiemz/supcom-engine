@@ -45,10 +45,10 @@ void test_yaw_only(TestContext& ctx) {
     }
     // The Torrent, and an enemy power generator ashore 100 to its side (its racks
     // reach 25-200, each over 165 degrees either side of its own centre).
-    const u32 torrent = spawn_unit(ctx, "__osc_yo_torrent", "xas0306", "ARMY_1", *sea);
+    const sim::EntityId torrent = spawn_unit(ctx, "__osc_yo_torrent", "xas0306", "ARMY_1", *sea);
     spawn_unit(ctx, "__osc_yo_target", "ueb1101", "ARMY_2", {sea->x + 100, sea->z});
     run_lua(ctx, "__osc_yo_target:SetCanTakeDamage(false)");
-    std::set<u32> missiles;
+    std::set<sim::EntityId> missiles;
     tick_until(ctx, "the Torrent fires its missile racks", 1200, [&] {
         ctx.sim.entity_registry().for_each([&](const sim::Entity& e) {
             if (e.is_projectile() && e.army() == 0) {

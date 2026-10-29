@@ -32,7 +32,7 @@ void FactoryQueueDisplay::peek(lua_State* L, sim::Unit* factory) {
 }
 
 void FactoryQueueDisplay::report_change(lua_State* L, sim::SimState& sim) {
-    if (current_factory_id_ == 0 || !L) {
+    if (!current_factory_id_ || !L) {
         return;
     }
     std::vector<sim::BuildQueueEntry> queue;

@@ -58,7 +58,7 @@ V2 forward(const Unit& u) {
 /// carried, not dying or unfinished.
 bool steers(const Unit& u) {
     return !u.destroyed() && !u.is_dying() && !u.is_being_built() && !u.is_air_unit() &&
-           u.max_speed() > 0 && u.transport_id() == 0 && u.parent_entity_id() == 0;
+           u.max_speed() > 0 && !u.transport_id() && !u.parent_entity_id();
 }
 
 bool can_fly(const Unit& u) {
@@ -79,14 +79,15 @@ f32 accel(const Unit& u) {
 }
 
 /// The unit its head order guards (or fights for, guarding), or 0.
-u32 guarded(const Unit& u) {
+EntityId guarded(const Unit& u) {
     return u.guarded_unit_id();
 }
 
 /// The transport its head order waits for, or 0.
-u32 awaited_transport(const Unit& u) {
+EntityId awaited_transport(const Unit& u) {
     const auto& q = u.command_queue();
-    return !q.empty() && q.front().type == CommandType::TransportLoad ? q.front().target_id : 0;
+    return !q.empty() && q.front().type == CommandType::TransportLoad ? q.front().target_id
+                                                                      : EntityId();
 }
 
 /// Both in one formation (attacking or not), of one army: a formation is an
@@ -114,8 +115,8 @@ bool ignored(const Unit& owner, const Unit& c) {
         c.footprint().flags == 0)
         return true;
     if (owner.has_unit_state("Upgrading") && c.creator_id() == owner.entity_id()) return true;
-    const u32 awaited = awaited_transport(owner);
-    return awaited != 0 && awaited == awaited_transport(c);
+    const EntityId awaited = awaited_transport(owner);
+    return awaited && awaited == awaited_transport(c);
 }
 
 /// Moho's func_UnitMoreInLineToOther(a1, a2): the one that faces the other
@@ -191,7 +192,7 @@ void path_ahead(const Unit& u, std::vector<Vector3>& out) {
 /// Each unit's path ahead, made once a tick: the pass runs before anything
 /// moves, and a unit meets many others. A resolution that changes a unit's
 /// path drops its entry. (Looked up by id only; nothing walks it.)
-using PathCache = std::unordered_map<u32, std::vector<Vector3>>;
+using PathCache = std::unordered_map<EntityId, std::vector<Vector3>>;
 
 const std::vector<Vector3>& cached_path(PathCache& cache, const Unit& u) {
     auto [it, fresh] = cache.try_emplace(u.entity_id());
@@ -532,9 +533,10 @@ void resolve_moho(SimState& sim, Unit& owner) {
 /// the push shared by their masses.
 void collide_moho_units(SimState& sim, Unit& owner) {
     if (owner.is_air_unit() || owner.layer() == "Sub" || owner.is_dying() ||
-        owner.is_being_built() || owner.parent_entity_id() != 0 || can_fly(owner) ||
-        owner.pushed() || owner.is_naval() || owner.destroyed())
+        owner.is_being_built() || owner.parent_entity_id() || can_fly(owner) || owner.pushed() ||
+        owner.is_naval() || owner.destroyed()) {
         return;
+    }
     const Vector3& ov = owner.motion_velocity();
     if (!(ov.x * ov.x + ov.y * ov.y + ov.z * ov.z > 0.000001f) && !owner.surface_collision())
         return;
@@ -548,7 +550,7 @@ void collide_moho_units(SimState& sim, Unit& owner) {
         reach_z += std::abs(box.axis[i].z) * box.extent[i];
     }
     struct Hit {
-        u32 id;
+        EntityId id{};
         f32 depth;
     };
     std::vector<Hit> hits;
@@ -822,8 +824,9 @@ u64 formation_layer(const Unit& u) {
     const UnitCommand& head = q.front();
     // (Moho's GuardBusy, a guard off fighting for its unit: here its head
     // order is the fight, so it isn't in the guard formation.)
-    if (head.type == CommandType::Guard && head.target_id != 0 && !u.has_category("ENGINEER"))
-        return (u64{1} << 32) | head.target_id;
+    if (head.type == CommandType::Guard && head.target_id && !u.has_category("ENGINEER")) {
+        return (u64{1} << 32) | head.target_id.moho();
+    }
     if (head.formed) return (u64{2} << 32) | head.command_id;
     return 0;
 }
@@ -844,7 +847,9 @@ bool outranks(const Unit& a, const Unit& b) {
     const bool b_grounded_flier = can_fly(b) && !b.is_air_unit();
     if (a_grounded_flier) return true;
     if (b_grounded_flier) return false;
-    if (awaited_transport(a) != 0 && awaited_transport(b) == 0) return true;
+    if (awaited_transport(a) && !awaited_transport(b)) {
+        return true;
+    }
     if (guarded(a) == b.entity_id()) return false;
     if (guarded(b) == a.entity_id()) return true;
     if (moving(a) != moving(b)) return !moving(a);
@@ -853,10 +858,10 @@ bool outranks(const Unit& a, const Unit& b) {
     return a.entity_id() < b.entity_id();
 }
 
-void steer_units(SimState& sim, const std::vector<u32>& ids) {
+void steer_units(SimState& sim, const std::vector<EntityId>& ids) {
     const i32 now = static_cast<i32>(sim.tick_count());
     PathCache cache;
-    for (const u32 id : ids) {
+    for (const EntityId id : ids) {
         Entity* e = sim.entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto& u = static_cast<Unit&>(*e);
@@ -895,7 +900,7 @@ void steer_stop(SimState& sim, Unit& u) {
 }
 
 void steer_ground_units(SimState& sim) {
-    std::vector<u32> ids;
+    std::vector<EntityId> ids;
     sim.entity_registry().for_each_unit([&](Entity& e) {
         if (auto& u = static_cast<Unit&>(e); steers(u) && moving(u)) {
             ids.push_back(u.entity_id());

@@ -60,21 +60,23 @@ extern "C" {
 
 namespace osc::test {
 
-u32 army_acu_id(sim::SimState& sim, i32 army) {
-    u32 best = 0;
+sim::EntityId army_acu_id(sim::SimState& sim, i32 army) {
+    sim::EntityId best{};
     sim.entity_registry().for_each([&](sim::Entity& e) {
         if (!e.is_unit() || e.army() != army) return;
         if (!static_cast<sim::Unit&>(e).has_category("COMMAND")) return;
-        if (best == 0 || e.entity_id() < best) best = e.entity_id();
+        if (!best || e.entity_id() < best) {
+            best = e.entity_id();
+        }
     });
     return best;
 }
 
 static int l_test_acu_id(lua_State* L) {
     auto* sim = sim::get_sim(L);
-    const u32 id = sim ? army_acu_id(*sim, static_cast<i32>(luaL_checknumber(L, 1)) - 1)
-                       : 0;
-    if (id == 0) {
+    const sim::EntityId id =
+        sim ? army_acu_id(*sim, static_cast<i32>(luaL_checknumber(L, 1)) - 1) : sim::EntityId();
+    if (!id) {
         lua_pushnil(L);
     } else {
         lua_pushnumber(L, static_cast<lua_Number>(osc::sim::EntityRegistry::moho_id(id)));
@@ -142,7 +144,7 @@ void register_test_helpers(lua_State* L, bool moho_pathing) {
 // Damage test: deal lethal damage to entity #1 and run more ticks
 void test_damage(TestContext& ctx) {
     spdlog::info("=== DAMAGE TEST: Killing entity #1 ===");
-    const u32 acu = army_acu_id(ctx.sim, 0);
+    const sim::EntityId acu = army_acu_id(ctx.sim, 0);
     auto damage_result = ctx.lua_state.do_string(
         "local e = GetEntityById(__osc_test_acu_id(1))\n"
         "if e then\n"
@@ -160,7 +162,7 @@ void test_damage(TestContext& ctx) {
 
     tick_until(ctx, "the commander's DeathThread destroys it", 300, [&] {
         const auto* e = ctx.sim.entity_registry().find(acu);
-        return acu != 0 && (!e || e->destroyed());
+        return acu && (!e || e->destroyed());
     });
     spdlog::info("Entities remaining: {}",
                  ctx.sim.entity_registry().count());
@@ -445,13 +447,13 @@ void test_chain(TestContext& ctx) {
 
         // Track builder to capture build_target_id before it completes
         auto* u1 = static_cast<osc::sim::Unit*>(e1);
-        osc::u32 factory_id = 0;
-        const auto finished = [&](osc::u32 id) {
+        osc::sim::EntityId factory_id{};
+        const auto finished = [&](osc::sim::EntityId id) {
             const auto* e = ctx.sim.entity_registry().find(id);
-            return id != 0 && e && !e->destroyed() && e->fraction_complete() >= 1.0f;
+            return id && e && !e->destroyed() && e->fraction_complete() >= 1.0f;
         };
         if (tick_until(ctx, "Phase 1: the commander finishes the land factory", 700, [&] {
-                if (u1->is_building() && factory_id == 0) {
+                if (u1->is_building() && !factory_id) {
                     factory_id = u1->build_target_id();
                 }
                 return finished(factory_id);
@@ -471,7 +473,7 @@ void test_chain(TestContext& ctx) {
             auto r2 = ctx.lua_state.do_string(p2_lua);
             if (!r2) spdlog::warn("Chain P2 Lua error: {}", r2.error().message);
 
-            osc::u32 engineer_id = 0;
+            osc::sim::EntityId engineer_id{};
             if (tick_until(ctx, "Phase 2: the factory finishes an engineer and rolls it off", 400,
                            [&] {
                                auto* fent = ctx.sim.entity_registry().find(factory_id);
@@ -479,7 +481,7 @@ void test_chain(TestContext& ctx) {
                                    return false;
                                }
                                auto* fu = static_cast<osc::sim::Unit*>(fent);
-                               if (fu->is_building() && engineer_id == 0) {
+                               if (fu->is_building() && !engineer_id) {
                                    engineer_id = fu->build_target_id();
                                }
                                auto* eent = ctx.sim.entity_registry().find(engineer_id);
@@ -505,12 +507,12 @@ void test_chain(TestContext& ctx) {
                 auto r3 = ctx.lua_state.do_string(p3_lua);
                 if (!r3) spdlog::warn("Chain P3 Lua error: {}", r3.error().message);
 
-                osc::u32 pgen_id = 0;
+                osc::sim::EntityId pgen_id{};
                 if (tick_until(ctx, "Phase 3: the engineer finishes the power generator", 600, [&] {
                         auto* eent = ctx.sim.entity_registry().find(engineer_id);
                         if (eent && eent->is_unit()) {
                             auto* eu = static_cast<osc::sim::Unit*>(eent);
-                            if (eu->is_building() && pgen_id == 0) {
+                            if (eu->is_building() && !pgen_id) {
                                 pgen_id = eu->build_target_id();
                             }
                         }
@@ -7026,7 +7028,8 @@ void test_projectile(TestContext& ctx) {
             }
             osc::sim::Entity* e = nullptr;
             if (lua_isnumber(L, -1)) {
-                e = ctx.sim.entity_registry().find(osc::sim::to_entity_id(L, -1));
+                e = ctx.sim.entity_registry().find(
+                    osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry()));
             }
             lua_pop(L, 1);
             return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e)->get_weapon(0) : nullptr;
@@ -7219,7 +7222,7 @@ void test_weapon(TestContext& ctx) {
         lua_State* L = ctx.lua_state.raw();
         lua_pushstring(L, "__osc_built_id");
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = osc::sim::to_entity_id(L, -1);
+        const auto id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 1);
         auto* built = ctx.sim.entity_registry().find(id);
         if (built && built->is_unit())
@@ -7389,7 +7392,7 @@ void test_targeting(TestContext& ctx) {
         lua_State* L = ctx.lua_state.raw();
         lua_pushstring(L, global);
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = osc::sim::to_entity_id(L, -1);
+        const auto id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 1);
         auto* e = ctx.sim.entity_registry().find(id);
         return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e) : nullptr;
@@ -7690,7 +7693,7 @@ void test_aim(TestContext& ctx) {
         lua_State* L = ctx.lua_state.raw();
         lua_pushstring(L, "__osc_tank_id");
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = osc::sim::to_entity_id(L, -1);
+        const auto id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 1);
         const auto* e = ctx.sim.entity_registry().find(id);
         const auto* tank = e && e->is_unit() ? static_cast<const osc::sim::Unit*>(e) : nullptr;
@@ -7798,10 +7801,10 @@ void test_death(TestContext& ctx) {
     };
     const int failures_before = osc::test_status::failure_count();
     lua_State* L = ctx.lua_state.raw();
-    const auto global_id = [L](const char* name) {
+    const auto global_id = [L, &ctx](const char* name) {
         lua_pushstring(L, name);
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = osc::sim::to_entity_id(L, -1);
+        const auto id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 1);
         return id;
     };
@@ -7893,7 +7896,7 @@ void test_death(TestContext& ctx) {
         __osc_bare_plane:Kill()
         __osc_scout:SetFuelRatio(0.0005)
     )");
-    const osc::u32 marine_id = global_id("__osc_marine_id");
+    const osc::sim::EntityId marine_id = global_id("__osc_marine_id");
     std::vector<std::array<osc::f32, 16>> marine_pose;
     if (!tick_until(
             [&] {
@@ -8507,7 +8510,7 @@ void test_collide(TestContext& ctx) {
         auto* L = ctx.lua_state.raw();
         lua_pushstring(L, "__osc_striker_id");
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = osc::sim::to_entity_id(L, -1);
+        const auto id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 1);
         const osc::sim::Entity* striker = ctx.sim.entity_registry().find(id);
         const auto shape = striker ? striker->collision_shape() : osc::sim::CollisionShape{};
@@ -8898,15 +8901,15 @@ void test_area(TestContext& ctx) {
             " __osc_victim_id, __osc_gunner_id = __osc_victim:GetEntityId(), "
             "__osc_gunner:GetEntityId()");
         auto* L = ctx.lua_state.raw();
-        const auto global = [L](const char* name) {
+        const auto global = [L, &ctx](const char* name) {
             lua_pushstring(L, name);
             lua_rawget(L, LUA_GLOBALSINDEX);
-            const auto v = osc::sim::to_entity_id(L, -1);
+            const auto v = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
             lua_pop(L, 1);
             return v;
         };
         const auto* victim = ctx.sim.entity_registry().find(global("__osc_victim_id"));
-        const osc::u32 gunner = global("__osc_gunner_id");
+        const osc::sim::EntityId gunner = global("__osc_gunner_id");
         check(victim && victim->is_unit() &&
                   static_cast<const osc::sim::Unit*>(victim)->last_attacker_id() == gunner,
               "Test 9: area damage credits its instigator");
@@ -9304,7 +9307,7 @@ void test_steer(TestContext& ctx) {
         if (!lua(std::string("__osc_id = ") + global + ":GetEntityId()")) return nullptr;
         lua_pushstring(L, "__osc_id");
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = osc::sim::to_entity_id(L, -1);
+        const auto id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 1);
         auto* e = ctx.sim.entity_registry().find(id);
         return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
@@ -9355,7 +9358,7 @@ void test_steer(TestContext& ctx) {
         Watch w;
         osc::sim::Unit* u[2] = {unit(a), unit(b)};
         if (!u[0] || !u[1]) return w;
-        const osc::u32 ids[2] = {u[0]->entity_id(), u[1]->entity_id()};
+        const osc::sim::EntityId ids[2] = {u[0]->entity_id(), u[1]->entity_id()};
         const bool along_x[2] = {a_along_x, b_along_x};
         float line[2];
         for (int i = 0; i < 2; ++i) line[i] = along_x[i] ? u[i]->position().z : u[i]->position().x;
@@ -9542,9 +9545,13 @@ void test_steer(TestContext& ctx) {
         const Watch w = watch("__osc_striker", "__osc_pillar", 300, false, false);
         auto* striker = unit("__osc_striker");
         auto* pillar = unit("__osc_pillar");
-        // With Moho pathing the pass is its navigator's (see test 1): nothing is made to stop.
-        check((moho || (w.stepped[0] && w.held[1])) && w.closest >= 0.9f * r && striker && pillar &&
-                  striker->position().z > pillar->position().z && w.arrived[0] && w.arrived[1],
+        // With Moho pathing the pass is its navigator's (see test 1): nothing is made to stop. Its
+        // look-ahead falls on the tick the unit's id matches mod 7, so the closest point shifts
+        // with the ids the scenes before left free.
+        const float keeps_apart = moho ? 0.85f : 0.9f;
+        check((moho || (w.stepped[0] && w.held[1])) && w.closest >= keeps_apart * r && striker &&
+                  pillar && striker->position().z > pillar->position().z && w.arrived[0] &&
+                  w.arrived[1],
               fmt::format("Test 5: overtaking one that outranks it, it steps aside and the other "
                           "stops (stepped {}, overtaken held {}, closest {:.2f} of {:.2f})",
                           w.stepped[0], w.held[1], w.closest, r));
@@ -9897,7 +9904,7 @@ void test_formation(TestContext& ctx) {
             return osc::sim::formation_scripts(ctx.lua_state.raw(), air);
         };
         input.set_command_mode_hooks(hooks);
-        std::unordered_set<osc::u32> sel;
+        std::unordered_set<osc::sim::EntityId> sel;
         ctx.sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
             if (!e.destroyed() && e.is_unit() && e.blueprint_id() == "uel0201" &&
                 std::abs(e.position().z - 75.0f) < 0.5f && e.position().x > 719.0f) {
@@ -10288,10 +10295,10 @@ void test_missile(TestContext& ctx) {
     {
         osc::sim::WorldSnapshot snap;
         osc::sim::capture_world(ctx.sim, snap);
-        u32 a_id = 0;
+        osc::sim::EntityId a_id{};
         if (ctx.lua_state.do_string("__osc_a_id = __osc_a:GetEntityId()")) {
             lua_getglobal(ctx.L, "__osc_a_id");
-            a_id = osc::sim::to_entity_id(ctx.L, -1);
+            a_id = osc::sim::to_entity_id(ctx.L, -1, ctx.sim.entity_registry());
             lua_pop(ctx.L, 1);
         }
         const osc::sim::EntityRecord* rec = snap.find(a_id);
@@ -11785,7 +11792,7 @@ void test_range(TestContext& ctx) {
         __osc_burn_id = tonumber(__osc_burn:GetEntityId())
     )");
     lua_getglobal(ctx.lua_state.raw(), "__osc_burn_id");
-    const auto burn_id = osc::sim::to_entity_id(ctx.lua_state.raw(), -1);
+    const auto burn_id = osc::sim::to_entity_id(ctx.lua_state.raw(), -1, ctx.sim.entity_registry());
     lua_pop(ctx.lua_state.raw(), 1);
     bool unit_templates = false;
     const auto burning = [&](float ratio) {
@@ -11824,7 +11831,7 @@ void test_range(TestContext& ctx) {
     )");
     {
         lua_getglobal(ctx.lua_state.raw(), "__osc_scaled_id");
-        const auto id = osc::sim::to_entity_id(ctx.lua_state.raw(), -1);
+        const auto id = osc::sim::to_entity_id(ctx.lua_state.raw(), -1, ctx.sim.entity_registry());
         lua_pop(ctx.lua_state.raw(), 1);
         const auto* e = ctx.sim.entity_registry().find(id);
         check(e && e->scale_x() == 1.0f && std::abs(e->scale_y() - 0.2f) < 1e-6f &&
@@ -12092,7 +12099,7 @@ void test_factory_assist(TestContext& ctx) {
         __osc_a_id = __osc_a:GetEntityId()
     )");
     lua_getglobal(ctx.lua_state.raw(), "__osc_a_id");
-    const auto a_id = osc::sim::to_entity_id(ctx.lua_state.raw(), -1);
+    const auto a_id = osc::sim::to_entity_id(ctx.lua_state.raw(), -1, ctx.sim.entity_registry());
     lua_pop(ctx.lua_state.raw(), 1);
     auto* a_unit = static_cast<osc::sim::Unit*>(ctx.sim.entity_registry().find(a_id));
     if (a_unit) a_unit->increase_build_count(1, 2);
@@ -12387,7 +12394,7 @@ void test_factory_rally(TestContext& ctx) {
     {
         lua_State* L = ctx.lua_state.raw();
         lua_getglobal(L, "__osc_a_id");
-        const auto a_id = osc::sim::to_entity_id(L, -1);
+        const auto a_id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 1);
         osc::sim::UnitCommand move;
         move.type = osc::sim::CommandType::Move;
@@ -12911,7 +12918,7 @@ void test_transport_slots(TestContext& ctx) {
             lua_gettable(L, -2);
             lua_pushvalue(L, -2);
             lua_pcall(L, 1, 1, 0);
-            const auto id = osc::sim::to_entity_id(L, -1);
+            const auto id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
             lua_pop(L, 2);
             if (const auto* e = ctx.sim.entity_registry().find(id)) out.push_back(e->position());
         }
@@ -12982,7 +12989,7 @@ void test_transport_slots(TestContext& ctx) {
 
     lua("__osc_xid = __osc_xport:GetEntityId()");
     const auto* xport = ctx.sim.entity_registry().find(
-        osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_xid"))));
+        ctx.sim.entity_registry().live_id(static_cast<osc::u32>(number("__osc_xid"))));
     const auto* transport =
         xport && xport->is_unit() ? static_cast<const osc::sim::Unit*>(xport) : nullptr;
     // How many carried units hang by their AttachPoint bone, and how far the
@@ -12991,7 +12998,8 @@ void test_transport_slots(TestContext& ctx) {
         const auto* slots = transport ? transport->built_transport_slots() : nullptr;
         f32 worst = 0;
         int placed = 0;
-        for (const osc::u32 id : transport ? transport->cargo_ids() : std::vector<osc::u32>{}) {
+        for (const osc::sim::EntityId id :
+             transport ? transport->cargo_ids() : std::vector<osc::sim::EntityId>{}) {
             const auto* e = ctx.sim.entity_registry().find(id);
             const auto* slot = slots ? slots->slot_of(id) : nullptr;
             if (!e || !e->is_unit() || !slot || slot->unit_bone < 0) continue;
@@ -13194,9 +13202,9 @@ void test_transport_slots(TestContext& ctx) {
     lua("__osc_gone = __osc_xport:BeenDestroyed() and 1 or 0");
     {
         const auto* kept = ctx.sim.entity_registry().find(
-            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_kept_id"))));
+            ctx.sim.entity_registry().live_id(static_cast<osc::u32>(number("__osc_kept_id"))));
         const bool there = kept && kept->is_unit() && !kept->destroyed();
-        const bool held = there && static_cast<const osc::sim::Unit*>(kept)->transport_id() != 0;
+        const bool held = there && static_cast<const osc::sim::Unit*>(kept)->transport_id();
         check(number("__osc_gone") == 1 && there && !held,
               fmt::format("destroyed, the transport holds its kept dead unit no longer (destroyed "
                           "{}, the unit there {}, held {})",
@@ -13235,7 +13243,7 @@ void test_transport_pickup(TestContext& ctx) {
     const auto unit = [&](const char* expr) -> osc::sim::Unit* {
         lua((std::string("__osc_id = ") + expr + ":GetEntityId()").c_str());
         auto* e = ctx.sim.entity_registry().find(
-            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_id"))));
+            ctx.sim.entity_registry().live_id(static_cast<osc::u32>(number("__osc_id"))));
         return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
     const auto* terrain = ctx.sim.terrain();
@@ -13303,7 +13311,7 @@ void test_transport_pickup(TestContext& ctx) {
 
     // Where the 6 given slots stood.
     osc::sim::Vector3 centre{};
-    for (const osc::u32 id : xport->pickup_ids()) {
+    for (const osc::sim::EntityId id : xport->pickup_ids()) {
         const auto* e = ctx.sim.entity_registry().find(id);
         centre = {centre.x + e->position().x / 6, 0, centre.z + e->position().z / 6};
     }
@@ -13320,7 +13328,7 @@ void test_transport_pickup(TestContext& ctx) {
                     std::hypot(xport->position().x - centre.x, xport->position().z - centre.z);
             }
             for (const auto* t : tanks) {
-                if (t && !t->destroyed() && t->transport_id() == 0) {
+                if (t && !t->destroyed() && !t->transport_id()) {
                     lifted =
                         std::max(lifted, t->position().y - terrain->get_surface_height(
                                                                t->position().x, t->position().z));
@@ -13492,18 +13500,19 @@ void test_transport_pickup(TestContext& ctx) {
     auto* free_tank = unit("__osc_free");
     tick_until(ctx, "both tanks board the transport", 600,
                [&] { return !rc || rc->cargo_ids().size() >= 2; });
-    std::vector<osc::u32> aboard = rc ? rc->cargo_ids() : std::vector<osc::u32>{};
+    std::vector<osc::sim::EntityId> aboard =
+        rc ? rc->cargo_ids() : std::vector<osc::sim::EntityId>{};
     if (rd && free_tank && aboard.size() == 2) {
         osc::sim::UnitCommand load;
         load.type = osc::sim::CommandType::TransportLoad;
         load.target_id = rd->entity_id();
         load.target_pos = rd->position();
-        std::vector<osc::u32> ordered = aboard;
+        std::vector<osc::sim::EntityId> ordered = aboard;
         ordered.push_back(free_tank->entity_id());
         ctx.sim.route_command(ordered, load, true);
     }
     std::size_t taken = 0;
-    for (const osc::u32 id : aboard) {
+    for (const osc::sim::EntityId id : aboard) {
         const auto* e = ctx.sim.entity_registry().find(id);
         if (e && e->is_unit()) {
             taken += static_cast<const osc::sim::Unit*>(e)->command_queue().size();
@@ -13525,13 +13534,15 @@ osc::sim::SimState* g_board_sim = nullptr;
 // attached as the load's beam-up attaches it. (AddUnitToStorage is a
 // carrier's storage, which a transport has none of.)
 int test_board(lua_State* L) {
-    const auto id_of = [L](int idx) -> osc::u32 {
-        if (!lua_istable(L, idx)) return 0;
+    const auto id_of = [L](int idx) -> osc::sim::EntityId {
+        if (!lua_istable(L, idx)) {
+            return {};
+        }
         lua_pushstring(L, "GetEntityId");
         lua_gettable(L, idx);
         lua_pushvalue(L, idx);
         lua_call(L, 1, 1);
-        const auto id = osc::sim::to_entity_id(L, -1);
+        const auto id = osc::sim::to_entity_id(L, -1, g_board_sim->entity_registry());
         lua_pop(L, 1);
         return id;
     };
@@ -13576,7 +13587,7 @@ void test_carrier(TestContext& ctx) {
     const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
         lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
         auto* e = ctx.sim.entity_registry().find(
-            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_id"))));
+            ctx.sim.entity_registry().live_id(static_cast<osc::u32>(number("__osc_id"))));
         return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
 
@@ -13636,9 +13647,9 @@ void test_carrier(TestContext& ctx) {
     )");
     auto* last = unit("__osc_planes[51]");
     check(carrier->stored_ids().size() == 50 && number("__osc_room") == 0 && last &&
-              last->transport_id() == 0,
+              !last->transport_id(),
           fmt::format("storage holds 50 and no more ({} stored, 51st aboard: {})",
-                      carrier->stored_ids().size(), last && last->transport_id() != 0));
+                      carrier->stored_ids().size(), last && last->transport_id()));
 
     // CalculateWorldPositionFromRelative turns the offset with the carrier.
     lua(R"(
@@ -13661,8 +13672,7 @@ void test_carrier(TestContext& ctx) {
     const auto launched = [&] {
         int n = 0;
         for (int i = 1; i <= 50; ++i)
-            if (auto* p = unit("__osc_planes[" + std::to_string(i) + "]");
-                p && p->transport_id() == 0)
+            if (auto* p = unit("__osc_planes[" + std::to_string(i) + "]"); p && !p->transport_id())
                 ++n;
         return n;
     };
@@ -13680,7 +13690,7 @@ void test_carrier(TestContext& ctx) {
     lua("__osc_touchable = __osc_planes[1].CanTakeDamage and 1 or 0");
     const osc::sim::UnitCommand* order =
         first->command_queue().empty() ? nullptr : &first->command_queue().front();
-    check(first->transport_id() == 0 && number("__osc_touchable") == 1 && order &&
+    check(!first->transport_id() && number("__osc_touchable") == 1 && order &&
               order->type == osc::sim::CommandType::Move &&
               std::abs(order->target_pos.x - static_cast<osc::f32>(number("__osc_cx") + 60)) <
                   0.01f,
@@ -13783,7 +13793,7 @@ void test_right_click(TestContext& ctx) {
     const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
         lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
         auto* e = ctx.sim.entity_registry().find(
-            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_id"))));
+            ctx.sim.entity_registry().live_id(static_cast<osc::u32>(number("__osc_id"))));
         return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
     if (!lua(R"(
@@ -13875,18 +13885,19 @@ void test_right_click(TestContext& ctx) {
     input.set_player_army(0);
     // Right-click `on` (its position) with `sel` selected; one tick applies it.
     std::vector<osc::renderer::IssuedCommand> issued;
-    const auto right_click = [&](const std::unordered_set<osc::u32>& sel,
+    const auto right_click = [&](const std::unordered_set<osc::sim::EntityId>& sel,
                                  const osc::sim::Entity& on) {
         input.set_selected(sel);
         issued = input.right_click_at(ctx.sim, on.position().x, on.position().z, false);
         ctx.sim.tick();
     };
     // Whether the click issued an order of this kind at this target.
-    const auto gave = [&](const char* type, osc::u32 target) {
+    const auto gave = [&](const char* type, osc::sim::EntityId target) {
         return std::any_of(issued.begin(), issued.end(),
                            [&](const auto& c) { return c.type == type && c.target_id == target; });
     };
-    const auto head = [](const osc::sim::Unit& u, osc::sim::CommandType type, osc::u32 target) {
+    const auto head = [](const osc::sim::Unit& u, osc::sim::CommandType type,
+                         osc::sim::EntityId target) {
         const auto& q = u.command_queue();
         return !q.empty() && q.front().type == type && q.front().target_id == target;
     };
@@ -13923,7 +13934,7 @@ void test_right_click(TestContext& ctx) {
     // A second engineer, right-clicking it, builds it alongside the first;
     // completed, it hears OnStopBeingBuilt once.
     if (unbuilt) {
-        const osc::u32 pgen = unbuilt->entity_id();
+        const osc::sim::EntityId pgen = unbuilt->entity_id();
         lua(("__osc_pgen = " + std::to_string(osc::sim::EntityRegistry::moho_id(pgen))).c_str());
         lua(R"(
             __osc_eng2 = CreateUnitHPR('uel0105', 'ARMY_1', __osc_x + 8, GetTerrainHeight(__osc_x + 8, __osc_z - 8), __osc_z - 8, 0, 0, 0)
@@ -13945,7 +13956,7 @@ void test_right_click(TestContext& ctx) {
         for (int i = 0; i < 3; ++i) ctx.sim.tick();
         // Both let it go when it is done, neither paying on.
         const auto released = [](const osc::sim::Unit& u) {
-            return u.build_target_id() == 0 && !u.economy().consumption_active;
+            return !u.build_target_id() && !u.economy().consumption_active;
         };
         check(helped && !unbuilt->is_being_built() && number("__osc_done") == 1 && eng2 &&
                   eng2->command_queue().empty() && released(*eng2) && released(*eng),
@@ -13979,8 +13990,7 @@ void test_right_click(TestContext& ctx) {
         }
         for (int i = 0; i < 20; ++i) ctx.sim.tick();
         lua(("__osc_left = " +
-             std::to_string(static_cast<osc::i32>(
-                 osc::sim::EntityRegistry::moho_id(left ? left->entity_id() : 0))))
+             std::to_string(left ? static_cast<osc::i32>(left->entity_id().moho()) : -1))
                 .c_str());
         const bool was_building = left && eng->build_target_id() == left->entity_id();
         lua(R"(
@@ -13994,9 +14004,9 @@ void test_right_click(TestContext& ctx) {
         )");
         ctx.sim.tick();
         // Its orders cleared, the builder lets the build go and stops paying.
-        check(was_building && eng->build_target_id() == 0 && !eng->economy().consumption_active,
+        check(was_building && !eng->build_target_id() && !eng->economy().consumption_active,
               "a builder whose orders are cleared lets its build go");
-        const osc::u32 left_id = osc::sim::EntityRegistry::from_moho_id(
+        const osc::sim::EntityId left_id = ctx.sim.entity_registry().live_id(
             static_cast<osc::u32>(static_cast<osc::i32>(number("__osc_left"))));
         const auto* le = left_id ? ctx.sim.entity_registry().find(left_id) : nullptr;
         left = le && !le->destroyed() && le->is_unit() ? static_cast<const osc::sim::Unit*>(le)
@@ -14065,8 +14075,9 @@ void test_right_click(TestContext& ctx) {
         ctx.sim.tick();
         input.set_selected({});
         const auto no_order = input.right_button_order(ctx.sim, gx, gz);
-        check(issued.size() == 1 && issued[0].type == "Move" && head(*eng, CT::Move, 0) &&
-                  shown_order == CT::Move && !no_order,
+        check(issued.size() == 1 && issued[0].type == "Move" &&
+                  head(*eng, CT::Move, osc::sim::EntityId()) && shown_order == CT::Move &&
+                  !no_order,
               "on open ground: a move, as the cursor shows; nothing selected, no order");
     }
     // Allied, the other army's tank is an ally: a right-click guards it.
@@ -14105,7 +14116,7 @@ void test_carrier_land(TestContext& ctx) {
     const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
         lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
         auto* e = ctx.sim.entity_registry().find(
-            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_id"))));
+            ctx.sim.entity_registry().live_id(static_cast<osc::u32>(number("__osc_id"))));
         return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
 
@@ -14152,8 +14163,11 @@ void test_carrier_land(TestContext& ctx) {
     // after wait 3 ticks more, and a reserved place counts as taken.
     {
         std::vector<osc::sim::Unit::StoragePlace> places;
-        for (osc::u32 id = 900001; id <= 900007; ++id)
-            if (auto p = carrier->reserve_storage(id)) places.push_back(*p);
+        for (osc::u32 id = 900001; id <= 900007; ++id) {
+            if (auto p = carrier->reserve_storage(osc::sim::EntityId(id))) {
+                places.push_back(*p);
+            }
+        }
         bool distinct = places.size() == 7;
         for (size_t i = 0; distinct && i < 6; ++i)
             for (size_t j = i + 1; j < 6; ++j) {
@@ -14173,13 +14187,16 @@ void test_carrier_land(TestContext& ctx) {
                         places.size() < 7 ? -1 : places[6].delay));
         // Reserved places count as taken: the 60 slots fill with 60.
         osc::u32 next = 900008;
-        while (carrier->transport_has_available_storage() && next < 900200)
-            (void)carrier->reserve_storage(next++);
+        while (carrier->transport_has_available_storage() && next < 900200) {
+            (void)carrier->reserve_storage(osc::sim::EntityId(next++));
+        }
         check(carrier->storage_reserved_ids().size() == 60 &&
                   !carrier->transport_has_available_storage(),
               fmt::format("reserved places fill the storage ({} reserved)",
                           carrier->storage_reserved_ids().size()));
-        for (osc::u32 id = 900001; id < next; ++id) carrier->clear_storage_reservation(id);
+        for (osc::u32 id = 900001; id < next; ++id) {
+            carrier->clear_storage_reservation(osc::sim::EntityId(id));
+        }
         carrier->reset_storage_reservation();
         check(carrier->storage_reserved_ids().empty() && carrier->next_storage_point() == 0 &&
                   carrier->storage_overflow() == 0,
@@ -14339,7 +14356,7 @@ void test_carrier_land(TestContext& ctx) {
               std::abs((f1 - f0) - 5.0f / 400.0f * 0.1f * 100.0f) < 1e-5f,
           fmt::format("docked, it lands and refuels stored, {:.4f} a tick", f1 - f0));
     const bool launched = stored && tick_until(ctx, "the refuelled plane is launched", 300, [&] {
-                                        return d->transport_id() == 0;
+                                        return !d->transport_id();
                                     }).has_value();
     const float surface =
         ctx.sim.terrain() ? ctx.sim.terrain()->get_surface_height(d->position().x, d->position().z)
@@ -14376,7 +14393,7 @@ void test_carrier_land(TestContext& ctx) {
                 went_in = went_in || carrier->is_stored_unit(g->entity_id());
             },
             "the interceptor docks and is launched", 3000,
-            [&] { return went_in && g->transport_id() == 0; });
+            [&] { return went_in && !g->transport_id(); });
         const float launch_alt = g->current_altitude();
         tick_until(ctx, "the interceptor's order is done", 300,
                    [&] { return g->command_queue().empty(); });
@@ -14405,7 +14422,7 @@ void test_carrier_land(TestContext& ctx) {
     )");
     auto* c4 = unit("__osc_c4");
     if (auto* h = unit("__osc_h"); h && c4) {
-        tick_until(ctx, "the stored plane is launched", 10, [&] { return h->transport_id() == 0; });
+        tick_until(ctx, "the stored plane is launched", 10, [&] { return !h->transport_id(); });
         // Where it is after its launch tick: by its launch bone (one tick's
         // climb off), not back at the height it had.
         float nearest = 1e9f;
@@ -14413,7 +14430,7 @@ void test_carrier_land(TestContext& ctx) {
             for (const osc::i32 bone : slots->launch_bones())
                 nearest =
                     std::min(nearest, std::abs(h->position().y - c4->bone_world_position(bone).y));
-        check(h->transport_id() == 0 && nearest < 1.0f,
+        check(!h->transport_id() && nearest < 1.0f,
               fmt::format("a plane launched from storage flies on from its launch height ({:.2f} "
                           "off it)",
                           nearest));
@@ -14433,7 +14450,7 @@ void test_carrier_land(TestContext& ctx) {
     auto* c3 = unit("__osc_c3");
     const bool took = f && !f->command_queue().empty();
     for (int i = 0; i < 5; ++i) ctx.sim.tick();
-    check(took && f && c3 && f->command_queue().empty() && f->transport_id() == 0 &&
+    check(took && f && c3 && f->command_queue().empty() && !f->transport_id() &&
               f->landing_phase() == 0 && c3->storage_reserved_ids().empty(),
           "ordered aboard a busy carrier, a plane gives up");
 
@@ -14489,7 +14506,7 @@ void test_change_army(TestContext& ctx) {
             return nullptr;
         lua_pushstring(L, "__osc_id");
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = osc::sim::to_entity_id(L, -1);
+        const auto id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 1);
         auto* e = ctx.sim.entity_registry().find(id);
         return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
@@ -14590,7 +14607,7 @@ void test_change_army(TestContext& ctx) {
         __osc_eng1 = CreateUnitHPR('uel0105', 'ARMY_1', x + 4, y - 12, z, 0, 0, 0)
         __osc_eng2 = CreateUnitHPR('uel0105', 'ARMY_1', x - 4, y - 12, z, 0, 0, 0)
     )");
-    std::vector<osc::u32> old_engs;
+    std::vector<osc::sim::EntityId> old_engs;
     if (auto* xport = unit("__osc_xport"))
         for (const char* eng : {"__osc_eng1", "__osc_eng2"})
             if (auto* e = unit(eng)) {
@@ -14602,13 +14619,13 @@ void test_change_army(TestContext& ctx) {
     {
         auto* x = unit("__osc_new_xport");
         bool all = x && x->army() == 1 && x->cargo_ids().size() == 2;
-        for (const osc::u32 id : x ? x->cargo_ids() : std::vector<osc::u32>{}) {
+        for (const osc::sim::EntityId id : x ? x->cargo_ids() : std::vector<osc::sim::EntityId>{}) {
             const auto* e = registry.find(id);
             all = all && e && e->is_unit() && e->army() == 1 &&
                   std::find(old_engs.begin(), old_engs.end(), id) == old_engs.end() &&
                   static_cast<const osc::sim::Unit*>(e)->transport_id() == x->entity_id();
         }
-        for (const osc::u32 id : old_engs) {
+        for (const osc::sim::EntityId id : old_engs) {
             const auto* o = registry.find(id);
             all = all && (!o || o->destroyed());
         }
@@ -14623,7 +14640,7 @@ void test_change_army(TestContext& ctx) {
         local x, y, z = __osc_at(0, 90, 12)
         __osc_xport2 = CreateUnitHPR('uea0107', 'ARMY_1', x, y, z, 0, 0, 0)
     )");
-    const osc::u32 acu_id = army_acu_id(ctx.sim, 0);
+    const osc::sim::EntityId acu_id = army_acu_id(ctx.sim, 0);
     if (auto* x2 = unit("__osc_xport2")) {
         x2->add_cargo(acu_id);
         lua("__osc_given = ChangeUnitArmy(__osc_xport2, 2) or false");
@@ -14695,7 +14712,7 @@ void test_change_army(TestContext& ctx) {
         end
     )");
     if (auto* carrier = unit("__osc_carrier")) {
-        std::vector<osc::u32> old_planes;
+        std::vector<osc::sim::EntityId> old_planes;
         for (const char* plane : {"__osc_stored", "__osc_stored2"})
             if (auto* s = unit(plane)) {
                 old_planes.push_back(s->entity_id());
@@ -14705,12 +14722,15 @@ void test_change_army(TestContext& ctx) {
         tick_for(ctx, 2);
         auto* c = unit("__osc_new_carrier");
         bool all = c && old_planes.size() == 2 && c->stored_ids().size() == 2;
-        for (const osc::u32 id : c ? c->stored_ids() : std::vector<osc::u32>{}) {
+        for (const osc::sim::EntityId id :
+             c ? c->stored_ids() : std::vector<osc::sim::EntityId>{}) {
             const auto* s = registry.find(id);
             all = all && s && s->army() == 1 &&
                   std::find(old_planes.begin(), old_planes.end(), id) == old_planes.end();
         }
-        for (const osc::u32 id : old_planes) all = all && !registry.find(id);
+        for (const osc::sim::EntityId id : old_planes) {
+            all = all && !registry.find(id);
+        }
         check(all, fmt::format("Test 9: a carrier's stored aircraft change army, stored in the "
                                "new carrier ({} stored)",
                                c ? c->stored_ids().size() : 0));
@@ -14724,7 +14744,7 @@ void test_change_army(TestContext& ctx) {
         __osc_defector = __osc_new_tank
         __osc_defector_pos = __osc_defector:GetPosition()
     )");
-    const osc::u32 defeated_acu = army_acu_id(ctx.sim, 1);
+    const osc::sim::EntityId defeated_acu = army_acu_id(ctx.sim, 1);
     ctx.sim.set_share_condition("Defectors");
     ctx.sim.defeat_army(1);
     lua_check("Test 10: a defeated army's units go over to an enemy as new units", R"(
@@ -14738,7 +14758,7 @@ void test_change_army(TestContext& ctx) {
         auto* e = registry.find(defeated_acu);
         const auto* acu =
             e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
-        check(defeated_acu != 0 && (!acu || (acu->is_dying() && acu->army() == 1)),
+        check(defeated_acu && (!acu || (acu->is_dying() && acu->army() == 1)),
               "Test 10b: a defeated army's commander is not given; it dies with its army");
     }
     lua_check("Test 10c: the enemy gets no commander", R"(
@@ -14771,7 +14791,7 @@ void test_air_turn(TestContext& ctx) {
     };
     const auto unit = [&](const char* id_global) -> const osc::sim::Unit* {
         const auto* e = ctx.sim.entity_registry().find(
-            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number(id_global))));
+            ctx.sim.entity_registry().live_id(static_cast<osc::u32>(number(id_global))));
         return e && e->is_unit() && !e->destroyed() ? static_cast<const osc::sim::Unit*>(e)
                                                     : nullptr;
     };
@@ -15008,7 +15028,7 @@ void test_air_staging(TestContext& ctx) {
     const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
         lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
         auto* e = ctx.sim.entity_registry().find(
-            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_id"))));
+            ctx.sim.entity_registry().live_id(static_cast<osc::u32>(number("__osc_id"))));
         return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
     const auto dock = [&](osc::sim::Unit& plane, const osc::sim::Unit& pad) {
@@ -15088,7 +15108,7 @@ void test_air_staging(TestContext& ctx) {
             b_docked = true;
             b_bone = slot_bone(*pad, *b);
         }
-        if (b_docked && b_left_health < 0 && b->transport_id() == 0) {
+        if (b_docked && b_left_health < 0 && !b->transport_id()) {
             b_left_health = b->health();
             b_left_fuel = b->fuel_ratio();
         }
@@ -15158,7 +15178,7 @@ void test_air_staging(TestContext& ctx) {
                 docked_y = a->position().y;
                 step();
             },
-            "the interceptor is let go", 300, [&] { return a->transport_id() == 0; })) {
+            "the interceptor is let go", 300, [&] { return !a->transport_id(); })) {
         detach_tick = now;
     }
     check(detach_tick > 0 && (detach_tick - attach_tick - 1) % 9 == 0 && a->fuel_ratio() > 0.99f &&
@@ -15210,7 +15230,7 @@ void test_air_staging(TestContext& ctx) {
     check(c && c->fuel_ratio() == 0.0f && number("__osc_dry") == 1 && number("__osc_got") == 0,
           fmt::format("OnRunOutOfFuel once, at empty ({} heard)", number("__osc_dry")));
     if (c) dock(*c, *pad);
-    tick_until(ctx, "the empty plane docks", 1500, [&] { return !c || c->transport_id() != 0; });
+    tick_until(ctx, "the empty plane docks", 1500, [&] { return !c || c->transport_id(); });
     // Slowed to a quarter by running dry, it still docked turned its bone's
     // way: it waits over the bone until it is.
     if (c && c->transport_id() == pad->entity_id()) {
@@ -15239,7 +15259,7 @@ void test_air_staging(TestContext& ctx) {
         const float seat = c->position().y;
         ctx.sim.tick();
         const auto* order = c->command_queue().empty() ? nullptr : &c->command_queue().front();
-        check(c->transport_id() == 0 && order && order->type == osc::sim::CommandType::Move &&
+        check(!c->transport_id() && order && order->type == osc::sim::CommandType::Move &&
                   std::abs(order->target_pos.x - static_cast<float>(number("__osc_px") + 60)) <
                       0.01f &&
                   std::abs(c->position().y - seat) < 1.0f && !c->has_unit_state("Refueling") &&
@@ -15327,7 +15347,7 @@ void test_air_staging(TestContext& ctx) {
                     p2_broke || (!p2->command_queue().empty() &&
                                  p2->command_queue().front().type != osc::sim::CommandType::Patrol);
                 p1_docked = p1_docked || p1->transport_id() == pad->entity_id();
-                p1_back = p1_docked && p1->transport_id() == 0 && !q1.empty() &&
+                p1_back = p1_docked && !p1->transport_id() && !q1.empty() &&
                           q1.front().type == osc::sim::CommandType::Patrol;
                 ++t;
             },
@@ -15410,7 +15430,7 @@ void test_air_staging(TestContext& ctx) {
     )");
     auto* e = unit("__osc_e");
     if (e) dock(*e, *pad);
-    tick_until(ctx, "the damaged plane docks", 1500, [&] { return !e || e->transport_id() != 0; });
+    tick_until(ctx, "the damaged plane docks", 1500, [&] { return !e || e->transport_id(); });
     for (int i = 0; i < 2; ++i) ctx.sim.tick();
     const double asking = e ? e->economy().dock_repair_energy : 0.0;
     lua("__osc_e:Kill()");
@@ -15423,10 +15443,10 @@ void test_air_staging(TestContext& ctx) {
     // A pad that dies lets its planes go, where they sit.
     if (d) dock(*d, *pad);
     tick_until(ctx, "the called-off plane docks again", 1500,
-               [&] { return !d || d->transport_id() != 0; });
+               [&] { return !d || d->transport_id(); });
     const bool docked = d && d->transport_id() == pad->entity_id();
     lua("__osc_pad:Kill()");
-    check(docked && d->transport_id() == 0 && d->is_dying(),
+    check(docked && !d->transport_id() && d->is_dying(),
           "a dying pad takes the plane docked on it with it");
 
     spdlog::info("Air staging test: {}/{} passed", pass, pass + fail);
@@ -15465,7 +15485,7 @@ void test_transport_drop(TestContext& ctx) {
     const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
         lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
         auto* e = ctx.sim.entity_registry().find(
-            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_id"))));
+            ctx.sim.entity_registry().live_id(static_cast<osc::u32>(number("__osc_id"))));
         return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
     const auto* terrain = ctx.sim.terrain();
@@ -15516,7 +15536,7 @@ void test_transport_drop(TestContext& ctx) {
             ctx.sim.tick();
             peak = std::max(peak, altitude(*xport));
             for (const auto* t : tanks) {
-                if (t && t->transport_id() == 0) {
+                if (t && !t->transport_id()) {
                     dropped_at = before;
                 }
             }
@@ -15589,9 +15609,8 @@ void test_transport_drop(TestContext& ctx) {
     )"))
         return;
     auto* one = unit("__osc_one");
-    tick_until(ctx, "the lone tank is set down", 400,
-               [&] { return !one || one->transport_id() == 0; });
-    check(one && one->transport_id() == 0 &&
+    tick_until(ctx, "the lone tank is set down", 400, [&] { return !one || !one->transport_id(); });
+    check(one && !one->transport_id() &&
               std::abs(one->position().y -
                        terrain->get_surface_height(one->position().x, one->position().z)) < 0.01f,
           fmt::format("a lone tank is set down on the ground ({:.3f} off it)",
@@ -16412,11 +16431,14 @@ void test_massstub4(TestContext& ctx) {
     int pass = 0, fail = 0;
 
     // Need at least 2 entities for attachment tests
-    osc::u32 eid1 = 0, eid2 = 0;
+    osc::sim::EntityId eid1, eid2;
     ctx.sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
         if (e.is_unit() && !e.destroyed()) {
-            if (!eid1) eid1 = e.entity_id();
-            else if (!eid2) eid2 = e.entity_id();
+            if (!eid1) {
+                eid1 = e.entity_id();
+            } else if (!eid2) {
+                eid2 = e.entity_id();
+            }
         }
     });
 
@@ -16512,7 +16534,7 @@ void test_massstub4(TestContext& ctx) {
             // Detach
             e1->remove_child(e2->entity_id());
             e2->clear_parent();
-            bool ok2 = e2->parent_entity_id() == 0 && e1->children().empty();
+            bool ok2 = !e2->parent_entity_id() && e1->children().empty();
             if (ok1 && ok2) { pass++; spdlog::info("[PASS] Test 6: attachment"); }
             else { fail++; osc::test_status::fail("[FAIL] Test 6: attachment ok1={} ok2={}", ok1, ok2); }
         } else { fail++; osc::test_status::fail("[FAIL] Test 6: need 2 entities"); }
@@ -16573,7 +16595,7 @@ void test_spatial(TestContext& ctx) {
     {
         auto unit = std::make_unique<osc::sim::Entity>();
         unit->set_position({256.0f, 0.0f, 256.0f});
-        osc::u32 uid = reg.register_entity(std::move(unit));
+        osc::sim::EntityId uid = reg.register_entity(std::move(unit));
 
         auto found = reg.collect_in_radius(256.0f, 256.0f, 10.0f);
         bool ok = std::find(found.begin(), found.end(), uid) != found.end();
@@ -16633,7 +16655,7 @@ void test_spatial(TestContext& ctx) {
     // Test 8: Large radius brute-force correctness check
     {
         // Create several entities at known positions
-        std::vector<osc::u32> test_ids;
+        std::vector<osc::sim::EntityId> test_ids;
         std::vector<std::pair<float, float>> positions = {
             {200.0f, 200.0f}, {210.0f, 200.0f}, {500.0f, 500.0f}, {100.0f, 400.0f}
         };
@@ -16674,15 +16696,13 @@ void test_unitsound(TestContext& ctx) {
 
     // Find first living unit (entity IDs start high due to props)
     osc::sim::Entity* e1 = nullptr;
-    osc::u32 test_id = 0;
+    osc::sim::EntityId test_id{};
     auto& reg = ctx.sim.entity_registry();
-    for (osc::u32 id = 1; id <= static_cast<osc::u32>(reg.count()) + 100; id++) {
-        auto* e = reg.find(id);
-        if (e && !e->destroyed() && e->is_unit()) {
-            e1 = e;
-            break;
+    reg.for_each_unit([&](osc::sim::Entity& e) {
+        if (!e1 && !e.destroyed()) {
+            e1 = &e;
         }
-    }
+    });
     if (!e1) {
         osc::test_status::fail("[FAIL] No living unit found for unit sound test");
         return;
@@ -16698,9 +16718,9 @@ void test_unitsound(TestContext& ctx) {
         lua_State* sL = ctx.lua_state.raw();
         lua_pushstring(sL, "__osc_sound_unit");
         lua_rawget(sL, LUA_GLOBALSINDEX);
-        const auto made_id = osc::sim::to_entity_id(sL, -1);
+        const auto made_id = osc::sim::to_entity_id(sL, -1, ctx.sim.entity_registry());
         lua_pop(sL, 1);
-        if (!made || made_id == 0 || !reg.find(made_id)) {
+        if (!made || !made_id || !reg.find(made_id)) {
             osc::test_status::fail("[FAIL] the unit sound test's tank wasn't made");
             return;
         }
@@ -16823,7 +16843,7 @@ void test_unitsound(TestContext& ctx) {
         lua_State* sL = ctx.lua_state.raw();
         lua_pushstring(sL, "__osc_loop_entity");
         lua_rawget(sL, LUA_GLOBALSINDEX);
-        const auto id = osc::sim::to_entity_id(sL, -1);
+        const auto id = osc::sim::to_entity_id(sL, -1, ctx.sim.entity_registry());
         lua_pop(sL, 1);
         return sound->entity_loop(osc::app::entity_loop_key(id, "__ambient"));
     };
@@ -16931,16 +16951,14 @@ void test_medstub(TestContext& ctx) {
 
     // Find first living unit
     osc::sim::Entity* e1 = nullptr;
-    osc::u32 test_id = 0;
+    osc::sim::EntityId test_id{};
     auto& reg = ctx.sim.entity_registry();
-    for (osc::u32 id = 1; id <= static_cast<osc::u32>(reg.count()) + 100; id++) {
-        auto* e = reg.find(id);
-        if (e && !e->destroyed() && e->is_unit()) {
-            e1 = e;
-            test_id = id;
-            break;
+    reg.for_each_unit([&](osc::sim::Entity& e) {
+        if (!e1 && !e.destroyed()) {
+            e1 = &e;
+            test_id = e.entity_id();
         }
-    }
+    });
     if (!e1) {
         osc::test_status::fail("[FAIL] No living unit found for medstub test");
         return;
@@ -17039,16 +17057,14 @@ void test_lowstub(TestContext& ctx) {
 
     // Find first living unit (ACU)
     osc::sim::Entity* e1 = nullptr;
-    osc::u32 test_id = 0;
+    osc::sim::EntityId test_id{};
     auto& reg = ctx.sim.entity_registry();
-    for (osc::u32 id = 1; id <= static_cast<osc::u32>(reg.count()) + 200; id++) {
-        auto* e = reg.find(id);
-        if (e && !e->destroyed() && e->is_unit()) {
-            e1 = e;
-            test_id = id;
-            break;
+    reg.for_each_unit([&](osc::sim::Entity& e) {
+        if (!e1 && !e.destroyed()) {
+            e1 = &e;
+            test_id = e.entity_id();
         }
-    }
+    });
     if (!e1) {
         osc::test_status::fail("[FAIL] No living unit found for lowstub test");
         return;
@@ -19186,7 +19202,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     //    OnFirstUpdate also names the commander for its player (4b, 6c); the
     //    scenario script named it for its army at boot, so it gets a marker
     //    name first, to tell the UI's rename from the boot name.
-    const u32 acu = army_acu_id(ctx.sim, 0);
+    const sim::EntityId acu = army_acu_id(ctx.sim, 0);
     const auto acu_name = [&]() -> std::string {
         const auto* e = ctx.sim.entity_registry().find(acu);
         return e ? e->custom_name() : std::string();
@@ -19203,11 +19219,14 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
 
     // 4b. OnFirstUpdate's rename (UserUnit:SetCustomName) is, as in Moho, a
     //     command to the sim: queued, not applied, since no beat has run it.
-    if (acu == 0) osc::test_status::fail("[FAIL] Test 4b: army 1 has no commander");
-    else if (acu_name() != kMarkerName)
+    if (!acu) {
+        osc::test_status::fail("[FAIL] Test 4b: army 1 has no commander");
+    } else if (acu_name() != kMarkerName) {
         osc::test_status::fail("[FAIL] Test 4b: the commander was renamed '{}' outside a beat",
                                acu_name());
-    else spdlog::info("[PASS] Test 4b: the commander's new name waits for a beat");
+    } else {
+        spdlog::info("[PASS] Test 4b: the commander's new name waits for a beat");
+    }
 
     // 5. StopLoadingDialog's fade-out ends in InitialAnimations ->
     //    HideGameUI('off') after ~4 s of UI time.
@@ -19404,7 +19423,8 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
     {
         lua_getglobal(L, "__osc_test_acu_id");
-        auto* acu = ctx.sim.entity_registry().find(osc::sim::to_entity_id(L, -1));
+        auto* acu = ctx.sim.entity_registry().find(
+            osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry()));
         lua_pop(L, 1);
         play(1); // a beat to record health
         if (acu) acu->set_health(acu->health() - 50.0f);
@@ -19523,7 +19543,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
         __osc_ui_pgen = CreateUnitHPR('ueb1101', 'ARMY_1', x + 12, GetTerrainHeight(x + 12, z), z + 12, 0, 0, 0)
     )");
-    osc::u32 unarmed_id = 0;
+    osc::sim::EntityId unarmed_id{};
     ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
         if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "ueb1101")
             unarmed_id = e.entity_id();
@@ -19558,8 +19578,8 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         __osc_ui_bot = CreateUnitHPR('ura0001', 'ARMY_1', x + 6, GetTerrainHeight(x + 6, z) + 3, z + 6, 0, 0, 0)
         __osc_ui_fac = CreateUnitHPR('ueb1101', 'ARMY_1', x - 14, GetTerrainHeight(x - 14, z), z - 14, 0, 0, 0)
     )");
-    osc::u32 bot_id = 0;
-    osc::u32 unbuilt_id = 0;
+    osc::sim::EntityId bot_id{};
+    osc::sim::EntityId unbuilt_id{};
     ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
         if (e.destroyed() || e.army() != 0) {
             return;
@@ -19591,7 +19611,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
         __osc_ui_rally = CreateUnitHPR('ueb0101', 'ARMY_1', x - 14, GetTerrainHeight(x - 14, z), z - 14, 0, 0, 0)
     )");
-    osc::u32 rally_factory = 0;
+    osc::sim::EntityId rally_factory{};
     osc::sim::Vector3 rally_at;
     ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
         if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "ueb0101") {
@@ -19655,7 +19675,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
                             ax + 30, az + 6)
                     .c_str());
         play(2);
-        u32 first = 0, second = 0;
+        sim::EntityId first, second;
         ctx.sim.entity_registry().for_each([&](osc::sim::Entity& e) {
             if (e.destroyed() || !e.is_unit() || e.blueprint_id() != "ueb1101") return;
             if (std::abs(e.position().x - (ax + 20)) < 0.01f) first = e.entity_id();
@@ -19718,8 +19738,8 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
     play(2);
     {
-        osc::u32 radar = 0;
-        osc::u32 scout = 0;
+        osc::sim::EntityId radar{};
+        osc::sim::EntityId scout{};
         ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
             if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "ueb3101") {
                 radar = e.entity_id();
@@ -19792,7 +19812,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
     play(2);
     {
-        osc::u32 launcher = 0;
+        osc::sim::EntityId launcher{};
         ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
             if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "xsb2401") {
                 launcher = e.entity_id();
@@ -19888,7 +19908,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
         __osc_ui_mex = CreateUnitHPR('ueb1103', 'ARMY_1', x + 12, GetTerrainHeight(x + 12, z), z - 12, 0, 0, 0)
     )");
-    osc::u32 mex_id = 0;
+    osc::sim::EntityId mex_id{};
     ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
         if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "ueb1103") {
             mex_id = e.entity_id();
@@ -19976,7 +19996,8 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     play(1);
     {
         lua_getglobal(L, "__osc_test_acu_id");
-        const auto* e = ctx.sim.entity_registry().find(osc::sim::to_entity_id(L, -1));
+        const auto* e = ctx.sim.entity_registry().find(
+            osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry()));
         lua_pop(L, 1);
         if (e && e->is_unit() && static_cast<const osc::sim::Unit*>(e)->is_paused())
             spdlog::info("[PASS] Test 10j: ProcessInfo SetPaused paused the unit");
@@ -20043,8 +20064,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     {
         const auto* factory = army1_unit("ueb0101");
         lua_pushstring(L, "__osc_test_factory_id");
-        lua_pushnumber(L, static_cast<osc::i32>(osc::sim::EntityRegistry::moho_id(
-                              factory ? factory->entity_id() : 0)));
+        lua_pushnumber(L, factory ? static_cast<osc::i32>(factory->entity_id().moho()) : -1);
         lua_rawset(L, LUA_GLOBALSINDEX);
     }
     lua_ok("Test 10q: queue three engineers at a factory", R"(
@@ -20123,8 +20143,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     {
         const auto* drone = army1_unit("uea0001");
         lua_pushstring(L, "__osc_test_drone_id");
-        lua_pushnumber(L, static_cast<osc::i32>(
-                              osc::sim::EntityRegistry::moho_id(drone ? drone->entity_id() : 0)));
+        lua_pushnumber(L, drone ? static_cast<osc::i32>(drone->entity_id().moho()) : -1);
         lua_rawset(L, LUA_GLOBALSINDEX);
         if (!drone || drone->factory_queue().empty()) {
             osc::test_status::fail("[FAIL] Test 10s5: the drone has no queued builds");
@@ -20286,7 +20305,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             spdlog::info("[PASS] Test 10x4: queued, a plane docks nearest where its orders end");
         else
             osc::test_status::fail("[FAIL] Test 10x4: {} orders, the last to #{}", q.size(),
-                                   q.empty() ? 0 : q.back().target_id);
+                                   q.empty() ? osc::sim::EntityId() : q.back().target_id);
     }
     sim_lua(R"(
         for _, u in ArmyBrains[1]:GetListOfUnits(categories.AIRSTAGINGPLATFORM, false) do
@@ -20361,7 +20380,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
     {
         lua_getglobal(L, "__osc_test_acu_id");
-        const auto acu_id = osc::sim::to_entity_id(L, -1);
+        const auto acu_id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 1);
         const auto* acu =
             static_cast<const osc::sim::Unit*>(ctx.sim.entity_registry().find(acu_id));
@@ -20425,7 +20444,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         __osc_test_acu_id = GetSelectedUnits()[1]:GetEntityId()
     )");
     lua_getglobal(L, "__osc_test_acu_id");
-    const auto tpl_acu = osc::sim::to_entity_id(L, -1);
+    const auto tpl_acu = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
     lua_pop(L, 1);
     if (const auto* commander =
             static_cast<const osc::sim::Unit*>(ctx.sim.entity_registry().find(tpl_acu))) {
@@ -20593,7 +20612,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     // as the deposit markers FAF's maps make: a click passes through it.)
     {
         lua_getglobal(L, "__osc_test_acu_id");
-        const auto acu_id = osc::sim::to_entity_id(L, -1);
+        const auto acu_id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 1);
         auto& reg = ctx.sim.entity_registry();
         const auto* acu = reg.find(acu_id);
@@ -20619,7 +20638,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         } else {
             // A prop that takes no time (FAF's smallest) is reclaimed within
             // the tick, its order done; the entity may be freed by then.
-            const u32 prop_id = prop->entity_id();
+            const sim::EntityId prop_id = prop->entity_id();
             play(1);
             const auto& q = static_cast<const osc::sim::Unit*>(acu)->command_queue();
             const auto* target = q.empty() ? nullptr : reg.find(q.front().target_id);
@@ -20634,7 +20653,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
                     "[FAIL] Test 11f: the commander has no reclaim order on a prop (queue {}, head "
                     "type {}, target #{} {}, prop #{})",
                     q.size(), q.empty() ? -1 : static_cast<int>(q.front().type),
-                    q.empty() ? 0u : q.front().target_id,
+                    q.empty() ? sim::EntityId() : q.front().target_id,
                     target ? (target->is_prop() ? "a prop" : "not a prop") : "gone", prop_id);
         }
     }
@@ -24265,7 +24284,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto* trail = effect_of("_emtest16_trail");
         const bool attached = trail && trail->type() == sim::EffectType::ATTACHED_EMITTER &&
-                              trail->entity_id() != 0 && trail->ends_at() < 0;
+                              trail->entity_id() && trail->ends_at() < 0;
         const u32 trail_id = trail ? trail->id() : 0;
         ctx.sim.tick();
         const bool kept = ctx.sim.effect_registry().find(trail_id) != nullptr;
@@ -24844,13 +24863,16 @@ void test_commands(TestContext& ctx) {
     };
 
     // Find first two ACU entity IDs dynamically
-    u32 unit1_id = 0, unit2_id = 0;
+    sim::EntityId unit1_id, unit2_id;
     ctx.sim.entity_registry().for_each([&](sim::Entity& e) {
         if (!e.is_unit() || e.destroyed()) return;
-        if (unit1_id == 0) unit1_id = e.entity_id();
-        else if (unit2_id == 0) unit2_id = e.entity_id();
+        if (!unit1_id) {
+            unit1_id = e.entity_id();
+        } else if (!unit2_id) {
+            unit2_id = e.entity_id();
+        }
     });
-    if (unit1_id == 0 || unit2_id == 0) {
+    if (!unit1_id || !unit2_id) {
         osc::test_status::fail("[FAIL] Commands test: need at least 2 units, found u1={} u2={}",
                                unit1_id, unit2_id);
         return;
@@ -25141,12 +25163,14 @@ void test_deposits(TestContext& ctx) {
     };
 
     // Find first unit dynamically
-    u32 unit1_id = 0;
+    sim::EntityId unit1_id{};
     ctx.sim.entity_registry().for_each([&](sim::Entity& e) {
-        if (!e.is_unit() || e.destroyed() || unit1_id != 0) return;
+        if (!e.is_unit() || e.destroyed() || unit1_id) {
+            return;
+        }
         unit1_id = e.entity_id();
     });
-    if (unit1_id == 0) {
+    if (!unit1_id) {
         osc::test_status::fail("[FAIL] Deposit test: no units found");
         return;
     }
@@ -25285,7 +25309,7 @@ void test_deposits(TestContext& ctx) {
             lua_State* L = ctx.lua_state.raw();
             lua_pushstring(L, "__osc_storage_id");
             lua_rawget(L, LUA_GLOBALSINDEX);
-            const auto id = osc::sim::to_entity_id(L, -1);
+            const auto id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
             lua_pop(L, 1);
             storage = dynamic_cast<sim::Unit*>(ctx.sim.entity_registry().find(id));
         }
@@ -25439,19 +25463,19 @@ void test_beams(TestContext& ctx) {
         return;
     }
 
-    u32 tgt_id = tgt_unit->entity_id();
+    sim::EntityId tgt_id = tgt_unit->entity_id();
 
     // Test 1: Build beam state
     {
         src_unit->set_build_target_id(tgt_id);
         bool building = src_unit->is_building();
-        u32 target = src_unit->build_target_id();
+        sim::EntityId target = src_unit->build_target_id();
         if (building && target == tgt_id) {
             pass++; spdlog::info("[PASS] Test 1: Build beam state (target={})", tgt_id);
         } else {
             fail++; osc::test_status::fail("[FAIL] Test 1: is_building={}, target={}", building, target);
         }
-        src_unit->set_build_target_id(0); // cleanup
+        src_unit->set_build_target_id({}); // cleanup
     }
 
     // Test 2: Reclaim beam state
@@ -25463,7 +25487,7 @@ void test_beams(TestContext& ctx) {
         } else {
             fail++; osc::test_status::fail("[FAIL] Test 2: is_reclaiming={}", reclaiming);
         }
-        src_unit->set_reclaim_target_id(0);
+        src_unit->set_reclaim_target_id({});
     }
 
     // Test 3: Repair beam state
@@ -25475,7 +25499,7 @@ void test_beams(TestContext& ctx) {
         } else {
             fail++; osc::test_status::fail("[FAIL] Test 3: is_repairing={}", repairing);
         }
-        src_unit->set_repair_target_id(0);
+        src_unit->set_repair_target_id({});
     }
 
     // Test 4: Capture beam state
@@ -25487,7 +25511,7 @@ void test_beams(TestContext& ctx) {
         } else {
             fail++; osc::test_status::fail("[FAIL] Test 4: is_capturing={}", capturing);
         }
-        src_unit->set_capture_target_id(0);
+        src_unit->set_capture_target_id({});
     }
 
     // Test 5: CollisionBeam entity state
@@ -25530,15 +25554,16 @@ void test_beams(TestContext& ctx) {
 
     // Test 6: No beam when target is destroyed
     {
-        src_unit->set_build_target_id(99999); // non-existent entity
-        auto* found = ctx.sim.entity_registry().find(99999);
+        const sim::EntityId missing = sim::EntityId::of(99999, 1);
+        src_unit->set_build_target_id(missing); // non-existent entity
+        auto* found = ctx.sim.entity_registry().find(missing);
         bool should_skip = (found == nullptr);
         if (should_skip) {
             pass++; spdlog::info("[PASS] Test 6: No beam for non-existent target");
         } else {
             fail++; osc::test_status::fail("[FAIL] Test 6: entity 99999 unexpectedly exists");
         }
-        src_unit->set_build_target_id(0);
+        src_unit->set_build_target_id({});
     }
 
     // Test 7: Multiple simultaneous beams (build + collision beam on different units)
@@ -25556,7 +25581,7 @@ void test_beams(TestContext& ctx) {
             fail++; osc::test_status::fail("[FAIL] Test 7: building={}, beaming={}", src_building, tgt_beaming);
         }
 
-        src_unit->set_build_target_id(0);
+        src_unit->set_build_target_id({});
         tgt_unit->set_beam_enabled(false);
         tgt_unit->set_collision_beam(false);
     }
@@ -25596,14 +25621,14 @@ void test_vet_adj_render(TestContext& ctx) {
     unit_a->set_position({100.0f, 0.0f, 100.0f});
     unit_a->set_max_health(1000.0f);
     unit_a->set_health(1000.0f);
-    u32 id_a = registry.register_entity(std::move(unit_a));
+    sim::EntityId id_a = registry.register_entity(std::move(unit_a));
 
     auto unit_b = std::make_unique<sim::Unit>();
     unit_b->set_army(0);
     unit_b->set_position({110.0f, 0.0f, 100.0f});
     unit_b->set_max_health(1000.0f);
     unit_b->set_health(1000.0f);
-    u32 id_b = registry.register_entity(std::move(unit_b));
+    sim::EntityId id_b = registry.register_entity(std::move(unit_b));
 
     // Test 1: Default vet level is 0
     {
@@ -25703,7 +25728,7 @@ void test_vet_adj_render(TestContext& ctx) {
         unit_c->set_position({100.0f, 0.0f, 110.0f});
         unit_c->set_max_health(500.0f);
         unit_c->set_health(500.0f);
-        u32 id_c = registry.register_entity(std::move(unit_c));
+        sim::EntityId id_c = registry.register_entity(std::move(unit_c));
 
         auto* ua = static_cast<sim::Unit*>(registry.find(id_a));
         ua->add_adjacent(id_b);
@@ -25758,7 +25783,7 @@ void test_intel_overlay(TestContext& ctx) {
     unit_ptr->set_position({200.0f, 0.0f, 200.0f});
     unit_ptr->set_max_health(1000.0f);
     unit_ptr->set_health(1000.0f);
-    u32 uid = registry.register_entity(std::move(unit_ptr));
+    sim::EntityId uid = registry.register_entity(std::move(unit_ptr));
 
     auto* unit = static_cast<sim::Unit*>(registry.find(uid));
 
@@ -25890,7 +25915,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
         u->set_position({300.0f, 0.0f, 300.0f});
-        u32 id = registry.register_entity(std::move(u));
+        sim::EntityId id = registry.register_entity(std::move(u));
         auto* e = registry.find(id);
         if (e->mesh_override().empty()) {
             pass++; spdlog::info("[PASS] Test 1: mesh_override empty by default");
@@ -25904,7 +25929,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
         u->set_position({310.0f, 0.0f, 300.0f});
-        u32 id = registry.register_entity(std::move(u));
+        sim::EntityId id = registry.register_entity(std::move(u));
         auto* e = registry.find(id);
         e->set_mesh_override("/units/uel0001/uel0001_PhaseShield_mesh");
         if (e->mesh_override() == "/units/uel0001/uel0001_PhaseShield_mesh") {
@@ -25919,7 +25944,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
         u->set_position({320.0f, 0.0f, 300.0f});
-        u32 id = registry.register_entity(std::move(u));
+        sim::EntityId id = registry.register_entity(std::move(u));
         auto* e = registry.find(id);
         e->set_mesh_override("/units/uel0001/uel0001_Gun_mesh");
         e->set_mesh_override("");
@@ -25935,7 +25960,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
         u->set_position({330.0f, 0.0f, 300.0f});
-        u32 id = registry.register_entity(std::move(u));
+        sim::EntityId id = registry.register_entity(std::move(u));
         auto* unit = static_cast<sim::Unit*>(registry.find(id));
         unit->add_enhancement("RightArm", "HeavyAntiMatterCannon");
         if (unit->has_enhancement("HeavyAntiMatterCannon")) {
@@ -25950,7 +25975,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
         u->set_position({340.0f, 0.0f, 300.0f});
-        u32 id = registry.register_entity(std::move(u));
+        sim::EntityId id = registry.register_entity(std::move(u));
         auto* unit = static_cast<sim::Unit*>(registry.find(id));
         unit->add_enhancement("Back", "PersonalShieldGenerator");
         unit->set_mesh_override("/units/uel0001/uel0001_PersonalShield_mesh");
@@ -25969,7 +25994,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
     {
         auto p = std::make_unique<sim::Prop>();
         p->set_position({350.0f, 0.0f, 300.0f});
-        u32 id = registry.register_entity(std::move(p));
+        sim::EntityId id = registry.register_entity(std::move(p));
         auto* e = registry.find(id);
         if (!e->is_wreckage()) {
             pass++; spdlog::info("[PASS] Test 6: Prop is_wreckage false by default");
@@ -25982,7 +26007,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
     {
         auto p = std::make_unique<sim::Prop>();
         p->set_position({360.0f, 0.0f, 300.0f});
-        u32 id = registry.register_entity(std::move(p));
+        sim::EntityId id = registry.register_entity(std::move(p));
         auto* e = registry.find(id);
         e->set_is_wreckage(true);
         if (e->is_wreckage()) {
@@ -26016,7 +26041,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
         u->set_position({370.0f, 0.0f, 300.0f});
-        u32 id = registry.register_entity(std::move(u));
+        sim::EntityId id = registry.register_entity(std::move(u));
         auto* e = registry.find(id);
         e->set_is_wreckage(true);
         if (e->is_wreckage() && e->is_unit()) {
@@ -26030,7 +26055,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
     {
         auto p = std::make_unique<sim::Prop>();
         p->set_position({380.0f, 0.0f, 300.0f});
-        u32 id = registry.register_entity(std::move(p));
+        sim::EntityId id = registry.register_entity(std::move(p));
         auto* e = registry.find(id);
         e->set_is_wreckage(true);
         e->set_is_wreckage(false);
@@ -26057,7 +26082,7 @@ void test_vfx_render(TestContext& ctx) {
     unit_ptr->set_position({400.0f, 0.0f, 400.0f});
     unit_ptr->set_max_health(1000.0f);
     unit_ptr->set_health(1000.0f);
-    u32 parent_id = registry.register_entity(std::move(unit_ptr));
+    sim::EntityId parent_id = registry.register_entity(std::move(unit_ptr));
 
     // Test 1: Create emitter at entity
     {
@@ -26118,7 +26143,7 @@ void test_vfx_render(TestContext& ctx) {
         auto unit2 = std::make_unique<sim::Unit>();
         unit2->set_army(0);
         unit2->set_position({420.0f, 0.0f, 400.0f});
-        u32 target_id = registry.register_entity(std::move(unit2));
+        sim::EntityId target_id = registry.register_entity(std::move(unit2));
 
         auto* fx = fx_reg.create();
         fx->set_type(sim::EffectType::BEAM_ENTITY_TO_ENTITY);
@@ -26178,7 +26203,7 @@ void test_vfx_render(TestContext& ctx) {
         fx->set_type(sim::EffectType::BEAM_EMITTER);
         fx->set_offset(500.0f, 5.0f, 500.0f);
         // No entity_id set (0)
-        if (fx->entity_id() == 0 && fx->offset_x() == 500.0f) {
+        if (!fx->entity_id() && fx->offset_x() == 500.0f) {
             pass++; spdlog::info("[PASS] Test 9: Unattached effect uses offset as position");
         } else {
             fail++; osc::test_status::fail("[FAIL] Test 9: unattached effect setup wrong");
@@ -26209,7 +26234,7 @@ void test_transport_silo_render(TestContext& ctx) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
         u->set_position({500.0f, 0.0f, 500.0f});
-        u32 id = registry.register_entity(std::move(u));
+        sim::EntityId id = registry.register_entity(std::move(u));
         auto* unit = static_cast<sim::Unit*>(registry.find(id));
         if (unit->cargo_ids().empty()) {
             pass++; spdlog::info("[PASS] Test 1: Empty cargo by default");
@@ -26224,11 +26249,11 @@ void test_transport_silo_render(TestContext& ctx) {
         transport->set_army(0);
         transport->set_position({510.0f, 0.0f, 500.0f});
         transport->set_transport_capacity(4);
-        u32 tid = registry.register_entity(std::move(transport));
+        sim::EntityId tid = registry.register_entity(std::move(transport));
         auto* t = static_cast<sim::Unit*>(registry.find(tid));
-        t->add_cargo(100);
-        t->add_cargo(101);
-        t->add_cargo(102);
+        t->add_cargo(sim::EntityId(100));
+        t->add_cargo(sim::EntityId(101));
+        t->add_cargo(sim::EntityId(102));
         if (t->cargo_ids().size() == 3) {
             pass++; spdlog::info("[PASS] Test 2: Transport has 3 cargo units");
         } else {
@@ -26241,9 +26266,11 @@ void test_transport_silo_render(TestContext& ctx) {
         auto transport = std::make_unique<sim::Unit>();
         transport->set_army(0);
         transport->set_position({520.0f, 0.0f, 500.0f});
-        u32 tid = registry.register_entity(std::move(transport));
+        sim::EntityId tid = registry.register_entity(std::move(transport));
         auto* t = static_cast<sim::Unit*>(registry.find(tid));
-        for (int i = 0; i < 12; i++) t->add_cargo(200 + i);
+        for (u64 i = 0; i < 12; i++) {
+            t->add_cargo(sim::EntityId(200 + i));
+        }
         if (t->cargo_ids().size() == 12) {
             pass++; spdlog::info("[PASS] Test 3: 12 cargo stored, renderer caps display at 8");
         } else {
@@ -26256,9 +26283,9 @@ void test_transport_silo_render(TestContext& ctx) {
         auto transport = std::make_unique<sim::Unit>();
         transport->set_army(0);
         transport->set_position({530.0f, 0.0f, 500.0f});
-        u32 tid = registry.register_entity(std::move(transport));
+        sim::EntityId tid = registry.register_entity(std::move(transport));
         auto* t = static_cast<sim::Unit*>(registry.find(tid));
-        t->add_cargo(300);
+        t->add_cargo(sim::EntityId(300));
         t->clear_cargo();
         if (t->cargo_ids().empty()) {
             pass++; spdlog::info("[PASS] Test 4: Cargo cleared");
@@ -26272,7 +26299,7 @@ void test_transport_silo_render(TestContext& ctx) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
         u->set_position({540.0f, 0.0f, 500.0f});
-        u32 id = registry.register_entity(std::move(u));
+        sim::EntityId id = registry.register_entity(std::move(u));
         auto* unit = static_cast<sim::Unit*>(registry.find(id));
         if (unit->nuke_silo_ammo() == 0 && unit->tactical_silo_ammo() == 0) {
             pass++; spdlog::info("[PASS] Test 5: No silo ammo by default");
@@ -26286,7 +26313,7 @@ void test_transport_silo_render(TestContext& ctx) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
         u->set_position({550.0f, 0.0f, 500.0f});
-        u32 id = registry.register_entity(std::move(u));
+        sim::EntityId id = registry.register_entity(std::move(u));
         auto* unit = static_cast<sim::Unit*>(registry.find(id));
         unit->give_nuke_silo_ammo(3);
         if (unit->nuke_silo_ammo() == 3) {
@@ -26301,7 +26328,7 @@ void test_transport_silo_render(TestContext& ctx) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
         u->set_position({560.0f, 0.0f, 500.0f});
-        u32 id = registry.register_entity(std::move(u));
+        sim::EntityId id = registry.register_entity(std::move(u));
         auto* unit = static_cast<sim::Unit*>(registry.find(id));
         unit->give_tactical_silo_ammo(5);
         if (unit->tactical_silo_ammo() == 5) {
@@ -26316,7 +26343,7 @@ void test_transport_silo_render(TestContext& ctx) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
         u->set_position({570.0f, 0.0f, 500.0f});
-        u32 id = registry.register_entity(std::move(u));
+        sim::EntityId id = registry.register_entity(std::move(u));
         auto* unit = static_cast<sim::Unit*>(registry.find(id));
         unit->give_nuke_silo_ammo(2);
         unit->give_tactical_silo_ammo(4);
@@ -26332,7 +26359,7 @@ void test_transport_silo_render(TestContext& ctx) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
         u->set_position({580.0f, 0.0f, 500.0f});
-        u32 id = registry.register_entity(std::move(u));
+        sim::EntityId id = registry.register_entity(std::move(u));
         auto* unit = static_cast<sim::Unit*>(registry.find(id));
         unit->give_nuke_silo_ammo(1);
         unit->remove_nuke_silo_ammo(5);
@@ -26348,7 +26375,7 @@ void test_transport_silo_render(TestContext& ctx) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
         u->set_position({590.0f, 0.0f, 500.0f});
-        u32 id = registry.register_entity(std::move(u));
+        sim::EntityId id = registry.register_entity(std::move(u));
         auto* unit = static_cast<sim::Unit*>(registry.find(id));
         unit->give_nuke_silo_ammo(10);
         if (unit->nuke_silo_ammo() == 10) {
@@ -26538,7 +26565,7 @@ constexpr float kInterpMinChanged = 0.9f;
 void InterpProbe::on_frame(sim::SimState& sim, const sim::FrameView& view,
                            const std::function<bool(const char*)>& sim_lua) {
     if (done_) return;
-    if (acu_ == 0) {
+    if (!acu_) {
         if (sim.tick_count() < kInterpOrderTick) return;
         acu_ = army_acu_id(sim, 0);
         const sim::Entity* acu = acu_ ? sim.entity_registry().find(acu_) : nullptr;
@@ -26605,16 +26632,15 @@ constexpr u32 kDumpLastTick = 180;
 constexpr int kDumpEvery = 16; // frames
 } // namespace
 
-void RenderDumpProbe::on_frame(sim::SimState& sim,
-                               const std::function<bool(const char*)>& sim_lua,
-                               const std::function<void(const std::vector<u32>&)>& select,
+void RenderDumpProbe::on_frame(sim::SimState& sim, const std::function<bool(const char*)>& sim_lua,
+                               const std::function<void(const std::vector<sim::EntityId>&)>& select,
                                const std::function<void(std::ostream&)>& dump) {
     if (done_) return;
     ++frames_;
     const u32 tick = sim.tick_count();
     if (!scene_ && tick >= kDumpSceneTick) {
         scene_ = true;
-        const u32 acu_id = army_acu_id(sim, 0);
+        const sim::EntityId acu_id = army_acu_id(sim, 0);
         const sim::Entity* acu = acu_id ? sim.entity_registry().find(acu_id) : nullptr;
         if (!acu) {
             test_status::fail("[FAIL] render-dump: army 1 has no commander");
@@ -26657,7 +26683,7 @@ void RenderDumpProbe::on_frame(sim::SimState& sim,
     }
     if (scene_ && !selected_ && tick >= kDumpSceneTick + 2) {
         selected_ = true;
-        std::vector<u32> army1;
+        std::vector<sim::EntityId> army1;
         sim.entity_registry().for_each([&](const sim::Entity& e) {
             if (e.is_unit() && !e.destroyed() && e.army() == 0) army1.push_back(e.entity_id());
         });

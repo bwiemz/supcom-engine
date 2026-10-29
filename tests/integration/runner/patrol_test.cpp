@@ -23,15 +23,15 @@ namespace osc::test {
 
 namespace {
 
-u32 lua_id(TestContext& ctx, const char* name) {
+sim::EntityId lua_id(TestContext& ctx, const char* name) {
     lua_pushstring(ctx.L, name);
     lua_rawget(ctx.L, LUA_GLOBALSINDEX);
-    const u32 id = osc::sim::to_entity_id(ctx.L, -1);
+    const sim::EntityId id = osc::sim::to_entity_id(ctx.L, -1, ctx.sim.entity_registry());
     lua_pop(ctx.L, 1);
     return id;
 }
 
-const sim::Prop* prop_of(TestContext& ctx, u32 id) {
+const sim::Prop* prop_of(TestContext& ctx, sim::EntityId id) {
     const sim::Entity* e = ctx.sim.entity_registry().find(id);
     return e && e->is_prop() ? static_cast<const sim::Prop*>(e) : nullptr;
 }
@@ -50,13 +50,15 @@ void test_patrol(TestContext& ctx) {
     const f32 sz = spot->z;
     const auto y = [&](f32 x, f32 z) { return ctx.sim.terrain()->get_terrain_height(x, z); };
     auto& registry = ctx.sim.entity_registry();
-    const auto unit = [&](u32 id) {
+    const auto unit = [&](sim::EntityId id) {
         sim::Entity* e = registry.find(id);
         return e && e->is_unit() ? static_cast<sim::Unit*>(e) : nullptr;
     };
 
-    const u32 eng_id = spawn_unit(ctx, "__osc_pt_eng", "uel0105", "ARMY_1", {sx - 20, sz});
-    const u32 arty_id = spawn_unit(ctx, "__osc_pt_arty", "uel0304", "ARMY_1", {sx + 40, sz + 65});
+    const sim::EntityId eng_id =
+        spawn_unit(ctx, "__osc_pt_eng", "uel0105", "ARMY_1", {sx - 20, sz});
+    const sim::EntityId arty_id =
+        spawn_unit(ctx, "__osc_pt_arty", "uel0304", "ARMY_1", {sx + 40, sz + 65});
     t.check(unit(eng_id) && unit(eng_id)->guard_scan_radius() == 25.0f && unit(arty_id) &&
                 unit(arty_id)->guard_scan_radius() == 30.0f,
             "GuardScanRadius: 25 without one in the blueprint, uel0304's 30");
@@ -81,8 +83,8 @@ void test_patrol(TestContext& ctx) {
                         "    return start(self, target)\n"
                         "end\n",
                         sx + 10, y(sx + 10, sz + 6), sz + 6, sx - 5, y(sx - 5, sz + 3), sz + 3));
-    const u32 crystal = lua_id(ctx, "__osc_pt_crystal");
-    const u32 rock = lua_id(ctx, "__osc_pt_rock");
+    const sim::EntityId crystal = lua_id(ctx, "__osc_pt_crystal");
+    const sim::EntityId rock = lua_id(ctx, "__osc_pt_rock");
     t.check(prop_of(ctx, crystal) && prop_of(ctx, crystal)->reclaimable_category &&
                 prop_of(ctx, rock) && !prop_of(ctx, rock)->reclaimable_category,
             "a prop's RECLAIMABLE from its blueprint (a crystal is, Rock_SM01 is not)");
@@ -114,8 +116,10 @@ void test_patrol(TestContext& ctx) {
             "a patrolling engineer reclaims the crystal beside its route, not the rock (" + got +
                 ")");
 
-    const u32 tank_id = spawn_unit(ctx, "__osc_pt_tank", "uel0201", "ARMY_1", {sx - 20, sz + 40});
-    const u32 enemy_id = spawn_unit(ctx, "__osc_pt_enemy", "uel0201", "ARMY_2", {sx + 10, sz + 55});
+    const sim::EntityId tank_id =
+        spawn_unit(ctx, "__osc_pt_tank", "uel0201", "ARMY_1", {sx - 20, sz + 40});
+    const sim::EntityId enemy_id =
+        spawn_unit(ctx, "__osc_pt_enemy", "uel0201", "ARMY_2", {sx + 10, sz + 55});
     run_lua(ctx, fmt::format("IssuePatrol({{__osc_pt_tank}}, {{{0}, {1}, {2}}})", sx + 40,
                              y(sx + 40, sz + 40), sz + 40));
     tick_until(ctx, "a patrolling tank breaks off for an enemy 15 off its route", 300, [&] {

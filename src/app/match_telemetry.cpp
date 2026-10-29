@@ -173,15 +173,17 @@ void MatchTelemetry::write_samples(const sim::SimState& sim) {
 void MatchTelemetry::write_events(const sim::SimState& sim) {
     const u32 tick = sim.tick_count();
     ++walk_;
-    const auto event = [&](const char* kind, u32 id, const Seen& unit) {
+    const auto event = [&](const char* kind, sim::EntityId id, const Seen& unit) {
         return nlohmann::json{
-            {"record", "event"},     {"tick", tick},  {"kind", kind}, {"id", id},
+            {"record", "event"},     {"tick", tick},  {"kind", kind}, {"id", id.moho()},
             {"army", unit.army + 1}, {"bp", unit.bp}, {"x", unit.x},  {"z", unit.z}};
     };
     // Who last damaged a unit, as far as it is still there to ask
-    const auto blame = [&](nlohmann::json& record, u32 attacker) {
-        if (attacker == 0) return;
-        record["by_id"] = attacker;
+    const auto blame = [&](nlohmann::json& record, sim::EntityId attacker) {
+        if (!attacker) {
+            return;
+        }
+        record["by_id"] = attacker.moho();
         if (const auto known = seen_.find(attacker); known != seen_.end()) {
             record["by_bp"] = known->second.bp;
             record["by_army"] = known->second.army + 1;
@@ -194,13 +196,15 @@ void MatchTelemetry::write_events(const sim::SimState& sim) {
     sim.entity_registry().for_each_unit([&](const sim::Entity& entity) {
         const auto& unit = static_cast<const sim::Unit&>(entity);
         if (unit.has_category("INSIGNIFICANTUNIT")) return;
-        const u32 id = unit.entity_id();
+        const sim::EntityId id = unit.entity_id();
         auto [it, first] = seen_.try_emplace(id);
         Seen& seen = it->second;
         seen.seen_at = walk_;
         seen.x = unit.position().x;
         seen.z = unit.position().z;
-        if (unit.last_attacker_id() != 0) seen.last_attacker = unit.last_attacker_id();
+        if (unit.last_attacker_id()) {
+            seen.last_attacker = unit.last_attacker_id();
+        }
         const bool gone = unit.destroyed() || unit.is_dying();
         if (first) {
             seen.army = unit.army();

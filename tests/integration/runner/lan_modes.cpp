@@ -131,7 +131,7 @@ int run_mp_lobby_test(bool is_host, const std::string& address, osc::u16 port, o
     // Minimal deterministic sim, constructed identically on both sides.
     lua_State* L = lua_open();
     auto sim = std::make_unique<sim::SimState>(L, nullptr);
-    std::vector<u32> unit_ids;
+    std::vector<sim::EntityId> unit_ids;
     for (int i = 0; i < 3; ++i) {
         auto u = std::make_unique<sim::Unit>();
         u->set_army(0);
@@ -146,18 +146,18 @@ int run_mp_lobby_test(bool is_host, const std::string& address, osc::u16 port, o
     auto* session = lua::mp_net_state().session.get();
     const u32 rng_probe = sim->sim_rand(); // equal on both sides iff the seed is
 
-    auto issue = [&](u32 unit_id, const sim::UnitCommand& cmd) {
+    auto issue = [&](sim::EntityId unit_id, const sim::UnitCommand& cmd) {
         sim->set_human_input_active(true); // player order → sink → session
         sim->route_command({unit_id}, cmd, true);
         sim->set_human_input_active(false);
     };
-    auto issue_move = [&](u32 unit_id, f32 x, f32 z) {
+    auto issue_move = [&](sim::EntityId unit_id, f32 x, f32 z) {
         sim::UnitCommand cmd;
         cmd.type = sim::CommandType::Move;
         cmd.target_pos = {x, 0.0f, z};
         issue(unit_id, cmd);
     };
-    auto issue_stop = [&](u32 unit_id) {
+    auto issue_stop = [&](sim::EntityId unit_id) {
         sim::UnitCommand cmd;
         cmd.type = sim::CommandType::Stop;
         issue(unit_id, cmd);

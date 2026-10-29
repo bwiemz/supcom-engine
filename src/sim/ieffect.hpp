@@ -57,11 +57,11 @@ public:
     const std::string& blueprint_path() const { return blueprint_path_; }
     void set_blueprint_path(const std::string& p) { blueprint_path_ = p; }
 
-    u32 entity_id() const { return entity_id_; }
-    void set_entity_id(u32 id) { entity_id_ = id; }
+    EntityId entity_id() const { return entity_id_; }
+    void set_entity_id(EntityId id) { entity_id_ = id; }
 
-    u32 target_entity_id() const { return target_entity_id_; }
-    void set_target_entity_id(u32 id) { target_entity_id_ = id; }
+    EntityId target_entity_id() const { return target_entity_id_; }
+    void set_target_entity_id(EntityId id) { target_entity_id_ = id; }
 
     i32 bone_index() const { return bone_index_; }
     void set_bone_index(i32 b) { bone_index_ = b; }
@@ -197,8 +197,8 @@ private:
     u32 id_ = 0;
     EffectType type_ = EffectType::EMITTER_AT_ENTITY;
     std::string blueprint_path_;
-    u32 entity_id_ = 0;        // parent entity
-    u32 target_entity_id_ = 0; // for beam entity-to-entity
+    EntityId entity_id_{};        // parent entity
+    EntityId target_entity_id_{}; // for beam entity-to-entity
     i32 bone_index_ = -1;
     i32 target_bone_index_ = -1;
     i32 army_ = 0;
@@ -284,7 +284,9 @@ public:
     /// `gone(id)` says whether entity `id` no longer exists.
     template <typename Gone> void destroy_detached(Gone gone) {
         for (auto& fx : effects_) {
-            if (!fx || fx->destroyed() || fx->entity_id() == 0) continue;
+            if (!fx || fx->destroyed() || !fx->entity_id()) {
+                continue;
+            }
             const EffectType t = fx->type();
             if (t != EffectType::ATTACHED_EMITTER && t != EffectType::TRAIL_EMITTER &&
                 t != EffectType::ATTACHED_BEAM)

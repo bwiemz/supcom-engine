@@ -73,11 +73,11 @@ bool same_id(const std::string& a, const std::string& b) {
 // Moho's world view hover: an unfinished unit whose creator is what it
 // upgrades from is that creator.
 const sim::Entity* hover_entity(const sim::SimState& sim, const sim::Entity* e) {
-    if (!e->is_unit() || e->parent_entity_id() != 0) {
+    if (!e->is_unit() || e->parent_entity_id()) {
         return e;
     }
     const auto& unit = static_cast<const sim::Unit&>(*e);
-    if (!unit.is_being_built() || unit.creator_id() == 0) {
+    if (!unit.is_being_built() || !unit.creator_id()) {
         return e;
     }
     const sim::Entity* creator = sim.entity_registry().find(unit.creator_id());
@@ -90,7 +90,7 @@ const sim::Entity* hover_entity(const sim::SimState& sim, const sim::Entity* e) 
 
 // Moho's func_GetRightMouseButtonAction: a unit riding another is busy.
 bool capture_target(const sim::Unit& u) {
-    return u.capturable() && !u.is_being_built() && u.parent_entity_id() == 0;
+    return u.capturable() && !u.is_being_built() && !u.parent_entity_id();
 }
 
 sim::MeshBounds mesh_box(const sim::Unit& unit) {
@@ -107,10 +107,10 @@ sim::MeshBounds mesh_box(const sim::Unit& unit) {
 }
 
 std::optional<sim::CommandType> friendly_mode(sim::SimState& sim,
-                                              const std::unordered_set<u32>& selected,
+                                              const std::unordered_set<sim::EntityId>& selected,
                                               i32 player_army, const sim::Unit& target) {
     std::vector<const sim::Unit*> units;
-    for (const u32 id : selected) {
+    for (const sim::EntityId id : selected) {
         const sim::Entity* e = sim.entity_registry().find(id);
         if (e && !e->destroyed() && e->is_unit()) {
             units.push_back(static_cast<const sim::Unit*>(e));
@@ -122,7 +122,7 @@ std::optional<sim::CommandType> friendly_mode(sim::SimState& sim,
     const auto has = [&](const char* cap) {
         return any([&](const sim::Unit* u) { return u->has_command_cap(cap); });
     };
-    if (target.has_category("RECLAIMFRIENDLY") && target.parent_entity_id() == 0 &&
+    if (target.has_category("RECLAIMFRIENDLY") && !target.parent_entity_id() &&
         sim::reclaim_target_valid(target) && has("RULEUCC_Reclaim")) {
         return sim::CommandType::Reclaim;
     }
@@ -167,7 +167,7 @@ std::optional<sim::CommandType> friendly_mode(sim::SimState& sim,
 } // namespace
 
 bool aboard(const sim::Unit& unit) {
-    return (unit.transport_id() != 0 || unit.parent_entity_id() != 0) && unit.is_mobile() &&
+    return (unit.transport_id() || unit.parent_entity_id()) && unit.is_mobile() &&
            !unit.has_category("POD");
 }
 
@@ -181,11 +181,11 @@ bool selectable(const sim::Entity& e) {
            unit.has_category("SELECTABLE");
 }
 
-u32 carrier_of(const sim::Entity& e) {
-    if (e.parent_entity_id() != 0) {
+sim::EntityId carrier_of(const sim::Entity& e) {
+    if (e.parent_entity_id()) {
         return e.parent_entity_id();
     }
-    return e.is_unit() ? static_cast<const sim::Unit&>(e).transport_id() : 0;
+    return e.is_unit() ? static_cast<const sim::Unit&>(e).transport_id() : sim::EntityId();
 }
 
 bool inside_ground_quad(const std::array<sim::Vector3, 4>& q, f32 x, f32 z) {
@@ -260,12 +260,13 @@ int drag_selection_priority(const sim::Unit& unit, bool faf_exe) {
     return unit.selection_priority();
 }
 
-std::vector<u32> highest_selection_priority(const std::vector<std::pair<u32, int>>& units) {
+std::vector<sim::EntityId>
+highest_selection_priority(const std::vector<std::pair<sim::EntityId, int>>& units) {
     int best = std::numeric_limits<int>::max();
     for (const auto& unit : units) {
         best = std::min(best, unit.second);
     }
-    std::vector<u32> kept;
+    std::vector<sim::EntityId> kept;
     for (const auto& [id, priority] : units) {
         if (priority == best) {
             kept.push_back(id);
@@ -332,7 +333,7 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
     if (!scrubbing) {
         cursor_world_.reset();
         cursor_ray_.reset();
-        hovered_ = 0;
+        hovered_ = {};
         hovered_command_ = 0;
     }
     camera_zoom_ = renderer.camera().zoom();
@@ -548,8 +549,8 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
             sim::UnitCommand cmd;
             cmd.type = sim::CommandType::Move;
             cmd.target_pos = {mm_wx, wy, mm_wz};
-            std::vector<u32> ids;
-            for (u32 uid : selected_) {
+            std::vector<sim::EntityId> ids;
+            for (sim::EntityId uid : selected_) {
                 auto* e = sim.entity_registry().find(uid);
                 if (!e || !e->is_unit() || e->destroyed()) continue;
                 ids.push_back(uid);
@@ -590,9 +591,10 @@ std::optional<CommandGraphNode> InputHandler::graph_node(u32 command_id) const {
     return std::nullopt;
 }
 
-std::vector<u32> InputHandler::own_units(sim::SimState& sim, const std::vector<u32>& ids) const {
-    std::vector<u32> own;
-    for (u32 id : ids) {
+std::vector<sim::EntityId> InputHandler::own_units(sim::SimState& sim,
+                                                   const std::vector<sim::EntityId>& ids) const {
+    std::vector<sim::EntityId> own;
+    for (sim::EntityId id : ids) {
         const sim::Entity* e = sim.entity_registry().find(id);
         if (e && !e->destroyed() && e->army() == player_army_) {
             own.push_back(id);
@@ -603,12 +605,12 @@ std::vector<u32> InputHandler::own_units(sim::SimState& sim, const std::vector<u
 
 // CWldSession::ProcessCommandDrag
 OrderDrag InputHandler::order_drop(sim::SimState& sim, const CommandGraphNode& node, f32 wx, f32 wz,
-                                   bool released, u32& target) const {
+                                   bool released, sim::EntityId& target) const {
     OrderDrag drop;
     drop.command_id = node.order.command_id;
     drop.at = {wx, sim.terrain() ? sim.terrain()->get_surface_height(wx, wz) : 0.0f, wz};
-    target = 0;
-    if (node.order.target_id != 0) {
+    target = {};
+    if (node.order.target_id) {
         if (!released) {
             return drop;
         }
@@ -627,7 +629,7 @@ OrderDrag InputHandler::order_drop(sim::SimState& sim, const CommandGraphNode& n
                 target = e.entity_id();
             }
         });
-        drop.valid = target != 0;
+        drop.valid = static_cast<bool>(target);
         return drop;
     }
     if (node.order.type == sim::CommandType::BuildMobile && mode_hooks_.can_place) {
@@ -659,7 +661,7 @@ void InputHandler::drag_order_to(sim::SimState& sim, f32 wx, f32 wz) {
         order_drag_.reset();
         return;
     }
-    u32 target = 0;
+    sim::EntityId target{};
     order_drag_ = order_drop(sim, *node, wx, wz, false, target);
     order_drag_moved_ = true;
 }
@@ -676,7 +678,7 @@ std::optional<sim::SimCallbackEntry> InputHandler::release_order_drag(sim::SimSt
     if (!moved || !node) {
         return std::nullopt;
     }
-    u32 target = 0;
+    sim::EntityId target{};
     OrderDrag drop = order_drop(sim, *node, wx, wz, true, target);
     if (!drop.valid) {
         return std::nullopt;
@@ -688,8 +690,8 @@ std::optional<sim::SimCallbackEntry> InputHandler::release_order_drag(sim::SimSt
     }
     cb.func_name = sim::kSetCommandTargetCallback;
     cb.args["Command"] = static_cast<f64>(command);
-    if (target != 0) {
-        cb.args["Target"] = static_cast<f64>(target);
+    if (target) {
+        cb.args["Target"] = static_cast<f64>(target.key());
         drop.at = sim.entity_registry().find(target)->position();
     } else {
         cb.args["X"] = static_cast<f64>(drop.at.x);
@@ -733,10 +735,10 @@ std::vector<u32> InputHandler::moves_to_patrol(sim::SimState& sim, u32 hovered) 
     if (hovered == 0 || player_army_ < 0 || !cur) {
         return {};
     }
-    std::vector<u32> ids(selected_.begin(), selected_.end());
+    std::vector<sim::EntityId> ids(selected_.begin(), selected_.end());
     std::sort(ids.begin(), ids.end());
     std::vector<u32> moves;
-    for (const u32 id : ids) {
+    for (const sim::EntityId id : ids) {
         const sim::Entity* e = sim.entity_registry().find(id);
         const sim::EntityRecord* record = cur->find(id);
         if (!e || e->destroyed() || !e->is_unit() || !record) {
@@ -872,9 +874,9 @@ void InputHandler::measure_snap_radius(const Renderer& renderer, const sim::SimS
 }
 
 void InputHandler::left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool ctrl) {
-    const u32 picked = unit_under(sim, wx, wz, true);
+    const sim::EntityId picked = unit_under(sim, wx, wz, true);
 
-    if (picked != 0 && ctrl) {
+    if (picked && ctrl) {
         select_blueprint_of(sim, picked, shift);
         return;
     }
@@ -883,7 +885,7 @@ void InputHandler::left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift,
         selected_.clear();
     }
 
-    if (picked != 0) {
+    if (picked) {
         if (shift && selected_.count(picked))
             selected_.erase(picked);
         else
@@ -895,13 +897,13 @@ void InputHandler::left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift,
                   selected_.size(), wx, wz);
 }
 
-void InputHandler::select_blueprint_of(sim::SimState& sim, u32 picked, bool shift) {
+void InputHandler::select_blueprint_of(sim::SimState& sim, sim::EntityId picked, bool shift) {
     const sim::Entity* hovered = sim.entity_registry().find(picked);
     if (!hovered || !hovered->is_unit()) {
         return;
     }
     const std::string blueprint = static_cast<const sim::Unit&>(*hovered).blueprint_id();
-    const auto of_blueprint = [&](u32 id) {
+    const auto of_blueprint = [&](sim::EntityId id) {
         const sim::Entity* e = sim.entity_registry().find(id);
         return e && e->is_unit() && static_cast<const sim::Unit&>(*e).blueprint_id() == blueprint;
     };
@@ -925,7 +927,7 @@ void InputHandler::select_blueprint_of(sim::SimState& sim, u32 picked, bool shif
 }
 
 void InputHandler::prune_selection(const sim::EntityRegistry& registry) {
-    std::erase_if(selected_, [&](u32 id) {
+    std::erase_if(selected_, [&](sim::EntityId id) {
         const sim::Entity* e = registry.find(id);
         if (!e || !e->is_unit() || e->destroyed()) {
             return false;
@@ -933,8 +935,8 @@ void InputHandler::prune_selection(const sim::EntityRegistry& registry) {
         const auto& unit = static_cast<const sim::Unit&>(*e);
         return aboard(unit) || unit.is_dying();
     });
-    std::unordered_map<u32, u32> requests;
-    for (const u32 id : selected_) {
+    std::unordered_map<sim::EntityId, u32> requests;
+    for (const sim::EntityId id : selected_) {
         const sim::Entity* e = registry.find(id);
         if (!e) {
             continue;
@@ -960,7 +962,7 @@ void InputHandler::world_click(sim::SimState& sim, f32 wx, f32 wz, bool shift, b
 
 void InputHandler::select_similar_in_view(sim::SimState& sim, f32 wx, f32 wz,
                                           const std::array<f32, 16>& view_proj) {
-    const u32 picked = unit_under(sim, wx, wz, true);
+    const sim::EntityId picked = unit_under(sim, wx, wz, true);
     const sim::Entity* hovered = picked ? sim.entity_registry().find(picked) : nullptr;
     if (!hovered || !hovered->is_unit() || hovered->army() != player_army_) return;
     const auto& unit = static_cast<const sim::Unit&>(*hovered);
@@ -1039,7 +1041,7 @@ void InputHandler::select_in_box(sim::SimState& sim, const std::array<f32, 16>& 
         }
         return true;
     };
-    std::vector<std::pair<u32, int>> boxed;
+    std::vector<std::pair<sim::EntityId, int>> boxed;
     sim.entity_registry().for_each_unit([&](const sim::Entity& e) {
         if (e.army() != player_army_ || !selectable(e)) {
             return;
@@ -1091,7 +1093,7 @@ void InputHandler::select_in_box(sim::SimState& sim, const std::array<f32, 16>& 
             }
         }
     } else {
-        for (u32 id : highest_selection_priority(boxed)) {
+        for (sim::EntityId id : highest_selection_priority(boxed)) {
             selected_.insert(id);
         }
     }
@@ -1101,26 +1103,26 @@ void InputHandler::select_in_box(sim::SimState& sim, const std::array<f32, 16>& 
                   sy0, sx1, sy1);
 }
 
-std::vector<std::pair<sim::UnitCommand, std::vector<u32>>>
+std::vector<std::pair<sim::UnitCommand, std::vector<sim::EntityId>>>
 InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz, bool* invalid) const {
     auto& registry = sim.entity_registry();
     const sim::ArmyBrain* me = sim.get_army(player_army_);
     const auto allied = [&](i32 army) {
         return army == player_army_ || (me && army >= 0 && me->is_ally(army));
     };
-    const auto live = [&](u32 id) -> sim::Entity* {
+    const auto live = [&](sim::EntityId id) -> sim::Entity* {
         sim::Entity* e = registry.find(id);
         return e && !e->destroyed() ? e : nullptr;
     };
     enum class On : u8 { Ground, Enemy, Ally, Wreck };
     On on = On::Ground;
-    u32 target = 0;
+    sim::EntityId target{};
     if (const sim::Entity* e = live(unit_under(sim, wx, wz)); e && e->army() >= 0) {
         target = e->entity_id();
         on = allied(e->army()) ? On::Ally : On::Enemy;
     } else {
         target = prop_under(sim, wx, wz);
-        if (target != 0) {
+        if (target) {
             on = On::Wreck;
         }
     }
@@ -1129,13 +1131,14 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz, bool* inval
     const sim::Entity* t = target ? live(target) : nullptr;
     const auto* tu = t && t->is_unit() ? static_cast<const sim::Unit*>(t) : nullptr;
     const bool hits =
-        on == On::Enemy && tu && std::any_of(selected_.begin(), selected_.end(), [&](u32 id) {
+        on == On::Enemy && tu &&
+        std::any_of(selected_.begin(), selected_.end(), [&](sim::EntityId id) {
             const sim::Entity* e = live(id);
             return e && e->is_unit() &&
                    sim::can_attack_target(static_cast<const sim::Unit&>(*e), *tu, true);
         });
     const auto selection_has = [&](const char* cap) {
-        return std::any_of(selected_.begin(), selected_.end(), [&](u32 id) {
+        return std::any_of(selected_.begin(), selected_.end(), [&](sim::EntityId id) {
             const sim::Entity* e = live(id);
             return e && e->is_unit() && static_cast<const sim::Unit&>(*e).has_command_cap(cap);
         });
@@ -1146,7 +1149,7 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz, bool* inval
             mode = sim::CommandType::Attack;
         } else if (tu && capture_target(*tu) && selection_has("RULEUCC_Capture")) {
             mode = sim::CommandType::Capture;
-        } else if (tu && tu->parent_entity_id() == 0 && sim::reclaim_target_valid(*tu) &&
+        } else if (tu && !tu->parent_entity_id() && sim::reclaim_target_valid(*tu) &&
                    selection_has("RULEUCC_Reclaim")) {
             mode = sim::CommandType::Reclaim;
         } else if (selection_has("RULEUCC_Attack")) {
@@ -1161,8 +1164,8 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz, bool* inval
         mode = friendly_mode(sim, selected_, player_army_, *tu);
     }
 
-    std::vector<u32> ids;
-    for (const u32 id : selected_) {
+    std::vector<sim::EntityId> ids;
+    for (const sim::EntityId id : selected_) {
         if (const sim::Entity* e = live(id); e && e->is_unit() && (!mode || id != target)) {
             ids.push_back(id);
         }
@@ -1208,8 +1211,9 @@ std::vector<IssuedCommand> InputHandler::right_click_at(sim::SimState& sim, f32 
 }
 
 std::vector<IssuedCommand> InputHandler::issue_right_orders(
-    sim::SimState& sim, const std::vector<std::pair<sim::UnitCommand, std::vector<u32>>>& orders,
-    bool shift, const FormationDrag* formation) {
+    sim::SimState& sim,
+    const std::vector<std::pair<sim::UnitCommand, std::vector<sim::EntityId>>>& orders, bool shift,
+    const FormationDrag* formation) {
     std::vector<IssuedCommand> issued;
     for (const auto& [order, units] : orders) {
         sim::UnitCommand cmd = order;
@@ -1261,7 +1265,7 @@ void InputHandler::right_press(sim::SimState& sim, f32 wx, f32 wz, bool shift) {
     bool walks = false;
     f32 sx = 0;
     f32 sz = 0;
-    for (const u32 id : move->second) {
+    for (const sim::EntityId id : move->second) {
         const auto* e = sim.entity_registry().find(id);
         if (!e || !e->is_unit()) {
             continue;
@@ -1352,9 +1356,9 @@ const std::vector<FormationGhost>& InputHandler::formation_ghosts(const sim::Sim
     formation_ghosts_for_ = key;
     formation_ghosts_.clear();
     std::vector<sim::FormationMember> members;
-    for (const u32 id : formation_->units) {
+    for (const sim::EntityId id : formation_->units) {
         const sim::Entity* e = sim.entity_registry().find(id);
-        if (!e || e->destroyed() || !e->is_unit() || e->parent_entity_id() != 0 ||
+        if (!e || e->destroyed() || !e->is_unit() || e->parent_entity_id() ||
             static_cast<const sim::Unit*>(e)->is_being_built()) {
             continue;
         }
@@ -1428,10 +1432,10 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     IssuedCommand out;
     out.clear = !shift;
     sim::UnitCommand cmd;
-    std::vector<u32> ids;
+    std::vector<sim::EntityId> ids;
 
     auto live_selected = [&](auto keep) {
-        for (u32 uid : selected_) {
+        for (sim::EntityId uid : selected_) {
             auto* e = sim.entity_registry().find(uid);
             if (!e || !e->is_unit() || e->destroyed()) continue;
             if (keep(static_cast<const sim::Unit&>(*e))) ids.push_back(uid);
@@ -1469,13 +1473,13 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
             cmd.target_id ? sim.entity_registry().find(cmd.target_id) : nullptr;
         const sim::Vector3 at =
             target ? target->position() : sim::Vector3{wx, surface_y(wx, wz), wz};
-        std::vector<u32> selection(selected_.begin(), selected_.end());
+        std::vector<sim::EntityId> selection(selected_.begin(), selected_.end());
         std::sort(selection.begin(), selection.end());
         const auto verdict = mode.verify_script(selection, cmd.target_id, at, !shift);
         if (!verdict) return std::nullopt;
         cmd.script_args = verdict->args;
         out.type = "Script";
-        for (u32 uid : verdict->units) {
+        for (sim::EntityId uid : verdict->units) {
             const auto* e = sim.entity_registry().find(uid);
             if (e && e->is_unit() && !e->destroyed()) ids.push_back(uid);
         }
@@ -1492,7 +1496,9 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         cmd.type = spec->type;
         out.type = spec->fa_type;
         cmd.target_id = target_under(sim, wx, wz, spec->type);
-        if (spec->targets_unit && cmd.target_id == 0) return std::nullopt;
+        if (spec->targets_unit && !cmd.target_id) {
+            return std::nullopt;
+        }
         live_selected([&](const sim::Unit& u) {
             return u.has_command_cap(spec->cap) && u.entity_id() != cmd.target_id;
         });
@@ -1502,10 +1508,10 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     // An Attack on bare ground: a mobile unit on ReturnFire attack-moves
     // there, and only the others get the ground attack (Moho's
     // SplitSelectionForAggressiveMove).
-    std::vector<u32> attack_movers;
-    if (cmd.type == sim::CommandType::Attack && cmd.target_id == 0) {
-        std::vector<u32> rest;
-        for (u32 id : ids) {
+    std::vector<sim::EntityId> attack_movers;
+    if (cmd.type == sim::CommandType::Attack && !cmd.target_id) {
+        std::vector<sim::EntityId> rest;
+        for (sim::EntityId id : ids) {
             const auto& u = static_cast<const sim::Unit&>(*sim.entity_registry().find(id));
             (u.is_mobile() && u.fire_state() == 0 ? attack_movers : rest).push_back(id);
         }
@@ -1529,7 +1535,7 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     f32 az = 0;
     const auto pending =
         shift ? sim.command_scheduler().pending() : std::vector<sim::ScheduledCommand>();
-    for (u32 id : ids) {
+    for (sim::EntityId id : ids) {
         const auto& u = static_cast<const sim::Unit&>(*sim.entity_registry().find(id));
         ax += u.position().x;
         az += u.position().z;
@@ -1611,8 +1617,8 @@ std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const Co
         snap_to_deposit(sim, mode, x1, z1);
     }
     // Mobile builders take the orders; factories build through their queue.
-    std::vector<u32> ids;
-    for (u32 uid : selected_) {
+    std::vector<sim::EntityId> ids;
+    for (sim::EntityId uid : selected_) {
         const auto* e = sim.entity_registry().find(uid);
         if (!e || !e->is_unit() || e->destroyed()) {
             continue;
@@ -1720,7 +1726,7 @@ void InputHandler::set_cursor_view(const Camera& camera, f32 width, f32 height, 
     screen_size_ = {width, height};
 }
 
-u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) const {
+sim::EntityId InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) const {
     // The cursor's ray if (wx, wz) is what it is on; else straight down.
     const bool on_cursor = cursor_ray_ && std::abs(cursor_ray_ground_[0] - wx) < 1e-3f &&
                            std::abs(cursor_ray_ground_[1] - wz) < 1e-3f;
@@ -1743,9 +1749,9 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
     const bool tolerant = on_cursor && cursor_solid_;
     constexpr f32 kReach = 16.0f; // the widest unit's half size
     const f32 reach = kReach + (tolerant ? cursor_reach_ : 0.0f);
-    u32 best_id = 0;
+    sim::EntityId best_id{};
     f32 best_t = std::numeric_limits<f32>::max();
-    for (u32 id :
+    for (sim::EntityId id :
          sim.entity_registry().collect_in_rect(x0 - reach, z0 - reach, x1 + reach, z1 + reach)) {
         const auto* e = sim.entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit() || !shown(*e) ||
@@ -1813,25 +1819,26 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
     return best_id;
 }
 
-u32 InputHandler::target_under(sim::SimState& sim, f32 wx, f32 wz, sim::CommandType type) const {
+sim::EntityId InputHandler::target_under(sim::SimState& sim, f32 wx, f32 wz,
+                                         sim::CommandType type) const {
     const bool reclaim = type == sim::CommandType::Reclaim;
-    const u32 unit = unit_under(sim, wx, wz);
+    const sim::EntityId unit = unit_under(sim, wx, wz);
     const auto* u =
         unit ? static_cast<const sim::Unit*>(sim.entity_registry().find(unit)) : nullptr;
     if (u && (!reclaim || sim::reclaim_target_valid(*u)) &&
         (type != sim::CommandType::Capture || capture_target(*u))) {
         return unit;
     }
-    return reclaim ? prop_under(sim, wx, wz) : 0;
+    return reclaim ? prop_under(sim, wx, wz) : sim::EntityId();
 }
 
-u32 InputHandler::prop_under(sim::SimState& sim, f32 wx, f32 wz) const {
+sim::EntityId InputHandler::prop_under(sim::SimState& sim, f32 wx, f32 wz) const {
     if (camera_zoom_ > 150.0f) {
-        return 0;
+        return {};
     }
-    u32 best_id = 0;
+    sim::EntityId best_id{};
     f32 best = std::numeric_limits<f32>::max();
-    for (u32 id : sim.entity_registry().collect_in_radius(wx, wz, 16.0f)) {
+    for (sim::EntityId id : sim.entity_registry().collect_in_radius(wx, wz, 16.0f)) {
         const sim::Entity* e = sim.entity_registry().find(id);
         if (!e || e->destroyed() || !shown(*e) || !targetable_prop(*e) ||
             !sim::reclaim_target_valid(*e)) {

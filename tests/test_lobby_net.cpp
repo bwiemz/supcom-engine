@@ -350,7 +350,7 @@ struct LuaGuard {
     LuaGuard& operator=(const LuaGuard&) = delete;
 };
 
-osc::u32 spawn_mover(osc::sim::SimState& sim) {
+osc::sim::EntityId spawn_mover(osc::sim::SimState& sim) {
     auto u = std::make_unique<osc::sim::Unit>();
     u->set_army(0);
     u->set_max_speed(5.0f);
@@ -396,7 +396,7 @@ TEST_CASE("Three sims play in lockstep over the lobby's connections (M218c)", "[
     SimState s0(g0.L, nullptr);
     SimState s1(g1.L, nullptr);
     SimState s2(g2.L, nullptr);
-    const osc::u32 id = spawn_mover(s0);
+    const osc::sim::EntityId id = spawn_mover(s0);
     REQUIRE(spawn_mover(s1) == id);
     REQUIRE(spawn_mover(s2) == id);
     const std::vector<osc::u32> sources{0, 1, 2};

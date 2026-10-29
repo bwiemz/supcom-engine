@@ -44,7 +44,7 @@ void test_binding_tail(TestContext& ctx) {
         const auto ran = ctx.lua_state.do_string(code);
         t.check(static_cast<bool>(ran), ran ? what : what + ": " + ran.error().message);
     };
-    const auto first_order = [&](u32 id) -> std::optional<sim::CommandType> {
+    const auto first_order = [&](sim::EntityId id) -> std::optional<sim::CommandType> {
         const auto* e = ctx.sim.entity_registry().find(id);
         if (!e || !e->is_unit()) return std::nullopt;
         const auto& queue = static_cast<const sim::Unit*>(e)->command_queue();
@@ -52,11 +52,14 @@ void test_binding_tail(TestContext& ctx) {
         return queue.front().type;
     };
 
-    const u32 transport = spawn_unit(ctx, "__osc_bt_transport", "uea0107", "ARMY_1", {sx, sz});
-    const u32 marine = spawn_unit(ctx, "__osc_bt_marine", "uel0106", "ARMY_1", {sx + 6, sz});
-    const u32 idle = spawn_unit(ctx, "__osc_bt_idle", "uea0107", "ARMY_1", {sx - 8, sz});
+    const sim::EntityId transport =
+        spawn_unit(ctx, "__osc_bt_transport", "uea0107", "ARMY_1", {sx, sz});
+    const sim::EntityId marine =
+        spawn_unit(ctx, "__osc_bt_marine", "uel0106", "ARMY_1", {sx + 6, sz});
+    const sim::EntityId idle = spawn_unit(ctx, "__osc_bt_idle", "uea0107", "ARMY_1", {sx - 8, sz});
     (void)spawn_unit(ctx, "__osc_bt_beacon", "ueb5102", "ARMY_1", {sx + 20, sz - 30});
-    const u32 near_gen = spawn_unit(ctx, "__osc_bt_near", "ueb1101", "ARMY_2", {sx + 40, sz + 60});
+    const sim::EntityId near_gen =
+        spawn_unit(ctx, "__osc_bt_near", "ueb1101", "ARMY_2", {sx + 40, sz + 60});
     (void)spawn_unit(ctx, "__osc_bt_far", "ueb1101", "ARMY_2", {sx - 20, sz + 60});
     check("setup: a platoon, squads named in any case", R"(
         local brain = ArmyBrains[1]
@@ -286,7 +289,7 @@ void test_binding_tail(TestContext& ctx) {
         end
     )");
 
-    const auto queued = [&](u32 id) {
+    const auto queued = [&](sim::EntityId id) {
         const auto* e = ctx.sim.entity_registry().find(id);
         return e && e->is_unit() ? static_cast<const sim::Unit*>(e)->command_queue().size() : 0;
     };

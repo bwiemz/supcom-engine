@@ -146,21 +146,21 @@ void run_lua(TestContext& ctx, const std::string& code) {
 
 /// Make a `bp` of `army`'s on the ground at `at`, as Lua global `global`;
 /// its entity id.
-u32 spawn_unit(TestContext& ctx, const char* global, const char* bp, const char* army, Spot at,
-               f32 lift) {
+sim::EntityId spawn_unit(TestContext& ctx, const char* global, const char* bp, const char* army,
+                         Spot at, f32 lift) {
     run_lua(ctx, fmt::format("{0} = CreateUnitHPR('{1}', '{2}', {3}, {4}, {5}, 0, 0, 0)\n"
                              "__osc_intel_id = tonumber({0}:GetEntityId())\n",
                              global, bp, army, at.x,
                              ctx.sim.terrain()->get_terrain_height(at.x, at.z) + lift, at.z));
     lua_pushstring(ctx.L, "__osc_intel_id");
     lua_rawget(ctx.L, LUA_GLOBALSINDEX);
-    const u32 id = osc::sim::to_entity_id(ctx.L, -1);
+    const sim::EntityId id = osc::sim::to_entity_id(ctx.L, -1, ctx.sim.entity_registry());
     lua_pop(ctx.L, 1);
     // Moho stands a unit made by script on its spawn height (the ground, the
     // water's surface: IUnit::CalcSpawnElevation). A scene that lifts one does
     // so on purpose (a rig for what it draws), so the lift goes on after; an
     // aircraft keeps its flying height, as it always did.
-    if (sim::Entity* e = id != 0 && lift != 0.0f ? ctx.sim.entity_registry().find(id) : nullptr;
+    if (sim::Entity* e = id && lift != 0.0f ? ctx.sim.entity_registry().find(id) : nullptr;
         e && e->is_unit() && static_cast<sim::Unit*>(e)->layer() != "Air") {
         sim::Vector3 p = e->position();
         p.y = ctx.sim.terrain()->get_terrain_height(at.x, at.z) + lift;

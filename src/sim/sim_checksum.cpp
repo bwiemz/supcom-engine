@@ -53,7 +53,9 @@ void mix_army(Fnv& armies, const ArmyBrain& a) {
         mix_str(armies, p->unique_name());
         armies.mix(p->disband_on_idle() ? 1u : 0u);
         armies.mix(static_cast<u64>(p->unit_ids().size()));
-        for (const u32 id : p->unit_ids()) armies.mix(id);
+        for (const EntityId id : p->unit_ids()) {
+            armies.mix(id);
+        }
     }
     // Its influence map's entries (M207b), as Moho mixes their strengths.
     if (const InfluenceMap* map = a.influence_map()) {
@@ -170,7 +172,9 @@ void mix_unit_flight(Fnv& units, const Unit& u) {
     // What a carrier keeps inside (M206q), only when it keeps something.
     if (!u.stored_ids().empty()) {
         units.mix(0x53544f5200000000ull | u.stored_ids().size()); // "STOR"
-        for (u32 id : u.stored_ids()) units.mix(id);
+        for (const EntityId id : u.stored_ids()) {
+            units.mix(id);
+        }
     }
     // Landing on carriers (M206s), only while under way: a carrier's
     // reservations and retrieve, a unit's landing.
@@ -178,11 +182,15 @@ void mix_unit_flight(Fnv& units, const Unit& u) {
         u.storage_overflow() != 0 || u.retrieve_phase() != 0 || u.landing_phase() != 0) {
         units.mix(0x4c414e4400000000ull); // "LAND"
         units.mix(static_cast<u64>(u.storage_reserved_ids().size()));
-        for (u32 id : u.storage_reserved_ids()) units.mix(id);
+        for (const EntityId id : u.storage_reserved_ids()) {
+            units.mix(id);
+        }
         units.mix(u.next_storage_point());
         units.mix(static_cast<u64>(static_cast<u32>(u.storage_overflow())));
         units.mix(u.retrieve_phase());
-        for (u32 id : u.retrieve_ids()) units.mix(id);
+        for (const EntityId id : u.retrieve_ids()) {
+            units.mix(id);
+        }
         units.mix(static_cast<u64>(static_cast<u32>(u.retrieve_wait())));
         units.mix(u.landing_phase());
         units.mix(static_cast<u64>(static_cast<u32>(u.landing_wait())));
@@ -255,7 +263,7 @@ void mix_unit_script_state(Fnv& units, const Unit& u, UnitScratch& scratch) {
         units.mix_f32(u.turn_mult());
     }
     // Its veterancy and last attacker, only once set; its enhancements.
-    if (u.vet_level() != 0 || u.last_attacker_id() != 0) {
+    if (u.vet_level() != 0 || u.last_attacker_id()) {
         units.mix(0x5645544c00000000ull | u.vet_level()); // "VETL"
         units.mix(u.last_attacker_id());
     }
@@ -402,8 +410,7 @@ void mix_command(Fnv& orders, const UnitCommand& cmd, bool need_unpack) {
     }
     // A guard's or patrol's fight's leash, only once it has one.
     const Vector3& anchor = cmd.leash_anchor_pos;
-    if (cmd.leash_armed || cmd.leash_anchor_id != 0 || anchor.x != 0 || anchor.y != 0 ||
-        anchor.z != 0) {
+    if (cmd.leash_armed || cmd.leash_anchor_id || anchor.x != 0 || anchor.y != 0 || anchor.z != 0) {
         orders.mix(0x4c455348u); // "LESH"
         orders.mix(cmd.leash_armed ? 1u : 0u);
         orders.mix(cmd.leash_anchor_id);
@@ -413,7 +420,7 @@ void mix_command(Fnv& orders, const UnitCommand& cmd, bool need_unpack) {
         orders.mix(0x5054524cu); // "PTRL"
         orders.mix(cmd.from_patrol ? 1u : 0u);
         orders.mix(static_cast<u64>(cmd.patrol_claimed.size()));
-        for (u32 id : cmd.patrol_claimed) {
+        for (const EntityId id : cmd.patrol_claimed) {
             orders.mix(id);
         }
     }
@@ -427,7 +434,9 @@ void mix_command(Fnv& orders, const UnitCommand& cmd, bool need_unpack) {
         orders.mix(0x4c4e4348u); // "LNCH"
         orders.mix(static_cast<u64>(static_cast<u32>(cmd.launch_wait)));
         orders.mix(static_cast<u64>(cmd.launch_queue.size()));
-        for (u32 id : cmd.launch_queue) orders.mix(id);
+        for (const EntityId id : cmd.launch_queue) {
+            orders.mix(id);
+        }
     }
     // A formation's slot, pace and facing, only for a formation order.
     if (cmd.formed || cmd.speed_cap != 0 || cmd.has_facing || !cmd.formation.empty()) {
@@ -464,7 +473,9 @@ void mix_command(Fnv& orders, const UnitCommand& cmd, bool need_unpack) {
     // as before it existed.
     if (!cmd.unload_ids.empty()) {
         orders.mix(static_cast<u64>(cmd.unload_ids.size()));
-        for (u32 id : cmd.unload_ids) orders.mix(id);
+        for (const EntityId id : cmd.unload_ids) {
+            orders.mix(id);
+        }
     }
 }
 
@@ -481,7 +492,9 @@ void mix_orders(Fnv& orders, const Unit& u) {
         orders.mix((u.pickup_running() ? 1u : 0u) | (u.pickup_ready() ? 2u : 0u));
         orders.mix(static_cast<u64>(static_cast<u32>(u.pickup_ticks())));
         orders.mix(static_cast<u64>(u.pickup_ids().size()));
-        for (const u32 id : u.pickup_ids()) orders.mix(id);
+        for (const EntityId id : u.pickup_ids()) {
+            orders.mix(id);
+        }
         orders.mix(static_cast<u64>(static_cast<u32>(u.beam_up_ticks())));
     }
     // A factory's rally orders (M206j), only where it has some.

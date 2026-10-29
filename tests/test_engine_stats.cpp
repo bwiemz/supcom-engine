@@ -134,7 +134,7 @@ TEST_CASE("The entity counts follow the ids' families, each made as its first en
 
     auto unit = std::make_unique<osc::sim::Unit>();
     unit->set_army(0);
-    const osc::u32 unit_id = reg.register_entity(std::move(unit));
+    const osc::sim::EntityId unit_id = reg.register_entity(std::move(unit));
     reg.register_entity(std::make_unique<osc::sim::Projectile>());
     stats.note_entities(&reg);
     CHECK(stats.find("EntityCount")->integer == 4);

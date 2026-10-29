@@ -339,12 +339,14 @@ TEST_CASE("Sound engine: a world sound at a point that isn't finite is not heard
     SoundManager sm(s.dir, false);
     LogCapture log;
     const f32 nan = std::numeric_limits<f32>::quiet_NaN();
-    CHECK(sm.play_world({"Test", "Click", "", {10, nan, 0}, false, 1, 7}) == INVALID_SOUND);
-    CHECK(sm.play_world({"Test", "Click", "", {10, nan, 0}, false, 2, 7}) == INVALID_SOUND);
+    const sim::EntityId entity = sim::EntityId::of(7, 1);
+    CHECK(sm.play_world({"Test", "Click", "", {10, nan, 0}, false, 1, entity}) == INVALID_SOUND);
+    CHECK(sm.play_world({"Test", "Click", "", {10, nan, 0}, false, 2, entity}) == INVALID_SOUND);
 
     using EL = SoundManager::EntityLoop;
     sm.set_global_variable("CameraDistance", 50);
-    std::vector<EL> want{EL{1, "Test", "Shot", "", {nan, nan, nan}, false, true, 8}};
+    std::vector<EL> want{
+        EL{1, "Test", "Shot", "", {nan, nan, nan}, false, true, sim::EntityId::of(8, 1)}};
     sm.sync_entity_loops(want);
     sm.sync_entity_loops(want);
     CHECK(sm.entity_loop(1) == INVALID_SOUND);

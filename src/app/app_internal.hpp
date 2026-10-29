@@ -352,7 +352,7 @@ void finish_world_load(sim::SimState& sim_state, lua::LuaState& sim_lua_state,
                        lua::LuaState& ui_lua_state, vfs::VirtualFileSystem& vfs,
                        GameStateManager& game_state_mgr, renderer::Renderer* renderer,
                        blueprints::BlueprintStore* ui_store, renderer::InputHandler* input_handler,
-                       std::unordered_set<u32>* prev_selection, double& sim_accumulator,
+                       std::unordered_set<sim::EntityId>* prev_selection, double& sim_accumulator,
                        const std::string& launch_scenario);
 
 // frames.cpp
@@ -367,15 +367,14 @@ void sync_build_ghost(sim::SimState& sim, const renderer::CommandMode& m, bool& 
 /// answer sets UserValidated; else the answer's AuthorizedUnits, and the
 /// answer without them as the task's data. An error is logged, and lets
 /// nothing go.
-std::optional<renderer::VerifiedScript> verify_script_command(lua_State* uiL,
-                                                              const std::vector<u32>& units,
-                                                              u32 target_id, const sim::Vector3& at,
-                                                              bool clear);
+std::optional<renderer::VerifiedScript>
+verify_script_command(lua_State* uiL, const std::vector<sim::EntityId>& units,
+                      sim::EntityId target_id, const sim::Vector3& at, bool clear);
 /// Moho's UserUnit::DoOnDetectAdjacencyBonusFor (faf-re UserUnit.cpp,
 /// 0x0083EEC0): /lua/ui/game/gamemain.lua's OnDetectAdjacencyBonus(unit,
 /// blueprint), whether `unit` gives a structure of `blueprint` placed beside
 /// it a bonus. An error is logged, and gives none.
-bool detect_adjacency_bonus(lua_State* uiL, u32 unit, const std::string& blueprint);
+bool detect_adjacency_bonus(lua_State* uiL, sim::EntityId unit, const std::string& blueprint);
 
 // ui_globals.cpp
 /// Register the session's UI globals (FlushEvents, SessionIsReplay, ...) on

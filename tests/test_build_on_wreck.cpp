@@ -3,6 +3,7 @@
 
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -31,7 +32,7 @@ struct WreckSite {
     lua_State* L = lua_open();
     SimState sim{L, nullptr};
     Unit* engineer = nullptr;
-    osc::u32 built_id = 0;
+    osc::sim::EntityId built_id{};
 
     explicit WreckSite(const char* extra_blueprints = "") {
         luaopen_base(L);
@@ -88,7 +89,7 @@ struct WreckSite {
         self->sim.entity_registry().register_entity(std::move(u));
         self->bind(*raw, nullptr);
         self->built_id = raw->entity_id();
-        lua_pushnumber(L, raw->entity_id());
+        osc::sim::push_entity_key(L, raw->entity_id());
         lua_rawgeti(L, LUA_REGISTRYINDEX, raw->lua_table_ref());
         return 2;
     }
@@ -105,8 +106,8 @@ struct WreckSite {
         e.set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
     }
 
-    osc::u32 prop(osc::f32 x, osc::f32 z, const char* associated, bool reclaimable,
-                  bool obstructs = false) {
+    osc::sim::EntityId prop(osc::f32 x, osc::f32 z, const char* associated, bool reclaimable,
+                            bool obstructs = false) {
         auto p = std::make_unique<Prop>();
         p->set_position({x, 0.0f, z});
         p->reclaimable_category = reclaimable;
@@ -140,7 +141,7 @@ struct WreckSite {
     }
 
     Unit* built() {
-        auto* e = built_id != 0 ? sim.entity_registry().find(built_id) : nullptr;
+        auto* e = built_id ? sim.entity_registry().find(built_id) : nullptr;
         return e ? static_cast<Unit*>(e) : nullptr;
     }
 };
@@ -150,7 +151,7 @@ struct WreckSite {
 TEST_CASE("A structure built on its own wreck starts half built, and the wreck goes",
           "[build][wreck]") {
     WreckSite w;
-    const osc::u32 wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
+    const osc::sim::EntityId wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
     w.build("ueb1103");
     w.start();
     REQUIRE(w.built());
@@ -160,7 +161,7 @@ TEST_CASE("A structure built on its own wreck starts half built, and the wreck g
 
 TEST_CASE("A wreck of another structure is reclaimed before the build starts", "[build][wreck]") {
     WreckSite w;
-    const osc::u32 wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
+    const osc::sim::EntityId wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
     w.build("uab1103");
     w.sim.tick();
     CHECK_FALSE(w.built());
@@ -177,17 +178,17 @@ TEST_CASE("A build stopped while it clears its site stops reclaiming", "[build][
     w.prop(11.0f, 11.0f, "ueb1103", true);
     w.build("uab1103");
     w.sim.tick();
-    REQUIRE(w.engineer->reclaim_target_id() != 0);
+    REQUIRE(w.engineer->reclaim_target_id());
     w.engineer->clear_commands();
     w.sim.tick();
-    CHECK(w.engineer->reclaim_target_id() == 0);
+    CHECK_FALSE(w.engineer->reclaim_target_id());
 }
 
 TEST_CASE("With OBSTRUCTSBUILDING in the data, only such props are cleared first",
           "[build][wreck]") {
     WreckSite w(
         "__blueprints.wreck = { BlueprintId = 'wreck', Categories = { 'OBSTRUCTSBUILDING' } }");
-    const osc::u32 tree = w.prop(10.5f, 10.5f, nullptr, true);
+    const osc::sim::EntityId tree = w.prop(10.5f, 10.5f, nullptr, true);
     w.build("uab1103");
     w.start();
     REQUIRE(w.built());
@@ -196,7 +197,7 @@ TEST_CASE("With OBSTRUCTSBUILDING in the data, only such props are cleared first
 
 TEST_CASE("A wreck worth nothing is reclaimed off the site all the same", "[build][wreck]") {
     WreckSite w("Engineer.GetReclaimCosts = function(self, target) return 1, 0, 0 end");
-    const osc::u32 wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
+    const osc::sim::EntityId wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
     w.build("uab1103");
     tick_until([&] { w.sim.tick(); }, "the build starts", 20, [&] { return w.built() != nullptr; });
     CHECK(w.sim.entity_registry().find(wreck) == nullptr);
@@ -205,7 +206,7 @@ TEST_CASE("A wreck worth nothing is reclaimed off the site all the same", "[buil
 TEST_CASE("A paused engineer clears its site, then makes its frame only on a retry after unpause",
           "[build][wreck][pause]") {
     WreckSite w;
-    const osc::u32 wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
+    const osc::sim::EntityId wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
     w.engineer->set_paused(true);
     w.build("uab1103");
     tick_until([&] { w.sim.tick(); }, "the paused engineer reclaims the wreck", 40,
@@ -298,7 +299,7 @@ TEST_CASE("A mobile build whose orders are cleared is let go at once, its frame 
     REQUIRE(w.engineer->build_target_id() == w.built_id);
     osc::sim::SimContext ctx = w.sim.sim_context();
     w.engineer->clear_commands(ctx);
-    CHECK(w.engineer->build_target_id() == 0);
+    CHECK_FALSE(w.engineer->build_target_id());
     CHECK_FALSE(w.engineer->economy().consumption_active);
     CHECK(heard(w.L) == "start MobileBuild stop MobileBuild failed ");
     REQUIRE(w.built());
@@ -333,7 +334,7 @@ TEST_CASE("A build whose unit is gone stops with nil for it, and fails as its ta
     w.built()->mark_destroyed();
     w.sim.entity_registry().unregister_entity(w.built_id);
     w.sim.tick();
-    CHECK(w.engineer->build_target_id() == 0);
+    CHECK_FALSE(w.engineer->build_target_id());
     CHECK(heard(w.L) == then);
 }
 
@@ -431,6 +432,6 @@ TEST_CASE("A build callback can clear its orders without stopping the build twic
     lua_getglobal(w.L, "__failed");
     CHECK(lua_tonumber(w.L, -1) == failures);
     lua_pop(w.L, 1);
-    CHECK(w.engineer->build_target_id() == 0);
+    CHECK_FALSE(w.engineer->build_target_id());
     CHECK_FALSE(w.engineer->economy().consumption_active);
 }

@@ -112,7 +112,7 @@ int weapon_ref(const EntityRegistry& registry, const Entity& beam) {
 
 } // namespace
 
-void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_step) {
+void check_collision_beam(SimState& sim, lua_State* L, EntityId beam_id, bool before_step) {
     EntityRegistry& registry = sim.entity_registry();
     Entity* beam = registry.find(beam_id);
     if (!beam || beam->destroyed() || !beam->is_collision_beam()) return;
@@ -121,7 +121,7 @@ void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_
     auto& setup = beam->beam_setup();
     setup.check_clock = setup.check_interval + (before_step ? 1 : 0);
 
-    const u32 launcher_id = beam->beam_launcher_id();
+    const EntityId launcher_id = beam->beam_launcher_id();
     const f32 length = setup.length > 0 ? setup.length : 1.0f;
     const Vector3 from = beam->pending_position();
     const Vector3 to{from.x + facing->x * length, from.y + facing->y * length,
@@ -149,15 +149,15 @@ void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_
 
     // What stands in the way before it, nearest first. Scripted entities
     // (a flare's lure) and other beams don't stop a beam.
-    std::vector<u32> candidates;
+    std::vector<EntityId> candidates;
     registry.collect_colliders(from.x, from.z, to.x, to.z, candidates);
-    std::vector<std::pair<f32, u32>> hits;
-    for (const u32 id : candidates) {
+    std::vector<std::pair<f32, EntityId>> hits;
+    for (const EntityId id : candidates) {
         if (id == beam_id || id == launcher_id) continue;
         const Entity* e = registry.find(id);
         if (!e || e->destroyed() || e->is_collision_beam()) continue;
         if (!e->is_unit() && !e->is_prop() && !e->is_shield() && !e->is_projectile()) continue;
-        if (e->is_unit() && static_cast<const Unit*>(e)->transport_id() != 0) {
+        if (e->is_unit() && static_cast<const Unit*>(e)->transport_id()) {
             continue;
         }
         if (e->is_projectile() && static_cast<const Projectile*>(e)->impacted) continue;
@@ -170,7 +170,7 @@ void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_
 
     // The first that lets the weapon hit it (its script may say no: an ally
     // without CollideFriendly, a category on DoNotCollideList).
-    u32 hit_id = 0;
+    EntityId hit_id{};
     f32 hit_t = surface_t;
     const int weapon = weapon_ref(registry, *beam);
     for (const auto& [t, id] : hits) {
@@ -188,7 +188,7 @@ void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_
     }
 
     const char* type = nullptr;
-    if (hit_id != 0) {
+    if (hit_id) {
         type = impact_type(*registry.find(hit_id));
     } else if (surface_t <= 1.0f) {
         type = surface_type;
@@ -200,8 +200,9 @@ void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_
         type = under ? "Underwater" : "Air";
     }
     Vector3 end = lerp(from, to, hit_t);
-    if (hit_id == 0 && surface_type && surface_t <= 1.0f && std::string(surface_type) == "Water")
+    if (!hit_id && surface_type && surface_t <= 1.0f && std::string(surface_type) == "Water") {
         end.y = terrain->water_elevation();
+    }
     beam->set_beam_endpoint(end);
     beam->beam_setup().reached = hit_t * length;
 
@@ -212,7 +213,7 @@ void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_
         const i32 index = setup.weapon;
         if (index >= 0 && static_cast<size_t>(index) < owner.weapons().size()) {
             Weapon& weapon = *owner.weapons()[static_cast<size_t>(index)];
-            const Entity* hit = hit_id != 0 ? registry.find(hit_id) : nullptr;
+            const Entity* hit = hit_id ? registry.find(hit_id) : nullptr;
             weapon.note_impact(owner, impact_missed(weapon.target_mark(), hit, type, false),
                                registry, &sim);
         }
@@ -227,7 +228,7 @@ void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_
     if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, top + 1);
         lua_pushstring(L, type);
-        const Entity* hit = hit_id != 0 ? registry.find(hit_id) : nullptr;
+        const Entity* hit = hit_id ? registry.find(hit_id) : nullptr;
         if (hit && hit->lua_table_ref() >= 0)
             lua_rawgeti(L, LUA_REGISTRYINDEX, hit->lua_table_ref());
         else lua_pushnil(L);

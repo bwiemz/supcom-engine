@@ -686,15 +686,17 @@ void test_cartographic_minimap(TestContext& ctx) {
         r.set_player_army(0);
         // The army's units with vision, and one of its with a weapon picked
         size_t seeing = 0;
-        u32 armed = 0;
+        sim::EntityId armed{};
         ctx.sim.entity_registry().for_each_unit([&](sim::Entity& e) {
             const auto& u = static_cast<const sim::Unit&>(e);
             if (u.army() != 0 || u.is_being_built() || u.is_dying()) return;
             const auto it = u.intel_states().find("Vision");
             if (it != u.intel_states().end() && std::floor(it->second.radius) > 0.0f) ++seeing;
-            if (armed == 0 && !u.weapons().empty()) armed = u.entity_id();
+            if (!armed && !u.weapons().empty()) {
+                armed = u.entity_id();
+            }
         });
-        const std::unordered_set<u32> selected{armed};
+        const std::unordered_set<sim::EntityId> selected{armed};
         ctx.sim.tick(); // the army's sight, which a tick paints
         shots.recapture();
         (void)shots.grab(&selected);
@@ -706,8 +708,7 @@ void test_cartographic_minimap(TestContext& ctx) {
         const f32 span = std::max(map_w, map_h);
         const f32 thick = renderer::ring_thickness(
             profile.outer, r.range_overlays().settings().outer_thickness_coeff, span, 1.0f);
-        t.check(armed != 0 && rings.size() == 1 &&
-                    std::abs(rings[0].outer_thickness - thick) < 1e-4f,
+        t.check(armed && rings.size() == 1 && std::abs(rings[0].outer_thickness - thick) < 1e-4f,
                 fmt::format("the selected unit's ring in the minimap's frame, its line {:.3f} "
                             "thick at the minimap's full zoom ({:.3f} in the world view)",
                             rings.empty() ? 0.0f : rings[0].outer_thickness,

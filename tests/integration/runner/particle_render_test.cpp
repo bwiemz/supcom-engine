@@ -208,15 +208,15 @@ void test_particle_render(TestContext& ctx) {
     const Spot l0{sx + 20, sz - 20};
     const Spot f0{sx + 45, sz - 30};
     (void)spawn_unit(ctx, "__osc_pt_a", "uel0105", "ARMY_1", a0, kLift);
-    const u32 b = spawn_unit(ctx, "__osc_pt_b", "uel0105", "ARMY_1", b0, kLift);
-    const u32 c = spawn_unit(ctx, "__osc_pt_c", "uel0105", "ARMY_1", c0, kLift);
-    const u32 d = spawn_unit(ctx, "__osc_pt_d", "uel0105", "ARMY_1", d0, kLift);
+    const sim::EntityId b = spawn_unit(ctx, "__osc_pt_b", "uel0105", "ARMY_1", b0, kLift);
+    const sim::EntityId c = spawn_unit(ctx, "__osc_pt_c", "uel0105", "ARMY_1", c0, kLift);
+    const sim::EntityId d = spawn_unit(ctx, "__osc_pt_d", "uel0105", "ARMY_1", d0, kLift);
     (void)spawn_unit(ctx, "__osc_pt_e", "uel0105", "ARMY_1", e0, kLift);
     (void)spawn_unit(ctx, "__osc_pt_q", "uel0105", "ARMY_1", q0, kLift);
-    const u32 c2_id = spawn_unit(ctx, "__osc_pt_c2", "uel0105", "ARMY_1", c2, kLift);
-    const u32 g = spawn_unit(ctx, "__osc_pt_g", "uel0105", "ARMY_1", g0, kLift);
+    const sim::EntityId c2_id = spawn_unit(ctx, "__osc_pt_c2", "uel0105", "ARMY_1", c2, kLift);
+    const sim::EntityId g = spawn_unit(ctx, "__osc_pt_g", "uel0105", "ARMY_1", g0, kLift);
     (void)spawn_unit(ctx, "__osc_pt_h", "uel0105", "ARMY_1", h0, kLift);
-    const u32 l = spawn_unit(ctx, "__osc_pt_l", "uel0105", "ARMY_1", l0, kLift);
+    const sim::EntityId l = spawn_unit(ctx, "__osc_pt_l", "uel0105", "ARMY_1", l0, kLift);
     (void)spawn_unit(ctx, "__osc_pt_f", "uel0105", "ARMY_2", f0, kLift);
 
     OffscreenShots shots(ctx);
@@ -235,7 +235,7 @@ void test_particle_render(TestContext& ctx) {
         shots.redraw();
         seen.capture(ctx.sim);
     };
-    const auto pos = [&](u32 id) {
+    const auto pos = [&](sim::EntityId id) {
         const sim::EntityRecord* rec = seen.cur().find(id);
         return rec ? rec->position : sim::Vector3{};
     };

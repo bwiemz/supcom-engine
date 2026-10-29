@@ -265,19 +265,17 @@ void SelectionInfoRenderer::build_single_unit(const sim::EntityRecord& unit,
 }
 
 void SelectionInfoRenderer::build_multi_unit(const sim::FrameView& view,
-                                              const std::unordered_set<u32>& selected_ids,
-                                              FontCache& font_cache,
-                                              TextureCache& tex_cache,
-                                              VkDescriptorSet icon_atlas_ds,
-                                              f32 px, f32 py,
-                                              f32 pw, f32 /*ph*/) {
+                                             const std::unordered_set<sim::EntityId>& selected_ids,
+                                             FontCache& font_cache, TextureCache& tex_cache,
+                                             VkDescriptorSet icon_atlas_ds, f32 px, f32 py, f32 pw,
+                                             f32 /*ph*/) {
     VkDescriptorSet white_ds = tex_cache.fallback_descriptor();
 
     // Count by icon type
     u32 type_counts[static_cast<u32>(StrategicIconType::COUNT)] = {};
     f32 total_hp = 0, total_max_hp = 0;
 
-    for (u32 uid : selected_ids) {
+    for (sim::EntityId uid : selected_ids) {
         auto* e = view.find(uid);
         if (!e || !e->is_unit) continue;
         auto itype = StrategicIconRenderer::classify_unit(*e);
@@ -381,10 +379,9 @@ void SelectionInfoRenderer::build_multi_unit(const sim::FrameView& view,
 }
 
 void SelectionInfoRenderer::update(const sim::FrameView& view,
-                                    const std::unordered_set<u32>* selected_ids,
-                                    FontCache& font_cache, TextureCache& tex_cache,
-                                    VkDescriptorSet icon_atlas_ds,
-                                    u32 viewport_w, u32 viewport_h) {
+                                   const std::unordered_set<sim::EntityId>* selected_ids,
+                                   FontCache& font_cache, TextureCache& tex_cache,
+                                   VkDescriptorSet icon_atlas_ds, u32 viewport_w, u32 viewport_h) {
     quads_.clear();
     groups_.clear();
     quad_count_ = 0;
@@ -398,7 +395,7 @@ void SelectionInfoRenderer::update(const sim::FrameView& view,
 
     u32 valid_count = 0;
     const sim::EntityRecord* single_unit = nullptr;
-    for (u32 uid : *selected_ids) {
+    for (sim::EntityId uid : *selected_ids) {
         auto* e = view.find(uid);
         if (!e || !e->is_unit) continue;
         valid_count++;

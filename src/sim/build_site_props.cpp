@@ -162,7 +162,7 @@ BuildSiteProp find_build_site_prop(lua_State* L, const EntityRegistry& registry,
 
     const Prop* nearest = nullptr;
     f32 nearest_d2 = std::numeric_limits<f32>::infinity();
-    for (const u32 id : registry.collect_in_rect(x0, z0, x0 + size_x, z0 + size_z)) {
+    for (const EntityId id : registry.collect_in_rect(x0, z0, x0 + size_x, z0 + size_z)) {
         const Entity* e = registry.find(id);
         if (!e || e->destroyed() || !e->is_prop()) {
             continue;
@@ -196,7 +196,7 @@ BuildSiteProp find_build_site_prop(lua_State* L, const EntityRegistry& registry,
         lua_settop(L, top);
         return found;
     }
-    found.reclaim_id = 0;
+    found.reclaim_id = EntityId();
     f32 bonus = 0.0f;
     if (!rebuild_bonus(L, builder, bonus)) {
         spdlog::warn("Failed to get valid rebuild bonus from the script");

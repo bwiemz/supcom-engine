@@ -111,21 +111,28 @@ its id mod 100. With the engine's one count, six Strikers sent to one point repa
 retail's. So the engine numbers entities as Moho does, from a pool per family and source (FR
 `EntityDB::DoReserveId`, 0x00684480). The family and source sit in the high bits: a unit
 `army << 20`, a projectile `(army | 0x100) << 20`, a prop `0x2FF << 20`, a shield
-`(army | 0x400) << 20`, a script's entity `(army | 0x500) << 20`, army 255 for none. The pool's next
+`(army | 0x400) << 20`, a script's entity `(army | 0x500) << 20`, army 255 for none. The pool's
 serial sits below them.
 
-- **EN's id is Moho's plus one**, so 0 stays "none". `EntityRegistry::moho_id` gives Moho's.
+- **Reuse:** a released serial is taken again as `IdPool` takes it (`sim/IdPool.cpp`). The pool holds
+  it for 99 beats, in a ring of 100 slots that `EntityDB::Purge` advances each beat
+  (`EntityRegistry::update_id_pools`, at the end of the deletion queue), then hands out its least free
+  serial before its next. Retail probed: 2,000 entities made and destroyed a tick, the serials made on
+  tick 5 are made again on tick 104.
+- **EN's key is `EntityId`:** Moho's id in the high bits, and below it the generation of that id, how
+  many times its pool has handed it out. Moho's orders, weapons and steering keep weak pointers, which
+  a dead entity empties; EN keeps keys, and a dead entity's key never finds the next entity with its
+  Moho id. Ordered by key, entities come in Moho's id order. 53 bits, which a Lua number holds.
+  `EntityId()` is "none"; `EntityId::moho` gives Moho's id.
 - **Scripts see Moho's.** `push_entity_id` hands it out (`GetEntityId`, `EntityId` fields, target
-  ids), `to_entity_id` takes one back (`GetEntityById`, `GetUnitById`, the selection, ferry beacons,
-  blips); `from_moho_id` converts. Hidden fields (`_c_entity_id`, `_c_prop_id`, `_c_effect_id`) and
-  the engine's own helpers keep EN's number. Before, scripts saw EN's number, so the prop meeting
-  tick a script checked against `GetEntityId` was one off Moho's.
+  ids), `to_entity_id` takes one back to the live entity with it (`GetEntityById`, `GetUnitById`, the
+  selection, ferry beacons). Hidden fields (`_c_entity_id`, `_c_prop_id`) hold EN's key.
+- **Saves and replays** carry keys; a saved game holds each pool's released serials, its ring and its
+  generations, so a loaded game takes them again on the beats the saved one would have (Moho's own save
+  merges the ring into the released serials). A replay from before keys reads each id as its first
+  generation, as nothing reused one then.
 - **Walks:** entities are walked in the order they were made. The world snapshot sorts them by id
   before it fills its records, for its binary search.
-- **shortcut:** Moho reuses a released serial. `IdPool` holds it for 99 beats, in a ring of 100 slots
-  that `EntityDB::Purge` advances each beat, then hands out the least free serial before its next. EN's
-  serials only grow: its orders, weapons and steering keep bare ids where Moho keeps weak pointers, and
-  a reused id would retarget them. This stays until those carry a generation.
 - **Past 2^20 serials** the serial spills into the source bits (`bits | serial`), in Moho as in EN: the
   id lands in another army's pool, or back at the start of its own. Moho's id map then finds the new
   entity under a live one's id. EN skips an id a live entity holds, so a new entity never replaces one.

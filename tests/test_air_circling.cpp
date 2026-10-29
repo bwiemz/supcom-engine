@@ -733,10 +733,10 @@ TEST_CASE("Only a hovering aircraft guarding with nothing to do flies winged: no
     d.set_repair_target_id(charge.entity_id());
     CHECK_FALSE(osc::sim::flies_winged_on_guard(d)); // repairing: it hovers, circling
     CHECK(osc::sim::circles(d));
-    d.set_repair_target_id(0);
+    d.set_repair_target_id({});
     d.set_reclaim_target_id(charge.entity_id());
     CHECK(osc::sim::flies_winged_on_guard(d)); // reclaiming doesn't count
-    d.set_reclaim_target_id(0);
+    d.set_reclaim_target_id({});
 
     // The guard's attack is an order of its own at the head: it circles
     Unit& g = *w.make("gunship", 30.0f, 100.0f);

@@ -17,6 +17,7 @@
 #include "sim/flight_math.hpp"
 #include "sim/platoon.hpp"
 #include "sim/projectile.hpp"
+#include "sim/script_class.hpp"
 #include "sim/entity_registry.hpp"
 #include "support/tick_until.hpp"
 
@@ -635,7 +636,7 @@ TEST_CASE("A factory is made with its initial rally, ahead of itself", "[session
     lua_pushnumber(L, 0);
     lua_pushnumber(L, 20);
     REQUIRE(lua_pcall(L, 5, 2, 0) == 0);
-    const auto built_id = static_cast<osc::u32>(lua_tonumber(L, -2));
+    const auto built_id = osc::sim::to_entity_key(L, -2);
     lua_pop(L, 2);
     auto* built = static_cast<osc::sim::Unit*>(h.sim.entity_registry().find(built_id));
     REQUIRE(built);
@@ -772,7 +773,7 @@ TEST_CASE("Weapons do not auto-target cloaked units without omni", "[cloak]") {
 
     target_ptr->set_cloaked(true);
     weapon_ptr->update(*owner_ptr, registry, nullptr);
-    REQUIRE(weapon_ptr->target_entity_id == 0);
+    REQUIRE_FALSE(weapon_ptr->target_entity_id);
 }
 
 TEST_CASE("Weapons do not auto-target BENIGN units but take them on an attack order", "[weapon]") {
@@ -798,7 +799,7 @@ TEST_CASE("Weapons do not auto-target BENIGN units but take them on an attack or
     const auto wall_id = registry.register_entity(std::move(wall));
 
     weapon_ptr->update(*owner_ptr, registry, nullptr);
-    CHECK(weapon_ptr->target_entity_id == 0);
+    CHECK_FALSE(weapon_ptr->target_entity_id);
 
     auto tank = std::make_unique<osc::sim::Unit>();
     tank->set_army(1);
@@ -991,7 +992,7 @@ TEST_CASE("Projectile homing tracks toward target", "[m160]") {
     // Create a target at (0, 0, 50)
     auto target = std::make_unique<osc::sim::Unit>();
     target->set_position({0, 0, 50});
-    osc::u32 tid = registry.register_entity(std::move(target));
+    osc::sim::EntityId tid = registry.register_entity(std::move(target));
 
     // A tracking projectile facing and moving +X, its target in +Z. As
     // Moho's UpdateTracking does, it turns its facing (a tenth of its turn
@@ -1030,7 +1031,7 @@ TEST_CASE("A tracking projectile ignores its gravity; one that doesn't track fal
     auto target = std::make_unique<osc::sim::Unit>();
     target->set_position({0, 0, 50});
     target->set_size_y(0.0f); // its centre, the point aimed at, level with the shot
-    const osc::u32 tid = registry.register_entity(std::move(target));
+    const osc::sim::EntityId tid = registry.register_entity(std::move(target));
     osc::sim::Projectile torpedo;
     torpedo.set_position({0, 0, 0});
     torpedo.velocity = {0, 0, 10};
@@ -1042,7 +1043,7 @@ TEST_CASE("A tracking projectile ignores its gravity; one that doesn't track fal
     torpedo.target_entity_id = tid;
     osc::sim::Projectile shell = torpedo;
     shell.tracking = false;
-    shell.target_entity_id = 0;
+    shell.target_entity_id = osc::sim::EntityId();
     for (int i = 0; i < 10; ++i) {
         torpedo.update(0.1, registry, nullptr, nullptr);
         shell.update(0.1, registry, nullptr, nullptr);
@@ -1192,9 +1193,9 @@ TEST_CASE("A player's move goes to a factory as its rally point", "[session][rul
     // Two commands: the factory's, flagged, and the tank's.
     const auto& recorded = h.sim.recorded_replay().commands;
     REQUIRE(recorded.size() == 2);
-    CHECK(recorded[0].unit_ids == std::vector<osc::u32>{tank->entity_id()});
+    CHECK(recorded[0].unit_ids == std::vector<osc::sim::EntityId>{tank->entity_id()});
     CHECK_FALSE(recorded[0].command.factory);
-    CHECK(recorded[1].unit_ids == std::vector<osc::u32>{f->entity_id()});
+    CHECK(recorded[1].unit_ids == std::vector<osc::sim::EntityId>{f->entity_id()});
     CHECK(recorded[1].command.factory);
     // The factory's rally orders take it; its builds are untouched.
     REQUIRE(f->rally_orders().size() == 1);
@@ -1501,7 +1502,7 @@ TEST_CASE("Taking an upgrade under way off the factory's queue ends it", "[sessi
     h.queue(osc::sim::CommandType::Upgrade, "f2");
     h.sim.tick();
     REQUIRE(h.factory->is_building());
-    const osc::u32 upgrade = h.factory->build_target_id();
+    const osc::sim::EntityId upgrade = h.factory->build_target_id();
     REQUIRE(h.shown() == "f2x1");
 
     h.factory->decrease_build_count(1, 1, h.sim.entity_registry(), h.state.raw());
@@ -1529,7 +1530,7 @@ TEST_CASE("A stopped upgrade takes its unfinished unit with it", "[session][rule
     h.sim.tick();
     h.sim.tick();
     REQUIRE(h.factory->is_building());
-    const osc::u32 upgrade = h.factory->build_target_id();
+    const osc::sim::EntityId upgrade = h.factory->build_target_id();
     lua_pushstring(L, "__frame");
     lua_rawgeti(L, LUA_REGISTRYINDEX, h.sim.entity_registry().find(upgrade)->lua_table_ref());
     lua_settable(L, LUA_GLOBALSINDEX);
@@ -1596,7 +1597,7 @@ TEST_CASE("Every way of clearing the queue cancels the build or upgrade under wa
     h.sim.tick();
     h.sim.tick();
     REQUIRE(h.factory->is_building());
-    const osc::u32 frame = h.factory->build_target_id();
+    const osc::sim::EntityId frame = h.factory->build_target_id();
     lua_pushstring(L, "__frame");
     lua_rawgeti(L, LUA_REGISTRYINDEX, h.sim.entity_registry().find(frame)->lua_table_ref());
     lua_settable(L, LUA_GLOBALSINDEX);
@@ -1634,7 +1635,7 @@ TEST_CASE("Every way of clearing the queue cancels the build or upgrade under wa
     const osc::sim::Entity* left = h.sim.entity_registry().find(frame);
     CHECK((!left || left->destroyed()));
     CHECK_FALSE(h.factory->destroyed());
-    CHECK(h.factory->build_target_id() == 0);
+    CHECK_FALSE(h.factory->build_target_id());
     CHECK_FALSE(h.factory->economy().consumption_active);
     CHECK(h.factory->work_progress() == 0.0f);
     lua_pushstring(L, "__heard");
@@ -1765,7 +1766,7 @@ TEST_CASE("IssueStop queues a Stop behind the build under way, which finishes",
     h.sim.tick();
     h.sim.tick();
     REQUIRE(h.factory->is_building());
-    const osc::u32 frame = h.factory->build_target_id();
+    const osc::sim::EntityId frame = h.factory->build_target_id();
 
     REQUIRE(h.state.do_string(call).ok());
     REQUIRE(h.factory->command_queue().size() == 2);

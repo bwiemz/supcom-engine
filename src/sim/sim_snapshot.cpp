@@ -36,9 +36,9 @@ constexpr u32 kVersion = 1;
 // What a light userdata is, in the Lua heap's snapshot.
 enum Kind : u32 {
     K_ENTITY = 1, ///< id: the entity's
-    K_WEAPON,     ///< id: its unit's << 32 | its index
+    K_WEAPON,     ///< id: its unit's Moho id << 32 | its index
     K_NAVIGATOR,  ///< id: its unit's
-    K_MANIP,      ///< id: its unit's << 32 | its index
+    K_MANIP,      ///< id: its unit's Moho id << 32 | its index
     K_ECONEVENT,  ///< id: its index among the events
     K_BRAIN,      ///< id: its army
     K_PLATOON,    ///< id: its army << 32 | its index
@@ -132,15 +132,15 @@ std::string StateIO::save_snapshot(SimState& sim, std::vector<u8>& out) {
     // Every C++ object Lua may hold, by what it is
     Names names;
     sim.entity_registry_.for_each([&](Entity& e) {
-        names.of[&e] = {K_ENTITY, e.entity_id()};
+        names.of[&e] = {K_ENTITY, e.entity_id().key()};
         auto* u = dynamic_cast<Unit*>(&e);
         if (!u) return;
         for (u32 i = 0; i < u->weapons_.size(); ++i)
-            names.of[u->weapons_[i].get()] = {K_WEAPON, pair_id(u->entity_id(), i)};
-        names.of[&u->navigator_] = {K_NAVIGATOR, u->entity_id()};
+            names.of[u->weapons_[i].get()] = {K_WEAPON, pair_id(u->entity_id().moho(), i)};
+        names.of[&u->navigator_] = {K_NAVIGATOR, u->entity_id().key()};
         for (u32 i = 0; i < u->manipulators_.size(); ++i)
             names.of[static_cast<const Waitable*>(u->manipulators_[i].get())] = {
-                K_MANIP, pair_id(u->entity_id(), i)};
+                K_MANIP, pair_id(u->entity_id().moho(), i)};
     });
     for (u32 i = 0; i < sim.economy_events_.events_.size(); ++i)
         names.of[static_cast<const Waitable*>(sim.economy_events_.events_[i].get())] = {K_ECONEVENT,
@@ -262,28 +262,28 @@ std::string StateIO::load_snapshot(SimState& sim, const std::vector<u8>& in) {
     hooks.find = [](void* ud, std::uint32_t kind, std::uint64_t id, void** p) {
         const auto* f = static_cast<Finder*>(ud);
         SimState& sim = *f->sim;
-        const auto unit = [&](u32 uid) {
+        const auto unit = [&](EntityId uid) {
             return dynamic_cast<Unit*>(sim.entity_registry_.find(uid));
         };
         const u32 hi = static_cast<u32>(id >> 32);
         const u32 lo = static_cast<u32>(id);
         *p = nullptr;
         switch (kind) {
-        case K_ENTITY: *p = sim.entity_registry_.find(lo); return *p != nullptr;
+        case K_ENTITY: *p = sim.entity_registry_.find(EntityId(id)); return *p != nullptr;
         case K_WEAPON: {
-            Unit* u = unit(hi);
+            Unit* u = unit(sim.entity_registry_.live_id(hi));
             if (!u || lo >= u->weapons_.size()) return false;
             *p = u->weapons_[lo].get();
             return true;
         }
         case K_NAVIGATOR: {
-            Unit* u = unit(lo);
+            Unit* u = unit(EntityId(id));
             if (!u) return false;
             *p = &u->navigator_;
             return true;
         }
         case K_MANIP: {
-            Unit* u = unit(hi);
+            Unit* u = unit(sim.entity_registry_.live_id(hi));
             if (!u || lo >= u->manipulators_.size()) return false;
             *p = static_cast<Waitable*>(u->manipulators_[lo].get());
             return true;

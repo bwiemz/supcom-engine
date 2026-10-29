@@ -29,7 +29,7 @@ void test_pod_rebuild(TestContext& ctx) {
         const auto ran = ctx.lua_state.do_string(code);
         t.check(static_cast<bool>(ran), ran ? what : what + ": " + ran.error().message);
     };
-    const auto pod_id = [&]() -> u32 {
+    const auto pod_id = [&]() -> sim::EntityId {
         run_lua(ctx, R"(
             local data = __osc_pr_station.PodData and __osc_pr_station.PodData.PodOne
             local pod = data and data.Active and data.PodHandle
@@ -37,7 +37,7 @@ void test_pod_rebuild(TestContext& ctx) {
         )");
         lua_pushstring(ctx.L, "__osc_pr_pod");
         lua_rawget(ctx.L, LUA_GLOBALSINDEX);
-        const u32 id = osc::sim::to_entity_id(ctx.L, -1);
+        const sim::EntityId id = osc::sim::to_entity_id(ctx.L, -1, ctx.sim.entity_registry());
         lua_pop(ctx.L, 1);
         return id;
     };
@@ -57,18 +57,18 @@ void test_pod_rebuild(TestContext& ctx) {
     spawn_unit(ctx, "__osc_pr_station", "xeb0104", "ARMY_1", *spot);
     run_lua(ctx, "ArmyBrains[1]:GiveResource('ENERGY', 100000)\n"
                  "ArmyBrains[1]:GiveResource('MASS', 10000)\n");
-    u32 first = 0;
+    sim::EntityId first{};
     if (!tick_until(ctx, "the station makes its pod", 50, [&] {
             first = pod_id();
-            return first != 0;
+            return static_cast<bool>(first);
         })) {
         return;
     }
 
     run_lua(ctx, "__osc_pr_station.PodData.PodOne.PodHandle:Kill()\n");
     tick_until(ctx, "the station rebuilds the pod", 1200, [&] {
-        const u32 id = pod_id();
-        return id != 0 && id != first;
+        const sim::EntityId id = pod_id();
+        return id && id != first;
     });
 
     spdlog::info("=== POD REBUILD TEST: {} passed, {} failed ===", t.pass, t.fail);

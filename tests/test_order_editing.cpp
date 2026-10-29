@@ -7,6 +7,7 @@
 #include "sim/formation.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/replay.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -29,6 +30,7 @@ extern "C" {
 #include <vector>
 
 using osc::sim::CommandType;
+using osc::sim::EntityId;
 using osc::sim::SimCallbackEntry;
 using osc::sim::SimState;
 using osc::sim::Unit;
@@ -72,8 +74,8 @@ struct World {
         return *raw;
     }
 
-    void order(const std::vector<osc::u32>& ids, CommandType type, osc::f32 x, osc::f32 z,
-               bool clear = true, osc::u32 target = 0) {
+    void order(const std::vector<EntityId>& ids, CommandType type, osc::f32 x, osc::f32 z,
+               bool clear = true, EntityId target = {}) {
         UnitCommand c;
         c.type = type;
         c.target_pos = {x, 0.0f, z};
@@ -90,7 +92,7 @@ struct World {
     }
 };
 
-SimCallbackEntry retarget(osc::u32 command, std::vector<osc::u32> units, osc::f32 x, osc::f32 z) {
+SimCallbackEntry retarget(osc::u32 command, std::vector<EntityId> units, osc::f32 x, osc::f32 z) {
     SimCallbackEntry cb;
     cb.func_name = osc::sim::kSetCommandTargetCallback;
     cb.args["Command"] = static_cast<double>(command);
@@ -223,12 +225,12 @@ TEST_CASE("An order on a unit moves to another unit of the same army", "[order_e
     const osc::u32 id = a.command_queue().front().command_id;
 
     SimCallbackEntry cb = retarget(id, {a.entity_id()}, 0, 0);
-    cb.args["Target"] = static_cast<double>(enemy.entity_id());
+    cb.args["Target"] = static_cast<double>(enemy.entity_id().key());
     w.sim->submit_callback(cb);
     w.ticks(1);
     CHECK(a.command_queue().front().target_id == friend1.entity_id());
 
-    cb.args["Target"] = static_cast<double>(friend2.entity_id());
+    cb.args["Target"] = static_cast<double>(friend2.entity_id().key());
     w.sim->submit_callback(cb);
     w.ticks(1);
     CHECK(a.command_queue().front().target_id == friend2.entity_id());
@@ -273,7 +275,7 @@ TEST_CASE("A moved build order snaps to its footprint, unless it is under way", 
     CHECK(a.command_queue()[1].target_pos.z == 41.0f);
 
     a.push_command(build, true);
-    a.set_build_target_id(99);
+    a.set_build_target_id(EntityId::of(99, 1));
     w.sim->run_sim_callback(retarget(5, {a.entity_id()}, 30, 40));
     CHECK(a.command_queue().front().target_pos.x == 60.0f);
 }
@@ -299,7 +301,7 @@ TEST_CASE("An order with no place, or of no unit named, is left alone", "[order_
 
 namespace {
 
-SimCallbackEntry removal(osc::u32 command, std::vector<osc::u32> units) {
+SimCallbackEntry removal(osc::u32 command, std::vector<EntityId> units) {
     SimCallbackEntry cb;
     cb.func_name = osc::sim::kRemoveCommandCallback;
     cb.args["Command"] = static_cast<double>(command);
@@ -321,7 +323,7 @@ TEST_CASE("Taking an order off a queue leaves the orders either side", "[order_e
     World w;
     Unit& a = w.walker(10, 10);
     Unit& b = w.walker(10, 20);
-    const std::vector<osc::u32> both = {a.entity_id(), b.entity_id()};
+    const std::vector<EntityId> both = {a.entity_id(), b.entity_id()};
     w.order(both, CommandType::Move, 60, 10);
     w.order(both, CommandType::Move, 60, 60, false);
     w.order(both, CommandType::Move, 10, 60, false);
@@ -422,7 +424,7 @@ TEST_CASE("Dragging a waypoint sends one SetCommandTarget, on release", "[order_
     CHECK(number(ui.sent[0], "Command") == id);
     CHECK(number(ui.sent[0], "X") == 30.0);
     CHECK(number(ui.sent[0], "Z") == 90.0);
-    CHECK(ui.sent[0].unit_ids == std::vector<osc::u32>{a.entity_id(), b.entity_id()});
+    CHECK(ui.sent[0].unit_ids == std::vector<EntityId>{a.entity_id(), b.entity_id()});
     REQUIRE(ui.input.order_drag());
     CHECK_FALSE(ui.input.order_drag()->held);
     CHECK_FALSE(ui.input.release_order_drag(*w.sim, 30, 90));
@@ -459,7 +461,7 @@ TEST_CASE("An order on a unit is dropped on the nearest unit of its target's arm
     CHECK(ui.input.order_drag()->at.x == 50.0f);
     REQUIRE(ui.input.release_order_drag(*w.sim, 50, 52));
     REQUIRE(ui.sent.size() == 1);
-    CHECK(number(ui.sent[0], "Target") == friend2.entity_id());
+    CHECK(number(ui.sent[0], "Target") == static_cast<double>(friend2.entity_id().key()));
     CHECK(ui.sent[0].args.count("X") == 0);
 }
 
@@ -509,7 +511,7 @@ TEST_CASE("Shift+Ctrl and the right button over a waypoint take its order off",
     World w;
     Unit& a = w.walker(10, 10);
     Unit& b = w.walker(10, 20);
-    const std::vector<osc::u32> both = {a.entity_id(), b.entity_id()};
+    const std::vector<EntityId> both = {a.entity_id(), b.entity_id()};
     w.order(both, CommandType::Move, 60, 10);
     w.order(both, CommandType::Move, 60, 60, false);
     w.ticks(2);
@@ -552,7 +554,7 @@ TEST_CASE("A dragged waypoint draws its order's legs to where it is", "[order_ed
     osc::sim::WorldSnapshot world;
     for (osc::u32 id : {1u, 2u}) {
         osc::sim::EntityRecord e;
-        e.id = id;
+        e.id = EntityId::of(id, 1);
         e.army = 0;
         e.is_unit = true;
         e.command_offset = static_cast<osc::u32>(world.commands.size());
@@ -579,7 +581,7 @@ TEST_CASE("A click on an earlier move's waypoint makes the moves from it a patro
     World w;
     Unit& a = w.walker(10, 10);
     Unit& b = w.walker(10, 20);
-    const std::vector<osc::u32> both = {a.entity_id(), b.entity_id()};
+    const std::vector<EntityId> both = {a.entity_id(), b.entity_id()};
     w.order(both, CommandType::Move, 60, 10);
     w.order(both, CommandType::Move, 60, 60, false);
     w.order(both, CommandType::Move, 10, 60, false);
@@ -660,7 +662,7 @@ TEST_CASE("Over a waypoint that starts a patrol the cursor text says which click
     World w;
     Unit& a = w.walker(10, 10);
     Unit& b = w.walker(10, 20);
-    const std::vector<osc::u32> both = {a.entity_id(), b.entity_id()};
+    const std::vector<EntityId> both = {a.entity_id(), b.entity_id()};
     w.order(both, CommandType::Move, 60, 10);
     w.order(both, CommandType::Move, 60, 60, false);
     w.order(both, CommandType::Move, 10, 60, false);
@@ -783,7 +785,7 @@ TEST_CASE("Only a move is made a patrol, and only of the sender's units", "[orde
     w.order({a.entity_id()}, CommandType::Attack, 60, 60, false);
     w.order({theirs.entity_id()}, CommandType::Move, 60, 60);
     w.ticks(2);
-    const auto patrol = [](osc::u32 command, osc::u32 unit, CommandType type) {
+    const auto patrol = [](osc::u32 command, EntityId unit, CommandType type) {
         SimCallbackEntry cb;
         cb.func_name = osc::sim::kSetCommandTypeCallback;
         cb.args["Command"] = static_cast<double>(command);
@@ -812,7 +814,7 @@ TEST_CASE("Only a move is made a patrol, and only of the sender's units", "[orde
 
 namespace {
 
-osc::renderer::InputHandler formation_input(const std::vector<osc::u32>& selected) {
+osc::renderer::InputHandler formation_input(const std::vector<EntityId>& selected) {
     osc::renderer::InputHandler input;
     input.set_player_army(0);
     input.set_selected({selected.begin(), selected.end()});
@@ -824,7 +826,7 @@ osc::renderer::InputHandler formation_input(const std::vector<osc::u32>& selecte
     return input;
 }
 
-UnitCommand pending_order(const SimState& sim, osc::u32 unit) {
+UnitCommand pending_order(const SimState& sim, EntityId unit) {
     const auto queues = sim.queues_with_pending();
     const auto it = queues.find(unit);
     REQUIRE(it != queues.end());
@@ -982,7 +984,9 @@ TEST_CASE("A settled drag formation shows each unit's ghost in its slot, facing 
                                 osc::f32 facing) {
         return osc::sim::plan_formation(
             L, units,
-            [](lua_State* s, const osc::sim::FormationMember& u) { lua_pushnumber(s, u.id); },
+            [](lua_State* s, const osc::sim::FormationMember& u) {
+                osc::sim::push_entity_id(s, u.id);
+            },
             nullptr, script, at, facing);
     };
     input.set_command_mode_hooks(hooks);

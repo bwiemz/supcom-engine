@@ -83,11 +83,11 @@ public:
     /// game's next frame does: what the renderer carries from frame to
     /// frame (the player's intel) carries on. `selected`: the player's
     /// selection; `ghost`: a structure being placed.
-    void redraw(const std::unordered_set<u32>* selected = nullptr,
+    void redraw(const std::unordered_set<sim::EntityId>* selected = nullptr,
                 const renderer::BuildGhost* ghost = nullptr);
 
     /// As redraw(), capturing the whole frame.
-    ImageRGBA8 grab(const std::unordered_set<u32>* selected = nullptr,
+    ImageRGBA8 grab(const std::unordered_set<sim::EntityId>* selected = nullptr,
                     const renderer::BuildGhost* ghost = nullptr);
 
     void draw_ui(lua_State* L, ui::UIControlRegistry* registry) {

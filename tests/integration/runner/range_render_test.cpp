@@ -94,7 +94,7 @@ void test_range_render(TestContext& ctx) {
     }
     const f32 sx = spot->x;
     const f32 sz = spot->z;
-    const u32 tank = spawn_unit(ctx, "__osc_rr_a", "uel0201", "ARMY_1", {sx, sz});
+    const sim::EntityId tank = spawn_unit(ctx, "__osc_rr_a", "uel0201", "ARMY_1", {sx, sz});
     ctx.sim.tick();
 
     OffscreenShots shots(ctx);
@@ -108,8 +108,8 @@ void test_range_render(TestContext& ctx) {
     overlays.set_profile(direct_fire());
     (void)shots.shoot(*ctx.sim.terrain(), sx, sz, 110.0f);
 
-    const std::unordered_set<u32> selected{tank};
-    const auto frame = [&](const std::unordered_set<u32>* sel,
+    const std::unordered_set<sim::EntityId> selected{tank};
+    const auto frame = [&](const std::unordered_set<sim::EntityId>* sel,
                            const renderer::BuildGhost* ghost = nullptr) {
         for (int i = 0; i < 4; ++i) shots.redraw(sel, ghost);
         return shots.grab(sel, ghost);
@@ -151,13 +151,14 @@ void test_range_render(TestContext& ctx) {
     t.check(drawn().size() == 1 && drawn()[0].color == direct_fire().rollover && hover_hits >= 32,
             fmt::format("Test 4: the hovered tank's ring in the rollover colour ({} of 36)",
                         hover_hits));
-    r.set_selection_marks(0, std::nullopt);
+    r.set_selection_marks(sim::EntityId(), std::nullopt);
     overlays.settings().render_highlighted = false;
 
     // Test 5: the active filter: every own built tank in view, not an
     // enemy's, nor one being built
-    const u32 foe = spawn_unit(ctx, "__osc_rr_b", "uel0201", "ARMY_2", {sx - 40, sz});
-    const u32 frame_only = spawn_unit(ctx, "__osc_rr_c", "uel0201", "ARMY_1", {sx, sz - 40});
+    const sim::EntityId foe = spawn_unit(ctx, "__osc_rr_b", "uel0201", "ARMY_2", {sx - 40, sz});
+    const sim::EntityId frame_only =
+        spawn_unit(ctx, "__osc_rr_c", "uel0201", "ARMY_1", {sx, sz - 40});
     if (auto* u = dynamic_cast<sim::Unit*>(ctx.sim.entity_registry().find(frame_only))) {
         u->set_is_being_built(true);
         u->set_fraction_complete(0.5f);
@@ -176,7 +177,7 @@ void test_range_render(TestContext& ctx) {
 
     // Test 6: two near tanks' rings merge: neither line shows inside the
     // other's ring, both show outside
-    const u32 second = spawn_unit(ctx, "__osc_rr_d", "uel0201", "ARMY_1", {sx + 12, sz});
+    const sim::EntityId second = spawn_unit(ctx, "__osc_rr_d", "uel0201", "ARMY_1", {sx + 12, sz});
     ctx.sim.tick();
     shots.recapture();
     const ImageRGBA8 merged = frame(nullptr);

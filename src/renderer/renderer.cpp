@@ -224,7 +224,7 @@ bool Renderer::create_window(u32 width, u32 height, const std::string& title, bo
     window_height_ = height;
     camera_.set_viewport(static_cast<f32>(width), static_cast<f32>(height));
     // The camera's targets are the world's entities as they are drawn
-    camera_.set_entity_lookup([this](u32 id, CameraEntityPose& out) {
+    camera_.set_entity_lookup([this](sim::EntityId id, CameraEntityPose& out) {
         const sim::EntityRecord* e = camera_view_.find(id);
         if (!e) return false;
         const sim::Vector3 p = camera_view_.position(*e);
@@ -2130,10 +2130,9 @@ Renderer::TerrainStrataViews Renderer::terrain_strata_views(const map::Terrain& 
     return out;
 }
 
-void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
-                      const BuildGhost* ghost, lua_State* L,
-                      ui::UIControlRegistry* ui_registry,
-                      const std::unordered_set<u32>* selected_ids) {
+void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events, const BuildGhost* ghost,
+                      lua_State* L, ui::UIControlRegistry* ui_registry,
+                      const std::unordered_set<sim::EntityId>* selected_ids) {
     const RenderScriptScope scripts(!scripts_suspended_);
     if (!scripts_suspended_ && terrain_source_ && terrain_snapshot_ &&
         (terrain_source_->flattenings_resets() != terrain_->flattenings_resets() ||
@@ -2443,7 +2442,7 @@ Camera& Renderer::add_camera(const std::string& name) {
     bool created = false;
     Camera& camera = cameras_.add(name, created);
     if (created) {
-        camera.set_entity_lookup([this](u32 id, CameraEntityPose& out) {
+        camera.set_entity_lookup([this](sim::EntityId id, CameraEntityPose& out) {
             const sim::EntityRecord* e = camera_view_.find(id);
             if (!e) {
                 return false;
@@ -3420,7 +3419,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
                                   const sim::FrameView& view, sim::WorldEvents& events,
                                   const BuildGhost* ghost, lua_State* L,
                                   ui::UIControlRegistry* ui_registry,
-                                  const std::unordered_set<u32>* selected_ids) {
+                                  const std::unordered_set<sim::EntityId>* selected_ids) {
     frame_ui_registry_ = ui_registry;
     // What the player's army sees this tick (everything, with the fog off)
     recon_.set_focus_army(fog_enabled_ ? player_army_ : -1);
@@ -3561,7 +3560,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
 
 void Renderer::update_view_units(u32 fi, const Frustum& frustum, const sim::FrameView& view,
                                  const BuildGhost* ghost, lua_State* L,
-                                 const std::unordered_set<u32>* selected_ids) {
+                                 const std::unordered_set<sim::EntityId>* selected_ids) {
     // Before the meshes: its planned sites are ghosts among them
     command_graph_renderer_.set_highlight(highlight_command_, hovered_);
     command_graph_renderer_.update(view, *view_camera_, selected_ids, player_army_, texture_cache_,
@@ -3638,7 +3637,8 @@ void Renderer::update_view_units(u32 fi, const Frustum& frustum, const sim::Fram
 void Renderer::update_view_effects(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum,
                                    const sim::FrameView& view, sim::WorldEvents& events,
                                    const BuildGhost* ghost, lua_State* L,
-                                   const std::unordered_set<u32>* selected_ids, bool primary) {
+                                   const std::unordered_set<sim::EntityId>* selected_ids,
+                                   bool primary) {
     // Effects emit where any view sees them (Moho's CAM_GetAllCameras)
     const Frustum* emit_frustum = split_ ? nullptr : &frustum;
     // FA's beams, before the overlay, which leaves the ones drawn to them (M214a)
@@ -4942,7 +4942,8 @@ void Renderer::set_volume_heights(const map::Heightmap& h) {
 }
 
 void Renderer::update_minimap_overlays(const sim::FrameView& view, const BuildGhost* ghost,
-                                       lua_State* L, const std::unordered_set<u32>* selected_ids,
+                                       lua_State* L,
+                                       const std::unordered_set<sim::EntityId>* selected_ids,
                                        f32 span, u32 fi) {
     // Cartographic::Render runs the range renderer with the minimap's
     // camera: the units in its view (the whole map) at its zoom, its largest

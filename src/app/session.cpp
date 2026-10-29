@@ -136,7 +136,7 @@ void give_army_the_player(osc::sim::SimState& sim) {
 void issue_scripted_orders(osc::sim::SimState& sim, osc::u32 tick) {
     if (tick % 40 != 20 || !sim.terrain()) return;
     osc::sim::SimRandom rng(0x5C817ED0ull ^ (static_cast<osc::u64>(tick) * 0x9E3779B97F4A7C15ull));
-    std::vector<osc::u32> movers, all; // army 1's live units, in id order
+    std::vector<osc::sim::EntityId> movers, all; // army 1's live units, in id order
     sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
         if (!e.is_unit() || e.destroyed() || e.army() != 0) return;
         all.push_back(e.entity_id());
@@ -144,11 +144,11 @@ void issue_scripted_orders(osc::sim::SimState& sim, osc::u32 tick) {
             movers.push_back(e.entity_id());
     });
     if (all.empty()) return;
-    auto any = [&](const std::vector<osc::u32>& ids) {
+    auto any = [&](const std::vector<osc::sim::EntityId>& ids) {
         return ids[static_cast<size_t>(rng.next_int(0, static_cast<osc::i64>(ids.size()) - 1))];
     };
     osc::sim::UnitCommand cmd;
-    std::vector<osc::u32> ids;
+    std::vector<osc::sim::EntityId> ids;
     switch ((tick / 40) % 6) {
     case 3: { // a fire state
         osc::sim::SimCallbackEntry cb;
@@ -160,7 +160,7 @@ void issue_scripted_orders(osc::sim::SimState& sim, osc::u32 tick) {
         return;
     }
     case 4: { // pause or resume
-        const osc::u32 id = any(all);
+        const osc::sim::EntityId id = any(all);
         const auto* u = static_cast<const osc::sim::Unit*>(sim.entity_registry().find(id));
         osc::sim::SimCallbackEntry cb;
         cb.func_name = osc::sim::kUnitSettingCallback;
@@ -199,13 +199,17 @@ void issue_scripted_orders(osc::sim::SimState& sim, osc::u32 tick) {
 /// mobile unit moves to the map's centre.
 void issue_order_before_save(osc::sim::SimState& sim) {
     if (!sim.terrain()) return;
-    osc::u32 mover = 0;
+    osc::sim::EntityId mover{};
     sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
-        if (mover != 0 || !e.is_unit() || e.destroyed() || e.army() != 0) return;
+        if (mover || !e.is_unit() || e.destroyed() || e.army() != 0) {
+            return;
+        }
         if (static_cast<const osc::sim::Unit&>(e).has_command_cap("RULEUCC_Move"))
             mover = e.entity_id();
     });
-    if (mover == 0) return;
+    if (!mover) {
+        return;
+    }
     osc::sim::UnitCommand cmd;
     cmd.type = osc::sim::CommandType::Move;
     cmd.target_pos = {sim.terrain()->map_width() * 0.5f, 0.0f, sim.terrain()->map_height() * 0.5f};

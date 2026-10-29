@@ -46,7 +46,7 @@ void test_guard_engage(TestContext& ctx) {
     const f32 sx = spot->x;
     const f32 sz = spot->z;
     auto& registry = ctx.sim.entity_registry();
-    const auto unit = [&](u32 id) {
+    const auto unit = [&](sim::EntityId id) {
         sim::Entity* e = registry.find(id);
         return e && e->is_unit() && !e->destroyed() ? static_cast<sim::Unit*>(e) : nullptr;
     };
@@ -55,11 +55,15 @@ void test_guard_engage(TestContext& ctx) {
         return static_cast<bool>(ctx.lua_state.do_string(code));
     };
 
-    const u32 ward_id = spawn_unit(ctx, "__osc_ge_ward", "uel0202", "ARMY_1", {sx, sz});
-    const u32 guard_id = spawn_unit(ctx, "__osc_ge_guard", "uel0201", "ARMY_1", {sx + 5, sz});
-    const u32 enemy_id = spawn_unit(ctx, "__osc_ge_enemy", "uel0105", "ARMY_2", {sx + 28, sz});
-    const u32 idle_id = spawn_unit(ctx, "__osc_ge_idle", "uel0201", "ARMY_1", {sx, sz + 50});
-    const u32 bait_id = spawn_unit(ctx, "__osc_ge_bait", "uel0105", "ARMY_2", {sx + 23, sz + 50});
+    const sim::EntityId ward_id = spawn_unit(ctx, "__osc_ge_ward", "uel0202", "ARMY_1", {sx, sz});
+    const sim::EntityId guard_id =
+        spawn_unit(ctx, "__osc_ge_guard", "uel0201", "ARMY_1", {sx + 5, sz});
+    const sim::EntityId enemy_id =
+        spawn_unit(ctx, "__osc_ge_enemy", "uel0105", "ARMY_2", {sx + 28, sz});
+    const sim::EntityId idle_id =
+        spawn_unit(ctx, "__osc_ge_idle", "uel0201", "ARMY_1", {sx, sz + 50});
+    const sim::EntityId bait_id =
+        spawn_unit(ctx, "__osc_ge_bait", "uel0105", "ARMY_2", {sx + 23, sz + 50});
     spawn_unit(ctx, "__osc_ge_spot1", "uel0105", "ARMY_1", {sx + 28, sz + 12});
     spawn_unit(ctx, "__osc_ge_spot2", "uel0105", "ARMY_1", {sx + 23, sz + 62});
     sim::Unit* guard = unit(guard_id);
@@ -117,7 +121,7 @@ void test_guard_engage(TestContext& ctx) {
         const sim::Unit* u = unit(idle_id);
         return u && !u->command_queue().empty() &&
                u->command_queue().front().type == sim::CommandType::Guard &&
-               u->command_queue().front().target_id == 0 &&
+               !u->command_queue().front().target_id &&
                std::hypot(u->position().x - (sx + 20), u->position().z - (sz - 30)) <= 2.5f;
     });
     t.check(there && lua_ok("if not __osc_ge_idle:IsUnitState('Guarding') or "

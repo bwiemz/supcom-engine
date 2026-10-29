@@ -24,6 +24,7 @@ extern "C" {
 #include <vector>
 
 using osc::sim::CommandType;
+using osc::sim::EntityId;
 using osc::sim::Replay;
 using osc::sim::ScheduledCommand;
 using osc::sim::SimState;
@@ -40,10 +41,10 @@ struct LuaGuard {
 
 // Identical initial world in both the recorded and replayed sims (a real replay
 // gets this from the deterministic map/scenario setup).
-std::vector<osc::u32> setup(SimState& sim) {
+std::vector<EntityId> setup(SimState& sim) {
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2");
-    std::vector<osc::u32> ids;
+    std::vector<EntityId> ids;
     for (int i = 0; i < 3; ++i) {
         auto u = std::make_unique<Unit>();
         u->set_army(i % 2);
@@ -75,9 +76,9 @@ TEST_CASE("Replay serialize/deserialize round-trips", "[replay]") {
     a.clear_existing = true;
     a.command.type = CommandType::Move;
     a.command.target_pos = {12.5f, 0.0f, -7.25f};
-    a.command.target_id = 99;
+    a.command.target_id = EntityId::of(99, 1);
     a.command.blueprint_id = "uel0001";
-    a.unit_ids = {3, 4, 5};
+    a.unit_ids = {EntityId::of(3, 1), EntityId::of(4, 1), EntityId::of(5, 1)};
     r.commands.push_back(a);
 
     ScheduledCommand b;
@@ -85,8 +86,8 @@ TEST_CASE("Replay serialize/deserialize round-trips", "[replay]") {
     b.source = 0;
     b.clear_existing = false;
     b.command.type = CommandType::Attack;
-    b.command.target_id = 7;
-    b.unit_ids = {8};
+    b.command.target_id = EntityId::of(7, 1);
+    b.unit_ids = {EntityId::of(8, 1)};
     r.commands.push_back(b);
 
     std::vector<osc::u8> bytes = r.serialize();
@@ -105,13 +106,13 @@ TEST_CASE("Replay serialize/deserialize round-trips", "[replay]") {
     CHECK(out.commands[0].command.type == CommandType::Move);
     CHECK(out.commands[0].command.target_pos.x == 12.5f);
     CHECK(out.commands[0].command.target_pos.z == -7.25f);
-    CHECK(out.commands[0].command.target_id == 99);
+    CHECK(out.commands[0].command.target_id == a.command.target_id);
     CHECK(out.commands[0].command.blueprint_id == "uel0001");
-    CHECK(out.commands[0].unit_ids == std::vector<osc::u32>{3, 4, 5});
+    CHECK(out.commands[0].unit_ids == a.unit_ids);
 
     CHECK(out.commands[1].command.type == CommandType::Attack);
     CHECK_FALSE(out.commands[1].clear_existing);
-    CHECK(out.commands[1].unit_ids == std::vector<osc::u32>{8});
+    CHECK(out.commands[1].unit_ids == b.unit_ids);
 }
 
 TEST_CASE("Replay deserialize rejects bad data", "[replay]") {
@@ -243,7 +244,7 @@ TEST_CASE("A lockstep peer's recording holds the other peers' commands", "[repla
     osc::sim::LoopbackTransport tb(hub, hub.add_endpoint());
     osc::sim::LockstepSession sa(a, ta, 0, {0, 1});
     osc::sim::LockstepSession sb(b, tb, 1, {0, 1});
-    a.set_local_command_sink([&](const std::vector<osc::u32>& u, const UnitCommand& c, bool clear) {
+    a.set_local_command_sink([&](const std::vector<EntityId>& u, const UnitCommand& c, bool clear) {
         sa.submit_local(u, c, clear);
     });
     const auto exchange = [&] {
@@ -264,7 +265,7 @@ TEST_CASE("A lockstep peer's recording holds the other peers' commands", "[repla
 
 TEST_CASE("Playback checks every tick against the recording", "[replay][sync]") {
     Replay recorded;
-    std::vector<osc::u32> ids;
+    std::vector<EntityId> ids;
     {
         LuaGuard g;
         SimState a(g.L, nullptr);
@@ -440,7 +441,7 @@ TEST_CASE("A formation order round-trips; a version 4 command loads without one"
     c.command.has_facing = true;
     c.command.facing = 1.5f;
     c.command.form_move = false;
-    c.unit_ids = {3, 4};
+    c.unit_ids = {EntityId::of(3, 1), EntityId::of(4, 1)};
     r.commands.push_back(c);
     Replay out;
     REQUIRE(Replay::deserialize(r.serialize(), out));
@@ -449,7 +450,7 @@ TEST_CASE("A formation order round-trips; a version 4 command loads without one"
     CHECK(out.commands[0].command.has_facing);
     CHECK(out.commands[0].command.facing == 1.5f);
     CHECK_FALSE(out.commands[0].command.form_move);
-    CHECK(out.commands[0].unit_ids == std::vector<osc::u32>{3, 4});
+    CHECK(out.commands[0].unit_ids == c.unit_ids);
 
     // Version 4 wrote no formation fields.
     std::vector<osc::u8> bytes;
@@ -481,7 +482,7 @@ TEST_CASE("A formation order round-trips; a version 4 command loads without one"
     REQUIRE(Replay::deserialize(bytes, out));
     REQUIRE(out.commands.size() == 1);
     CHECK(out.commands[0].command.formation.empty());
-    CHECK(out.commands[0].unit_ids == std::vector<osc::u32>{3});
+    CHECK(out.commands[0].unit_ids == std::vector<EntityId>{EntityId::of(2, 1)});
 }
 
 TEST_CASE("A factory command round-trips; a version 6 command loads without the flag", "[replay]") {
@@ -492,13 +493,13 @@ TEST_CASE("A factory command round-trips; a version 6 command loads without the 
     c.command.type = CommandType::Move;
     c.command.target_pos = {10.0f, 0.0f, 20.0f};
     c.command.factory = true;
-    c.unit_ids = {3};
+    c.unit_ids = {EntityId::of(3, 1)};
     r.commands.push_back(c);
     Replay out;
     REQUIRE(Replay::deserialize(r.serialize(), out));
     REQUIRE(out.commands.size() == 1);
     CHECK(out.commands[0].command.factory);
-    CHECK(out.commands[0].unit_ids == std::vector<osc::u32>{3});
+    CHECK(out.commands[0].unit_ids == c.unit_ids);
 
     // Version 6 wrote no flag after the unload list.
     std::vector<osc::u8> bytes;
@@ -534,7 +535,7 @@ TEST_CASE("A factory command round-trips; a version 6 command loads without the 
     REQUIRE(Replay::deserialize(bytes, out));
     REQUIRE(out.commands.size() == 1);
     CHECK_FALSE(out.commands[0].command.factory);
-    CHECK(out.commands[0].unit_ids == std::vector<osc::u32>{3});
+    CHECK(out.commands[0].unit_ids == std::vector<EntityId>{EntityId::of(2, 1)});
 }
 
 TEST_CASE("A recorded replay reproduces the match", "[replay][sync]") {

@@ -719,7 +719,8 @@ void test_effect_meshes(TestContext& ctx) {
             (void)ctx.lua_state.do_string("__osc_number = __osc_scaled:GetEntityId()");
             lua_pushstring(ctx.L, "__osc_number");
             lua_rawget(ctx.L, LUA_GLOBALSINDEX);
-            const auto* p = ctx.sim.entity_registry().find(osc::sim::to_entity_id(ctx.L, -1));
+            const auto& registry = ctx.sim.entity_registry();
+            const auto* p = registry.find(osc::sim::to_entity_id(ctx.L, -1, registry));
             lua_pop(ctx.L, 1);
             const f32 x = p ? p->position().x : 0.0f;
             const f32 z = p ? p->position().z : 0.0f;

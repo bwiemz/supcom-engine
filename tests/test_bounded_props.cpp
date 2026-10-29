@@ -25,14 +25,14 @@ namespace {
 struct Wrecks {
     osc::lua::LuaState lua;
     SimState sim{lua.raw(), nullptr};
-    std::vector<osc::u32> ids;
+    std::vector<osc::sim::EntityId> ids;
 
     Wrecks() { osc::lua::register_moho_bindings(lua, sim); }
 
-    osc::u32 add(double mass) {
+    osc::sim::EntityId add(double mass) {
         auto p = std::make_unique<Prop>();
         Prop* raw = p.get();
-        const osc::u32 id = sim.entity_registry().register_entity(std::move(p));
+        const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(p));
         lua_State* L = lua.raw();
         lua_newtable(L);
         lua_pushstring(L, "_c_object");
@@ -48,7 +48,7 @@ struct Wrecks {
         return id;
     }
 
-    bool alive(osc::u32 id) const {
+    bool alive(osc::sim::EntityId id) const {
         const osc::sim::Entity* e = sim.entity_registry().find(id);
         return e && !e->destroyed();
     }
@@ -76,11 +76,11 @@ TEST_CASE("Bounded props leave lowest priority first, then oldest", "[sim][props
 
 TEST_CASE("AddBoundedProp destroys the cheapest wreck past 1000", "[sim][props][lua]") {
     Wrecks w;
-    const osc::u32 cheap = w.add(10.4);
+    const osc::sim::EntityId cheap = w.add(10.4);
     for (int i = 0; i < 998; ++i) {
         w.add(500.0);
     }
-    const osc::u32 twelve = w.add(12.0);
+    const osc::sim::EntityId twelve = w.add(12.0);
     REQUIRE(w.sim.bounded_props().size() == 1000);
     CHECK(w.alive(cheap));
 
@@ -94,7 +94,7 @@ TEST_CASE("A destroyed bounded prop leaves the count when freed", "[sim][props][
     Wrecks w;
     w.add(5.0);
     REQUIRE(w.lua.do_string("first = wreck").ok());
-    const osc::u32 second = w.add(6.0);
+    const osc::sim::EntityId second = w.add(6.0);
     REQUIRE(w.lua.do_string("moho.prop_methods.Destroy(first)").ok());
     CHECK(w.sim.bounded_props().size() == 2);
     w.sim.tick();
@@ -105,7 +105,7 @@ TEST_CASE("A destroyed bounded prop leaves the count when freed", "[sim][props][
 TEST_CASE("Bounded props survive a save and load", "[sim][props][save]") {
     Wrecks w;
     w.add(40.0);
-    const osc::u32 cheap = w.add(7.0);
+    const osc::sim::EntityId cheap = w.add(7.0);
     const auto bytes = osc::sim::save_sim_state(w.sim);
 
     osc::lua::LuaState lua;

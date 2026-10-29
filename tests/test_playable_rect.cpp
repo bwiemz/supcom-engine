@@ -14,9 +14,13 @@ bool same(const std::optional<PlayableRect>& r, i32 x0, i32 z0, i32 x1, i32 z1) 
     return r && r->x0 == x0 && r->z0 == z0 && r->x1 == x1 && r->z1 == z1;
 }
 
+sim::EntityId eid(u32 moho) {
+    return sim::EntityId::of(moho, 1);
+}
+
 void add(sim::WorldSnapshot& snap, u32 id, f32 x, f32 z) {
     sim::EntityRecord e;
-    e.id = id;
+    e.id = eid(id);
     e.position = {x, 0, z};
     snap.entities.push_back(e);
 }
@@ -49,33 +53,37 @@ TEST_CASE("A playable rect sync hides the meshes then outside it, until the next
 
     UserPlayableRect playable;
     playable.sync({0, 0, 100, 100});
-    for (u32 id = 1; id <= 6; ++id) CHECK_FALSE(playable.hides(id)); // until a frame applies it
-    playable.apply(sim::FrameView());                                // (a frame with no world)
-    CHECK_FALSE(playable.hides(3));
+    for (u32 id = 1; id <= 6; ++id) {
+        CHECK_FALSE(playable.hides(eid(id))); // until a frame applies it
+    }
+    playable.apply(sim::FrameView()); // (a frame with no world)
+    CHECK_FALSE(playable.hides(eid(3)));
 
     playable.apply(view);
-    CHECK_FALSE(playable.hides(1));
-    CHECK_FALSE(playable.hides(2));
-    CHECK(playable.hides(3));
-    CHECK_FALSE(playable.hides(4));
-    CHECK(playable.hides(5));
-    CHECK(playable.hides(6));
+    CHECK_FALSE(playable.hides(eid(1)));
+    CHECK_FALSE(playable.hides(eid(2)));
+    CHECK(playable.hides(eid(3)));
+    CHECK_FALSE(playable.hides(eid(4)));
+    CHECK(playable.hides(eid(5)));
+    CHECK(playable.hides(eid(6)));
 
     // One that moves in stays hidden, one that appears later is drawn.
     snap.entities[4].position = {50, 0, 50};
     add(snap, 7, 300, 300);
     playable.apply(view); // nothing pending: nothing changes
-    CHECK(playable.hides(5));
-    CHECK_FALSE(playable.hides(7));
+    CHECK(playable.hides(eid(5)));
+    CHECK_FALSE(playable.hides(eid(7)));
 
     // The next sync decides afresh.
     playable.sync({0, 0, 512, 512});
     playable.apply(view);
-    for (u32 id = 1; id <= 7; ++id) CHECK_FALSE(playable.hides(id));
+    for (u32 id = 1; id <= 7; ++id) {
+        CHECK_FALSE(playable.hides(eid(id)));
+    }
 
     // A new world: nothing hidden, the pending sync dropped.
     playable.sync({0, 0, 10, 10});
     playable.clear();
     playable.apply(view);
-    CHECK_FALSE(playable.hides(5));
+    CHECK_FALSE(playable.hides(eid(5)));
 }

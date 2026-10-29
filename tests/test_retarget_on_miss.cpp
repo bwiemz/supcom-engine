@@ -28,8 +28,8 @@ extern "C" {
 #include <vector>
 
 using osc::f32;
-using osc::u32;
 using osc::sim::CommandType;
+using osc::sim::EntityId;
 using osc::sim::EntityRegistry;
 using osc::sim::SimState;
 using osc::sim::Unit;
@@ -101,7 +101,7 @@ struct Scene {
     EntityRegistry& registry() { return sim.entity_registry(); }
 };
 
-Weapon::TargetMark at_entity(u32 id) {
+Weapon::TargetMark at_entity(EntityId id) {
     Weapon::TargetMark m;
     m.entity = id;
     return m;
@@ -166,12 +166,12 @@ TEST_CASE("ReTargetOnMiss gives a target up on the eleventh miss in a row, and p
 
     // The eleventh gives it up: a held target, its script told nothing, and the change ages it
     gun.note_impact(*s.ship, true, s.registry(), &s.sim);
-    CHECK(gun.target_entity_id == 0);
+    CHECK_FALSE(gun.target_entity_id);
     CHECK(gun.target_held);
     CHECK_FALSE(gun.has_target());
     CHECK(gun.retarget_misses == 0);
     REQUIRE(gun.blacklist.size() == 1);
-    CHECK(gun.blacklist[0] == std::pair<u32, osc::i32>{s.near->entity_id(), 9});
+    CHECK(gun.blacklist[0] == std::pair<EntityId, osc::i32>{s.near->entity_id(), 9});
 
     // Its next look passes over it, and the change to the other target ages it again
     gun.target_check_clock = 0;
@@ -334,7 +334,7 @@ TEST_CASE("A ReTargetOnMiss weapon's beam tells it whether each check struck its
     beam->beam_setup().weapon = 0;
     beam->beam_setup().length = 20;
     beam->set_position({64.0f, 9.0f, 64.0f});
-    const u32 beam_id = s.registry().register_entity(std::move(beam));
+    const EntityId beam_id = s.registry().register_entity(std::move(beam));
     osc::sim::check_collision_beam(s.sim, nullptr, beam_id, false);
     CHECK(gun.retarget_misses == 1);
     osc::sim::check_collision_beam(s.sim, nullptr, beam_id, false);
@@ -361,7 +361,7 @@ TEST_CASE("A ReTargetOnMiss weapon's beam check that strikes its target starts t
     beam->set_beam_launcher_id(s.ship->entity_id());
     beam->beam_setup().weapon = 0;
     beam->beam_setup().length = 20;
-    const u32 beam_id = s.registry().register_entity(std::move(beam));
+    const EntityId beam_id = s.registry().register_entity(std::move(beam));
     osc::sim::check_collision_beam(s.sim, nullptr, beam_id, false);
     CHECK(gun.retarget_misses == 0);
 }

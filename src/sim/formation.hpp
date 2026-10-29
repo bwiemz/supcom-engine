@@ -19,12 +19,12 @@ class EntityRegistry;
 
 /// Where one unit of a formation order goes.
 struct FormationSlot {
-    u32 unit_id = 0;
+    EntityId unit_id{};
     Vector3 position;
 };
 
 struct FormationMember {
-    u32 id = 0;
+    EntityId id{};
     i32 army = -1;
     Vector3 position;
     f32 size = 1.0f; ///< its footprint's larger side
@@ -48,7 +48,8 @@ std::vector<std::string> formation_scripts(lua_State* L, bool air);
 /// order stays plain) for fewer than two units, a name with no function, or
 /// a script error.
 std::vector<FormationSlot> plan_formation(lua_State* L, const EntityRegistry& registry,
-                                          const map::Terrain* terrain, std::vector<u32> unit_ids,
+                                          const map::Terrain* terrain,
+                                          std::vector<EntityId> unit_ids,
                                           const std::string& formation, const Vector3& target,
                                           std::optional<f32> facing);
 /// The same in any Lua state, `push` pushing a unit's object there

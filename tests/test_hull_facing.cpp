@@ -30,7 +30,6 @@ extern "C" {
 #include <vector>
 
 using osc::f32;
-using osc::u32;
 using osc::sim::CommandType;
 using osc::sim::SimState;
 using osc::sim::Unit;
@@ -475,7 +474,7 @@ TEST_CASE("A turret on a turning hull fires along its aim", "[hull-facing][weapo
     foe->place_now();
     w.set_target_entity(foe->entity_id());
 
-    std::set<u32> seen;
+    std::set<osc::sim::EntityId> seen;
     int shots_while_turning = 0;
     for (int t = 0; t < 10; ++t) {
         const f32 before = heading_deg(*u);

@@ -31,6 +31,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cmath>
+#include <optional>
 #include <string>
 
 namespace osc::test {
@@ -49,22 +50,29 @@ void test_need_unpack(TestContext& ctx) {
     const f32 sx = spot->x;
     const f32 sz = spot->z;
     auto& registry = ctx.sim.entity_registry();
-    const auto unit = [&](u32 id) {
+    const auto unit = [&](sim::EntityId id) {
         sim::Entity* e = registry.find(id);
         return e && e->is_unit() ? static_cast<sim::Unit*>(e) : nullptr;
     };
-    // The weapon target it holds, 0 for none (-1: a ground target).
-    const auto target_of = [&](const sim::Unit& u) -> i64 {
+    // The weapon target it holds, if any (nullopt: a ground target).
+    const auto target_of = [&](const sim::Unit& u) -> std::optional<sim::EntityId> {
         for (const auto& w : u.weapons()) {
-            if (w->target_entity_id != 0) return w->target_entity_id;
-            if (w->has_ground_target) return -1;
+            if (w->target_entity_id) {
+                return w->target_entity_id;
+            }
+            if (w->has_ground_target) {
+                return std::nullopt;
+            }
         }
-        return 0;
+        return sim::EntityId();
     };
 
-    const u32 art_id = spawn_unit(ctx, "__osc_nu_art", "uel0304", "ARMY_1", {sx - 20, sz + 10});
-    const u32 tank_id = spawn_unit(ctx, "__osc_nu_tank", "uel0201", "ARMY_1", {sx + 40, sz + 60});
-    const u32 gen_id = spawn_unit(ctx, "__osc_nu_gen", "ueb1101", "ARMY_2", {sx - 20, sz + 70});
+    const sim::EntityId art_id =
+        spawn_unit(ctx, "__osc_nu_art", "uel0304", "ARMY_1", {sx - 20, sz + 10});
+    const sim::EntityId tank_id =
+        spawn_unit(ctx, "__osc_nu_tank", "uel0201", "ARMY_1", {sx + 40, sz + 60});
+    const sim::EntityId gen_id =
+        spawn_unit(ctx, "__osc_nu_gen", "ueb1101", "ARMY_2", {sx - 20, sz + 70});
     run_lua(ctx, "__osc_nu_gen:SetCanTakeDamage(false)");
     sim::Unit* art = unit(art_id);
     t.check(art && art->need_unpack() && unit(tank_id) && !unit(tank_id)->need_unpack() &&
@@ -88,7 +96,8 @@ void test_need_unpack(TestContext& ctx) {
                         gz));
     ctx.sim.tick();
     art = unit(art_id);
-    t.check(art && target_of(*art) == 0, "Test 1: its weapon drops the target as the move begins");
+    t.check(art && target_of(*art) == sim::EntityId(),
+            "Test 1: its weapon drops the target as the move begins");
 
     int packed_at = -1;
     bool redeployed = false;
@@ -113,7 +122,7 @@ void test_need_unpack(TestContext& ctx) {
             if (packed_at >= 0 && moving && art->immobile()) {
                 redeployed = true;
             }
-            if (moving && target_of(*art) != 0) {
+            if (moving && target_of(*art) != sim::EntityId()) {
                 targeted = true;
             }
             return art->command_queue().empty();
@@ -135,13 +144,16 @@ void test_need_unpack(TestContext& ctx) {
     for (int i = 0; i < 100 && art; ++i) {
         ctx.sim.tick();
         art = unit(art_id);
-        if (art && (art->immobile() || target_of(*art) != 0)) stayed = false;
+        if (art && (art->immobile() || target_of(*art) != sim::EntityId())) {
+            stayed = false;
+        }
     }
     t.check(art && stayed, "Test 4: it stays packed with nothing in range");
     if (!art) return;
 
     // The generator it is sent at is 121 off; a second, 45 off, is in range.
-    const u32 near_id = spawn_unit(ctx, "__osc_nu_near", "ueb1101", "ARMY_2", {sx + 40, sz + 10});
+    const sim::EntityId near_id =
+        spawn_unit(ctx, "__osc_nu_near", "ueb1101", "ARMY_2", {sx + 40, sz + 10});
     run_lua(ctx, "__osc_nu_near:SetCanTakeDamage(false)\n"
                  "IssueAttack({__osc_nu_art}, __osc_nu_gen)");
     bool took_near = false;

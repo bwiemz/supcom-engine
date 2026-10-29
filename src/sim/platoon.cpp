@@ -7,7 +7,7 @@
 
 namespace osc::sim {
 
-void Platoon::add_unit(u32 entity_id) {
+void Platoon::add_unit(EntityId entity_id) {
     if (!has_unit(entity_id))
         unit_ids_.push_back(entity_id);
 }
@@ -20,7 +20,7 @@ bool Platoon::is_army_pool() const {
            });
 }
 
-void Platoon::remove_unit(u32 entity_id) {
+void Platoon::remove_unit(EntityId entity_id) {
     unit_ids_.erase(
         std::remove(unit_ids_.begin(), unit_ids_.end(), entity_id),
         unit_ids_.end());
@@ -28,17 +28,17 @@ void Platoon::remove_unit(u32 entity_id) {
     formation_map_.erase(entity_id);
 }
 
-void Platoon::set_unit_formation(u32 entity_id, const std::string& formation) {
+void Platoon::set_unit_formation(EntityId entity_id, const std::string& formation) {
     formation_map_[entity_id] = formation;
 }
 
-std::string Platoon::unit_formation(u32 entity_id) const {
+std::string Platoon::unit_formation(EntityId entity_id) const {
     if (!formation_override_.empty()) return formation_override_;
     const auto it = formation_map_.find(entity_id);
     return it != formation_map_.end() ? it->second : std::string();
 }
 
-bool Platoon::has_unit(u32 entity_id) const {
+bool Platoon::has_unit(EntityId entity_id) const {
     return std::find(unit_ids_.begin(), unit_ids_.end(), entity_id)
            != unit_ids_.end();
 }
@@ -46,7 +46,7 @@ bool Platoon::has_unit(u32 entity_id) const {
 Vector3 Platoon::get_position(const EntityRegistry& registry) const {
     f32 sx = 0, sy = 0, sz = 0;
     i32 count = 0;
-    for (u32 id : unit_ids_) {
+    for (EntityId id : unit_ids_) {
         auto* e = registry.find(id);
         if (e && !e->destroyed()) {
             sx += e->position().x;
@@ -59,13 +59,13 @@ Vector3 Platoon::get_position(const EntityRegistry& registry) const {
     return {sx / count, sy / count, sz / count};
 }
 
-void Platoon::set_unit_squad(u32 entity_id, const std::string& squad) {
+void Platoon::set_unit_squad(EntityId entity_id, const std::string& squad) {
     squad_map_[entity_id] = squad;
 }
 
 static const std::string empty_squad;
 
-const std::string& Platoon::get_unit_squad(u32 entity_id) const {
+const std::string& Platoon::get_unit_squad(EntityId entity_id) const {
     auto it = squad_map_.find(entity_id);
     return (it != squad_map_.end()) ? it->second : empty_squad;
 }
@@ -86,7 +86,7 @@ int Platoon::squad_class(std::string_view squad) {
     return -1;
 }
 
-bool Platoon::in_squad(u32 entity_id, std::string_view squad) const {
+bool Platoon::in_squad(EntityId entity_id, std::string_view squad) const {
     const std::string& mine = get_unit_squad(entity_id);
     const int a = squad_class(mine);
     const int b = squad_class(squad);

@@ -174,8 +174,9 @@ void MinimapRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
 }
 
 void MinimapRenderer::update(const sim::FrameView& view, const Camera& camera,
-                             TextureCache& tex_cache, const std::unordered_set<u32>* selected_ids,
-                             u32 viewport_w, u32 viewport_h, lua_State* L) {
+                             TextureCache& tex_cache,
+                             const std::unordered_set<sim::EntityId>* selected_ids, u32 viewport_w,
+                             u32 viewport_h, lua_State* L) {
     quads_.clear();
     draw_groups_.clear();
     quad_count_ = 0;
@@ -316,7 +317,7 @@ std::vector<ResourceIcon> minimap_resource_icons(std::span<const sim::ResourceDe
 
 void MinimapRenderer::paint(const sim::FrameView& view, const Camera& camera,
                             TextureCache& tex_cache, f32 x, f32 y, f32 w, f32 h, u32 viewport_w,
-                            u32 viewport_h, const std::unordered_set<u32>* selected_ids,
+                            u32 viewport_h, const std::unordered_set<sim::EntityId>* selected_ids,
                             lua_State* L, std::vector<UIQuad>& out,
                             const std::optional<PlayableRect>& resources,
                             VkDescriptorSet cartographic) {
@@ -332,7 +333,7 @@ void MinimapRenderer::paint(const sim::FrameView& view, const Camera& camera,
 
 void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
                             TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, bool framed,
-                            const std::unordered_set<u32>* selected_ids, lua_State* L,
+                            const std::unordered_set<sim::EntityId>* selected_ids, lua_State* L,
                             const std::optional<PlayableRect>& resources,
                             VkDescriptorSet cartographic) {
     white_ds_ = tex_cache.fallback_descriptor();

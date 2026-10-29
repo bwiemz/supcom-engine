@@ -503,10 +503,9 @@ std::optional<u32> StrategicIconRenderer::team_color(const sim::FrameView& view,
 }
 
 template <class Place>
-StrategicIconRenderer::Runs
-StrategicIconRenderer::collect(const sim::FrameView& view,
-                               const std::unordered_set<u32>* selected_ids, TextureCache& tex_cache,
-                               lua_State* L, bool fade, f32 cam_dist, f32 fade_cap, Place&& place) {
+StrategicIconRenderer::Runs StrategicIconRenderer::collect(
+    const sim::FrameView& view, const std::unordered_set<sim::EntityId>* selected_ids,
+    TextureCache& tex_cache, lua_State* L, bool fade, f32 cam_dist, f32 fade_cap, Place&& place) {
     Runs runs;
 
     // One unit's icon, into its run: the world's units, then the
@@ -704,7 +703,7 @@ void StrategicIconRenderer::emit_runs(const Runs& runs, TextureCache& tex_cache,
 
 bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& camera,
                                    const std::array<f32, 16>& vp_matrix,
-                                   const std::unordered_set<u32>* selected_ids,
+                                   const std::unordered_set<sim::EntityId>* selected_ids,
                                    TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
                                    lua_State* L, f32 frame_seconds) {
     quads_.clear();
@@ -776,7 +775,8 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
 }
 
 void StrategicIconRenderer::paint_map(const sim::FrameView& view, const MapArea& area, f32 map_w,
-                                      f32 map_h, const std::unordered_set<u32>* selected_ids,
+                                      f32 map_h,
+                                      const std::unordered_set<sim::EntityId>* selected_ids,
                                       TextureCache& tex_cache, lua_State* L,
                                       std::vector<UIQuad>& out, bool icon_pass) {
     load_generic_icons(L);

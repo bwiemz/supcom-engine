@@ -78,6 +78,13 @@ public:
     void f64v(f64 v) { pod(v); }
     void b(bool v) { u8v(v ? 1 : 0); }
     void size(size_t n) { u32v(static_cast<u32>(n)); }
+    void id(EntityId v) { u64v(v.key()); }
+    void ids(const std::vector<EntityId>& v) {
+        size(v.size());
+        for (const EntityId e : v) {
+            id(e);
+        }
+    }
     void str(std::string_view s) {
         size(s.size());
         raw(s.data(), s.size());
@@ -146,6 +153,14 @@ public:
         }
         return n;
     }
+    EntityId id() { return EntityId(u64v()); }
+    std::vector<EntityId> ids() {
+        std::vector<EntityId> v(size(8));
+        for (EntityId& e : v) {
+            e = id();
+        }
+        return v;
+    }
     std::string str() {
         const size_t n = size();
         std::string s(n, '\0');
@@ -209,8 +224,8 @@ struct StateIO {
     static void load(StateReader& r, path::PathQueue& q, SimState& sim);
     static void save_path_maps(StateWriter& w, const SimState& sim);
     /// The unit whose navigator's finder `t` is (0: none), and back.
-    static u32 traveler_id(const SimState& sim, const path::Traveler* t);
-    static path::PathFinder* traveler_of(SimState& sim, u32 id);
+    static EntityId traveler_id(const SimState& sim, const path::Traveler* t);
+    static path::PathFinder* traveler_of(SimState& sim, EntityId id);
     static void load_path_maps(StateReader& r, SimState& sim);
     static void save(StateWriter& w, const Weapon& wp);
     static void load(StateReader& r, Weapon& wp);

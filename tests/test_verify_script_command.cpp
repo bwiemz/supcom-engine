@@ -29,7 +29,7 @@ struct VerifyWorld {
     osc::lua::LuaState sim_lua;
     osc::sim::SimState sim{sim_lua.raw(), nullptr};
     osc::lua::LuaState ui;
-    osc::u32 id = 0;
+    osc::sim::EntityId id{};
 
     VerifyWorld() {
         sim.add_army("ARMY_1", "ARMY_1");
@@ -53,8 +53,8 @@ struct VerifyWorld {
         return r.ok();
     }
 
-    std::optional<osc::renderer::VerifiedScript> verify(osc::u32 target, osc::sim::Vector3 at,
-                                                        bool clear) {
+    std::optional<osc::renderer::VerifiedScript> verify(osc::sim::EntityId target,
+                                                        osc::sim::Vector3 at, bool clear) {
         return osc::app::verify_script_command(ui.raw(), {id}, target, at, clear);
     }
 };
@@ -67,7 +67,7 @@ TEST_CASE("VerifyScriptCommand hears a Script order as Moho describes it", "[ui]
     // The unit's id as scripts get it
     osc::sim::push_entity_id(w.ui.raw(), w.id);
     lua_setglobal(w.ui.raw(), "id");
-    CHECK_FALSE(w.verify(0, {1, 2, 3}, true));
+    CHECK_FALSE(w.verify({}, {1, 2, 3}, true));
     CHECK(w.check("assert(table.getn(seen.Units) == 1 and seen.Units[1]:GetEntityId() == id, "
                   "'units')"
                   " assert(seen.Blueprint == '' and seen.CommandType == 'Script', 'kind')"
@@ -87,17 +87,17 @@ TEST_CASE("Only a VerifyScriptCommand answer with UserValidated lets the order g
           "[ui][script]") {
     VerifyWorld w;
     REQUIRE(w.check("answer = function(data) return { UserValidated = false } end"));
-    CHECK_FALSE(w.verify(0, {1, 2, 3}, true));
+    CHECK_FALSE(w.verify({}, {1, 2, 3}, true));
     REQUIRE(w.check("answer = function(data) return nil end"));
-    CHECK_FALSE(w.verify(0, {1, 2, 3}, true));
+    CHECK_FALSE(w.verify({}, {1, 2, 3}, true));
 
     // Retail's own answer: the mode's task, the target as its Location
     REQUIRE(w.check("answer = function(data) return { TaskName = 'TargetLocation', "
                     "UserValidated = true, Location = data.Target.Position, "
                     "AuthorizedUnits = data.Units } end"));
-    const auto verdict = w.verify(0, {1, 2, 3}, true);
+    const auto verdict = w.verify({}, {1, 2, 3}, true);
     REQUIRE(verdict);
-    CHECK(verdict->units == std::vector<osc::u32>{w.id});
+    CHECK(verdict->units == std::vector<osc::sim::EntityId>{w.id});
     // The task's data: the answer without AuthorizedUnits
     lua_State* L = w.ui.raw();
     REQUIRE(osc::sim::push_lua_bytes(L, verdict->args));
@@ -109,7 +109,7 @@ TEST_CASE("Only a VerifyScriptCommand answer with UserValidated lets the order g
     // None authorized: it goes to no one
     REQUIRE(w.check("answer = function(data) return { UserValidated = true, "
                     "AuthorizedUnits = {} } end"));
-    const auto none = w.verify(0, {1, 2, 3}, true);
+    const auto none = w.verify({}, {1, 2, 3}, true);
     REQUIRE(none);
     CHECK(none->units.empty());
 }
@@ -117,7 +117,7 @@ TEST_CASE("Only a VerifyScriptCommand answer with UserValidated lets the order g
 TEST_CASE("A VerifyScriptCommand that fails, or isn't there, lets nothing go", "[ui][script]") {
     VerifyWorld w;
     REQUIRE(w.check("answer = function(data) error('no such ability') end"));
-    CHECK_FALSE(w.verify(0, {1, 2, 3}, true));
+    CHECK_FALSE(w.verify({}, {1, 2, 3}, true));
     REQUIRE(w.check("modules = {}"));
-    CHECK_FALSE(w.verify(0, {1, 2, 3}, true));
+    CHECK_FALSE(w.verify({}, {1, 2, 3}, true));
 }

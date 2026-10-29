@@ -48,10 +48,10 @@ void test_viz_render(TestContext& ctx) {
         t.check(false, "the map, and dry ground 60 from every unit");
         return;
     }
-    const u32 shown = spawn_unit(ctx, "__osc_viz_shown", "uel0201", "ARMY_1", *spot);
-    const u32 hidden =
+    const sim::EntityId shown = spawn_unit(ctx, "__osc_viz_shown", "uel0201", "ARMY_1", *spot);
+    const sim::EntityId hidden =
         spawn_unit(ctx, "__osc_viz_hidden", "uel0201", "ARMY_1", Spot{spot->x + 8, spot->z});
-    const u32 enemies_only =
+    const sim::EntityId enemies_only =
         spawn_unit(ctx, "__osc_viz_mine", "uel0201", "ARMY_1", Spot{spot->x + 16, spot->z});
     run_lua(
         ctx,
@@ -68,7 +68,7 @@ void test_viz_render(TestContext& ctx) {
     shots.recapture();
     (void)shots.shoot_frame(*terrain, spot->x + 8, spot->z, 40.0f);
     const auto& registry = ctx.sim.entity_registry();
-    const auto at = [&](u32 id) { return registry.find(id)->position(); };
+    const auto at = [&](sim::EntityId id) { return registry.find(id)->position(); };
     const int a = drawn_at(shots.renderer(), at(shown));
     const int b = drawn_at(shots.renderer(), at(hidden));
     const int c = drawn_at(shots.renderer(), at(enemies_only));

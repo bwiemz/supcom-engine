@@ -39,8 +39,8 @@ void test_mesh_texture(TestContext& ctx) {
         mesh.LODs = { { AlbedoName = '', SpecularName = '', NormalsName = '' } }
     )");
     t.check(static_cast<bool>(ran), "the mesh blueprint names empty textures");
-    const u32 bot = spawn_unit(ctx, "__osc_mt_bot", "uel0106", "ARMY_1", *spot);
-    t.check(bot != 0, "the bot is made");
+    const sim::EntityId bot = spawn_unit(ctx, "__osc_mt_bot", "uel0106", "ARMY_1", *spot);
+    t.check(static_cast<bool>(bot), "the bot is made");
 
     OffscreenShots shots(ctx);
     if (!shots.ok()) {

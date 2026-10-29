@@ -232,7 +232,7 @@ static int unit_IsUnitState(lua_State* L) {
         else if (std::strcmp(state, "Reclaiming") == 0)
             result = u->is_reclaiming();
         else if (std::strcmp(state, "Repairing") == 0)
-            result = u->is_repairing() || u->build_repairs() || u->silo_assist_id() != 0;
+            result = u->is_repairing() || u->build_repairs() || u->silo_assist_id();
         else if (std::strcmp(state, "Busy") == 0)
             result = u->busy();
         else if (std::strcmp(state, "BlockCommandQueue") == 0)
@@ -273,7 +273,7 @@ static int unit_IsUnitState(lua_State* L) {
 
 static int unit_GetUnitBeingBuilt(lua_State* L) {
     auto* u = check_unit(L);
-    if (!u || u->build_target_id() == 0) {
+    if (!u || !u->build_target_id()) {
         lua_pushnil(L);
         return 1;
     }
@@ -336,7 +336,7 @@ static int unit_GetGuards(lua_State* L) {
     if (!u || !sim) return 1;
 
     int result = lua_gettop(L);
-    u32 my_id = u->entity_id();
+    sim::EntityId my_id = u->entity_id();
     int idx = 1;
 
     sim->entity_registry().for_each_unit([&](sim::Entity& e) {
@@ -356,9 +356,9 @@ static int unit_GetGuards(lua_State* L) {
 // GetGuardedUnit(): return the unit this unit is guarding, or nil
 static int unit_GetGuardedUnit(lua_State* L) {
     auto* u = check_unit(L);
-    const u32 guarded = u ? u->guarded_unit_id() : 0;
+    const sim::EntityId guarded = u ? u->guarded_unit_id() : sim::EntityId();
     auto* sim = get_sim(L);
-    if (guarded == 0 || !sim) {
+    if (!guarded || !sim) {
         lua_pushnil(L);
         return 1;
     }
@@ -379,9 +379,12 @@ static int unit_GetFocusUnit(lua_State* L) {
     auto* u = check_unit(L);
     if (!u) { lua_pushnil(L); return 1; }
 
-    const u32 focus_id = u->focus_id();
+    const sim::EntityId focus_id = u->focus_id();
 
-    if (focus_id == 0) { lua_pushnil(L); return 1; }
+    if (!focus_id) {
+        lua_pushnil(L);
+        return 1;
+    }
 
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
@@ -406,7 +409,7 @@ static int unit_GetTargetEntity(lua_State* L) {
     auto* sim = get_sim(L);
     if (u && sim && !u->command_queue().empty()) {
         const auto& head = u->command_queue().front();
-        if (head.type == sim::CommandType::Attack && head.target_id != 0) {
+        if (head.type == sim::CommandType::Attack && head.target_id) {
             auto* target = sim->entity_registry().find(head.target_id);
             if (target && !target->destroyed() && target->lua_table_ref() >= 0) {
                 lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
@@ -450,7 +453,7 @@ static int unit_GetParent(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    if (u->transport_id() != 0) {
+    if (u->transport_id()) {
         auto* sim = get_sim(L);
         if (sim) {
             auto* transport = sim->entity_registry().find(u->transport_id());
@@ -472,7 +475,7 @@ static int unit_GetCargo(lua_State* L) {
     lua_newtable(L);
     if (!u || !sim) return 1;
     int idx = 1;
-    for (u32 cargo_id : u->cargo_ids()) {
+    for (sim::EntityId cargo_id : u->cargo_ids()) {
         auto* cargo = sim->entity_registry().find(cargo_id);
         if (cargo && !cargo->destroyed() && cargo->lua_table_ref() >= 0) {
             lua_rawgeti(L, LUA_REGISTRYINDEX, cargo->lua_table_ref());
@@ -703,7 +706,7 @@ static int unit_GetCommandQueue(lua_State* L) {
         lua_newtable(L);
         number("commandType", sim::moho_command_number(cmd));
         const sim::Entity* target =
-            cmd.target_id > 0 && sim ? sim->entity_registry().find(cmd.target_id) : nullptr;
+            cmd.target_id && sim ? sim->entity_registry().find(cmd.target_id) : nullptr;
         if (target && target->destroyed()) target = nullptr;
         const sim::Vector3 at = target ? target->position() : cmd.target_pos;
         number("x", at.x);
@@ -714,7 +717,7 @@ static int unit_GetCommandQueue(lua_State* L) {
             lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
             lua_rawset(L, -3);
         }
-        if (cmd.target_id > 0) {
+        if (cmd.target_id) {
             lua_pushstring(L, "targetId");
             sim::push_entity_id(L, cmd.target_id);
             lua_rawset(L, -3);
@@ -734,7 +737,7 @@ static int unit_GetCommandQueue(lua_State* L) {
 /// Push `req_army`'s blip of the entity (SimState::push_blip): the army's
 /// one blip object of it, its id and the army, no pointer to the unit (AI
 /// scripts keep blips after their unit is gone; every use resolves the id).
-static void push_blip_table(lua_State* L, osc::u32 entity_id, osc::i32 req_army) {
+static void push_blip_table(lua_State* L, sim::EntityId entity_id, osc::i32 req_army) {
     if (auto* sim = get_sim(L)) {
         sim->push_blip(L, entity_id, req_army);
     } else {
@@ -782,18 +785,24 @@ static int unit_GetBlip(lua_State* L) {
     // --- Case 2: entity destroyed — check blip cache for dead-reckoning ---
     if (req_army < 0) { lua_pushnil(L); return 1; }
 
-    // Read EntityId from the Lua table (arg 1) since C++ entity is gone
-    osc::u32 entity_id = 0;
+    auto* sim = get_sim(L);
+    if (!sim) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // Read the entity's key from the Lua table (arg 1) since C++ entity is gone
+    sim::EntityId entity_id{};
     if (lua_istable(L, 1)) {
-        lua_pushstring(L, "EntityId");
+        lua_pushstring(L, "_c_entity_id");
         lua_rawget(L, 1);
-        if (lua_isnumber(L, -1)) entity_id = sim::to_entity_id(L, -1);
+        entity_id = sim::to_entity_key(L, -1);
         lua_pop(L, 1);
     }
-    if (entity_id == 0) { lua_pushnil(L); return 1; }
-
-    auto* sim = get_sim(L);
-    if (!sim) { lua_pushnil(L); return 1; }
+    if (!entity_id) {
+        lua_pushnil(L);
+        return 1;
+    }
 
     auto* snap = sim->get_blip_snapshot(entity_id,
                                          static_cast<osc::u32>(req_army));
@@ -1394,7 +1403,9 @@ static int unit_CanBuild(lua_State* L) {
 // unit:EnableShield() — enable shield on this unit's shield entity
 static int unit_EnableShield(lua_State* L) {
     auto* u = check_unit(L);
-    if (!u || u->shield_entity_id() == 0) return 0;
+    if (!u || !u->shield_entity_id()) {
+        return 0;
+    }
     auto* sim = get_sim(L);
     if (!sim) return 0;
     auto* e = sim->entity_registry().find(u->shield_entity_id());
@@ -1407,7 +1418,9 @@ static int unit_EnableShield(lua_State* L) {
 // unit:DisableShield() — disable shield on this unit's shield entity
 static int unit_DisableShield(lua_State* L) {
     auto* u = check_unit(L);
-    if (!u || u->shield_entity_id() == 0) return 0;
+    if (!u || !u->shield_entity_id()) {
+        return 0;
+    }
     auto* sim = get_sim(L);
     if (!sim) return 0;
     auto* e = sim->entity_registry().find(u->shield_entity_id());
@@ -1420,7 +1433,7 @@ static int unit_DisableShield(lua_State* L) {
 // unit:ShieldIsOn() -> bool
 static int unit_ShieldIsOn(lua_State* L) {
     auto* u = check_unit(L);
-    if (!u || u->shield_entity_id() == 0) {
+    if (!u || !u->shield_entity_id()) {
         lua_pushboolean(L, 0);
         return 1;
     }
@@ -1749,13 +1762,16 @@ static int unit_SetCreator(lua_State* L) {
     auto* u = check_unit(L);
     if (!u) return 0;
     auto* creator = check_entity(L, 2);
-    u->set_creator_id(creator ? creator->entity_id() : 0);
+    u->set_creator_id(creator ? creator->entity_id() : sim::EntityId());
     return 0;
 }
 
 static int unit_GetCreator(lua_State* L) {
     auto* u = check_unit(L);
-    if (!u || u->creator_id() == 0) { lua_pushnil(L); return 1; }
+    if (!u || !u->creator_id()) {
+        lua_pushnil(L);
+        return 1;
+    }
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
     auto* creator = sim->entity_registry().find(u->creator_id());
@@ -1810,13 +1826,15 @@ static int unit_SetFocusEntity(lua_State* L) {
     auto* u = check_unit(L);
     if (!u) return 0;
     auto* target = check_entity(L, 2);
-    u->set_focus_entity_id(target ? target->entity_id() : 0);
+    u->set_focus_entity_id(target ? target->entity_id() : sim::EntityId());
     return 0;
 }
 
 static int unit_ClearFocusEntity(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->set_focus_entity_id(0);
+    if (u) {
+        u->set_focus_entity_id(sim::EntityId());
+    }
     return 0;
 }
 
@@ -1844,7 +1862,10 @@ static int unit_SetCanBeKilled(lua_State* L) {
 
 static int unit_GetAttacker(lua_State* L) {
     auto* u = check_unit(L);
-    if (!u || u->last_attacker_id() == 0) { lua_pushnil(L); return 1; }
+    if (!u || !u->last_attacker_id()) {
+        lua_pushnil(L);
+        return 1;
+    }
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
     auto* attacker = sim->entity_registry().find(u->last_attacker_id());
@@ -1885,9 +1906,9 @@ static int unit_SetBuildingUnit(lua_State* L) {
     int entity_idx = lua_isboolean(L, 2) ? 3 : 2;
     if (lua_istable(L, entity_idx)) {
         auto* target = check_entity(L, entity_idx);
-        u->set_build_target_id(target ? target->entity_id() : 0);
+        u->set_build_target_id(target ? target->entity_id() : sim::EntityId());
     } else {
-        u->set_build_target_id(0);
+        u->set_build_target_id(sim::EntityId());
     }
     return 0;
 }
@@ -2151,8 +2172,9 @@ static int unit_GetGuardedEntity(lua_State* L) {
     auto* u = check_unit(L);
     auto* sim = get_sim(L);
     sim::Entity* target = nullptr;
-    if (u && sim && u->guarded_unit_id() != 0)
+    if (u && sim && u->guarded_unit_id()) {
         target = sim->entity_registry().find(u->guarded_unit_id());
+    }
     if (target && target->is_unit() && !target->destroyed()) push_unit_for_ui(L, target);
     else lua_pushnil(L);
     return 1;
@@ -2219,7 +2241,7 @@ static constexpr const char* kSelectionSetsKey = "__osc_selection_sets";
 
 /// Push this unit's set table (name -> true), creating it if `create`;
 /// pushes nil otherwise when there is none.
-static void push_unit_selection_sets(lua_State* L, u32 id, bool create) {
+static void push_unit_selection_sets(lua_State* L, sim::EntityId id, bool create) {
     lua_pushstring(L, kSelectionSetsKey);
     lua_rawget(L, LUA_REGISTRYINDEX);
     if (!lua_istable(L, -1)) {
@@ -2229,12 +2251,14 @@ static void push_unit_selection_sets(lua_State* L, u32 id, bool create) {
         lua_pushvalue(L, -2);
         lua_rawset(L, LUA_REGISTRYINDEX);
     }
-    lua_rawgeti(L, -1, static_cast<int>(id));
+    sim::push_entity_key(L, id);
+    lua_rawget(L, -2);
     if (!lua_istable(L, -1) && create) {
         lua_pop(L, 1);
         lua_newtable(L);
-        lua_pushvalue(L, -1);
-        lua_rawseti(L, -3, static_cast<int>(id));
+        sim::push_entity_key(L, id);
+        lua_pushvalue(L, -2);
+        lua_rawset(L, -4);
     }
     lua_remove(L, -2);
 }

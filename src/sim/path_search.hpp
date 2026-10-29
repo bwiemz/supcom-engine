@@ -62,7 +62,7 @@ public:
     /// else to the cell it found nearest the goal.
     virtual void on_path(bool reached, std::vector<Cell> cells) = 0;
     /// The unit it searches for, by id (0: none); the sync checksum's.
-    virtual u32 owner() const { return 0; }
+    virtual EntityId owner() const { return {}; }
 
 private:
     friend class PathQueue;

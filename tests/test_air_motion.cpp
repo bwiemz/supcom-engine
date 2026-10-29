@@ -554,7 +554,7 @@ TEST_CASE("An aircraft's weapon takes its ordered target only once the attack en
         },
         "the attack engages", 300, [&] { return a.command_queue().front().engaged; });
     CHECK_FALSE(early);
-    CHECK(weapon.target_entity_id == 0);
+    CHECK_FALSE(weapon.target_entity_id);
     a.weapons().front()->fire_clock = 1000000;
     w.sim.tick();
     CHECK(weapon.target_entity_id == tank.entity_id());

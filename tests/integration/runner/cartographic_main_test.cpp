@@ -88,7 +88,7 @@ void test_cartographic_main(TestContext& ctx) {
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* registry = static_cast<ui::UIControlRegistry*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-    const u32 acu = army_acu_id(ctx.sim, 0);
+    const sim::EntityId acu = army_acu_id(ctx.sim, 0);
     const auto* acu_entity = ctx.sim.entity_registry().find(acu);
     if (!terrain || !registry || !acu_entity) {
         t.check(false, "a map, the UI's controls and ARMY_1's commander");
@@ -308,7 +308,7 @@ void test_cartographic_main(TestContext& ctx) {
                             "army's {} vision circles: {} of {} pixels ({} dimmed)",
                             circles, m.same, m.pixels, dimmer));
         r.range_overlays().settings().render_selected = true;
-        const std::unordered_set<u32> selected{acu};
+        const std::unordered_set<sim::EntityId> selected{acu};
         shots.recapture();
         shots.redraw(&selected);
         const auto& rings = r.main_frame_ranges().drawn();

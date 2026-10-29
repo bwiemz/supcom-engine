@@ -19,8 +19,8 @@ extern "C" {
 #include <memory>
 #include <vector>
 
-using osc::u32;
 using osc::sim::CommandType;
+using osc::sim::EntityId;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
@@ -32,9 +32,9 @@ namespace {
 struct Ferry {
     lua_State* L = lua_open();
     SimState sim{L, nullptr};
-    u32 transport = 0;
-    u32 first = 0;
-    u32 second = 0;
+    EntityId transport{};
+    EntityId first{};
+    EntityId second{};
 
     Ferry() {
         luaopen_base(L);
@@ -49,15 +49,15 @@ struct Ferry {
     Ferry(const Ferry&) = delete;
     Ferry& operator=(const Ferry&) = delete;
 
-    u32 spawn() {
+    EntityId spawn() {
         auto u = std::make_unique<Unit>();
         u->set_army(0);
         return sim.entity_registry().register_entity(std::move(u));
     }
-    Unit& unit(u32 id) { return *static_cast<Unit*>(sim.entity_registry().find(id)); }
+    Unit& unit(EntityId id) { return *static_cast<Unit*>(sim.entity_registry().find(id)); }
 
     /// Unload where the transport stands (within reach at once).
-    void unload(std::vector<u32> ids) {
+    void unload(std::vector<EntityId> ids) {
         UnitCommand cmd;
         cmd.type = CommandType::TransportUnload;
         cmd.target_pos = unit(transport).position();
@@ -70,12 +70,12 @@ struct Ferry {
 
 TEST_CASE("A specific unload drops only its cargo", "[transport]") {
     Ferry f;
-    REQUIRE(f.unit(f.transport).cargo_ids() == std::vector<u32>{f.first, f.second});
+    REQUIRE(f.unit(f.transport).cargo_ids() == std::vector<EntityId>{f.first, f.second});
     f.unload({f.second});
     f.sim.tick();
-    CHECK(f.unit(f.second).transport_id() == 0);
+    CHECK_FALSE(f.unit(f.second).transport_id());
     CHECK(f.unit(f.first).transport_id() == f.transport);
-    CHECK(f.unit(f.transport).cargo_ids() == std::vector<u32>{f.first});
+    CHECK(f.unit(f.transport).cargo_ids() == std::vector<EntityId>{f.first});
     CHECK(f.unit(f.transport).command_queue().empty());
 }
 
@@ -83,25 +83,25 @@ TEST_CASE("An unload without a cargo list drops all of it", "[transport]") {
     Ferry f;
     f.unload({});
     f.sim.tick();
-    CHECK(f.unit(f.first).transport_id() == 0);
-    CHECK(f.unit(f.second).transport_id() == 0);
+    CHECK_FALSE(f.unit(f.first).transport_id());
+    CHECK_FALSE(f.unit(f.second).transport_id());
     CHECK(f.unit(f.transport).cargo_ids().empty());
 }
 
 TEST_CASE("A specific unload whose cargo has gone ends at once", "[transport]") {
     Ferry f;
-    const u32 elsewhere = f.spawn(); // never aboard
+    const EntityId elsewhere = f.spawn(); // never aboard
     f.unload({elsewhere});
     f.sim.tick();
     CHECK(f.unit(f.transport).command_queue().empty());
-    CHECK(f.unit(f.transport).cargo_ids() == std::vector<u32>{f.first, f.second});
+    CHECK(f.unit(f.transport).cargo_ids() == std::vector<EntityId>{f.first, f.second});
 }
 
 TEST_CASE("A specific unload's cargo survives the codec", "[transport][replay]") {
     osc::sim::ScheduledCommand c;
     c.command.type = CommandType::TransportUnload;
-    c.command.unload_ids = {7, 9};
-    c.unit_ids = {3};
+    c.command.unload_ids = {EntityId::of(7, 1), EntityId::of(9, 1)};
+    c.unit_ids = {EntityId::of(3, 1)};
     std::vector<osc::u8> bytes;
     osc::sim::ByteWriter w(bytes);
     osc::sim::write_command(w, c);
@@ -109,8 +109,8 @@ TEST_CASE("A specific unload's cargo survives the codec", "[transport][replay]")
     osc::sim::ByteReader r(bytes);
     osc::sim::ScheduledCommand back;
     REQUIRE(osc::sim::read_command(r, back));
-    CHECK(back.command.unload_ids == std::vector<u32>{7, 9});
-    CHECK(back.unit_ids == std::vector<u32>{3});
+    CHECK(back.command.unload_ids == std::vector<EntityId>{EntityId::of(7, 1), EntityId::of(9, 1)});
+    CHECK(back.unit_ids == std::vector<EntityId>{EntityId::of(3, 1)});
 }
 
 TEST_CASE("The orders checksum sees which cargo an unload drops", "[transport][sync]") {

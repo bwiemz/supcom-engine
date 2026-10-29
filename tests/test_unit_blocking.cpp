@@ -30,6 +30,7 @@ extern "C" {
 
 using osc::f32;
 using osc::u32;
+using osc::sim::EntityId;
 using osc::sim::OrientedBox;
 using osc::sim::Unit;
 using osc::sim::Vector3;
@@ -206,7 +207,7 @@ TEST_CASE("UnitIsBlocked: a still unit blocks the cells its box reaches; a flier
     w.make("gunship", 50.0f, 50.0f);
     w.sim.tick();
     w.sim.tick();
-    const u32 id = owner.entity_id();
+    const EntityId id = owner.entity_id();
     REQUIRE_FALSE(parked.moved_last_tick());
     // A leader minds it at every cell its box (0.9 each way) reaches.
     CHECK(w.blockers().unit_blocked(id, Cell{29, 29}, 2));
@@ -233,7 +234,7 @@ TEST_CASE("UnitIsBlocked sees a box as far as it reaches turned, and stretched b
     Unit& parked = *w.make("bigtank", 30.0f, 30.0f);
     w.sim.tick();
     w.sim.tick();
-    const u32 id = owner.entity_id();
+    const EntityId id = owner.entity_id();
     // Turned 45 degrees, its corner (0.9 * sqrt 2 = 1.27 out) reaches the
     // next cell along x.
     const f32 half = std::sqrt(0.5f);
@@ -266,7 +267,7 @@ TEST_CASE("SweptPathBlockedByUnit: a unit across the way blocks it; beside it, n
     w.make("bigtank", 30.0f, 30.0f);
     w.sim.tick();
     w.sim.tick();
-    const u32 id = owner.entity_id();
+    const EntityId id = owner.entity_id();
     using osc::sim::path::WorldPoint;
     CHECK(w.blockers().swept_blocked(id, WorldPoint{20, 0, 30}, WorldPoint{40, 0, 30}, 2));
     // 3 to the side: the box (0.9 each way) and the sweep (0.44 each way)
@@ -301,7 +302,7 @@ TEST_CASE("A search minds mobile units only past its first: a leader's goes roun
 namespace {
 
 /// Give `u` an order of `type` (at the head, the queue cleared).
-void order(Unit& u, osc::sim::CommandType type, u32 command_id, bool formed, u32 target = 0) {
+void order(Unit& u, osc::sim::CommandType type, u32 command_id, bool formed, EntityId target = {}) {
     osc::sim::UnitCommand cmd;
     cmd.type = type;
     cmd.command_id = command_id;
@@ -358,7 +359,7 @@ TEST_CASE("Units in one formation don't block each other's way", "[unit_blocking
     Unit& parked = *w.make("bigtank", 30.0f, 30.0f);
     w.sim.tick();
     w.sim.tick();
-    const u32 id = owner.entity_id();
+    const EntityId id = owner.entity_id();
     order(owner, CommandType::Move, 21, true);
     order(parked, CommandType::Move, 21, true);
     CHECK_FALSE(w.blockers().unit_blocked(id, Cell{30, 30}, 2));

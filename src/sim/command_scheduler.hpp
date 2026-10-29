@@ -27,7 +27,7 @@ struct ScheduledCommand {
     u32 source = 0;             // originating command source (player / peer / AI)
     u64 sequence = 0;           // submission order — deterministic tiebreak
     UnitCommand command;        // the order payload
-    std::vector<u32> unit_ids;  // entities that receive the order
+    std::vector<EntityId> unit_ids; // entities that receive the order
     bool clear_existing = true; // replace the queue (fresh order) vs append (queued)
     /// A UI script's SimCallback instead of a unit order: run in the sim at
     /// exec_beat on every peer (see SimState::run_sim_callback).

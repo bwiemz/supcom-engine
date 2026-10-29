@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 #include <map>
 #include <optional>
 #include <string>
@@ -97,7 +98,7 @@ struct SimCallbackEntry {
     // A script's Args given as one value, in replays v8 to v12.
     std::optional<SimCallbackArg> value;
     // Optional: selected unit entity IDs (when addUnitSelection=true)
-    std::vector<u32> unit_ids;
+    std::vector<EntityId> unit_ids;
     // A script's Args as lua_to_bytes wrote them (Moho's SCR_ToByteStream).
     std::optional<std::string> lua_args;
 };

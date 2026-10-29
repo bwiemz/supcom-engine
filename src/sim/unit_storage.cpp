@@ -23,14 +23,14 @@ namespace {
 /// the same tick, 1 the next, n the n - 1th).
 constexpr i32 kLaunchInterval = 2;
 
-Unit* live_unit(EntityRegistry& registry, u32 id) {
+Unit* live_unit(EntityRegistry& registry, EntityId id) {
     Entity* e = registry.find(id);
     return e && !e->destroyed() && e->is_unit() ? static_cast<Unit*>(e) : nullptr;
 }
 
 } // namespace
 
-bool Unit::is_stored_unit(u32 id) const {
+bool Unit::is_stored_unit(EntityId id) const {
     return std::find(stored_ids_.begin(), stored_ids_.end(), id) != stored_ids_.end();
 }
 
@@ -39,7 +39,7 @@ bool Unit::transport_has_available_storage() const {
     return static_cast<i32>(stored_ids_.size() + storage_reserved_.size()) < storage_slots_;
 }
 
-std::optional<Unit::StoragePlace> Unit::reserve_storage(u32 unit_id) {
+std::optional<Unit::StoragePlace> Unit::reserve_storage(EntityId unit_id) {
     // TransportReserveStorage: the next generic attach point, round robin.
     // Each pass round adds 3 ticks (modulo 50) to the wait of those after.
     const TransportSlots* slots = transport_slots();
@@ -63,7 +63,7 @@ std::optional<Unit::StoragePlace> Unit::reserve_storage(u32 unit_id) {
     return place;
 }
 
-void Unit::clear_storage_reservation(u32 unit_id) {
+void Unit::clear_storage_reservation(EntityId unit_id) {
     storage_reserved_.erase(
         std::remove(storage_reserved_.begin(), storage_reserved_.end(), unit_id),
         storage_reserved_.end());
@@ -79,7 +79,7 @@ void Unit::add_to_storage(Unit& unit, EntityRegistry& registry, lua_State* L) {
     if (&unit == this || is_stored_unit(unit.entity_id())) return;
     // The script first (retail's hides a carried unit and makes it
     // untouchable), then it rides at the carrier's centre.
-    const u32 id = unit.entity_id();
+    const EntityId id = unit.entity_id();
     unit.call_lua_method_with_entity(L, "OnAddToStorage", this);
     if (!live_unit(registry, id) || destroyed()) return;
     clear_storage_reservation(id); // landed (M206s)
@@ -95,11 +95,11 @@ void Unit::add_to_storage(Unit& unit, EntityRegistry& registry, lua_State* L) {
 void Unit::remove_from_storage(Unit& unit, EntityRegistry& registry, lua_State* L,
                                const map::Terrain* terrain) {
     if (!is_stored_unit(unit.entity_id())) return;
-    const u32 id = unit.entity_id();
+    const EntityId id = unit.entity_id();
     unit.call_lua_method_with_entity(L, "OnRemoveFromStorage", this);
     forget_stored(id);
     if (!live_unit(registry, id)) return;
-    unit.transport_id_ = 0;
+    unit.transport_id_ = EntityId();
     unit.set_unit_state("Attached", false);
 
     // Out at the next launch bone, facing as it does (else at the carrier).
@@ -130,7 +130,7 @@ void Unit::remove_from_storage(Unit& unit, EntityRegistry& registry, lua_State* 
     }
 }
 
-void Unit::forget_stored(u32 id) {
+void Unit::forget_stored(EntityId id) {
     stored_ids_.erase(std::remove(stored_ids_.begin(), stored_ids_.end(), id), stored_ids_.end());
 }
 
@@ -146,22 +146,24 @@ OrderStep Unit::order_carrier_launch(UnitCommand& cmd, SimContext& ctx) {
     // one every few ticks. (Moho gives them a ground Guard there; units here
     // have no ground guard, so they move to it.)
     if (cmd.launch_wait < 0) {
-        for (u32 id : stored_ids_)
+        for (EntityId id : stored_ids_) {
             if (cmd.unload_ids.empty() ||
                 std::find(cmd.unload_ids.begin(), cmd.unload_ids.end(), id) != cmd.unload_ids.end())
                 cmd.launch_queue.push_back(id);
+        }
         UnitCommand move;
         move.type = CommandType::Move;
         move.target_pos = cmd.target_pos;
-        for (u32 id : cmd.launch_queue)
+        for (EntityId id : cmd.launch_queue) {
             if (Unit* u = live_unit(registry, id)) u->push_command(move, true);
+        }
         // The first leaves the next tick: Moho's task gets ready (returning
         // 1), then orders the units and launches at once (returning 0).
         cmd.launch_wait = 2;
     }
     set_unit_state("TransportUnloading", !cmd.launch_queue.empty());
     if (!cmd.launch_queue.empty() && --cmd.launch_wait <= 0) {
-        const u32 id = cmd.launch_queue.front();
+        const EntityId id = cmd.launch_queue.front();
         cmd.launch_queue.erase(cmd.launch_queue.begin());
         cmd.launch_wait = kLaunchInterval;
         // Scripts run: the order (and cmd with it) may be gone afterwards.
@@ -179,7 +181,7 @@ OrderStep Unit::order_carrier_launch(UnitCommand& cmd, SimContext& ctx) {
 
 OrderStep Unit::order_carrier_retrieve(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
-    const u32 me = entity_id();
+    const EntityId me = entity_id();
     const u32 order_id = cmd.command_id;
     const auto ends = [&](bool complete) {
         end_retrieve(complete, ctx);
@@ -196,7 +198,9 @@ OrderStep Unit::order_carrier_retrieve(UnitCommand& cmd, SimContext& ctx) {
         registry.for_each_unit([&](Entity& e) {
             if (e.destroyed() || !e.is_unit() || e.army() != army() || e.entity_id() == me) return;
             const auto& u = static_cast<const Unit&>(e);
-            if (u.transport_id() != 0) return;
+            if (u.transport_id()) {
+                return;
+            }
             if (std::any_of(u.command_queue_.begin(), u.command_queue_.end(),
                             [&](const UnitCommand& c) {
                                 return c.type == CommandType::TransportLoad && c.target_id == me &&
@@ -216,11 +220,13 @@ OrderStep Unit::order_carrier_retrieve(UnitCommand& cmd, SimContext& ctx) {
     if (retrieve_phase_ == RetrievePhase::Gather) {
         // Until each of them has this order in hand; then a submerged carrier
         // surfaces, and any other stops.
-        for (const u32 id : retrieve_ids_) {
+        for (const EntityId id : retrieve_ids_) {
             const Entity* e = registry.find(id);
             const auto* u =
                 e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
-            if (!u || u->is_dying() || u->is_being_built() || u->transport_id() != 0) continue;
+            if (!u || u->is_dying() || u->is_being_built() || u->transport_id()) {
+                continue;
+            }
             if (u->command_queue_.empty() || u->command_queue_.front().command_id != order_id)
                 return OrderStep::Hold;
         }
@@ -247,7 +253,7 @@ OrderStep Unit::order_carrier_retrieve(UnitCommand& cmd, SimContext& ctx) {
         --retrieve_wait_;
         if (retrieve_wait_ > 0) return OrderStep::Hold;
     }
-    std::erase_if(retrieve_ids_, [&](u32 id) {
+    std::erase_if(retrieve_ids_, [&](EntityId id) {
         const Entity* e = registry.find(id);
         const auto* u =
             e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
@@ -261,14 +267,15 @@ OrderStep Unit::order_carrier_retrieve(UnitCommand& cmd, SimContext& ctx) {
 void Unit::end_retrieve(bool complete, SimContext& ctx) {
     retrieve_phase_ = RetrievePhase::None;
     retrieve_wait_ = 0;
-    const std::vector<u32> left = std::exchange(retrieve_ids_, {});
+    const std::vector<EntityId> left = std::exchange(retrieve_ids_, {});
     call_lua_method(ctx.L, "OnStopTransportLoading");
     if (destroyed() || !in_registry()) return;
     reset_storage_reservation();
     set_unit_state("TransportLoading", false);
     if (complete) return;
-    for (const u32 id : left)
+    for (const EntityId id : left) {
         if (Unit* u = live_unit(ctx.registry, id); u && !u->is_dying()) u->navigator_.abort_move();
+    }
 }
 
 } // namespace osc::sim

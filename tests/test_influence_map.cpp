@@ -18,6 +18,10 @@ using osc::sim::ThreatType;
 
 namespace {
 
+sim::EntityId unit(u32 moho) {
+    return sim::EntityId::of(moho, 1);
+}
+
 /// A tank: 10 surface threat, driving on land.
 ThreatSource tank() {
     ThreatSource s;
@@ -37,8 +41,9 @@ ThreatSource structure() {
 /// The map's army 0 (the owner, allied with army 2) updating, with every
 /// enemy unit on land and detailed as given.
 void update(InfluenceMap& map, bool detailed = true, ThreatLayer layer = ThreatLayer::Land) {
-    map.update([](i32 army) { return army == 0 || army == 2; },
-               [&](u32) { return std::optional<InfluenceMap::UnitState>({layer, detailed}); });
+    map.update(
+        [](i32 army) { return army == 0 || army == 2; },
+        [&](sim::EntityId) { return std::optional<InfluenceMap::UnitState>({layer, detailed}); });
 }
 
 f32 cell(const InfluenceMap& map, f32 x, f32 z, ThreatType type, i32 army = -1) {
@@ -68,44 +73,44 @@ TEST_CASE("An influence map's cells are sized to the map, as Moho's", "[influenc
 
 TEST_CASE("A unit's threat holds for 10 updates, then fades; a structure's stays", "[influence]") {
     InfluenceMap map(512, 512, 3);
-    map.report(1, 1, {40, 0, 40}, tank());
-    map.report(2, 1, {100, 0, 100}, structure());
+    map.report(unit(1), 1, {40, 0, 40}, tank());
+    map.report(unit(2), 1, {100, 0, 100}, structure());
     update(map);
     CHECK_THAT(cell(map, 40, 40, ThreatType::Overall), WithinAbs(10.0, 1e-5));
     CHECK_THAT(cell(map, 100, 100, ThreatType::Overall), WithinAbs(5.0, 1e-5));
 
     // Unseen from here: 8 more updates at full strength, then 0.02 less each.
     for (int i = 0; i < 8; ++i) update(map);
-    CHECK(map.strength(1) == 1.0f);
+    CHECK(map.strength(unit(1)) == 1.0f);
     update(map); // the tenth
-    CHECK_THAT(map.strength(1), WithinAbs(0.98, 1e-6));
+    CHECK_THAT(map.strength(unit(1)), WithinAbs(0.98, 1e-6));
     update(map);
-    CHECK_THAT(map.strength(1), WithinAbs(0.96, 1e-6));
+    CHECK_THAT(map.strength(unit(1)), WithinAbs(0.96, 1e-6));
     CHECK_THAT(cell(map, 40, 40, ThreatType::Overall), WithinAbs(9.6, 1e-4));
 
     // Seen again, it is at full strength for another 10.
-    map.report(1, 1, {41, 0, 41}, tank());
+    map.report(unit(1), 1, {41, 0, 41}, tank());
     update(map);
-    CHECK(map.strength(1) == 1.0f);
+    CHECK(map.strength(unit(1)) == 1.0f);
 
     // Left unseen, it goes after 49 more fading updates; the structure stays.
     for (int i = 0; i < 70; ++i) update(map);
-    CHECK_FALSE(map.has_entry(1));
+    CHECK_FALSE(map.has_entry(unit(1)));
     CHECK(cell(map, 40, 40, ThreatType::Overall) == 0.0f);
-    CHECK(map.strength(2) == 1.0f);
+    CHECK(map.strength(unit(2)) == 1.0f);
     CHECK_THAT(cell(map, 100, 100, ThreatType::Overall), WithinAbs(5.0, 1e-5));
 }
 
 TEST_CASE("A unit that crosses into another cell moves its entry", "[influence]") {
     InfluenceMap map(512, 512, 2);
-    map.report(1, 1, {40, 0, 40}, tank());
+    map.report(unit(1), 1, {40, 0, 40}, tank());
     update(map);
-    map.report(1, 1, {200, 0, 40}, tank());
+    map.report(unit(1), 1, {200, 0, 40}, tank());
     update(map);
     CHECK(cell(map, 40, 40, ThreatType::Overall) == 0.0f);
     CHECK_THAT(cell(map, 200, 40, ThreatType::Overall), WithinAbs(10.0, 1e-5));
     CHECK(map.entry_count() == 1);
-    map.remove(1);
+    map.remove(unit(1));
     CHECK(map.entry_count() == 0);
 }
 
@@ -119,11 +124,11 @@ TEST_CASE("Threat is laned by what the unit is and how well it was seen", "[infl
     plane.flies = true;
     ThreatSource acu = tank();
     acu.commander = true;
-    map.report(1, 1, {40, 0, 40}, tank());      // cell A
-    map.report(2, 1, {40, 0, 40}, structure()); // cell A
-    map.report(3, 1, {40, 0, 40}, mex);         // cell A
-    map.report(4, 1, {40, 0, 40}, plane);       // cell A
-    map.report(5, 1, {200, 0, 200}, acu);       // cell B
+    map.report(unit(1), 1, {40, 0, 40}, tank());      // cell A
+    map.report(unit(2), 1, {40, 0, 40}, structure()); // cell A
+    map.report(unit(3), 1, {40, 0, 40}, mex);         // cell A
+    map.report(unit(4), 1, {40, 0, 40}, plane);       // cell A
+    map.report(unit(5), 1, {200, 0, 200}, acu);       // cell B
     update(map, true);
     CHECK_THAT(cell(map, 40, 40, ThreatType::Overall), WithinAbs(10 + 5 + 5 + 3, 1e-4));
     CHECK_THAT(cell(map, 40, 40, ThreatType::Structures), WithinAbs(10.0, 1e-5));
@@ -139,14 +144,14 @@ TEST_CASE("Threat is laned by what the unit is and how well it was seen", "[infl
 
     // At sea it counts as naval.
     InfluenceMap sea(512, 512, 2);
-    sea.report(1, 1, {40, 0, 40}, tank());
+    sea.report(unit(1), 1, {40, 0, 40}, tank());
     update(sea, true, ThreatLayer::Naval);
     CHECK_THAT(cell(sea, 40, 40, ThreatType::Naval), WithinAbs(10.0, 1e-5));
     CHECK(cell(sea, 40, 40, ThreatType::Land) == 0.0f);
 
     // Never seen closely, a unit's threat is Unknown, not AntiSurface.
     InfluenceMap blip(512, 512, 2);
-    blip.report(1, 1, {40, 0, 40}, tank());
+    blip.report(unit(1), 1, {40, 0, 40}, tank());
     update(blip, false);
     CHECK_THAT(cell(blip, 40, 40, ThreatType::Unknown), WithinAbs(10.0, 1e-5));
     CHECK(cell(blip, 40, 40, ThreatType::AntiSurface) == 0.0f);
@@ -162,33 +167,33 @@ TEST_CASE("A jammer's fake the army knows fake adds nothing, and goes", "[influe
     InfluenceMap map(512, 512, 2);
     const auto fake = [&](bool known) {
         map.update([](i32 army) { return army == 0; },
-                   [&](u32) {
+                   [&](sim::EntityId) {
                        return std::optional<InfluenceMap::UnitState>(
                            {ThreatLayer::Land, false, known});
                    });
     };
-    map.report(1, 1, {40, 0, 40}, tank());
+    map.report(unit(1), 1, {40, 0, 40}, tank());
     fake(false);
     CHECK_THAT(cell(map, 40, 40, ThreatType::Unknown), WithinAbs(10.0, 1e-5));
     fake(true);
     CHECK(cell(map, 40, 40, ThreatType::Overall) == 0.0f);
-    CHECK(map.has_entry(1));
+    CHECK(map.has_entry(unit(1)));
     fake(true);
-    CHECK_FALSE(map.has_entry(1));
+    CHECK_FALSE(map.has_entry(unit(1)));
 
     // Fed again before the next update (as its army still holds it), it
     // stays and adds nothing for as long as the army knows it fake.
-    map.report(1, 1, {40, 0, 40}, tank());
+    map.report(unit(1), 1, {40, 0, 40}, tank());
     fake(true);
-    map.report(1, 1, {40, 0, 40}, tank());
+    map.report(unit(1), 1, {40, 0, 40}, tank());
     fake(true);
-    CHECK(map.has_entry(1));
+    CHECK(map.has_entry(unit(1)));
     CHECK(cell(map, 40, 40, ThreatType::Overall) == 0.0f);
 }
 
 TEST_CASE("An ally's units count only as Overall, Unknown, Structures and Air", "[influence]") {
     InfluenceMap map(512, 512, 3);
-    map.report(1, 2, {40, 0, 40}, tank()); // army 2 is allied with the owner
+    map.report(unit(1), 2, {40, 0, 40}, tank()); // army 2 is allied with the owner
     update(map, true);
     CHECK_THAT(cell(map, 40, 40, ThreatType::Overall), WithinAbs(10.0, 1e-5));
     CHECK_THAT(cell(map, 40, 40, ThreatType::Unknown), WithinAbs(10.0, 1e-5));
@@ -196,7 +201,7 @@ TEST_CASE("An ally's units count only as Overall, Unknown, Structures and Air", 
     CHECK(cell(map, 40, 40, ThreatType::AntiSurface) == 0.0f);
 
     // Asked for one army, only its units count.
-    map.report(2, 1, {40, 0, 40}, tank());
+    map.report(unit(2), 1, {40, 0, 40}, tank());
     update(map, true);
     CHECK_THAT(cell(map, 40, 40, ThreatType::Overall, 1), WithinAbs(10.0, 1e-5));
     CHECK_THAT(cell(map, 40, 40, ThreatType::Overall, 2), WithinAbs(10.0, 1e-5));
@@ -222,9 +227,9 @@ TEST_CASE("A script's threat fades by its rate, and shows as Overall after an up
 
 TEST_CASE("Threat queries answer in cells, as Moho's", "[influence]") {
     InfluenceMap map(512, 512, 2);               // 32-unit cells
-    map.report(1, 1, {40, 0, 40}, tank());       // cell (1, 1)
-    map.report(2, 1, {104, 0, 40}, tank());      // cell (3, 1)
-    map.report(3, 1, {40, 0, 200}, structure()); // cell (1, 6)
+    map.report(unit(1), 1, {40, 0, 40}, tank()); // cell (1, 1)
+    map.report(unit(2), 1, {104, 0, 40}, tank());      // cell (3, 1)
+    map.report(unit(3), 1, {40, 0, 200}, structure()); // cell (1, 6)
     update(map);
 
     // A square of rings about the cell.

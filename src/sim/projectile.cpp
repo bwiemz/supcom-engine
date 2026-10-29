@@ -38,8 +38,8 @@ f32 water_line(const map::Terrain* terrain) {
 /// ReTargetOnMiss (Moho's Projectile::Impact, after OnImpact): while the target unit it was fired
 /// at is still there, the weapon of `launcher` (`weapon`, -1 for none) hears whether the impact on
 /// `hit_id` (0: the ground, the water, the air) of `type` struck it.
-void report_impact(lua_State* L, EntityRegistry& registry, u32 launcher, i32 weapon, u32 fired_at,
-                   u32 hit_id, const char* type) {
+void report_impact(lua_State* L, EntityRegistry& registry, EntityId launcher, i32 weapon,
+                   EntityId fired_at, EntityId hit_id, const char* type) {
     if (weapon < 0 || !registry.find(fired_at)) return;
     Entity* e = registry.find(launcher);
     if (!e || e->destroyed() || !e->is_unit()) return;
@@ -96,10 +96,10 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
 
     // Moho's MotionTick: a hit its last step found impacts now, in place of a step.
     if (impact_waiting()) {
-        Entity* hit = impact_entity_id != 0 ? registry.find(impact_entity_id) : nullptr;
+        Entity* hit = impact_entity_id ? registry.find(impact_entity_id) : nullptr;
         const std::string type = impact_kind;
         impact_interpolation = -1.0f;
-        impact_entity_id = 0;
+        impact_entity_id = EntityId();
         impact_kind.clear();
         on_impact(L, hit && !hit->destroyed() ? hit : nullptr, registry, terrain, type.c_str());
         return;
@@ -224,7 +224,7 @@ bool Projectile::steer(Quaternion& facing, EntityRegistry& registry, lua_State* 
     // steering this once more at the last aim if it was sent at something on
     // the ground or the water.
     bool has_target = has_target_position;
-    if (target_entity_id > 0) {
+    if (target_entity_id) {
         auto* target = registry.find(target_entity_id);
         if (target && !target->destroyed()) {
             target_position = target->is_unit()
@@ -233,7 +233,7 @@ bool Projectile::steer(Quaternion& facing, EntityRegistry& registry, lua_State* 
             has_target_position = true;
             has_target = true;
         } else {
-            target_entity_id = 0;
+            target_entity_id = EntityId();
             has_target_position = false;
             has_target = false;
         }
@@ -250,7 +250,7 @@ bool Projectile::steer(Quaternion& facing, EntityRegistry& registry, lua_State* 
 
     // LeadTarget: where its target will be by the time it gets there at its
     // top speed, the time found twice over, both times from the aim
-    if (lead_target && max_speed > 0.0f && target_entity_id > 0) {
+    if (lead_target && max_speed > 0.0f && target_entity_id) {
         if (const Entity* target = registry.find(target_entity_id)) {
             const Vector3 v = target->is_unit() ? static_cast<const Unit*>(target)->velocity()
                               : target->is_projectile()
@@ -337,7 +337,9 @@ void Projectile::arm_lost_target_aim(const EntityRegistry& registry) {
     // Moho's Projectile constructor: a homing shot sent at something neither
     // in the air nor under the water steers on at where it last was.
     keep_last_aim = false;
-    if (!tracking || target_entity_id == 0) return;
+    if (!tracking || !target_entity_id) {
+        return;
+    }
     const Entity* target = registry.find(target_entity_id);
     if (!target || !target->is_unit()) return;
     const std::string layer = static_cast<const Unit*>(target)->layer();
@@ -410,7 +412,7 @@ std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
 
     // A tracking shot sent to a place (a strategic missile, which skims no
     // surface, or a missile whose target died) ends on reaching it.
-    if (tracking && has_target_position && target_entity_id == 0) {
+    if (tracking && has_target_position && !target_entity_id) {
         const Vector3 d{to.x - from.x, to.y - from.y, to.z - from.z};
         const Vector3 w{target_position.x - from.x, target_position.y - from.y,
                         target_position.z - from.z};
@@ -440,15 +442,15 @@ std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
                             from.z - d.z * kSweepBeyond};
         const Vector3 end{to.x + d.x * kSweepBeyond, to.y + d.y * kSweepBeyond,
                           to.z + d.z * kSweepBeyond};
-        std::vector<u32> candidates;
+        std::vector<EntityId> candidates;
         registry.collect_colliders(start.x, start.z, end.x, end.z, candidates);
-        std::vector<std::pair<f32, u32>> hits;
-        for (const u32 id : candidates) {
+        std::vector<std::pair<f32, EntityId>> hits;
+        for (const EntityId id : candidates) {
             if (id == entity_id() || id == launcher_id) continue;
             const Entity* e = registry.find(id);
             if (!e || e->destroyed()) continue;
             // A corpse is in the way (Moho's CheckCollision); a unit in a hold isn't.
-            if (e->is_unit() && static_cast<const Unit*>(e)->transport_id() != 0) {
+            if (e->is_unit() && static_cast<const Unit*>(e)->transport_id()) {
                 continue;
             }
             // A shield stops what comes in, not what goes out.
@@ -533,14 +535,14 @@ void Projectile::record_impact(const Vector3& at, f32 interpolation, const Entit
         return;
     }
     impact_interpolation = interpolation;
-    impact_entity_id = hit ? hit->entity_id() : 0;
+    impact_entity_id = hit ? hit->entity_id() : EntityId();
     impact_kind = kind;
 }
 
 bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entity& other) {
     if (!L) return true;
-    const u32 self_id = entity_id();
-    const u32 other_id = other.entity_id();
+    const EntityId self_id = entity_id();
+    const EntityId other_id = other.entity_id();
     // What is struck is asked, OnCollisionCheck(self, other) with `other`
     // the projectile; the projectile itself is not (faf-re Projectile::
     // CheckCollision calls only the collided entity's script). As Moho's
@@ -550,7 +552,7 @@ bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entit
     // return false the thing hitting us has no idea that it came into contact
     // with us". FAF's torpedo answers false to anything but an anti-torpedo
     // projectile hitting it, and had been asked about every ship it ran into.
-    const auto check = [&](u32 self, u32 with) {
+    const auto check = [&](EntityId self, EntityId with) {
         const Entity* a = registry.find(self);
         const Entity* b = registry.find(with);
         if (!a || !b || a->destroyed() || b->destroyed()) return false;
@@ -702,7 +704,7 @@ const char* Projectile::impact_type(const Entity* target, const map::Terrain* te
 }
 
 bool Projectile::call_script(lua_State* L, EntityRegistry& registry, const char* method) {
-    const u32 id = entity_id();
+    const EntityId id = entity_id();
     if (!L || lua_table_ref() < 0) return true;
     const int top = lua_gettop(L);
     lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
@@ -729,15 +731,15 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
         return;
     }
     impacted = true;
-    const u32 id = entity_id();
-    const u32 target_id = target ? target->entity_id() : 0;
+    const EntityId id = entity_id();
+    const EntityId target_id = target ? target->entity_id() : EntityId();
     const char* type = type_override ? type_override : impact_type(target, terrain);
     // Its scripts may destroy it: what ReTargetOnMiss's report needs, first. Moho reads the
     // shot's target as it lands (a script may have changed it); a bomb, which the engine sends at
     // no unit, keeps the one it was fired at.
-    const u32 launcher = launcher_id;
+    const EntityId launcher = launcher_id;
     const i32 listener = impact_listener_weapon;
-    const u32 fired_at = target_entity_id != 0 ? target_entity_id : impact_listener_target;
+    const EntityId fired_at = target_entity_id ? target_entity_id : impact_listener_target;
 
     bool scripted = false;
     if (lua_table_ref() >= 0) {
@@ -794,7 +796,7 @@ void Projectile::deal_engine_damage(lua_State* L, Entity* target, EntityRegistry
     // Resolve launcher's Lua ref once (avoids stale pointer if launcher is
     // destroyed during DamageArea/Damage pcall in a future code path)
     int launcher_ref = -2; // LUA_NOREF
-    if (launcher_id > 0) {
+    if (launcher_id) {
         Entity* launcher = registry.find(launcher_id);
         if (launcher && !launcher->destroyed() && launcher->lua_table_ref() >= 0)
             launcher_ref = launcher->lua_table_ref();
@@ -866,7 +868,9 @@ void Projectile::deal_engine_damage(lua_State* L, Entity* target, EntityRegistry
 }
 
 bool Projectile::has_live_target(const EntityRegistry& registry) const {
-    if (target_entity_id == 0) return has_target_position;
+    if (!target_entity_id) {
+        return has_target_position;
+    }
     const Entity* target = registry.find(target_entity_id);
     if (!target || target->destroyed()) return false;
     return !target->is_unit() || !static_cast<const Unit*>(target)->is_dying();
