@@ -138,11 +138,14 @@ public:
     /// of every structure (finished or under construction) and of the army's
     /// pending build orders, and -- for extractors -- over a deposit.
     bool can_build(const std::string& bp_id, f32 x, f32 z) const;
+    /// can_build without the army's pending orders (Moho's func_LocationIsFree).
+    bool location_free(const std::string& bp_id, f32 x, f32 z) const;
 
     /// The rules for `bp_id` (cached per query object).
     const PlacementRules& rules(const std::string& bp_id) const;
 
 private:
+    bool fits(const std::string& bp_id, f32 x, f32 z, bool pending_orders) const;
     /// `layers`: the placement_layer bits occupy_layers allows there.
     bool terrain_allows(const StructureSite& site, u8 layers) const;
     bool in_playable(const StructureSite& site) const;
@@ -163,6 +166,13 @@ private:
     mutable std::optional<std::vector<StructureSite>> reserved_; ///< see reserved()
     mutable std::map<std::string, PlacementRules> rules_cache_;
 };
+
+/// Moho's TryBuildStructureAt (faf-re unit/tasks/CUnitCallTeleport.cpp) for a script's build
+/// order: the centre `bp_id` is built at for one asked at (x, z), or none.
+std::optional<std::pair<f32, f32>> try_build_structure_at(const SimState& sim,
+                                                          const StructurePlacement& placement,
+                                                          const std::string& bp_id, f32 x, f32 z,
+                                                          bool whole_map);
 
 /// Where a structure stands at (x, z): on the ground for one that can sit
 /// on the seabed, else on the water's surface where there is water

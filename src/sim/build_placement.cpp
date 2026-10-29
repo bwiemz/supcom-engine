@@ -222,6 +222,14 @@ u8 occupy_layers(const map::Terrain& terrain, const PlacementRules& r, f32 x, f3
 }
 
 bool StructurePlacement::can_build(const std::string& bp_id, f32 x, f32 z) const {
+    return fits(bp_id, x, z, true);
+}
+
+bool StructurePlacement::location_free(const std::string& bp_id, f32 x, f32 z) const {
+    return fits(bp_id, x, z, false);
+}
+
+bool StructurePlacement::fits(const std::string& bp_id, f32 x, f32 z, bool pending_orders) const {
     const auto& r = rules(bp_id);
     // Moho's OCCUPY_Check, then the cells under the footprint on the layers
     // it leaves (func_LocationIsFree's occupancy narrowing).
@@ -244,9 +252,74 @@ bool StructurePlacement::can_build(const std::string& bp_id, f32 x, f32 z) const
     // Moho's OCCUPY_Check: anything else keeps its skirt off every deposit.
     if (r.deposit == PlacementRules::Deposit::None && !r.mobile && deposit_under(site))
         return false;
-    for (const auto& pending : reserved())
-        if (pending.overlaps(site)) return false;
+    if (pending_orders) {
+        for (const auto& pending : reserved()) {
+            if (pending.overlaps(site)) {
+                return false;
+            }
+        }
+    }
     return !structure_overlaps(sim_.entity_registry(), site);
+}
+
+namespace {
+
+// Moho's STIMap::IsWithin.
+bool within(const SimState& sim, f32 x, f32 z, f32 border, bool whole_map) {
+    const map::Terrain* terrain = sim.terrain();
+    if (!terrain) {
+        return true;
+    }
+    const auto w = static_cast<f32>(terrain->map_width());
+    const auto h = static_cast<f32>(terrain->map_height());
+    if (whole_map) {
+        return !(0.0f > x - border) && !(0.0f > z - border) && !(x + border >= w) &&
+               !(z + border >= h);
+    }
+    const bool rect = sim.has_playable_rect();
+    const f32 x0 = rect ? sim.playable_x0() : 0.0f;
+    const f32 z0 = rect ? sim.playable_z0() : 0.0f;
+    const f32 x1 = rect ? sim.playable_x1() : w;
+    const f32 z1 = rect ? sim.playable_z1() : h;
+    return !(x0 > x - border) && !(z0 > z - border) && !(x + border > x1) && !(z + border > z1);
+}
+
+} // namespace
+
+std::optional<std::pair<f32, f32>> try_build_structure_at(const SimState& sim,
+                                                          const StructurePlacement& placement,
+                                                          const std::string& bp_id, f32 x, f32 z,
+                                                          bool whole_map) {
+    const PlacementRules& r = placement.rules(bp_id);
+    const int border = std::max(8, static_cast<int>(std::max(r.size_x, r.size_z)));
+    const auto snapped = [&r](f32 at_x, f32 at_z) {
+        snap_structure_center(at_x, at_z, r.size_x, r.size_z);
+        return std::pair<f32, f32>{at_x, at_z};
+    };
+    // Moho tests every ring's site against the asked one's bounds, so outside them none is free.
+    if (!within(sim, x, z, static_cast<f32>(border), whole_map)) {
+        return std::nullopt;
+    }
+    if (placement.location_free(bp_id, x, z)) {
+        return snapped(x, z);
+    }
+    int probes = 0;
+    for (int ring = 1;; ++ring) {
+        for (int i = -ring; i <= ring; ++i) {
+            const int step = i == -ring || i == ring ? 1 : 2 * ring;
+            for (int j = -ring; j <= ring; j += step) {
+                ++probes;
+                const f32 at_x = static_cast<f32>(border * i) + x;
+                const f32 at_z = static_cast<f32>(border * j) + z;
+                if (placement.location_free(bp_id, at_x, at_z)) {
+                    return snapped(at_x, at_z);
+                }
+            }
+        }
+        if (probes >= 900) {
+            return std::nullopt;
+        }
+    }
 }
 
 bool StructurePlacement::terrain_allows(const StructureSite& site, u8 layers) const {
