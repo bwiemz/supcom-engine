@@ -2253,7 +2253,7 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
     const bool damaged = target->health() < target->max_health();
     auto& target_unit = static_cast<Unit&>(*target);
     Entity* bubble = shield_focus(target_unit, registry);
-    if (bubble) {
+    if (bubble && efficiency != 0.0f) {
         // Moho asks ShieldIsOn only of an undamaged unit, so a damaged one's
         // bubble regains health while off. FAF's patched exe always asks, and
         // repairs only the hull of a damaged one that is off

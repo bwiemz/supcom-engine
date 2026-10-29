@@ -413,6 +413,63 @@ TEST_CASE("On FAF's data an engineer repairing a damaged shield generator leaves
 
 namespace {
 
+struct ShieldAssist {
+    LuaGuard g;
+    SimState sim{g.L, nullptr};
+    Unit* gen = nullptr;
+    osc::sim::Shield* bubble = nullptr;
+    Unit* eng = nullptr;
+    double energy_a_tick;
+
+    ShieldAssist(bool faf, double energy) : energy_a_tick(energy) {
+        flat(sim);
+        sim.set_faf_exe(faf);
+        run_lua(g.L, "__blueprints = { gen = { Economy = { BuildTime = 100, BuildCostEnergy = 400"
+                     " }, Defense = { Shield = { RegenAssistMult = 60 } } } }");
+        gen = still(sim, 0, 50.0f, 50.0f);
+        gen->set_unit_id("gen");
+        gen->add_category("SHIELD");
+        gen->set_lua_table_ref(lua_ref_of(g.L, "{ ShieldIsOn = function() return true end }"));
+        auto bubble_owned = std::make_unique<osc::sim::Shield>();
+        bubble = bubble_owned.get();
+        bubble->set_army(0);
+        bubble->set_max_health(9000.0f);
+        bubble->set_health(1000.0f);
+        sim.entity_registry().register_entity(std::move(bubble_owned));
+        bubble->set_lua_table_ref(lua_ref_of(g.L, "{ RegenRate = 120 }"));
+        gen->set_focus_entity_id(bubble->entity_id());
+
+        eng = walker(sim, 0, 53.0f, 50.0f);
+        eng->add_category("ENGINEER");
+        eng->add_category("REPAIR");
+        eng->set_build_rate(5.0f);
+        eng->set_max_build_distance(5.0f);
+        eng->push_command(guard(gen, 1), true);
+    }
+
+    void tick() {
+        sim.get_army(0)->set_stored_resources(0.0, energy_a_tick);
+        sim.tick();
+    }
+};
+
+} // namespace
+
+TEST_CASE("An engineer granted nothing regenerates no shield generator's bubble", "[guard]") {
+    for (const bool faf : {false, true}) {
+        INFO("FAF's exe " << faf);
+        ShieldAssist s(faf, 0.0);
+        for (int t = 0; t < 10; ++t) {
+            s.tick();
+        }
+        CHECK(s.eng->repair_target_id() == s.gen->entity_id());
+        CHECK(s.eng->economy().resource_consumed == 0.0);
+        CHECK(s.bubble->health() == 1000.0f);
+    }
+}
+
+namespace {
+
 struct FactoryAtWork {
     Unit* factory;
     Unit* unit;
