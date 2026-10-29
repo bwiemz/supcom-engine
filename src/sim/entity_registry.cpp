@@ -21,7 +21,13 @@ u32 EntityRegistry::reserve_id(const Entity& e) {
     // shortcut: Moho reuses a released serial, the least first; the engine's orders,
     // weapons and steering keep bare ids (where Moho keeps weak pointers), so a reused
     // id would retarget them. Serials only grow until those carry a generation.
-    return (bits | id_pools_[bits].next++) + 1;
+    IdPool& pool = id_pools_[bits];
+    u32 id = 0;
+    // Past 2^20 serials Moho's id runs into another pool's, whose entity may be alive.
+    do {
+        id = (bits | pool.next++) + 1;
+    } while (entities_.contains(id));
+    return id;
 }
 
 std::array<u32, 16> EntityRegistry::family_counts() const {
