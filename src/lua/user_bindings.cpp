@@ -1562,27 +1562,16 @@ static int l_SelectUnits(lua_State* L) {
     const int n = lua_istable(L, 1) ? luaL_getn(L, 1) : 0; // Lua 5.0: no lua_objlen
     for (int i = 1; i <= n; i++) {
         lua_rawgeti(L, 1, i);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "EntityId");
-            lua_rawget(L, -2);
-            if (lua_isnumber(L, -1)) {
-                if (sim) {
-                    auto eid = sim::to_entity_id(L, -1, sim->entity_registry());
-                    auto* entity = sim->entity_registry().find(eid);
-                    if (entity && renderer::selectable(*entity)) {
-                        new_sel.insert(eid);
-                    } else if (entity) {
-                        const auto* carrier =
-                            sim->entity_registry().find(renderer::carrier_of(*entity));
-                        if (carrier && renderer::selectable(*carrier)) {
-                            new_sel.insert(carrier->entity_id());
-                        }
-                    }
-                }
+        const auto* entity = sim ? check_entity(L, lua_gettop(L)) : nullptr;
+        if (entity && renderer::selectable(*entity)) {
+            new_sel.insert(entity->entity_id());
+        } else if (entity) {
+            const auto* carrier = sim->entity_registry().find(renderer::carrier_of(*entity));
+            if (carrier && renderer::selectable(*carrier)) {
+                new_sel.insert(carrier->entity_id());
             }
-            lua_pop(L, 1); // EntityId value
         }
-        lua_pop(L, 1); // unit table
+        lua_pop(L, 1);
     }
     ih->set_selected(new_sel);
     return 0;
@@ -1622,19 +1611,9 @@ static int l_AddSelectUnits(lua_State* L) {
     int n = luaL_getn(L, 1);
     for (int i = 1; i <= n; i++) {
         lua_rawgeti(L, 1, i);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "EntityId");
-            lua_rawget(L, -2);
-            if (lua_isnumber(L, -1)) {
-                if (sim) {
-                    auto eid = sim::to_entity_id(L, -1, sim->entity_registry());
-                    auto* entity = sim->entity_registry().find(eid);
-                    if (entity && renderer::selectable(*entity)) {
-                        sel.insert(eid);
-                    }
-                }
-            }
-            lua_pop(L, 1);
+        const auto* entity = sim ? check_entity(L, lua_gettop(L)) : nullptr;
+        if (entity && renderer::selectable(*entity)) {
+            sel.insert(entity->entity_id());
         }
         lua_pop(L, 1);
     }

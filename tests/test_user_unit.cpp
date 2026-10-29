@@ -866,6 +866,32 @@ TEST_CASE("SelectUnits takes a unit aboard as its transport", "[userunit][select
     CHECK(input.selected() == std::unordered_set<osc::sim::EntityId>{transport_id});
 }
 
+TEST_CASE("A dead unit's object doesn't select the unit that takes its Moho id",
+          "[userunit][selection][ids]") {
+    UiWorld w;
+    osc::lua::register_user_bindings(w.ui);
+    osc::renderer::InputHandler input;
+    lua_State* L = w.ui.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    w.sim.entity_registry().destroy(w.unit());
+    for (int i = 0; i < 100; ++i) {
+        w.sim.tick();
+    }
+    auto next = std::make_unique<osc::sim::Unit>();
+    next->set_army(0);
+    next->add_category("SELECTABLE");
+    const osc::sim::EntityId next_id = w.sim.entity_registry().register_entity(std::move(next));
+    REQUIRE(next_id.moho() == w.id.moho());
+
+    for (const char* select : {"SelectUnits(units)", "AddSelectUnits(units)"}) {
+        INFO(select);
+        REQUIRE(w.ui.do_string(select).ok());
+        CHECK(input.selected().empty());
+    }
+}
+
 TEST_CASE("A selected unit that boards leaves the selection", "[selection]") {
     UiWorld w;
     osc::renderer::InputHandler input;
