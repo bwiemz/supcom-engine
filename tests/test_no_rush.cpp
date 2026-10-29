@@ -126,6 +126,7 @@ TEST_CASE("No Rush confines each army to its own start", "[norush]") {
     const Vector3 base2{200.0f, 0.0f, 0.0f};
     LuaGuard g;
     SimState sim(g.L, nullptr);
+    sim.set_victory_condition("sandbox");
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2");
     sim.get_army(0)->set_start_position({0.0f, 0.0f, 0.0f});
@@ -136,7 +137,11 @@ TEST_CASE("No Rush confines each army to its own start", "[norush]") {
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
     u->push_command(move_to(0.0f, 0.0f), true); // head toward the other base
 
-    for (int i = 0; i < 40; ++i) sim.tick();
+    tick_until([&] { sim.tick(); }, "the unit reaches its own boundary", 150,
+               [&] { return dist_xz(u->position(), base2) >= 49.5f; });
+    for (int i = 0; i < 40; ++i) {
+        sim.tick();
+    }
     CHECK(dist_xz(u->position(), base2) <= 50.5f);
     CHECK(u->position().x >= 149.5f); // never crossed toward the enemy base
 }
