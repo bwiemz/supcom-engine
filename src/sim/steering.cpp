@@ -824,10 +824,13 @@ u64 formation_layer(const Unit& u) {
     const UnitCommand& head = q.front();
     // (Moho's GuardBusy, a guard off fighting for its unit: here its head
     // order is the fight, so it isn't in the guard formation.)
+    constexpr u32 kKindShift = 32 + EntityId::kGenerationBits;
     if (head.type == CommandType::Guard && head.target_id && !u.has_category("ENGINEER")) {
-        return (u64{1} << 32) | head.target_id.moho();
+        return (u64{1} << kKindShift) | head.target_id.key();
     }
-    if (head.formed) return (u64{2} << 32) | head.command_id;
+    if (head.formed) {
+        return (u64{2} << kKindShift) | head.command_id;
+    }
     return 0;
 }
 

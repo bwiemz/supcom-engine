@@ -9,9 +9,15 @@
 namespace osc::app {
 
 u64 entity_loop_key(sim::EntityId entity_id, std::string_view slot) {
-    u32 hash = 2166136261u; // FNV-1a
-    for (const char c : slot) hash = (hash ^ static_cast<unsigned char>(c)) * 16777619u;
-    return (static_cast<u64>(entity_id.moho()) << 32) | hash;
+    u64 hash = 14695981039346656037u; // FNV-1a
+    const auto mix = [&hash](u8 byte) { hash = (hash ^ byte) * 1099511628211u; };
+    for (u32 shift = 0; shift < 64; shift += 8) {
+        mix(static_cast<u8>(entity_id.key() >> shift));
+    }
+    for (const char c : slot) {
+        mix(static_cast<u8>(c));
+    }
+    return hash;
 }
 
 namespace {

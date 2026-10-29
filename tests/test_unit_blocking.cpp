@@ -352,6 +352,16 @@ TEST_CASE("Formation layers: one formation order's slots, and a unit's guards (n
     CHECK_FALSE(same_formation_layer(g1, a));
 }
 
+TEST_CASE("A dead unit's guards and the guards of the unit with its Moho id are two formations",
+          "[unit_blocking][ids]") {
+    World w;
+    Unit& g1 = *w.make("tank", 20.5f, 20.5f);
+    Unit& g2 = *w.make("tank", 22.5f, 20.5f);
+    order(g1, osc::sim::CommandType::Guard, 11, false, EntityId::of(7, 1));
+    order(g2, osc::sim::CommandType::Guard, 12, false, EntityId::of(7, 2));
+    CHECK_FALSE(osc::sim::same_formation_layer(g1, g2));
+}
+
 TEST_CASE("Units in one formation don't block each other's way", "[unit_blocking]") {
     World w;
     using osc::sim::CommandType;

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "app/world_sounds.hpp"
 #include "audio/sound_manager.hpp"
 #include "xact_fixtures.hpp"
 
@@ -637,4 +638,10 @@ TEST_CASE("Sound engine: replace-lowest-priority stops the lowest priority", "[a
     CHECK(sm.current_gain(click) < click_gain * 0.9f); // fading
     CHECK_THAT(sm.current_gain(shot), WithinAbs(shot_gain, 1e-5)); // untouched
     CHECK(sm.is_playing(shot2));
+}
+
+TEST_CASE("A dead entity's loop and the loop of the entity with its Moho id have two keys",
+          "[audio][ids]") {
+    CHECK(app::entity_loop_key(sim::EntityId::of(7, 1), "Ambient") !=
+          app::entity_loop_key(sim::EntityId::of(7, 2), "Ambient"));
 }
