@@ -1365,7 +1365,26 @@ static int brain_FindPlaceToBuild(lua_State* L) {
     return 1;
 }
 
-// brain:BuildStructure(unit, whatToBuild, location, relative)
+// The orders Moho's CAiBrain::BuildStructure doesn't give (retail probe build-structure).
+static bool build_order_refused(lua_State* L, const sim::SimState& sim, i32 army,
+                                const sim::Unit& builder, const std::string& bp_id, f32 x, f32 z) {
+    if (!sim::blueprint_can_build(L, builder.blueprint_id(), bp_id)) {
+        return true;
+    }
+    if (const auto* terrain = sim.terrain()) {
+        constexpr f32 kEdge = 8.0f;
+        const auto w = static_cast<f32>(terrain->map_width());
+        const auto h = static_cast<f32>(terrain->map_height());
+        if (x < kEdge || z < kEdge || x > w - kEdge || z > h - kEdge) {
+            return true;
+        }
+    }
+    const auto placement = placement_for(L, sim, army);
+    return placement.rules(bp_id).deposit != sim::PlacementRules::Deposit::None &&
+           !placement.can_build(bp_id, x, z);
+}
+
+// brain:BuildStructure(unit, whatToBuild, location, relative) -> relative
 // unit = arg 2 (Lua table with _c_object), whatToBuild = arg 3 (bp string),
 // location = arg 4 ({x, z, dist} from FindPlaceToBuild)
 static int brain_BuildStructure(lua_State* L) {
@@ -1397,17 +1416,24 @@ static int brain_BuildStructure(lua_State* L) {
         lua_pop(L, 1);
     }
 
-    if (lua_toboolean(L, 5)) { // buildRelative: an offset from the builder
-        pos.x += unit->position().x;
-        pos.z += unit->position().z;
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (lua_toboolean(L, 5) && brain) {
+        pos.x += brain->start_position().x;
+        pos.z += brain->start_position().z;
     }
 
-    sim::UnitCommand cmd;
-    cmd.type = sim::CommandType::BuildMobile;
-    cmd.target_pos = pos;
-    cmd.blueprint_id = bp_id;
-    unit->push_command(cmd, false);
-    return 0;
+    const bool refused =
+        sim && brain && build_order_refused(L, *sim, brain->index(), *unit, bp_id, pos.x, pos.z);
+    if (!refused) {
+        sim::UnitCommand cmd;
+        cmd.type = sim::CommandType::BuildMobile;
+        cmd.target_pos = pos;
+        cmd.blueprint_id = bp_id;
+        unit->push_command(cmd, false);
+    }
+    lua_settop(L, 5);
+    return 1;
 }
 
 // brain:BuildUnit(factory, blueprintId)
