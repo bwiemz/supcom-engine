@@ -720,6 +720,18 @@ TEST_CASE("A slow helper's step brings the unit it helps build level with its he
     CHECK(helper->work_progress() == w.site->fraction_complete());
 }
 
+TEST_CASE("A unit damaged while it is being built is finished with that damage",
+          "[build][assist]") {
+    AssistSim w;
+    w.site->set_fraction_complete(0.995f);
+    w.site->set_health(50.0f);
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    tick_until([&] { w.sim.tick(); }, "the site is built", 10,
+               [&] { return !w.site->is_being_built(); });
+    CHECK(w.site->health() == Catch::Approx(51.0f));
+}
+
 namespace {
 
 /// OnBuildProgress and OnBeingBuiltProgress, heard in `progress` as "<who> <band>": the first of

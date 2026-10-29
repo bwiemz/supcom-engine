@@ -1602,7 +1602,6 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
             target_unit->set_is_being_built(false);
             target_unit->set_unit_state("BeingUpgraded", false);
             target_unit->set_fraction_complete(1.0f);
-            target_unit->set_health(target_unit->max_health());
 
             spdlog::info("finish_build: entity #{} completed building target #{}", entity_id(),
                          target_id);
