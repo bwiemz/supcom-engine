@@ -376,7 +376,10 @@ static int entity_AdjustHealth(lua_State* L) {
 
 static int entity_GetEntityId(lua_State* L) {
     auto* e = check_entity(L);
-    sim::push_entity_id(L, e ? e->entity_id() : sim::EntityId());
+    if (!e) {
+        return luaL_error(L, "Game object has been destroyed");
+    }
+    sim::push_entity_id(L, e->entity_id());
     return 1;
 }
 

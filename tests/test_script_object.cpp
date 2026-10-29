@@ -209,6 +209,24 @@ TEST_CASE("IsDestroyed reads each kind of script object, as Moho's", "[scriptobj
     )"));
 }
 
+TEST_CASE("A destroyed unit gives its id until its tick ends, then GetEntityId raises",
+          "[scriptobject][ids]") {
+    ScriptWorld w;
+    REQUIRE(w.check(R"(
+        GetId = moho.unit_methods.GetEntityId or moho.entity_methods.GetEntityId
+        u = CreateUnit('test_plain', 1, 0, 0, 0)
+        id = GetId(u)
+        ;(moho.unit_methods.Destroy or moho.entity_methods.Destroy)(u)
+    )"));
+    CHECK(w.check("assert(GetId(u) == id, tostring(GetId(u)))"));
+    w.sim.tick();
+    CHECK(w.check(R"(
+        local ok, err = pcall(GetId, u)
+        assert(not ok and string.find(err, 'Game object has been destroyed', 1, true),
+               tostring(err))
+    )"));
+}
+
 TEST_CASE("An entity's spec names its army as Moho's _c_CreateEntity reads it", "[scriptobject]") {
     ScriptWorld w;
     w.sim.add_army("ARMY_2", "ARMY_2");
