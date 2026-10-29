@@ -4,6 +4,7 @@
 // engine's run (src/app) with them is osc_integration.
 
 #include "app/app.hpp"
+#include "attack_move_click_test.hpp"
 #include "integration_tests.hpp"
 
 #include <optional>
@@ -40,6 +41,7 @@ private:
     size_t marks_most_ = 0; // the most order marks drawn at once
     InterpProbe interp_probe_;
     std::optional<RenderDumpProbe> render_dump_;
+    std::optional<AttackMoveClickProbe> attack_move_click_; // --attack-move-click-test
 };
 
 /// The two-process multiplayer harness (lan_modes.cpp): --mp-host/--mp-join

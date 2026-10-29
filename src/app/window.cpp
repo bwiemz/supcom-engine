@@ -304,6 +304,13 @@ void App::Window::publish_window_objects() {
     publish("__osc_renderer", &renderer);
     publish("__osc_input_handler", &input_handler);
     publish("__osc_factory_queue", &factory_queue);
+    sim_callback_queue.set_send([this](osc::sim::SimCallbackEntry& callback) {
+        if (!sim_state || !sim_lua_state || loading || sim_state->ticking_elsewhere()) {
+            return false;
+        }
+        sim_state->submit_callback(std::move(callback));
+        return true;
+    });
     publish("__osc_sim_callback_queue", &sim_callback_queue);
     // A --map launch's game interface came before the window: its world
     // views take the camera now

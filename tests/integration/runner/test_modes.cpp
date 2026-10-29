@@ -508,6 +508,7 @@ void IntegrationModes::print_usage() const {
               << "  --render-dump <f>  Windowed: dump what the renderers generate for a scripted scene\n"
               << "  --mouse-scene      Six Strikers of army 1 beside its commander, for --mouse goldens\n"
               << "  --count-marks <N>  Run N frames; fail if no order's mark (feedback blip) is drawn\n"
+              << "  --attack-move-click-test Windowed, FAF's data: attack-move clicks through a tick's frames\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
               << "  --focus-army-test  A launch's player in the second slot plays and watches it\n"
               << "  --command-sources-test A launch's player commands its army; FAF's union and common armies\n"
@@ -553,6 +554,9 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
     for (const Mode& m : kModesAfter) note(m.flag);
     for (const char* flag : kOwnModes) note(flag);
     interp_ = parse_flag(argc, argv, "--interp-test");
+    if (parse_flag(argc, argv, "--attack-move-click-test")) {
+        attack_move_click_.emplace();
+    }
     render_dump_path_ = parse_string_arg(argc, argv, "--render-dump", "");
     mouse_scene_ = parse_flag(argc, argv, "--mouse-scene");
     count_marks_frames_ = static_cast<u32>(
@@ -561,7 +565,8 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
 
     app::TestRequest request;
     request.headless = !given_.empty();
-    request.windowed = interp_ || !render_dump_path_.empty() || count_marks_frames_ > 0;
+    request.windowed = interp_ || !render_dump_path_.empty() || count_marks_frames_ > 0 ||
+                       attack_move_click_.has_value();
     request.ai_army_2 = has("--ai-test") || has("--platoon-test") || has("--threat-test") ||
                         has("--combat-test") || has("--persist-test");
     request.world_ui = has("--gameui-test") || has("--victory-test") || has("--keymap-test") ||
@@ -572,7 +577,7 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
     request.splash = has("--movie-test");
     // --render-dump compares renders; its scene's script errors are logged,
     // not counted, so a dump is still written.
-    if (interp_) osc::test_status::set_count_lua_failures(true);
+    if (interp_ || attack_move_click_) osc::test_status::set_count_lua_failures(true);
     return request;
 }
 
@@ -823,6 +828,9 @@ void IntegrationModes::frame_view(Engine& e, app::Frame& frame) {
             osc::test_status::fail("[FAIL] mouse-scene: the scene script failed");
         }
     }
+    if (attack_move_click_) {
+        attack_move_click_->on_frame(e, frame);
+    }
     if (!interp_) return;
     interp_probe_.on_frame(*e.sim_state, frame.view,
                            [&](const char* code) { return run_sim_lua(e, code); });
@@ -850,10 +858,15 @@ void IntegrationModes::frame_rendered(Engine& e, app::Frame& frame) {
 bool IntegrationModes::frames_done() const {
     return (interp_ && interp_probe_.done()) ||
            (!render_dump_path_.empty() && render_dump_->done()) ||
-           (count_marks_frames_ > 0 && marks_frames_seen_ >= count_marks_frames_);
+           (count_marks_frames_ > 0 && marks_frames_seen_ >= count_marks_frames_) ||
+           (attack_move_click_ && attack_move_click_->done());
 }
 
 std::optional<int> IntegrationModes::after_window() {
+    if (attack_move_click_) {
+        attack_move_click_->finish();
+        return finish_test_run("attack-move-click-test");
+    }
     if (count_marks_frames_ > 0) {
         if (marks_most_ == 0) {
             osc::test_status::fail("[FAIL] count-marks: no order's mark was drawn");
