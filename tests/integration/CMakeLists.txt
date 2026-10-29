@@ -15,6 +15,7 @@ add_executable(osc_integration
     runner/wave_test.cpp
     runner/movie_test.cpp
     runner/combo_click_test.cpp
+    runner/command_issued_test.cpp
     runner/command_sources_test.cpp
     runner/edit_text_test.cpp
     runner/hidpi_test.cpp
@@ -237,6 +238,14 @@ set_tests_properties(data.unitview-sweep-test PROPERTIES
     LABELS "data;gate"
     SKIP_RETURN_CODE 77
     TIMEOUT 900)
+# The UI's orders reach OnCommandIssued with their LuaParams (FAF's run is
+# data.command-issued_faf)
+add_test(NAME data.command-issued-test
+         COMMAND osc_integration --map ${OSC_TEST_MAP} --command-issued-test)
+set_tests_properties(data.command-issued-test PROPERTIES
+    LABELS "data;gate"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 900)
 
 # M196: the same game, played twice as two processes (every address
 # different), stays identical tick for tick -- nothing depends on hash
@@ -422,6 +431,20 @@ if(Python3_Interpreter_FOUND)
                          "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
     endif()
     set_tests_properties(data.unitview-sweep_faf PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
+    # FAF's enhancement queue and attack-move read an order's LuaParams
+    if(_osc_faf_data)
+        add_test(NAME data.command-issued_faf
+                 COMMAND osc_integration --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP}
+                         --command-issued-test)
+    else()
+        add_test(NAME data.command-issued_faf
+                 COMMAND ${Python3_EXECUTABLE} -c
+                         "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
+    endif()
+    set_tests_properties(data.command-issued_faf PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 600)

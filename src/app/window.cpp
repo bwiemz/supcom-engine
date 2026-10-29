@@ -158,7 +158,7 @@ std::optional<int> App::Window::set_up() {
     input_handler.set_command_mode_hooks(
         {[this] { return current_command_mode; },
          [this](const osc::renderer::IssuedCommand& c) {
-             report_command_issued(ui_lua_state.raw(), c);
+             osc::lua::report_command_issued(ui_lua_state.raw(), c);
          },
          [this] { cancel_command_mode(ui_lua_state.raw()); },
          [this](osc::i32 army, const std::string& bp, osc::f32 x, osc::f32 z, osc::u32 moving) {

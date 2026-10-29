@@ -12,12 +12,12 @@
 #include "lua/script_loader.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/user_bindings.hpp"
 #include "lua/beat_system.hpp"
 #include "ui/wld_ui_provider.hpp"
 #include "renderer/renderer.hpp"
 #include "ui/world_view.hpp"
 #include "lua/sim_sync.hpp"
-#include "sim/script_class.hpp"
 
 namespace osc::app {
 
@@ -150,50 +150,18 @@ static void build_mode_blueprint(lua_State* uiL, osc::renderer::CommandMode& m) 
     lua_pop(uiL, 2);
 }
 
-/// A point as a {x, y, z} table
-static void push_xyz(lua_State* L, const osc::sim::Vector3& p) {
-    lua_newtable(L);
-    lua_pushnumber(L, p.x);
-    lua_rawseti(L, -2, 1);
-    lua_pushnumber(L, p.y);
-    lua_rawseti(L, -2, 2);
-    lua_pushnumber(L, p.z);
-    lua_rawseti(L, -2, 3);
-}
-
 std::optional<osc::renderer::VerifiedScript>
 verify_script_command(lua_State* uiL, const std::vector<osc::u32>& units, osc::u32 target_id,
                       const osc::sim::Vector3& at, bool clear) {
     const int top = lua_gettop(uiL);
-    // The order as BuildUserScriptCommandObject (0x0083E150) describes it
-    lua_newtable(uiL);
+    osc::renderer::IssuedCommand order;
+    order.type = "Script";
+    order.position = at;
+    order.target_id = target_id;
+    order.clear = clear;
+    order.units = units;
+    osc::lua::push_user_command(uiL, order);
     const int data = lua_gettop(uiL);
-    lua_pushstring(uiL, "Units");
-    osc::lua::push_units_for_ui(uiL, units);
-    lua_rawset(uiL, data);
-    lua_pushstring(uiL, "Blueprint");
-    lua_pushstring(uiL, "");
-    lua_rawset(uiL, data);
-    lua_pushstring(uiL, "Target");
-    lua_newtable(uiL);
-    lua_pushstring(uiL, "Type");
-    lua_pushstring(uiL, target_id ? "Entity" : "Position");
-    lua_rawset(uiL, -3);
-    if (target_id) {
-        lua_pushstring(uiL, "EntityId");
-        osc::sim::push_entity_id(uiL, target_id);
-        lua_rawset(uiL, -3);
-    }
-    lua_pushstring(uiL, "Position");
-    push_xyz(uiL, at);
-    lua_rawset(uiL, -3);
-    lua_rawset(uiL, data); // Target
-    lua_pushstring(uiL, "CommandType");
-    lua_pushstring(uiL, "Script");
-    lua_rawset(uiL, data);
-    lua_pushstring(uiL, "Clear");
-    lua_pushboolean(uiL, clear ? 1 : 0);
-    lua_rawset(uiL, data);
 
     // Its answer; on an error the order's own table, which lets nothing go
     int answer = data;
@@ -303,48 +271,6 @@ osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
         };
     }
     return m;
-}
-
-/// Report an issued command to commandmode.OnCommandIssued, as Moho does:
-/// a non-Shift command ends the mode, and FA draws its feedback blip.
-void report_command_issued(lua_State* uiL, const osc::renderer::IssuedCommand& c) {
-    lua_newtable(uiL);
-    lua_pushstring(uiL, "CommandType");
-    lua_pushstring(uiL, c.type.c_str());
-    lua_rawset(uiL, -3);
-    lua_pushstring(uiL, "Clear");
-    lua_pushboolean(uiL, c.clear ? 1 : 0);
-    lua_rawset(uiL, -3);
-    if (!c.blueprint.empty()) {
-        lua_pushstring(uiL, "Blueprint");
-        lua_pushstring(uiL, c.blueprint.c_str());
-        lua_rawset(uiL, -3);
-    }
-    lua_pushstring(uiL, "Target");
-    lua_newtable(uiL);
-    lua_pushstring(uiL, "Type");
-    lua_pushstring(uiL, c.target_id ? "Entity" : "Position");
-    lua_rawset(uiL, -3);
-    if (c.target_id) {
-        lua_pushstring(uiL, "EntityId");
-        osc::sim::push_entity_id(uiL, c.target_id);
-        lua_rawset(uiL, -3);
-    }
-    lua_pushstring(uiL, "Position");
-    lua_newtable(uiL);
-    lua_pushnumber(uiL, c.position.x);
-    lua_rawseti(uiL, -2, 1);
-    lua_pushnumber(uiL, c.position.y);
-    lua_rawseti(uiL, -2, 2);
-    lua_pushnumber(uiL, c.position.z);
-    lua_rawseti(uiL, -2, 3);
-    lua_rawset(uiL, -3); // Target.Position
-    lua_rawset(uiL, -3); // command.Target
-    // The units it went to: FAF's commandmode watches a lone unit's queue.
-    lua_pushstring(uiL, "Units");
-    osc::lua::push_units_for_ui(uiL, c.units);
-    lua_rawset(uiL, -3);
-    osc::core::call_ui_callback(uiL, kCommandModeModule, "OnCommandIssued", 1);
 }
 
 /// Leave FA's command mode, cancelled (a right-click).

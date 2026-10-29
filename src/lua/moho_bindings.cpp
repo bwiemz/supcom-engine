@@ -3082,7 +3082,7 @@ std::string ui_command_name(const char* name) {
 /// (M206w: the construction panel's enhancements, as EnhanceTask). `data`
 /// is the order's table.
 void issue_targetless_order(lua_State* L, const std::vector<u32>& ids, const std::string& name,
-                            int data, bool clear) {
+                            int data, bool clear, bool tell) {
     sim::UnitCommand cmd;
     if (name == "Stop") {
         cmd.type = sim::CommandType::Stop;
@@ -3106,6 +3106,9 @@ void issue_targetless_order(lua_State* L, const std::vector<u32>& ids, const std
         return;
     }
     issue_player_order(L, ids, cmd, clear);
+    if (tell) {
+        report_script_order(L, name, ids, clear, data);
+    }
 }
 
 /// IssueUnitCommand(units, command)

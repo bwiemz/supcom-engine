@@ -5,6 +5,7 @@
 
 #include "blueprints/blueprint_store.hpp"
 #include "core/color.hpp"
+#include "core/game_state.hpp"
 #include "core/localization.hpp"
 #include "platform/executable.hpp"
 #include "lua/user_bindings.hpp"
@@ -1753,12 +1754,81 @@ static std::vector<u32> selected_unit_ids(lua_State* L) {
     return ids;
 }
 
+void push_user_command(lua_State* L, const renderer::IssuedCommand& c) {
+    lua_newtable(L);
+    const int command = lua_gettop(L);
+    lua_pushstring(L, "Units");
+    push_units_for_ui(L, c.units);
+    lua_rawset(L, command);
+    lua_pushstring(L, "Blueprint");
+    lua_pushstring(L, c.blueprint.c_str());
+    lua_rawset(L, command);
+    lua_pushstring(L, "Target");
+    lua_newtable(L);
+    lua_pushstring(L, "Type");
+    lua_pushstring(L, !c.targeted ? "None" : (c.target_id != 0 ? "Entity" : "Position"));
+    lua_rawset(L, -3);
+    if (c.target_id != 0) {
+        lua_pushstring(L, "EntityId");
+        sim::push_entity_id(L, c.target_id);
+        lua_rawset(L, -3);
+    }
+    lua_pushstring(L, "Position");
+    lua_newtable(L);
+    lua_pushnumber(L, c.position.x);
+    lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, c.position.y);
+    lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, c.position.z);
+    lua_rawseti(L, -2, 3);
+    lua_rawset(L, -3);
+    lua_rawset(L, command);
+    if (!c.lua_params.empty()) {
+        lua_pushstring(L, "LuaParams");
+        if (sim::push_lua_bytes(L, c.lua_params)) {
+            lua_rawset(L, command);
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    lua_pushstring(L, "CommandType");
+    lua_pushstring(L, c.type.c_str());
+    lua_rawset(L, command);
+    lua_pushstring(L, "Clear");
+    lua_pushboolean(L, c.clear ? 1 : 0);
+    lua_rawset(L, command);
+}
+
+void report_command_issued(lua_State* L, const renderer::IssuedCommand& c) {
+    push_user_command(L, c);
+    core::call_ui_callback(L, "/lua/ui/game/commandmode.lua", "OnCommandIssued", 1);
+}
+
+void report_script_order(lua_State* L, const std::string& type, const std::vector<u32>& ids,
+                         bool clear, int data, const std::string& blueprint) {
+    if (!get_sim(L)) {
+        return;
+    }
+    renderer::IssuedCommand c;
+    c.type = type;
+    c.blueprint = blueprint;
+    c.clear = clear;
+    c.units = ids;
+    c.targeted = false;
+    if (data != 0 && !lua_isnoneornil(L, data)) {
+        c.lua_params = sim::lua_to_bytes(L, data).value_or(std::string());
+    }
+    report_command_issued(L, c);
+}
+
 /// IssueCommand(command [, data [, clear]]) -- for the selection: the orders
 /// panel's Stop, Dive and silo builds, the construction panel's enhancements.
 static int l_IssueCommand(lua_State* L) {
     const std::string name = ui_command_name(luaL_checkstring(L, 1));
     const bool clear = lua_isboolean(L, 3) ? lua_toboolean(L, 3) != 0 : true;
-    issue_targetless_order(L, selected_unit_ids(L), name, 2, clear);
+    // Moho's hands a silo build to the silos, not to ISSUE_Command
+    const bool silo = name == "BuildSiloNuke" || name == "BuildSiloTactical";
+    issue_targetless_order(L, selected_unit_ids(L), name, 2, clear, !silo);
     return 0;
 }
 
@@ -1901,11 +1971,14 @@ static int l_IssueBlueprintCommand(lua_State* L) {
     const auto ids = selected_unit_ids(L);
     if (name == "BuildFactory") {
         cmd.type = sim::CommandType::BuildFactory;
-        for (int i = 0; i < std::min(count, 1000); ++i)
+        for (int i = 0; i < std::min(count, 1000); ++i) {
             issue_player_order(L, ids, cmd, clear && i == 0);
+            report_script_order(L, name, ids, clear && i == 0, 0, cmd.blueprint_id);
+        }
     } else if (name == "Upgrade") {
         cmd.type = sim::CommandType::Upgrade;
         issue_player_order(L, ids, cmd, clear);
+        report_script_order(L, name, ids, clear, 0, cmd.blueprint_id);
     } else {
         spdlog::warn("IssueBlueprintCommand: unsupported order '{}'", name);
     }

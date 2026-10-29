@@ -133,6 +133,8 @@ struct IssuedCommand {
     std::string blueprint; ///< build: blueprint id
     bool clear = true;     ///< replaced the units' queues (no Shift)
     std::vector<u32> units; ///< the units it was issued to
+    bool targeted = true;   ///< false: none (Target.Type "None")
+    std::string lua_params; ///< its Lua data, as sim::lua_to_bytes writes it; empty: none
 };
 
 /// The engine side of FA's command mode, provided by the game loop (the

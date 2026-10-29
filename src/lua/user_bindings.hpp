@@ -16,6 +16,10 @@ namespace osc::sim {
 class SimState;
 }
 
+namespace osc::renderer {
+struct IssuedCommand;
+}
+
 namespace osc::ui {
 class Console;
 }
@@ -58,6 +62,13 @@ std::vector<sim::FormationSlot> plan_ui_formation(lua_State* L,
                                                   const map::Terrain* terrain,
                                                   const std::string& script, const sim::Vector3& at,
                                                   f32 facing);
+
+/// An order as Moho's BuildUserScriptCommandObject hands it to UI scripts.
+void push_user_command(lua_State* L, const renderer::IssuedCommand& c);
+
+/// commandmode.OnCommandIssued, told of an order the player issued, as Moho's
+/// ISSUE_Command tells UI_OnCommandIssued of each.
+void report_command_issued(lua_State* L, const renderer::IssuedCommand& c);
 
 /// The console commands that act on the game session (M217d, Moho's):
 /// StartCommandMode, UI_SelectByCategory and IssueCommand.
