@@ -3081,8 +3081,8 @@ std::string ui_command_name(const char* name) {
 /// An order with no target: Stop, Dive, a silo build, or a Script order
 /// (M206w: the construction panel's enhancements, as EnhanceTask). `data`
 /// is the order's table.
-void issue_targetless_order(lua_State* L, const std::vector<u32>& ids, const std::string& name,
-                            int data, bool clear, bool tell) {
+bool issue_targetless_order(lua_State* L, const std::vector<u32>& ids, const std::string& name,
+                            int data, bool clear, bool tell, const std::string& blueprint) {
     sim::UnitCommand cmd;
     if (name == "Stop") {
         cmd.type = sim::CommandType::Stop;
@@ -3093,28 +3093,57 @@ void issue_targetless_order(lua_State* L, const std::vector<u32>& ids, const std
         // it, not its queue, so `clear` does nothing).
         cmd.type = name == "BuildSiloNuke" ? sim::CommandType::SiloBuildNuke
                                            : sim::CommandType::SiloBuildTactical;
-    } else if (name == "Script" && lua_istable(L, data)) {
+    } else if (name == "Script" && data != 0 && lua_istable(L, data)) {
         auto bytes = sim::lua_to_bytes(L, data);
         if (!bytes) {
             spdlog::warn("IssueCommand: a Script order's table can't be carried");
-            return;
+            return false;
         }
         cmd.type = sim::CommandType::Script;
         cmd.script_args = std::move(*bytes);
     } else {
         spdlog::warn("IssueCommand: unsupported order '{}'", name);
-        return;
+        return false;
     }
     issue_player_order(L, ids, cmd, clear);
     if (tell) {
-        report_script_order(L, name, ids, clear, data);
+        report_script_order(L, name, ids, clear, data, blueprint);
     }
+    return true;
 }
 
-/// IssueUnitCommand(units, command)
+/// IssueUnitCommand(units, command [, data [, clear]]), as Moho's
+/// cfunc_IssueUnitCommandL
 static int l_IssueUnitCommand(lua_State* L) {
-    const std::string name = ui_command_name(luaL_checkstring(L, 2));
-    issue_targetless_order(L, ui_unit_ids(L, 1), name, 3, true);
+    const int argc = lua_gettop(L);
+    if (argc < 1 || argc > 4) {
+        return arg_range_error(L, "IssueUnitCommand(unitList,command,[string],[clear])", 1, 4,
+                               argc);
+    }
+    if (!get_sim(L)) {
+        spdlog::warn("Attempt to call IssueCommand before world sessions exists.");
+        return 0;
+    }
+    if (!lua_istable(L, 1)) {
+        return luaL_error(L, "Unit list expected as first argument");
+    }
+    std::vector<u32> ids;
+    lua_pushnil(L);
+    while (lua_next(L, 1) != 0) {
+        const sim::Entity* e = check_entity(L, lua_gettop(L));
+        if (!e) {
+            return luaL_error(L, "Expected a game object. (Did you call with '.' instead of ':'?)");
+        }
+        if (e->is_unit() && !e->destroyed()) {
+            ids.push_back(e->entity_id());
+        }
+        lua_pop(L, 1);
+    }
+    if (!lua_tostring(L, 2)) {
+        return arg_type_error(L, 2, "string");
+    }
+    const std::string name = ui_command_name(lua_tostring(L, 2));
+    issue_targetless_order(L, ids, name, 3, argc < 4 || arg_boolean(L, 4));
     return 0;
 }
 

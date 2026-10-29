@@ -1824,11 +1824,25 @@ void report_script_order(lua_State* L, const std::string& type, const std::vecto
 /// IssueCommand(command [, data [, clear]]) -- for the selection: the orders
 /// panel's Stop, Dive and silo builds, the construction panel's enhancements.
 static int l_IssueCommand(lua_State* L) {
-    const std::string name = ui_command_name(luaL_checkstring(L, 1));
-    const bool clear = lua_isboolean(L, 3) ? lua_toboolean(L, 3) != 0 : true;
+    const int argc = lua_gettop(L);
+    if (argc < 1 || argc > 3) {
+        return arg_range_error(L, "IssueCommand(command,[string],[clear])", 1, 3, argc);
+    }
+    if (!get_sim(L)) {
+        spdlog::warn("Attempt to call IssueCommand before world sessions exists.");
+        return 0;
+    }
+    if (!lua_tostring(L, 1)) {
+        return arg_type_error(L, 1, "string");
+    }
+    const std::string name = ui_command_name(lua_tostring(L, 1));
     // Moho's hands a silo build to the silos, not to ISSUE_Command
-    const bool silo = name == "BuildSiloNuke" || name == "BuildSiloTactical";
-    issue_targetless_order(L, selected_unit_ids(L), name, 2, clear, !silo);
+    if (name == "BuildSiloNuke" || name == "BuildSiloTactical") {
+        issue_targetless_order(L, selected_unit_ids(L), name, 0, true, false);
+        return 0;
+    }
+    const bool clear = argc < 3 || arg_boolean(L, 3);
+    issue_targetless_order(L, selected_unit_ids(L), name, 2, clear);
     return 0;
 }
 
@@ -1960,27 +1974,69 @@ static int l_IssueDockCommand(lua_State* L) {
     return 0;
 }
 
-/// IssueBlueprintCommand(command, blueprint [, count [, clear]]) -- for the
-/// selection: the construction panel's factory builds and upgrades.
+/// IssueBlueprintCommand(command, blueprint, count [, clear]) -- for the
+/// selection, as Moho's cfunc_IssueBlueprintCommandL: the construction
+/// panel's factory builds and upgrades.
 static int l_IssueBlueprintCommand(lua_State* L) {
-    const std::string name = ui_command_name(luaL_checkstring(L, 1));
-    sim::UnitCommand cmd;
-    cmd.blueprint_id = luaL_checkstring(L, 2);
-    const int count = lua_isnumber(L, 3) ? static_cast<int>(lua_tonumber(L, 3)) : 1;
-    const bool clear = lua_isboolean(L, 4) && lua_toboolean(L, 4) != 0;
+    const int argc = lua_gettop(L);
+    if (argc < 3 || argc > 4) {
+        return arg_range_error(
+            L, "IssueBlueprintCommand(command, blueprintid, count, clear = false)", 3, 4, argc);
+    }
+    auto* sim = get_sim(L);
+    if (!sim) {
+        spdlog::warn("Attempt to call IssueBlueprintCommand before world sessions exists.");
+        return 0;
+    }
+    if (!lua_tostring(L, 1)) {
+        return arg_type_error(L, 1, "string");
+    }
+    const std::string name = ui_command_name(lua_tostring(L, 1));
+    if (!lua_tostring(L, 2)) {
+        return arg_type_error(L, 2, "string");
+    }
+    const auto* store = LuaState::get_blueprint_store(L);
+    const auto* blueprint = store ? store->find(lua_tostring(L, 2)) : nullptr;
+    if (lua_type(L, 3) != LUA_TNUMBER) {
+        return arg_type_error(L, 3, "integer");
+    }
+    const lua_Number count_arg = lua_tonumber(L, 3);
+    const int count =
+        count_arg > -2147483648.0 && count_arg < 2147483648.0 ? static_cast<int>(count_arg) : 0;
+    const bool clear = argc == 4 && arg_boolean(L, 4);
+    if (!blueprint) {
+        return 0;
+    }
     const auto ids = selected_unit_ids(L);
+    if (name == "BuildSiloNuke" || name == "BuildSiloTactical") {
+        issue_targetless_order(L, ids, name, 0, false, false);
+        return 0;
+    }
+    sim::UnitCommand cmd;
+    cmd.blueprint_id = blueprint->id;
     if (name == "BuildFactory") {
         cmd.type = sim::CommandType::BuildFactory;
-        for (int i = 0; i < std::min(count, 1000); ++i) {
-            issue_player_order(L, ids, cmd, clear && i == 0);
-            report_script_order(L, name, ids, clear && i == 0, 0, cmd.blueprint_id);
+        for (const u32 id : ids) {
+            const sim::Entity* e = sim->entity_registry().find(id);
+            const auto* unit = e && e->is_unit() ? static_cast<const sim::Unit*>(e) : nullptr;
+            if (!unit || unit->destroyed() || unit->is_dying() || !unit->has_category("FACTORY")) {
+                continue;
+            }
+            for (int i = 0; i < count; ++i) {
+                issue_player_order(L, {id}, cmd, clear);
+                report_script_order(L, name, {id}, clear, 0, cmd.blueprint_id);
+            }
         }
-    } else if (name == "Upgrade") {
-        cmd.type = sim::CommandType::Upgrade;
-        issue_player_order(L, ids, cmd, clear);
-        report_script_order(L, name, ids, clear, 0, cmd.blueprint_id);
-    } else {
-        spdlog::warn("IssueBlueprintCommand: unsupported order '{}'", name);
+        return 0;
+    }
+    for (int i = 0; i < count; ++i) {
+        if (name == "Upgrade") {
+            cmd.type = sim::CommandType::Upgrade;
+            issue_player_order(L, ids, cmd, clear);
+            report_script_order(L, name, ids, clear, 0, cmd.blueprint_id);
+        } else if (!issue_targetless_order(L, ids, name, 0, clear, true, cmd.blueprint_id)) {
+            break;
+        }
     }
     return 0;
 }

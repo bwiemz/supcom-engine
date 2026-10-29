@@ -96,6 +96,22 @@ constexpr const char* kStop = R"(
     return 'ok'
 )";
 
+constexpr const char* kFactories = R"(
+    local fs = EntityCategoryFilterDown(categories.ueb0101, GetIdleFactories() or {})
+    local es = EntityCategoryFilterDown(categories.uel0105, GetIdleEngineers() or {})
+    if not (fs[1] and fs[2] and es[1]) then return 'factories ' .. table.getn(fs) end
+    __osc_ci_units = {F1 = fs[1], F2 = fs[2], E = es[1]}
+    __osc_ci_queue = function(name)
+        local text = ''
+        for _, b in SetCurrentFactoryForQueueDisplay(__osc_ci_units[name]) or {} do
+            text = text .. b.id .. 'x' .. b.count .. ' '
+        end
+        ClearCurrentFactoryForQueueDisplay()
+        return text
+    end
+    return 'ok'
+)";
+
 const sim::Unit* commander(TestContext& ui) {
     const auto* e = ui.sim.entity_registry().find(army_acu_id(ui.sim, 0));
     return e && e->is_unit() ? static_cast<const sim::Unit*>(e) : nullptr;
@@ -163,6 +179,48 @@ void test_command_issued(TestContext& ui, const std::function<void(int)>& pump,
         const std::string queued = ui_answer(ui, kQueued);
         t.check(queued == "0", "Test 8: FAF's Stop empties its enhancement queue: " + queued);
     }
+
+    sim_lua(R"(
+        local p = ArmyBrains[1]:GetListOfUnits(categories.COMMAND, false)[1]:GetPosition()
+        for _, d in {{-12, -12}, {12, -12}} do
+            local x, z = p[1] + d[1], p[3] + d[2]
+            CreateUnitHPR('ueb0101', 'ARMY_1', x, GetSurfaceHeight(x, z), z, 0, 0, 0)
+        end
+        local x, z = p[1] + 6, p[3] + 6
+        CreateUnitHPR('uel0105', 'ARMY_1', x, GetSurfaceHeight(x, z), z, 0, 0, 0)
+    )");
+    play(2);
+    const std::string factories = ui_answer(ui, kFactories);
+    t.check(factories == "ok", "Test 11: two factories and an engineer: " + factories);
+    struct Build {
+        const char* selection;
+        const char* args;
+        const char* queues;
+    };
+    const Build builds[] = {
+        {"u.F1", "'UNITCOMMAND_BuildFactory', 'uel0105', 3", "uel0105x3 |"},
+        {"u.F1, u.F2, u.E", "'UNITCOMMAND_BuildFactory', 'uel0105', 2", "uel0105x2 |uel0105x2 "},
+        {"u.F1", "'UNITCOMMAND_BuildFactory', 'uel0105', 3, true", "uel0105x1 |"},
+    };
+    for (const Build& b : builds) {
+        if (factories != "ok") {
+            break;
+        }
+        const std::string issued =
+            ui_answer(ui, fmt::format("local u = __osc_ci_units SelectUnits({{{}}}) "
+                                      "IssueBlueprintCommand({}) return 'ok'",
+                                      b.selection, b.args));
+        play(2);
+        const std::string queues =
+            ui_answer(ui, "return __osc_ci_queue('F1') .. '|' .. __osc_ci_queue('F2')");
+        t.check(issued == "ok" && queues == b.queues,
+                fmt::format("Test 12: IssueBlueprintCommand({}) to {} queues {} (want {})", b.args,
+                            b.selection, queues, b.queues));
+        ui_answer(ui, "local u = __osc_ci_units IssueUnitCommand({u.F1, u.F2, u.E}, 'Stop') "
+                      "return 'ok'");
+        play(2);
+    }
+    ui_answer(ui, kSelect);
     if (!faf) {
         pump(1);
         return;
