@@ -961,6 +961,20 @@ static void resolve_footprints(lua_State* L, const sim::SimState& sim, const Blu
         own.max_water_depth = number(fp, "MaxWaterDepth");
     }
     lua_pop(L, 1);
+    blueprints::Footprint own_alt = own;
+    lua_pushstring(L, "AltFootprint");
+    lua_rawget(L, bp);
+    if (lua_istable(L, -1)) {
+        const int fp = lua_gettop(L);
+        own_alt.size_x = cells(number(fp, "SizeX"));
+        own_alt.size_z = cells(number(fp, "SizeZ"));
+        own_alt.caps = cells(number(fp, "OccupancyCaps"));
+        own_alt.flags = cells(number(fp, "Flags"));
+        own_alt.max_slope = number(fp, "MaxSlope");
+        own_alt.min_water_depth = number(fp, "MinWaterDepth");
+        own_alt.max_water_depth = number(fp, "MaxWaterDepth");
+    }
+    lua_pop(L, 1);
     std::string alt_motion;
     lua_pushstring(L, "Physics");
     lua_rawget(L, bp);
@@ -976,7 +990,7 @@ static void resolve_footprints(lua_State* L, const sim::SimState& sim, const Blu
     const u8 build_caps = (rules.on_land ? oc::kLand : 0) | (rules.on_seabed ? oc::kSeabed : 0) |
                           (rules.on_sub ? oc::kSub : 0) | (rules.on_water ? oc::kWater : 0);
     const blueprints::UnitFootprints resolved = blueprints::resolve_unit_footprints(
-        store.footprint_classes(), own, unit.motion_type(), alt_motion, build_caps);
+        store.footprint_classes(), own, own_alt, unit.motion_type(), alt_motion, build_caps);
     unit.set_footprints(resolved);
     // The class replaces the footprint whole, and Moho's ranges, formations and
     // steering read that size; the skirt is then at least it. A skirt the .bp

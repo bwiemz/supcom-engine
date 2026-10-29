@@ -128,8 +128,8 @@ on a bare blueprint and is not also in the filled table.
     `range_overlays`'s `ToggleCaps`, `build_placement`). This is stage 4b (section 6).
   - *Done (2026-10-29) for the three flag enums (section 6); `CollisionShape` stays unfilled.*
 - **`Footprint.OccupancyCaps`, `Footprint.Flags`, `AltFootprint`:** derived from the motion type's
-  footprint class; nothing reads them. *Done (2026-10-29) for `OccupancyCaps` and `Flags` (section 5);
-  `AltFootprint` stays unfilled.*
+  footprint class; nothing reads them. *Done (2026-10-29) for `OccupancyCaps` and `Flags`, and
+  (2026-10-30) for `AltFootprint` (section 5).*
 - **`Display.MeshBlueprint`:** Moho completes it from `Source`; the mesh cache resolves an absent one
   itself.
 - **`SizeX`, `SizeY`, `SizeZ`** (Moho's 1):
@@ -174,6 +174,11 @@ These parts of the write-back aren't ported:
     (Seraphim build effects, `BlockFormation`), and under FAF formations size a group by
     `max(Footprint.SizeX, SizeZ)` (`categorizeUnits.lua`): a Striker is 1, not 2, and a Valiant
     destroyer 4, not 8.*
+  - *Done (2026-10-30): `AltFootprint` too. Its unsized axes are the unit's size rounded up, as the
+    footprint's (`REntityBlueprint::OnInitBlueprint`). A mobile unit with an `AltMotionType` gives it
+    that motion type's caps and, with a ground footprint, the class nearest its own size, else the
+    main footprint; one without takes the main footprint whole. A structure's stays as it is. The sim
+    resolves a unit's alt footprint from it too (`resolve_unit_footprints`' `own_alt`).*
 - **`MotionType` for a unit that doesn't move.** Moho sets it to `RULEUMT_None` when `MaxSpeed` is 0.
   That is a sim-visible change to present values.
 

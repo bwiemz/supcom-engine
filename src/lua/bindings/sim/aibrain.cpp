@@ -1201,7 +1201,7 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const sim::SimState&
     lua_settop(L, top);
     if (!motion.empty() && motion != "RULEUMT_None" && sim.blueprint_store()) {
         r.mobile = blueprints::resolve_unit_footprints(sim.blueprint_store()->footprint_classes(),
-                                                       own, motion, {}, 0)
+                                                       own, own, motion, {}, 0)
                        .main;
     }
     return r;

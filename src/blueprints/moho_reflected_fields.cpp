@@ -343,7 +343,6 @@ constexpr UnfilledField kUnitUnfilled[] = {
     {"", "SizeX", kSizeReason},
     {"", "SizeY", kSizeReason},
     {"", "SizeZ", kSizeReason},
-    {"", "AltFootprint", "the footprint, or the alt motion type's class; nothing reads it"},
     {"Display", "MeshBlueprint",
      "Moho completes it against Source; the mesh cache resolves an absent one itself"},
     {"Physics", "TurnRadius",
@@ -509,13 +508,17 @@ void default_icon_name(lua_State* L, int bp, int display) {
 /// nearest, which differs on 13 retail axes, e.g. a T2 tank's 1.2 length),
 /// and a zero inertia tensor is a solid box's of its size.
 void derive_entity(lua_State* L, int bp) {
-    const int footprint = push_section(L, bp, "Footprint");
-    for (const char* axis : {"SizeX", "SizeZ"}) {
-        if (number_at(L, footprint, axis, 0) != 0) continue;
-        const lua_Number size = number_at(L, bp, axis, 1);
-        set_number(L, footprint, axis, std::max(1.0, std::ceil(size)));
+    for (const char* section : {"Footprint", "AltFootprint"}) {
+        const int footprint = push_section(L, bp, section);
+        for (const char* axis : {"SizeX", "SizeZ"}) {
+            if (number_at(L, footprint, axis, 0) != 0) {
+                continue;
+            }
+            const lua_Number size = number_at(L, bp, axis, 1);
+            set_number(L, footprint, axis, std::max(1.0, std::ceil(size)));
+        }
+        lua_pop(L, 1);
     }
-    lua_pop(L, 1);
 
     const f32 tx = float_at(L, bp, "InertiaTensorX", 0);
     const f32 ty = float_at(L, bp, "InertiaTensorY", 0);
@@ -548,34 +551,44 @@ void write_flag_enums(lua_State* L, int bp) {
     }
 }
 
-/// The footprint ComputeDerivedQuantities leaves (resolve_unit_footprints).
-void derive_footprint(lua_State* L, int physics, int footprint,
-                      const std::vector<NamedFootprint>& classes) {
+Footprint footprint_at(lua_State* L, int t) {
     const auto byte = [](lua_Number v) {
         return static_cast<u8>(std::clamp(std::lround(v), 0L, 255L));
     };
-    Footprint own;
-    own.size_x = byte(number_at(L, footprint, "SizeX", 0));
-    own.size_z = byte(number_at(L, footprint, "SizeZ", 0));
-    own.flags = byte(number_at(L, footprint, "Flags", 0));
-    own.max_slope = float_at(L, footprint, "MaxSlope", 0);
-    own.min_water_depth = float_at(L, footprint, "MinWaterDepth", 0);
+    Footprint fp;
+    fp.size_x = byte(number_at(L, t, "SizeX", 0));
+    fp.size_z = byte(number_at(L, t, "SizeZ", 0));
+    fp.caps = byte(number_at(L, t, "OccupancyCaps", 0));
+    fp.flags = byte(number_at(L, t, "Flags", 0));
+    fp.max_slope = float_at(L, t, "MaxSlope", 0);
+    fp.min_water_depth = float_at(L, t, "MinWaterDepth", 0);
+    return fp;
+}
+
+void set_footprint(lua_State* L, int t, const Footprint& fp, bool whole) {
+    if (whole) {
+        set_number(L, t, "SizeX", fp.size_x);
+        set_number(L, t, "SizeZ", fp.size_z);
+        set_number(L, t, "MaxSlope", fp.max_slope);
+        set_number(L, t, "MinWaterDepth", fp.min_water_depth);
+    }
+    set_number(L, t, "OccupancyCaps", fp.caps);
+    set_number(L, t, "Flags", fp.flags);
+}
+
+/// The footprints ComputeDerivedQuantities leaves (resolve_unit_footprints).
+void derive_footprints(lua_State* L, int physics, int footprint, int alt,
+                       const std::vector<NamedFootprint>& classes) {
     lua_pushstring(L, "BuildOnLayerCaps");
     lua_rawget(L, physics);
     const u32 layers = read_flag_enum(L, -1, kLayerEnum).value_or(occupancy::kLand);
     lua_pop(L, 1);
     const UnitFootprints resolved =
-        resolve_unit_footprints(classes, own, string_at(L, physics, "MotionType"),
+        resolve_unit_footprints(classes, footprint_at(L, footprint), footprint_at(L, alt),
+                                string_at(L, physics, "MotionType"),
                                 string_at(L, physics, "AltMotionType"), static_cast<u8>(layers));
-    const Footprint& fp = resolved.main;
-    if (resolved.main_class >= 0) {
-        set_number(L, footprint, "SizeX", fp.size_x);
-        set_number(L, footprint, "SizeZ", fp.size_z);
-        set_number(L, footprint, "MaxSlope", fp.max_slope);
-        set_number(L, footprint, "MinWaterDepth", fp.min_water_depth);
-    }
-    set_number(L, footprint, "OccupancyCaps", fp.caps);
-    set_number(L, footprint, "Flags", fp.flags);
+    set_footprint(L, footprint, resolved.main, resolved.main_class >= 0);
+    set_footprint(L, alt, resolved.alt, true);
 }
 
 /// RUnitBlueprintPhysics::ComputeDerivedQuantities (0x0051F260), as far as
@@ -597,7 +610,8 @@ void derive_physics(lua_State* L, int bp, const std::vector<NamedFootprint>& cla
     }
 
     const int footprint = push_section(L, bp, "Footprint");
-    derive_footprint(L, physics, footprint, classes);
+    const int alt = push_section(L, bp, "AltFootprint");
+    derive_footprints(L, physics, footprint, alt, classes);
     for (const auto& [skirt, offset, axis] :
          {std::array<const char*, 3>{"SkirtSizeX", "SkirtOffsetX", "SizeX"},
           std::array<const char*, 3>{"SkirtSizeZ", "SkirtOffsetZ", "SizeZ"}}) {
@@ -609,7 +623,7 @@ void derive_physics(lua_State* L, int bp, const std::vector<NamedFootprint>& cla
             set_number(L, physics, offset, 0);
         }
     }
-    lua_pop(L, 2); // Footprint, Physics
+    lua_pop(L, 3); // AltFootprint, Footprint, Physics
 }
 
 /// RUnitBlueprint::OnInitBlueprint (0x0051EA40): an aircraft can fly, its

@@ -76,8 +76,8 @@ Footprint sized(int x, int z) {
 }
 
 std::string class_of(const RetailClasses& r, const char* motion, int x, int z) {
-    const UnitFootprints f =
-        osc::blueprints::resolve_unit_footprints(r.classes(), sized(x, z), motion, "", 0);
+    const UnitFootprints f = osc::blueprints::resolve_unit_footprints(r.classes(), sized(x, z),
+                                                                      sized(x, z), motion, "", 0);
     return f.main_class < 0 ? "-" : r.classes()[static_cast<size_t>(f.main_class)].name;
 }
 
@@ -122,7 +122,7 @@ TEST_CASE("The class replaces a mobile unit's footprint whole", "[footprints]") 
     Footprint own = sized(4, 4);
     own.max_slope = 0.2f;
     const UnitFootprints f =
-        osc::blueprints::resolve_unit_footprints(r.classes(), own, "RULEUMT_Land", "", 0);
+        osc::blueprints::resolve_unit_footprints(r.classes(), own, own, "RULEUMT_Land", "", 0);
     CHECK(f.main.size_x == 5);
     CHECK(f.main.size_z == 5);
     CHECK(f.main.caps == oc::kLand);
@@ -135,7 +135,7 @@ TEST_CASE("The class replaces a mobile unit's footprint whole", "[footprints]") 
 
     // A flier keeps its own size, with AIR caps and no class.
     const UnitFootprints air =
-        osc::blueprints::resolve_unit_footprints(r.classes(), own, "RULEUMT_Air", "", 0);
+        osc::blueprints::resolve_unit_footprints(r.classes(), own, own, "RULEUMT_Air", "", 0);
     CHECK(air.main_class == -1);
     CHECK(air.main.caps == oc::kAir);
     CHECK(air.main.size_x == 4);
@@ -145,12 +145,19 @@ TEST_CASE("An AltMotionType has a footprint of its own, else the main one", "[fo
     RetailClasses r;
     // A land unit that also floats (AltMotionType Hover).
     const UnitFootprints f = osc::blueprints::resolve_unit_footprints(
-        r.classes(), sized(2, 2), "RULEUMT_Land", "RULEUMT_Hover", 0);
+        r.classes(), sized(2, 2), sized(2, 2), "RULEUMT_Land", "RULEUMT_Hover", 0);
     CHECK(r.classes()[static_cast<size_t>(f.main_class)].name == "Vehicle2x2");
     CHECK(r.classes()[static_cast<size_t>(f.alt_class)].name == "WaterLand2x2");
+    const UnitFootprints salem = osc::blueprints::resolve_unit_footprints(
+        r.classes(), sized(2, 8), sized(2, 6), "RULEUMT_AmphibiousFloating", "RULEUMT_Water", 0);
+    CHECK(r.classes()[static_cast<size_t>(salem.main_class)].name == "WaterLand5x5");
+    CHECK(r.classes()[static_cast<size_t>(salem.alt_class)].name == "Water4x4");
+    const UnitFootprints wide = osc::blueprints::resolve_unit_footprints(
+        r.classes(), sized(1, 1), sized(6, 6), "RULEUMT_Land", "RULEUMT_Water", 0);
+    CHECK(r.classes()[static_cast<size_t>(wide.alt_class)].name == "Water6x6");
     // One whose alt caps have no class falls back to the main footprint.
     const UnitFootprints g = osc::blueprints::resolve_unit_footprints(
-        r.classes(), sized(2, 2), "RULEUMT_Land", "RULEUMT_Special", 0);
+        r.classes(), sized(2, 2), sized(2, 2), "RULEUMT_Land", "RULEUMT_Special", 0);
     CHECK(g.alt == g.main);
     CHECK(g.alt_class == g.main_class);
 }
@@ -160,14 +167,16 @@ TEST_CASE("A structure stands where it may be built", "[footprints]") {
     Footprint own = sized(3, 3);
     own.min_water_depth = 1.5f;
     const UnitFootprints dock = osc::blueprints::resolve_unit_footprints(
-        r.classes(), own, "RULEUMT_None", "", oc::kWater | oc::kSub);
+        r.classes(), own, sized(4, 2), "RULEUMT_None", "", oc::kWater | oc::kSub);
     CHECK(dock.main_class == -1); // structures have no path class
     CHECK(dock.main.caps == (oc::kWater | oc::kSub));
     CHECK(dock.main.size_x == 3);
     CHECK(dock.main.min_water_depth == 1.5f);
+    CHECK(dock.alt == sized(4, 2));
+    CHECK(dock.alt_class == -1);
     // One that may stand on the seabed, with no MaxWaterDepth: any depth.
     const UnitFootprints extractor = osc::blueprints::resolve_unit_footprints(
-        r.classes(), sized(2, 2), "", "", oc::kLand | oc::kSeabed);
+        r.classes(), sized(2, 2), sized(2, 2), "", "", oc::kLand | oc::kSeabed);
     CHECK(extractor.main.max_water_depth == std::numeric_limits<osc::f32>::max());
 }
 

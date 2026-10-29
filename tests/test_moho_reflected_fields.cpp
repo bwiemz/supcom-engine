@@ -339,6 +339,47 @@ TEST_CASE("A mobile unit's footprint reads as its class of footprints.lua",
     )"));
 }
 
+TEST_CASE("A unit's AltFootprint reads as its alt motion type's class, else the main one's",
+          "[blueprints][moho-reflection]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        SpecFootprints {
+            {Name = 'Vehicle1x1', SizeX = 1, SizeZ = 1, Caps = 1, MaxWaterDepth = 0.05,
+             MaxSlope = 0.75, Flags = 0},
+            {Name = 'WaterLand5x5', SizeX = 5, SizeZ = 5, Caps = 9, MaxWaterDepth = 5,
+             MaxSlope = 0.75, Flags = 0},
+            {Name = 'Water4x4', SizeX = 4, SizeZ = 4, Caps = 8, MinWaterDepth = 1.5, Flags = 0},
+            {Name = 'Water6x6', SizeX = 6, SizeZ = 6, Caps = 8, MinWaterDepth = 1.5, Flags = 0},
+        }
+        local function reg(id, physics, extra)
+            local bp = extra or {}
+            bp.BlueprintId, bp.SizeX, bp.SizeZ, bp.Physics = id, 1.5, 5.4, physics
+            RegisterUnitBlueprint(bp)
+            return bp.AltFootprint, bp.Footprint
+        end
+        local alt, fp = reg('urs0201', {MotionType = 'RULEUMT_AmphibiousFloating', MaxSpeed = 1,
+                                        AltMotionType = 'RULEUMT_Water'},
+                            {Footprint = {SizeX = 2, SizeZ = 8}})
+        assert(fp.SizeX == 5 and fp.OccupancyCaps == 9, 'the main class')
+        assert(alt.SizeX == 4 and alt.SizeZ == 4 and alt.OccupancyCaps == 8 and
+               alt.MinWaterDepth == 1.5, 'its own 2x6 is a Water4x4: ' .. alt.SizeX)
+        alt, fp = reg('url0107', {MotionType = 'RULEUMT_Land', MaxSpeed = 1},
+                      {AltFootprint = {SizeX = 6, SizeZ = 6, Flags = 1}})
+        for _, key in {'SizeX', 'SizeZ', 'MaxSlope', 'MinWaterDepth', 'OccupancyCaps', 'Flags'} do
+            assert(alt[key] == fp[key], 'no AltMotionType: the main footprint, but ' .. key)
+        end
+        alt = reg('uea0102', {MotionType = 'RULEUMT_Air', MaxSpeed = 1,
+                              AltMotionType = 'RULEUMT_Land'})
+        assert(alt.SizeX == 2 and alt.SizeZ == 6 and alt.OccupancyCaps == 1,
+               'an aircraft keeps its own with the alt caps')
+        alt, fp = reg('ueb2101', {MotionType = 'RULEUMT_None'},
+                      {AltFootprint = {SizeX = 3, OccupancyCaps = 5, Flags = 1, MaxSlope = 0.5}})
+        assert(alt.SizeX == 3 and alt.SizeZ == 6 and alt.OccupancyCaps == 5 and alt.Flags == 1 and
+               alt.MaxSlope == 0.5 and alt.MinWaterDepth == 0, 'a structure keeps its own')
+        assert(fp.OccupancyCaps == 1, 'its main one is where it is built')
+    )"));
+}
+
 TEST_CASE("The engine reads a registered blueprint's flag enums as Moho writes them back",
           "[blueprints][moho-reflection]") {
     osc::lua::LuaState state;

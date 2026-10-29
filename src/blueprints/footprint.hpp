@@ -76,18 +76,22 @@ struct UnitFootprints {
 };
 
 /// Resolve a unit blueprint's footprints (Moho's RUnitBlueprintPhysics::
-/// ComputeDerivedQuantities). `own` is the blueprint's Footprint table (its
-/// size already rounded up from SizeX/SizeZ where it gives none), `motion`
-/// and `alt_motion` its Physics.MotionType and AltMotionType,
-/// `build_on_layer_caps` its BuildOnLayerCaps as layer bits.
+/// ComputeDerivedQuantities). `own` and `own_alt` are the blueprint's
+/// Footprint and AltFootprint tables (their sizes already rounded up from
+/// SizeX/SizeZ where they give none), `motion` and `alt_motion` its
+/// Physics.MotionType and AltMotionType, `build_on_layer_caps` its
+/// BuildOnLayerCaps as layer bits.
 /// - A mobile unit (MotionType not None) takes its caps from the motion
 ///   type; with any ground cap, the nearest class replaces its footprint
-///   whole. Its alt footprint is resolved the same way from AltMotionType,
-///   falling back to the main one.
+///   whole. Its alt footprint is its own with AltMotionType's caps, resolved
+///   the same way and falling back to the main one; without an
+///   AltMotionType it is the main one.
 /// - A structure (None) takes its caps from where it may be built; one that
-///   may stand on the seabed with no MaxWaterDepth has no depth limit.
+///   may stand on the seabed with no MaxWaterDepth has no depth limit. Its
+///   alt footprint stays its own.
 UnitFootprints resolve_unit_footprints(const std::vector<NamedFootprint>& classes,
-                                       const Footprint& own, std::string_view motion,
-                                       std::string_view alt_motion, u8 build_on_layer_caps);
+                                       const Footprint& own, const Footprint& own_alt,
+                                       std::string_view motion, std::string_view alt_motion,
+                                       u8 build_on_layer_caps);
 
 } // namespace osc::blueprints
