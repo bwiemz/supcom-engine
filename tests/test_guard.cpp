@@ -468,6 +468,23 @@ TEST_CASE("An engineer granted nothing regenerates no shield generator's bubble"
     }
 }
 
+TEST_CASE("On FAF's data an engineer regenerates a shield generator's bubble at the share of its "
+          "request granted",
+          "[guard]") {
+    for (const bool faf : {false, true}) {
+        INFO("FAF's exe " << faf);
+        ShieldAssist s(faf, 0.5);
+        for (int t = 0; t < 10; ++t) {
+            s.tick();
+        }
+        CHECK(s.eng->repair_target_id() == s.gen->entity_id());
+        CHECK(std::abs(s.eng->economy().resource_consumed - 0.25) < 1e-6);
+        const f32 before = s.bubble->health();
+        s.tick();
+        CHECK(std::abs(s.bubble->health() - before - (faf ? 0.25f : 1.0f)) < 1e-4f);
+    }
+}
+
 namespace {
 
 struct FactoryAtWork {

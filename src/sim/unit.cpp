@@ -2272,8 +2272,13 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
                     heal_amount *= 0.5f;
                 }
                 const f32 regen = script_number(L, *bubble, "RegenRate") * static_cast<f32>(dt);
+                // FA-Binary-Patches section/Fixes/ShieldRepairEfficiency.cpp
+                f32 repair = regen * build_rate_;
+                if (registry.faf_exe()) {
+                    repair *= efficiency;
+                }
                 bubble->set_health(
-                    std::min(bubble->max_health(), bubble->health() + regen * build_rate_ / mult));
+                    std::min(bubble->max_health(), bubble->health() + repair / mult));
             }
         }
     }
