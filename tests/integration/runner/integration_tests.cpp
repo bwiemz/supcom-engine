@@ -11484,9 +11484,9 @@ void test_range(TestContext& ctx) {
         IssueMove({__osc_queued}, __osc_at(690, 100.5))
         IssueGuard({__osc_queued}, __osc_acu)
 
-        -- Footprints: a blueprint without one rounds its size up (a T2
-        -- tank is 1.2 long: 2 cells); a prop has one too, so an engineer
-        -- reaches an oak grove (8 by 10) from 16.
+        -- Footprints: a mobile unit's is its class's (a T2 tank's 1x2 is a
+        -- Vehicle1x1, as Unit.lua's GetFootPrintSize reads it); a prop has
+        -- one too, so an engineer reaches an oak grove (8 by 10) from 16.
         __osc_long = __osc_spawn('uel0202', 'ARMY_1', 700.5, 140.5)
         __osc_cutter = __osc_spawn('uel0105', 'ARMY_1', 726, 110.5)
         __osc_grove = CreatePropHPR('/env/evergreen/props/trees/groups/oak01_group1_prop.bp', 740,
@@ -11520,8 +11520,8 @@ void test_range(TestContext& ctx) {
         local n = table.getn(__osc_queued:GetCommandQueue())
         if n ~= 2 then error('its queue holds ' .. n) end
     )");
-    lua_check("Test 5: footprints round up, and props have them", R"(
-        if __osc_long:GetFootPrintSize() ~= 2 then error('the tank spans ' .. __osc_long:GetFootPrintSize()) end
+    lua_check("Test 5: a tank's footprint is its class's, and props have them", R"(
+        if __osc_long:GetFootPrintSize() ~= 1 then error('the tank spans ' .. __osc_long:GetFootPrintSize()) end
         if not __osc_cutter:IsUnitState('Reclaiming') then error('the grove is not being reclaimed') end
         if __osc_from(__osc_cutter, 726, 110.5) > 0.1 then error('the cutter moved') end
     )");

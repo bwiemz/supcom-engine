@@ -1,6 +1,7 @@
 #include "renderer/range_overlays.hpp"
 
 #include "blueprints/blueprint_store.hpp"
+#include "blueprints/flag_enums.hpp"
 #include "sim/blueprint_categories.hpp"
 
 #include <algorithm>
@@ -42,17 +43,6 @@ f32 max_of(lua_State* L, int index, const char* key) {
     const f32 v = number_at(L, lua_gettop(L), "Max");
     lua_pop(L, 1);
     return v;
-}
-
-/// RULEUTC_* names' bits, as the script bits number them
-u32 toggle_cap_bit(std::string_view name) {
-    static constexpr std::array<std::string_view, 9> kToggles = {
-        "RULEUTC_ShieldToggle",  "RULEUTC_WeaponToggle",     "RULEUTC_JammingToggle",
-        "RULEUTC_IntelToggle",   "RULEUTC_ProductionToggle", "RULEUTC_StealthToggle",
-        "RULEUTC_GenericToggle", "RULEUTC_SpecialToggle",    "RULEUTC_CloakToggle"};
-    for (u32 i = 0; i < kToggles.size(); ++i)
-        if (kToggles[i] == name) return 1u << i;
-    return 0;
 }
 
 /// Moho's ResolvePositiveRadius
@@ -229,17 +219,10 @@ RangeBlueprint read_range_blueprint(lua_State* L, int index) {
         lua_pop(L, 1);
     }
     if (push_table(L, index, "General")) {
-        if (push_table(L, lua_gettop(L), "ToggleCaps")) {
-            const int caps = lua_gettop(L);
-            lua_pushnil(L);
-            while (lua_next(L, caps) != 0) {
-                if (lua_type(L, -2) == LUA_TSTRING && lua_toboolean(L, -1))
-                    bp.toggle_caps |= toggle_cap_bit(lua_tostring(L, -2));
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1);
+        lua_pushstring(L, "ToggleCaps");
+        lua_rawget(L, -2);
+        bp.toggle_caps = blueprints::read_flag_enum(L, -1, blueprints::kToggleCapsEnum).value_or(0);
+        lua_pop(L, 2);
     }
     return bp;
 }

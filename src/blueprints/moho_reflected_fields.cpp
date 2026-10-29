@@ -1,5 +1,7 @@
 #include "blueprints/moho_reflected_fields.hpp"
 
+#include "blueprints/flag_enums.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -319,24 +321,28 @@ constexpr ReflectedField kProjectileFields[] = {
     num("Physics", "TurnRateRange", 0, kProjectilePhysicsCtor),
 };
 
-constexpr const char* kFlagEnum =
-    "a flag enum: Moho writes back its registered name, or the number for "
-    "several flags, where the engine's readers take the .bp's table";
+struct FlagField {
+    const char* section;
+    const char* name;
+    const FlagEnum* type;
+    u32 value; ///< its constructor's
+};
+
+constexpr FlagField kUnitFlagFields[] = {
+    {"General", "CommandCaps", &kCommandCapsEnum, 0},
+    {"General", "ToggleCaps", &kToggleCapsEnum, 0},
+    {"Physics", "BuildOnLayerCaps", &kLayerEnum, occupancy::kLand},
+};
 
 constexpr const char* kSizeReason =
     "Moho's 1; every retail and FAF unit gives it, and the engine reads an absent one as no "
     "collision box (blueprint_collision_shape), which unit tests' blueprints rely on";
 
 constexpr UnfilledField kUnitUnfilled[] = {
-    {"General", "CommandCaps", kFlagEnum},
-    {"General", "ToggleCaps", kFlagEnum},
-    {"Physics", "BuildOnLayerCaps", kFlagEnum},
     {"", "CollisionShape", "an enum whose registered names the engine has not checked"},
     {"", "SizeX", kSizeReason},
     {"", "SizeY", kSizeReason},
     {"", "SizeZ", kSizeReason},
-    {"Footprint", "OccupancyCaps", "derived from the motion type; nothing reads it"},
-    {"Footprint", "Flags", "derived from the motion type; nothing reads it"},
     {"", "AltFootprint", "the footprint, or the alt motion type's class; nothing reads it"},
     {"Display", "MeshBlueprint",
      "Moho completes it against Source; the mesh cache resolves an absent one itself"},
@@ -424,6 +430,14 @@ void set_number(lua_State* L, int t, const char* name, lua_Number value) {
 /// t[name] as Moho holds a float: what a derived value is computed in.
 f32 float_at(lua_State* L, int t, const char* name, f32 fallback) {
     return static_cast<f32>(number_at(L, t, name, fallback));
+}
+
+std::string string_at(lua_State* L, int t, const char* name) {
+    lua_pushstring(L, name);
+    lua_rawget(L, t);
+    std::string s = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+    return s;
 }
 
 void push_default(lua_State* L, const ReflectedField& f) {
@@ -517,13 +531,59 @@ void derive_entity(lua_State* L, int bp) {
     }
 }
 
+/// Each flag enum as its lexical form; Moho keeps the constructor's value
+/// for one it can't read.
+void write_flag_enums(lua_State* L, int bp) {
+    for (const FlagField& f : kUnitFlagFields) {
+        const int section = push_section(L, bp, f.section);
+        lua_pushstring(L, f.name);
+        lua_rawget(L, section);
+        const u32 value = read_flag_enum(L, -1, *f.type).value_or(f.value);
+        lua_pop(L, 1);
+        const std::string lexical = flag_enum_lexical(*f.type, value);
+        lua_pushstring(L, f.name);
+        lua_pushlstring(L, lexical.data(), lexical.size());
+        lua_rawset(L, section);
+        lua_pop(L, 1);
+    }
+}
+
+/// The footprint ComputeDerivedQuantities leaves (resolve_unit_footprints).
+void derive_footprint(lua_State* L, int physics, int footprint,
+                      const std::vector<NamedFootprint>& classes) {
+    const auto byte = [](lua_Number v) {
+        return static_cast<u8>(std::clamp(std::lround(v), 0L, 255L));
+    };
+    Footprint own;
+    own.size_x = byte(number_at(L, footprint, "SizeX", 0));
+    own.size_z = byte(number_at(L, footprint, "SizeZ", 0));
+    own.flags = byte(number_at(L, footprint, "Flags", 0));
+    own.max_slope = float_at(L, footprint, "MaxSlope", 0);
+    own.min_water_depth = float_at(L, footprint, "MinWaterDepth", 0);
+    lua_pushstring(L, "BuildOnLayerCaps");
+    lua_rawget(L, physics);
+    const u32 layers = read_flag_enum(L, -1, kLayerEnum).value_or(occupancy::kLand);
+    lua_pop(L, 1);
+    const UnitFootprints resolved =
+        resolve_unit_footprints(classes, own, string_at(L, physics, "MotionType"),
+                                string_at(L, physics, "AltMotionType"), static_cast<u8>(layers));
+    const Footprint& fp = resolved.main;
+    if (resolved.main_class >= 0) {
+        set_number(L, footprint, "SizeX", fp.size_x);
+        set_number(L, footprint, "SizeZ", fp.size_z);
+        set_number(L, footprint, "MaxSlope", fp.max_slope);
+        set_number(L, footprint, "MinWaterDepth", fp.min_water_depth);
+    }
+    set_number(L, footprint, "OccupancyCaps", fp.caps);
+    set_number(L, footprint, "Flags", fp.flags);
+}
+
 /// RUnitBlueprintPhysics::ComputeDerivedQuantities (0x0051F260), as far as
-/// the table shows it: a moving unit's reverse speed, the attack elevation
-/// and the catch-up acceleration. An absent skirt is the footprint, with no
-/// offset (the footprint class a mobile unit resolves to later is
-/// resolve_footprints'). Moho's MotionType None for a unit with no MaxSpeed
-/// is left to the readers.
-void derive_physics(lua_State* L, int bp) {
+/// the table shows it: a moving unit's reverse speed, the attack elevation,
+/// the catch-up acceleration, the footprint, and a skirt at least that
+/// footprint, never offset outward. Moho's MotionType None for a unit with
+/// no MaxSpeed is left to the readers.
+void derive_physics(lua_State* L, int bp, const std::vector<NamedFootprint>& classes) {
     const int physics = push_section(L, bp, "Physics");
     const f32 max_speed = float_at(L, physics, "MaxSpeed", 0);
     if (max_speed != 0.0f && float_at(L, physics, "MaxSpeedReverse", -1) < 0.0f)
@@ -536,15 +596,18 @@ void derive_physics(lua_State* L, int bp) {
                             float_at(L, physics, "MaxBrake", 0)));
     }
 
-    // Mobile units have none, and the AI's AIBuildAdjacency reads
-    // Physics.SkirtSizeX unguarded on whatever it builds beside.
     const int footprint = push_section(L, bp, "Footprint");
+    derive_footprint(L, physics, footprint, classes);
     for (const auto& [skirt, offset, axis] :
          {std::array<const char*, 3>{"SkirtSizeX", "SkirtOffsetX", "SizeX"},
           std::array<const char*, 3>{"SkirtSizeZ", "SkirtOffsetZ", "SizeZ"}}) {
-        if (!is_number(L, physics, skirt))
-            set_number(L, physics, skirt, std::max(1.0, number_at(L, footprint, axis, 1)));
-        if (!is_number(L, physics, offset)) set_number(L, physics, offset, 0);
+        const lua_Number size = std::max(1.0, number_at(L, footprint, axis, 1));
+        if (number_at(L, physics, skirt, 0) < size) {
+            set_number(L, physics, skirt, size);
+        }
+        if (!is_number(L, physics, offset) || number_at(L, physics, offset, 0) > 0) {
+            set_number(L, physics, offset, 0);
+        }
     }
     lua_pop(L, 2); // Footprint, Physics
 }
@@ -619,10 +682,11 @@ std::span<const UnfilledField> unit_unfilled_fields() {
     return kUnitUnfilled;
 }
 
-void apply_unit_reflection(lua_State* L, int bp) {
+void apply_unit_reflection(lua_State* L, int bp, const std::vector<NamedFootprint>& classes) {
     lua_checkstack(L, 8);
     default_upgrade_links(L, bp);
     fill(L, bp, kUnitFields);
+    write_flag_enums(L, bp);
     normalize_res_id(L, bp, "StrategicIconName");
 
     lua_pushstring(L, "Weapon");
@@ -646,7 +710,7 @@ void apply_unit_reflection(lua_State* L, int bp) {
     lua_pop(L, 1); // Weapon
 
     derive_entity(L, bp);
-    derive_physics(L, bp);
+    derive_physics(L, bp, classes);
     derive_unit(L, bp);
 }
 

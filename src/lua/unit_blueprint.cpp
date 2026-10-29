@@ -1,6 +1,7 @@
 #include "lua/unit_blueprint.hpp"
 
 #include "blueprints/blueprint_store.hpp"
+#include "blueprints/flag_enums.hpp"
 #include "blueprints/footprint.hpp"
 #include "lua/sim_bindings.hpp"
 #include "map/terrain.hpp"
@@ -1205,18 +1206,17 @@ static void read_command_caps(lua_State* L, const BlueprintStore& store,
         for (const bool command : {true, false}) {
             lua_pushstring(L, command ? "CommandCaps" : "ToggleCaps");
             lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushnil(L);
-                while (lua_next(L, -2) != 0) {
-                    if (lua_type(L, -2) == LUA_TSTRING && lua_toboolean(L, -1)) {
-                        const std::string cap = lua_tostring(L, -2);
-                        if (command) unit.add_command_cap(cap);
-                        else unit.add_toggle_cap(cap);
-                    }
-                    lua_pop(L, 1); // value; key stays for lua_next
+            const blueprints::FlagEnum& caps =
+                command ? blueprints::kCommandCapsEnum : blueprints::kToggleCapsEnum;
+            const u32 value = blueprints::read_flag_enum(L, -1, caps).value_or(0);
+            for (const char* cap : blueprints::flag_enum_tokens(caps, value)) {
+                if (command) {
+                    unit.add_command_cap(cap);
+                } else {
+                    unit.add_toggle_cap(cap);
                 }
             }
-            lua_pop(L, 1); // caps table (or nil)
+            lua_pop(L, 1);
         }
         lua_pushstring(L, "SelectionPriority");
         lua_rawget(L, -2);
