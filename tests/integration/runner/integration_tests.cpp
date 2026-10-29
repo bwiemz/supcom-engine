@@ -10683,12 +10683,13 @@ void test_defence(TestContext& ctx) {
         function __osc_at(x, z) return {x, GetTerrainHeight(x, z), z} end
         -- Every shot a unit's weapons fire, followed each tick.
         __osc_shots = {}
-        function __osc_watch(u)
+        function __osc_watch(u, method)
+            method = method or 'CreateProjectileAtMuzzle'
             u.__osc_fired = 0
             for i = 1, u:GetWeaponCount() do
                 local w = u:GetWeapon(i)
-                local create = w.CreateProjectileAtMuzzle
-                w.CreateProjectileAtMuzzle = function(self, muzzle)
+                local create = w[method]
+                w[method] = function(self, muzzle)
                     local proj = create(self, muzzle)
                     if proj then
                         u.__osc_fired = u.__osc_fired + 1
@@ -10730,9 +10731,7 @@ void test_defence(TestContext& ctx) {
     )");
 
     // A nuke launched at power generators two anti-nukes cover, each holding
-    // one missile, all on the north-east shore's dry ground: a nuke skims no
-    // surface (CollideSurface false), so one launched from the seabed would
-    // stay on the Water layer, which the anti-nukes don't fire at, as Moho's.
+    // one missile.
     lua_check("setup: a nuke, and anti-nukes about its target", R"(
         __osc_s = __osc_watch(__osc_spawn('ueb2305', 'ARMY_1', 960, 40))
         __osc_s:GiveNukeSiloAmmo(1)
@@ -10769,6 +10768,45 @@ void test_defence(TestContext& ctx) {
         if fired ~= 1 then error(fired .. ' interceptors were fired') end
         local left = __osc_d1:GetTacticalSiloAmmoCount() + __osc_d2:GetTacticalSiloAmmoCount()
         if left ~= 1 then error(left .. ' interceptors are left') end
+    )");
+
+    // UES0304_script.lua's CreateProjectileAtMuzzle returns nothing.
+    lua_check("setup: a strategic sub's nuke", R"(
+        __osc_sub_nuker = __osc_watch(CreateUnitHPR('ues0304', 'ARMY_1', 491.5,
+            GetSurfaceHeight(491.5, 314.5), 314.5, 0, 0, 0), 'CreateProjectileForWeapon')
+        __osc_sub_nuker:GiveNukeSiloAmmo(1)
+        for _, d in {__osc_d1, __osc_d2} do
+            if d:GetTacticalSiloAmmoCount() == 0 then d:GiveTacticalSiloAmmo(1) end
+        end
+        __osc_intercepted = __osc_d1.__osc_fired + __osc_d2.__osc_fired
+    )");
+    tick_until(
+        [&] { run(1); }, "setup: the sub is under the water", 80,
+        [&] { return lua_true(ctx.lua_state, "__osc_sub_nuker:GetCurrentLayer() == 'Sub'"); });
+    lua_check("setup: the sub launches", "IssueNuke({__osc_sub_nuker}, __osc_zero)");
+    tick_until([&] { run(1); }, "the sub's nuke is launched and is gone", 1000,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    local nuke = __osc_shot_of(__osc_sub_nuker, 1)
+                    return nuke ~= nil and nuke.gone ~= nil
+                end)()
+            )");
+               });
+    lua_check("Test 2b: an anti-nuke shot the sub's nuke down, and nothing about its target was "
+              "harmed",
+              R"(
+        local nuke = __osc_shot_of(__osc_sub_nuker, 1)
+        local at = nuke.path[1]
+        if at[2] >= GetSurfaceHeight(at[1], at[3]) then error('it was launched above the water') end
+        if nuke.impact then error('the nuke impacted: ' .. nuke.impact) end
+        for i, v in __osc_victims do
+            if v:IsDead() or v:GetHealth() < v:GetMaxHealth() then error('victim ' .. i .. ' was hit') end
+        end
+    )");
+    lua_check("Test 2c: only one anti-nuke fired at the sub's", R"(
+        local fired = __osc_d1.__osc_fired + __osc_d2.__osc_fired - __osc_intercepted
+        if fired ~= 1 then error(fired .. ' interceptors were fired') end
     )");
 
     // Tactical missiles at power generators: one undefended, one by a UEF

@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 97; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 98; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -128,6 +128,8 @@ constexpr u32 kVersion = 97; // 2: entities' wanted loops (M216b); 3: emitter ov
                              //     again every tick)
                              // 96: units' lean into a dive (Moho's CalcRollHack)
                              // 97: aim controllers' reset pose in ticks; weapons' aim reset ticks
+                             // 98: no projectile collision switch apart from its surface and
+                             //     entity ones (SetCollision sets both)
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a

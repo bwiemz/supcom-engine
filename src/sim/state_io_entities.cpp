@@ -2032,7 +2032,6 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.b(p.velocity_align);
     w.vec3(p.angular_velocity);
     w.vec3(p.scale_velocity);
-    w.b(p.collision_enabled);
     w.b(p.collide_surface);
     w.b(p.collide_entity);
     w.b(p.stay_underwater);
@@ -2091,7 +2090,6 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.velocity_align = r.b();
     p.angular_velocity = r.vec3();
     p.scale_velocity = r.vec3();
-    p.collision_enabled = r.b();
     p.collide_surface = r.b();
     p.collide_entity = r.b();
     p.stay_underwater = r.b();

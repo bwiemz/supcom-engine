@@ -111,7 +111,6 @@ public:
     bool velocity_align = false;     // SetVelocityAlign
     Vector3 angular_velocity;        // SetLocalAngularVelocity
     Vector3 scale_velocity;          // SetScaleVelocity: scale (x UniformScale) change per second
-    bool collision_enabled = true;   // SetCollision
     bool collide_surface = true;     // SetCollideSurface: the terrain and water
     bool collide_entity = true;      // SetCollideEntity: units, props, shields
     bool stay_underwater = false;    // StayUnderwater

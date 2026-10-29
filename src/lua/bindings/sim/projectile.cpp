@@ -402,9 +402,14 @@ static int proj_SetLocalAngularVelocity(lua_State* L) {
 
 // --- Projectile collision + CreateChildProjectile (M51) ---
 
+// Both flags, as Moho's (faf-re cfunc_ProjectileSetCollisionL)
 static int proj_SetCollision(lua_State* L) {
     auto* p = check_projectile(L);
-    if (p) p->collision_enabled = (lua_toboolean(L, 2) != 0);
+    if (p) {
+        const bool on = lua_toboolean(L, 2) != 0;
+        p->collide_surface = on;
+        p->collide_entity = on;
+    }
     lua_pushvalue(L, 1); return 1; // return self for chaining
 }
 
