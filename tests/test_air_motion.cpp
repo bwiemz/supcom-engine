@@ -741,3 +741,20 @@ TEST_CASE("An aircraft docking at a staging platform is taken aboard on the tick
         "the plane is taken aboard", 400, [&] { return plane.transport_id() == pad.entity_id(); });
     CHECK(aboard == settled + 1);
 }
+
+TEST_CASE("An aircraft's patrol leg ends within its air speed in cells of its point",
+          "[air_motion][patrol]") {
+    World w;
+    Unit& a = w.make("gunship", 30.0f, 128.0f);
+    osc::sim::UnitCommand patrol;
+    patrol.type = osc::sim::CommandType::Patrol;
+    patrol.target_pos = {130.0f, 10.0f, 128.0f};
+    a.push_command(patrol, true);
+    tick_until([&] { w.sim.tick(); }, "the patrol ends", 600,
+               [&] { return a.command_queue().empty(); });
+    const f32 dx = 130.0f - a.position().x;
+    const f32 dz = 128.0f - a.position().z;
+    const f32 away = std::sqrt(dx * dx + dz * dz);
+    CHECK(away > 3.0f);
+    CHECK(away <= 13.0f);
+}

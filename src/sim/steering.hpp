@@ -39,6 +39,10 @@ void collide_units(SimState& sim, Unit& u);
 /// with it that no longer hold).
 void steer_stop(SimState& sim, Unit& u);
 
+/// With Moho pathing, CAiSteeringImpl::SetWaypoints with none: a unit on a spline brakes
+/// along it to a stop (CAiPathSpline::Update(3)), its meetings checked afresh.
+void steer_no_waypoints(SimState& sim, Unit& u);
+
 /// Moho's Unit::IsSameFormationLayerWith: in one formation, and neither
 /// attacking.
 bool same_formation_layer(const Unit& a, const Unit& b);

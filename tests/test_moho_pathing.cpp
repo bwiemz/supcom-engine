@@ -4,6 +4,7 @@
 // each target and refused ground it won't fit.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "blueprints/blueprint_store.hpp"
 #include "blueprints/footprint.hpp"
@@ -672,4 +673,85 @@ TEST_CASE("With Moho pathing a unit walled in where it stands gives its move up 
     CHECK(tank.navigator().moho_path().state() == osc::sim::path::PathNavigator::State::Failed);
     CHECK(step_of(w, tank) == 0.0f);
     CHECK(tank.command_queue().empty());
+}
+
+namespace {
+
+void patrol(Unit& u, osc::sim::CommandType type, f32 x, f32 z, bool clear) {
+    osc::sim::UnitCommand cmd;
+    cmd.type = type;
+    cmd.target_pos = {x, 10.0f, z};
+    u.push_command(cmd, clear);
+}
+
+} // namespace
+
+TEST_CASE("A patrol leg ends on a run of its task within the unit's top speed in cells of its "
+          "point",
+          "[patrol][pathing]") {
+    const bool moho = GENERATE(false, true);
+    const int points = GENERATE(1, 2);
+    INFO("moho " << moho << ", points " << points);
+    World w(moho);
+    Unit* tank = w.make("tank", 20.5f, 30.5f);
+    patrol(*tank, osc::sim::CommandType::Patrol, 60.5f, 30.5f, true);
+    if (points == 2) {
+        patrol(*tank, osc::sim::CommandType::Patrol, 20.5f, 30.5f, false);
+    }
+    tick_until([&] { w.sim.tick(); }, "the first leg ends", 400,
+               [&] {
+                   return tank->command_queue().empty() ||
+                          tank->command_queue().front().target_pos.x != 60.5f;
+               });
+    const f32 short_of = 60.5f - tank->position().x;
+    CHECK(short_of > 1.0f);
+    CHECK(short_of <= 4.5f);
+    if (points == 1) {
+        CHECK(tank->command_queue().empty());
+    } else {
+        REQUIRE(tank->command_queue().size() == 2);
+        CHECK(tank->command_queue().back().target_pos.x == 60.5f);
+    }
+}
+
+TEST_CASE("A patrol leg lasts to its task's fourth run", "[patrol][pathing]") {
+    const bool moho = GENERATE(false, true);
+    INFO("moho " << moho);
+    World w(moho);
+    Unit* tank = w.make("tank", 20.5f, 30.5f);
+    patrol(*tank, osc::sim::CommandType::Patrol, 22.5f, 30.5f, true);
+    for (int t = 0; t < 18; ++t) {
+        w.sim.tick();
+    }
+    CHECK_FALSE(tank->command_queue().empty());
+    w.sim.tick();
+    CHECK(tank->command_queue().empty());
+}
+
+TEST_CASE("An attack-move ends as its patrol task's leg does, short of its point",
+          "[patrol][attack-move][pathing]") {
+    const bool moho = GENERATE(false, true);
+    INFO("moho " << moho);
+    World w(moho);
+    Unit* tank = w.make("tank", 20.5f, 30.5f);
+    patrol(*tank, osc::sim::CommandType::AggressiveMove, 60.5f, 30.5f, true);
+    int ticks = 0;
+    w.run(*tank, "the attack-move ends", 400, ticks);
+    const f32 short_of = 60.5f - tank->position().x;
+    CHECK(short_of > 1.0f);
+    CHECK(short_of <= 4.5f);
+}
+
+TEST_CASE("With Moho pathing a patrol leg's end brakes its unit along its spline",
+          "[patrol][pathing]") {
+    World w(true);
+    Unit* tank = w.make("tank", 20.5f, 30.5f);
+    patrol(*tank, osc::sim::CommandType::Patrol, 60.5f, 30.5f, true);
+    int ticks = 0;
+    w.run(*tank, "the patrol ends", 400, ticks);
+    const f32 ended = tank->position().x;
+    for (int t = 0; t < 30; ++t) {
+        w.sim.tick();
+    }
+    CHECK(tank->position().x - ended > 1.2f);
 }

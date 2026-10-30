@@ -1705,8 +1705,9 @@ private:
     /// A build its army's unit cap stopped: the order `command_id` (if
     /// still at the head -- the brain's scripts ran) waits kTaskRetryTicks.
     OrderStep hold_for_unit_cap(u32 command_id);
-    /// Go to the point, then queue it again at the back.
+    /// A leg of Moho's CUnitPatrolTask; done, the order goes to the back, or ends.
     OrderStep order_patrol(UnitCommand& cmd, SimContext& ctx);
+    bool patrol_leg_reached(const UnitCommand& cmd) const;
     /// An enemy a patrol on leg `cmd` breaks off to attack (Moho's
     /// CUnitPatrolTask::FindTarget), or null.
     Entity* find_patrol_target(const UnitCommand& cmd, SimContext& ctx);

@@ -609,7 +609,13 @@ bool Unit::nav_update(f32 speed_cap) {
 
 bool Unit::nav_step(f64 dt, const map::Terrain* terrain) {
     navigator_.set_ended(false);
-    if (!std::exchange(nav_requested_, false) || !navigator_.busy()) {
+    const bool requested = std::exchange(nav_requested_, false);
+    // Its navigator idle, its motion still follows the spline its steering brakes along.
+    if (!navigator_.busy() && navigator_.has_motion_node() && !is_air_unit()) {
+        navigator_.update(*this, nav_speed(), dt, terrain);
+        return true;
+    }
+    if (!requested || !navigator_.busy()) {
         return false;
     }
     if (is_air_unit()) {

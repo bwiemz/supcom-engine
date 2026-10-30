@@ -157,8 +157,8 @@ TEST_CASE("A patrol clicked once runs between the click and where it was given",
     tick_until(
         [&] {
             sim.tick();
-            there |= u->position().x > 58.0f;
-            back |= there && u->position().x < 12.0f;
+            there |= u->position().x > 53.0f;
+            back |= there && u->position().x < 17.0f;
         },
         "the patrol reaches the click and comes back", 600, [&] { return back; });
 }

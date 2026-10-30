@@ -114,10 +114,10 @@ void Navigator::set_goal(const Vector3& pos) {
     status_ = Status::Moving;
 }
 
-void Navigator::abort_move() {
+void Navigator::abort_move(bool keep_spline) {
     ended_ = false;
     air_hold_set_ = false;
-    reset_moho();
+    reset_moho(keep_spline);
     status_ = Status::Idle;
     waypoints_.clear();
     waypoint_index_ = 0;
@@ -185,14 +185,16 @@ void Navigator::hold(int ticks, EntityId for_id) {
 
 bool Navigator::update(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
     if (unit.is_air_unit()) return slide(unit, max_speed, dt, terrain);
-    if (moho_pending_ || moho_active_) {
+    if (moho_pending_ || moho_active_ || motion_node_set_) {
         return drive_moho(unit, max_speed, dt, terrain);
     }
     return drive(unit, max_speed, dt, terrain);
 }
 
-void Navigator::reset_moho() {
-    spline_stop();
+void Navigator::reset_moho(bool keep_spline) {
+    if (!keep_spline) {
+        spline_stop();
+    }
     steer_dest_set_ = false;
     waypoint_refresh_ = false;
     moho_.reset();
@@ -355,7 +357,7 @@ void Navigator::navigate(Unit& unit) {
 }
 
 bool Navigator::drive_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
-    if (!moho_active_ || waypoints_.empty()) {
+    if ((!moho_active_ || waypoints_.empty()) && !motion_node_set_) {
         return true;
     }
     const Status was = status_;

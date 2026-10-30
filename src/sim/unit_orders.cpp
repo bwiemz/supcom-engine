@@ -15,6 +15,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/prepare_move.hpp"
 #include "sim/script_class.hpp"
+#include "sim/steering.hpp"
 #include "sim/work_range.hpp"
 #include "map/terrain.hpp"
 
@@ -1159,83 +1160,127 @@ OrderStep Unit::end_factory_build_order(UnitCommand& cmd) {
 }
 
 OrderStep Unit::order_patrol(UnitCommand& cmd, SimContext& ctx) {
+    const auto drive = [&] {
+        if (navigator_.status() == Navigator::Status::WaitingForPath) {
+            set_path_goal(cmd.target_pos, ctx);
+        }
+        nav_update(cmd.speed_cap);
+        return OrderStep::Hold;
+    };
     // Moho's CUnitPatrolTask::Execute, every 6 ticks (it returns 7).
     if (cmd.patrol_scan > 0) {
         --cmd.patrol_scan;
-    } else {
-        cmd.patrol_scan = 5;
-        // Moho's patrol task returns 7 with its new task above it, which so
-        // starts 6 ticks on; done, it hands straight back to the patrol's Execute.
-        // An aircraft goes at once: nothing here flies it while it would wait.
-        const auto break_off = [&](UnitCommand order) {
-            order.command_id = cmd.command_id;
-            order.from_patrol = true;
-            order.patrol_scan = is_air_unit() ? 0 : 5;
-            cmd.patrol_scan = 0;
-            navigator_.abort_move();
-            command_queue_.push_front(
-                std::move(order)); // cmd stays valid: a deque keeps references
-            return OrderStep::Hold;
-        };
-        if (Unit* pad = find_platform(ctx)) {
-            // As Moho's patrol task does (TransportResetReservation): a
-            // carrier's landing points go round again from the first, so two
-            // patrols breaking off to one carrier moments apart can share a
-            // point.
-            pad->reset_storage_reservation();
-            UnitCommand refuel;
-            refuel.type = CommandType::Dock;
-            refuel.target_id = pad->entity_id();
-            refuel.target_pos = pad->position();
-            return break_off(std::move(refuel));
+        return drive();
+    }
+    cmd.patrol_scan = 5;
+    ++cmd.patrol_runs;
+    // Moho's patrol task returns 7 with its new task above it, which so
+    // starts 6 ticks on; done, it hands straight back to the patrol's Execute.
+    // An aircraft goes at once: nothing here flies it while it would wait.
+    const auto break_off = [&](UnitCommand order) {
+        order.command_id = cmd.command_id;
+        order.from_patrol = true;
+        order.patrol_scan = is_air_unit() ? 0 : 5;
+        cmd.patrol_scan = 0;
+        cmd.patrol_moving = false;
+        navigator_.abort_move();
+        command_queue_.push_front(std::move(order)); // cmd stays valid: a deque keeps references
+        return OrderStep::Hold;
+    };
+    if (Unit* pad = find_platform(ctx)) {
+        // As Moho's patrol task does (TransportResetReservation): a
+        // carrier's landing points go round again from the first, so two
+        // patrols breaking off to one carrier moments apart can share a
+        // point.
+        pad->reset_storage_reservation();
+        UnitCommand refuel;
+        refuel.type = CommandType::Dock;
+        refuel.target_id = pad->entity_id();
+        refuel.target_pos = pad->position();
+        return break_off(std::move(refuel));
+    }
+    if (Entity* enemy = find_patrol_target(cmd, ctx)) {
+        UnitCommand attack;
+        attack.type = CommandType::Attack;
+        attack.target_id = enemy->entity_id();
+        attack.target_pos = enemy->position();
+        ctx.sim->pick_target_point(attack);
+        // Moho's patrol task keeps where it broke off (GuardedPos): the
+        // fight's leash runs from there.
+        attack.leash_anchor_pos = position();
+        return break_off(std::move(attack));
+    }
+    if (Entity* work = find_patrol_work(cmd, ctx)) {
+        UnitCommand order;
+        order.target_id = work->entity_id();
+        order.target_pos = work->position();
+        if (work->is_unit() && ctx.sim->is_ally(army(), work->army())) {
+            order.type = CommandType::Repair;
+        } else {
+            order.type = CommandType::Reclaim;
+            cmd.patrol_claimed.push_back(work->entity_id());
         }
-        if (Entity* enemy = find_patrol_target(cmd, ctx)) {
-            UnitCommand attack;
-            attack.type = CommandType::Attack;
-            attack.target_id = enemy->entity_id();
-            attack.target_pos = enemy->position();
-            ctx.sim->pick_target_point(attack);
-            // Moho's patrol task keeps where it broke off (GuardedPos): the
-            // fight's leash runs from there.
-            attack.leash_anchor_pos = position();
-            return break_off(std::move(attack));
-        }
-        if (Entity* work = find_patrol_work(cmd, ctx)) {
-            UnitCommand order;
-            order.target_id = work->entity_id();
-            order.target_pos = work->position();
-            if (work->is_unit() && ctx.sim->is_ally(army(), work->army())) {
-                order.type = CommandType::Repair;
+        return break_off(std::move(order));
+    }
+    if (cmd.patrol_moving && cmd.patrol_runs > 3 && patrol_leg_reached(cmd)) {
+        // ~CUnitPatrolTask aborts the move of a unit that moved this tick (AbortMove).
+        const Vector3& now = position();
+        const Vector3& before = last_position();
+        if (now.x != before.x || now.y != before.y || now.z != before.z) {
+            if (is_air_unit()) {
+                stop_air();
             } else {
-                order.type = CommandType::Reclaim;
-                cmd.patrol_claimed.push_back(work->entity_id());
+                navigator_.abort_move(true);
+                navigator_.set_speed_through_goal(false);
+                if (ctx.sim) {
+                    steer_no_waypoints(*ctx.sim, *this);
+                }
             }
-            return break_off(std::move(order));
         }
-    }
-    if ((!navigator_.is_moving() && !navigator_.ended()) ||
-        navigator_.goal().x != cmd.target_pos.x || navigator_.goal().z != cmd.target_pos.z) {
-        set_path_goal(cmd.target_pos, ctx);
-    }
-    if (!nav_update(cmd.speed_cap)) {
-        // An attack-move is one leg: Moho's dispatch removes the order when
-        // its patrol task is done.
+        // Moho's dispatch removes an attack-move whose patrol task is done.
         if (cmd.type == CommandType::AggressiveMove) {
             command_queue_.pop_front();
             return OrderStep::Next;
         }
-        // Reached patrol point — cycle to back of queue (moved out first:
-        // cmd is the element pop_front destroys). The next leg starts next
-        // tick: a patrol whose points it already stands on would otherwise
-        // go round them for ever within this one.
-        auto finished = std::move(cmd);
+        // A patrol's leg goes to the back while another order follows it, else
+        // the patrol ends; either way the next order starts next tick.
+        auto finished = std::move(cmd); // cmd is the element pop_front destroys
         finished.patrol_claimed.clear();
         finished.begun = false; // Moho makes each leg a new patrol task
+        finished.patrol_scan = 0;
+        finished.patrol_runs = 0;
+        finished.patrol_moving = false;
         command_queue_.pop_front();
-        command_queue_.push_back(std::move(finished));
+        if (!command_queue_.empty()) {
+            command_queue_.push_back(std::move(finished));
+        }
         return OrderStep::Hold;
     }
+    if (navigator_.busy() && cmd.patrol_moving) {
+        return drive();
+    }
+    update_speed_through();
+    set_path_goal(cmd.target_pos, ctx);
+    cmd.patrol_moving = true;
+    nav_update(cmd.speed_cap);
     return OrderStep::Hold;
+}
+
+bool Unit::patrol_leg_reached(const UnitCommand& cmd) const {
+    // Moho's PatrolGoalCoversUnitOrigin (faf-re CUnitPatrolTask.cpp).
+    const blueprints::Footprint& fp = footprint();
+    const auto cell = [](f32 at, u8 size) {
+        return static_cast<i32>(std::lrint(at - static_cast<f32>(size) * 0.5f));
+    };
+    // Moho's mFormationTopSpeed: a flier's air speed.
+    const f32 top = can_fly() ? max_airspeed() * speed_mult() : nav_speed();
+    const i32 grow = static_cast<i32>(std::ceil(top));
+    const i32 goal_x = cell(cmd.target_pos.x, fp.size_x);
+    const i32 goal_z = cell(cmd.target_pos.z, fp.size_z);
+    const i32 x = cell(position().x, fp.size_x);
+    const i32 z = cell(position().z, fp.size_z);
+    return goal_x - grow <= x && x <= goal_x + 1 + grow && goal_z - grow <= z &&
+           z <= goal_z + 1 + grow;
 }
 
 OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {

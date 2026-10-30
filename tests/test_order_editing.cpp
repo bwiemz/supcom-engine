@@ -196,10 +196,10 @@ TEST_CASE("A moved patrol point stays moved, lap after lap", "[order_edit][patro
     bool old_point = false;
     for (int t = 0; t < 1200; ++t) {
         w.sim->tick();
-        const bool now = distance(a, 10, 60) < 3.0f;
+        const bool now = distance(a, 10, 60) < 9.0f;
         visits += now && !near ? 1 : 0;
         near = now;
-        old_point = old_point || distance(a, 60, 60) < 3.0f;
+        old_point = old_point || distance(a, 60, 60) < 9.0f;
     }
     CHECK(visits >= 2);
     CHECK_FALSE(old_point);

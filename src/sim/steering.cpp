@@ -869,7 +869,7 @@ void steer_units(SimState& sim, const std::vector<EntityId>& ids) {
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto& u = static_cast<Unit&>(*e);
         Navigator& nav = u.navigator();
-        if (sim.moho_pathing() && nav.moho_active()) {
+        if (sim.moho_pathing() && (nav.moho_active() || nav.has_spline())) {
             if (steers(u)) steer_moho(sim, u);
             continue;
         }
@@ -900,6 +900,19 @@ void steer_stop(SimState& sim, Unit& u) {
     const bool remaining = !nav.spline().empty();
     nav.spline_stop();
     if (remaining) check_moho(sim, u);
+}
+
+void steer_no_waypoints(SimState& sim, Unit& u) {
+    Navigator& nav = u.navigator();
+    if (!nav.has_spline()) {
+        return;
+    }
+    nav.clear_collision();
+    if (!u.is_dying() && !u.is_being_built() && !u.destroyed()) {
+        nav.spline_brake(u, 3);
+    }
+    check_moho(sim, u);
+    nav.advance_motion_node();
 }
 
 void steer_ground_units(SimState& sim) {
