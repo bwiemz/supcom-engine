@@ -1457,12 +1457,41 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     if (command.type == CommandType::Upgrade) {
         return takes_upgrade(L_, blueprint_store_, unit, command, last);
     }
-    const char* needs = command.type == CommandType::Reclaim   ? "RECLAIM"
-                        : command.type == CommandType::Capture ? "CAPTURE"
-                        : command.type == CommandType::Repair  ? "REPAIR"
-                                                               : nullptr;
+    const char* needs = command.type == CommandType::Reclaim     ? "RECLAIM"
+                        : command.type == CommandType::Capture   ? "CAPTURE"
+                        : command.type == CommandType::Repair    ? "REPAIR"
+                        : command.type == CommandType::Sacrifice ? "REPAIR"
+                                                                 : nullptr;
     if (needs && (!unit.has_category(needs) || (carrier && !pod))) {
         return false;
+    }
+    const Entity* target_entity =
+        command.target_id ? entity_registry_.find(command.target_id) : nullptr;
+    if (target_entity && target_entity->destroyed()) {
+        target_entity = nullptr;
+    }
+    if (command.type == CommandType::Capture) {
+        if (!target_entity) {
+            return true;
+        }
+        const Unit* target =
+            target_entity->is_unit() ? static_cast<const Unit*>(target_entity) : nullptr;
+        if (!target || !target->capturable() || target->is_dying() || target->is_being_built()) {
+            return false;
+        }
+        const ArmyBrain* owner =
+            target->army() >= 0 ? army_at(static_cast<size_t>(target->army())) : nullptr;
+        return !owner || !owner->is_ally(unit.army());
+    }
+    if (command.type == CommandType::Repair || command.type == CommandType::Sacrifice) {
+        if (!target_entity || target_entity == &unit ||
+            (command.type == CommandType::Sacrifice &&
+             !unit.has_command_cap("RULEUCC_Sacrifice"))) {
+            return false;
+        }
+        const ArmyBrain* own =
+            unit.army() >= 0 ? army_at(static_cast<size_t>(unit.army())) : nullptr;
+        return !own || target_entity->army() < 0 || !own->is_enemy(target_entity->army());
     }
     if (command.type == CommandType::Attack) {
         if (!unit.is_mobile() && std::all_of(unit.weapons().begin(), unit.weapons().end(),

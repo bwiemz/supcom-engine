@@ -235,6 +235,45 @@ void test_issue_checks(TestContext& ctx) {
                   {"__ic_try(__ic_sub, function() IssueDive({__ic_sub}) end)", "1"},
                   {"__ic_try(__ic_t, function() IssueDive({__ic_t}) end)", "0"},
               });
+
+    if (!run(ctx, "capture and repair targets", R"(
+        SetAlliance(1, 3, 'Ally')
+        SetAlliance(3, 1, 'Ally')
+        __ic_e5 = __ic_make('uel0105', 0, 20)
+        __ic_ally = __ic_make('uel0201', 32, 0, 'ARMY_3')
+        __ic_ally:SetHealth(nil, __ic_ally:GetMaxHealth() / 2)
+        __ic_nocap = __ic_make('ueb1101', 12, 80, 'ARMY_2')
+        __ic_nocap:SetCapturable(false)
+        __ic_ef = __ic_make('ueb0101', -20, 80, 'ARMY_2')
+        IssueUpgrade({__ic_ef}, 'ueb0201')
+        __ic_of = __ic_make('ueb0101', 20, 50)
+        IssueUpgrade({__ic_of}, 'ueb0201')
+        __ic_ae = __ic_make('ual0105', 4, 20)
+    )")) {
+        return;
+    }
+    tick_until(ctx, "issue-checks-test: the upgrades begin", 30,
+               "__ic_ef:GetFocusUnit() ~= nil and __ic_of:GetFocusUnit() ~= nil");
+    check_all(ctx, t, "a capture's, repair's or sacrifice's target",
+              {
+                  {"__ic_try(__ic_e5, function() IssueCapture({__ic_e5}, __ic_enemy) end)", "1"},
+                  {"__ic_try(__ic_e5, function() IssueCapture({__ic_e5}, __ic_ally) end)", "0"},
+                  {"__ic_try(__ic_e5, function() IssueCapture({__ic_e5}, __ic_friend) end)", "0"},
+                  {"__ic_try(__ic_e5, function() IssueCapture({__ic_e5}, __ic_nocap) end)", "0"},
+                  {"__ic_try(__ic_e5, function() IssueCapture({__ic_e5}, __ic_ef:GetFocusUnit()) "
+                   "end)",
+                   "0"},
+                  {"__ic_try(__ic_e5, function() IssueRepair({__ic_e5}, __ic_friend) end)", "1"},
+                  {"__ic_try(__ic_e5, function() IssueRepair({__ic_e5}, __ic_ally) end)", "1"},
+                  {"__ic_try(__ic_e5, function() IssueRepair({__ic_e5}, __ic_enemy) end)", "0"},
+                  {"__ic_try(__ic_e5, function() IssueRepair({__ic_e5}, __ic_of:GetFocusUnit()) "
+                   "end)",
+                   "1"},
+                  {"__ic_try(__ic_ae, function() IssueSacrifice({__ic_ae}, __ic_friend) end)", "1"},
+                  {"__ic_try(__ic_ae, function() IssueSacrifice({__ic_ae}, __ic_ally) end)", "1"},
+                  {"__ic_try(__ic_ae, function() IssueSacrifice({__ic_ae}, __ic_enemy) end)", "0"},
+                  {"__ic_try(__ic_ae, function() IssueSacrifice({__ic_ae}, __ic_ae) end)", "0"},
+              });
     spdlog::info("issue-checks-test: {} passed, {} failed", t.pass, t.fail);
 }
 

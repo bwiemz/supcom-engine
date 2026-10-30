@@ -1821,6 +1821,9 @@ TEST_CASE("Repair, Sacrifice, Reclaim and Capture leave their target out of the 
                 lua_rawset(L, -3);
                 lua_setglobal(L, name);
             };
+            if (std::string(issue) == "IssueCapture") {
+                a->set_army(1);
+            }
             global("a", a);
             global("b", b);
             const auto r = lua.do_string(std::string(issue) + "({a}, a) " + issue + "({a, b}, a)");

@@ -236,3 +236,57 @@ TEST_CASE("Only a surfacing sub takes a Dive", "[routing]") {
         CHECK(w.takes(u, CommandType::Dive) == taken);
     }
 }
+
+TEST_CASE("A capture, repair or sacrifice goes only to a target Moho's issue lets it have",
+          "[routing]") {
+    struct Case {
+        const char* what;
+        CommandType type;
+        const char* target;
+        bool taken;
+    };
+    const Case cases[] = {
+        {"capture an enemy", CommandType::Capture, "enemy", true},
+        {"capture an ally", CommandType::Capture, "ally", false},
+        {"capture its own", CommandType::Capture, "own", false},
+        {"capture an uncapturable enemy", CommandType::Capture, "uncapturable", false},
+        {"capture an unfinished enemy", CommandType::Capture, "unfinished", false},
+        {"capture nothing named", CommandType::Capture, nullptr, true},
+        {"repair its own", CommandType::Repair, "own", true},
+        {"repair an ally", CommandType::Repair, "ally", true},
+        {"repair an unfinished one of its own", CommandType::Repair, "own unfinished", true},
+        {"repair an enemy", CommandType::Repair, "enemy", false},
+        {"repair itself", CommandType::Repair, "self", false},
+        {"repair nothing named", CommandType::Repair, nullptr, false},
+        {"sacrifice to its own", CommandType::Sacrifice, "own", true},
+        {"sacrifice to an ally", CommandType::Sacrifice, "ally", true},
+        {"sacrifice to an enemy", CommandType::Sacrifice, "enemy", false},
+        {"sacrifice to itself", CommandType::Sacrifice, "self", false},
+        {"sacrifice without the order", CommandType::Sacrifice, "no cap", false},
+    };
+    for (const Case& c : cases) {
+        IssueWorld w;
+        w.sim.add_army("ARMY_3", "ARMY_3");
+        w.sim.get_army(0)->set_alliance(2, osc::sim::Alliance::Ally);
+        w.sim.get_army(2)->set_alliance(0, osc::sim::Alliance::Ally);
+        Unit& u = w.make(0, {"CAPTURE", "REPAIR"}, "RULEUMT_Land");
+        const std::string target = c.target ? c.target : "";
+        if (target != "no cap") {
+            u.add_command_cap("RULEUCC_Sacrifice");
+        }
+        osc::sim::EntityId id;
+        if (target == "self" || target == "no cap") {
+            id = target == "self" ? u.entity_id() : w.make(0, {}, "RULEUMT_Land").entity_id();
+        } else if (!target.empty()) {
+            const int army = target == "ally" ? 2 : target.rfind("own", 0) == 0 ? 0 : 1;
+            Unit& t = w.make(army, {}, "RULEUMT_Land");
+            t.set_capturable(target != "uncapturable");
+            if (target == "unfinished" || target == "own unfinished") {
+                t.set_is_being_built(true);
+            }
+            id = t.entity_id();
+        }
+        INFO(c.what);
+        CHECK(w.takes(u, c.type, id) == c.taken);
+    }
+}
