@@ -131,10 +131,9 @@ static void read_drive(lua_State* L, const BlueprintStore& store, const Blueprin
         drive.turn_radius = number("TurnRadius", 0);
         // FAF: MaxSpeedReverse defaults to MaxSpeed (every retail unit gives it).
         drive.max_speed_reverse = number("MaxSpeedReverse", max_speed);
-        // Two retail blueprints spell it BackupDistance. Unset (negative), it
-        // is three times the unit's length (RUnitBlueprintPhysics; SizeZ
-        // defaults to 1).
-        drive.backup_distance = number("BackUpDistance", number("BackupDistance", -1));
+        // Unset (negative), three times the unit's length (RUnitBlueprintPhysics;
+        // SizeZ defaults to 1).
+        drive.backup_distance = number("BackUpDistance", -1);
         if (drive.backup_distance < 0) {
             lua_pushstring(L, "SizeZ");
             lua_rawget(L, physics - 1);

@@ -918,7 +918,7 @@ TEST_CASE("CreateUnitAtMouse's unit is a cheat the sim makes", "[simcallback][ch
         for (const char* bp : {"{BlueprintId = 'wall', Footprint = {SizeX = 2, SizeZ = 1},"
                                " Physics = {MotionType = 'RULEUMT_None'}}",
                                "{BlueprintId = 'tank', Footprint = {SizeX = 1, SizeZ = 1},"
-                               " Physics = {MotionType = 'RULEUMT_Land'}}"}) {
+                               " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 1}}"}) {
             const std::string code = std::string("return ") + bp;
             REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "bp") == 0);
             REQUIRE(lua_pcall(L, 0, 1, 0) == 0);

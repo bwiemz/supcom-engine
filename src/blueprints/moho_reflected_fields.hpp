@@ -37,13 +37,6 @@ struct ReflectedField {
     u32 address;      ///< the Moho function that sets it (faf-re)
 };
 
-/// A reflected field the engine does not fill, and why.
-struct UnfilledField {
-    const char* section;
-    const char* name;
-    const char* reason;
-};
-
 /// A unit blueprint's fields, but for its weapons' (REntityBlueprint,
 /// RUnitBlueprint and its sections).
 std::span<const ReflectedField> unit_reflected_fields();
@@ -51,8 +44,6 @@ std::span<const ReflectedField> unit_reflected_fields();
 std::span<const ReflectedField> weapon_reflected_fields();
 /// A projectile blueprint's fields the engine fills (RProjectileBlueprintPhysics).
 std::span<const ReflectedField> projectile_reflected_fields();
-/// A unit blueprint's reflected fields left as the .bp gives them.
-std::span<const UnfilledField> unit_unfilled_fields();
 
 /// Fill the unit blueprint table at stack index `bp` as Moho's write-back
 /// leaves it: defaults for what it leaves out, derived values (a mobile

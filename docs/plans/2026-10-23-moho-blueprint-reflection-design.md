@@ -121,6 +121,16 @@ default changes nothing they compute. Two cases needed a closer look:
 Each is listed, with its reason, in `unit_unfilled_fields()`. A unit test checks that each stays nil
 on a bare blueprint and is not also in the filled table.
 
+*Done (2026-10-30): all of them are filled now, and `unit_unfilled_fields()` is gone. `CollisionShape`
+reads `"Box"`; `BackUpDistance` is derived as `ComputeDerivedQuantities` derives it, and the drive
+reader no longer reads the two retail blueprints' `BackupDistance` spelling, which Moho doesn't
+reflect (the Brick backs up within 2.7, not 5); a unit's mesh id is completed against `Source`. What
+reads differently [probe `bp-typed`]: the Czar's Miscellaneous ring is 300 (`StagingPlatformScanRadius`
+before `GuardScanRadius`, `MiscellaneousExtractor`), the 15 retail units without a selection size get
+1, and on FAF's data 37 `spawn_dummy_*` aircraft fly at 0 and its Cybran build bots' life bars are
+0.1 high. Every retail and FAF ground and naval unit gives its `TurnRadius`, every aircraft and hover
+its `Elevation`; units without a size are only in unit tests, which now give the sizes they need.*
+
 - **`General.CommandCaps`, `General.ToggleCaps`, `Physics.BuildOnLayerCaps`** (flag enums), and
   **`CollisionShape`**:
   - Moho writes back the registered name, or a number for several flags combined.
@@ -181,6 +191,8 @@ These parts of the write-back aren't ported:
     resolves a unit's alt footprint from it too (`resolve_unit_footprints`' `own_alt`).*
 - **`MotionType` for a unit that doesn't move.** Moho sets it to `RULEUMT_None` when `MaxSpeed` is 0.
   That is a sim-visible change to present values.
+  - *Done (2026-10-30): `derive_physics` does. No retail or FAF unit has a motion type without a
+    top speed.*
 
 ## 6. Stage 4b: enums as their names
 

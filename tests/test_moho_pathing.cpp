@@ -88,13 +88,14 @@ struct World {
         lua_State* L = state.raw();
         for (const char* bp : {
                  "{BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
-                 " Defense = {MaxHealth = 100}, Footprint = {SizeX = 1, SizeZ = 1},"
+                 " Defense = {MaxHealth = 100}, SizeX = 0.7, SizeY = 0.5, SizeZ = 0.9,"
+                 " Footprint = {SizeX = 1, SizeZ = 1},"
                  " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 4, MaxAcceleration = 4,"
-                 "  MaxBrake = 4, TurnRate = 180}}",
+                 "  MaxBrake = 4, TurnRate = 180, TurnRadius = 0}}",
                  "{BlueprintId = 'bigtank', Categories = {'LAND', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, Footprint = {SizeX = 3, SizeZ = 3},"
                  " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 4, MaxAcceleration = 4,"
-                 "  MaxBrake = 4, TurnRate = 180}}",
+                 "  MaxBrake = 4, TurnRate = 180, TurnRadius = 0}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));

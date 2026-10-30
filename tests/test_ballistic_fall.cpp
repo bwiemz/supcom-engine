@@ -60,13 +60,13 @@ struct World {
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, MaxAirspeed = 12, KMove = 0.8, KMoveDamping = 2,"
                  " StartTurnDistance = 5, AutoLandTime = 0},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 12, Elevation = 10}}",
                  "{BlueprintId = 'heavy', Categories = {'AIR', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 12, SizeY = 4, SizeZ = 12,"
                  " Footprint = {SizeX = 12, SizeZ = 12},"
                  " Air = {CanFly = true, MaxAirspeed = 5, StartTurnDistance = 5,"
                  " AutoLandTime = 0},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 5, Elevation = 10}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
