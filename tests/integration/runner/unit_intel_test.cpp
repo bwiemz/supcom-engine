@@ -561,7 +561,9 @@ void test_effect_intel(TestContext& ctx) {
                  "'/effects/emitters/build_beam_01_emit.bp')\n"
                  "CreateBeamEntityToEntity(__osc_fx_seen, -1, __osc_fx_fog, -1, 2, "
                  "'/effects/emitters/no_such_beam.bp')\n");
-    f = next();
+    next();
+    shots.redraw_until_loaded();
+    f = drawn(r);
     const auto half_seen_beams = fa_beams();
     const auto half_seen_placeholders = placeholders(f);
     t.check(fog_beams == 0 && half_seen_beams == 1 && fog_placeholders == 0 &&

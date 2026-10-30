@@ -318,13 +318,18 @@ void test_beam_render(TestContext& ctx) {
                             "local eng = CreateUnitHPR('uel0105', 'ARMY_1', {0}, 0, {1}, 0, 0, 0)\n"
                             "IssueBuildMobile({{eng}}, Vector({0}, 0, {2}), 'ueb1101', {{}})\n",
                             sx + 20, sz + 20, sz + 30));
-        tick_until([&] { next(); }, "Test 7: a building engineer draws retail's build beams", 200,
-                   [&] {
-                       const auto& beams = r.beam_renderer().drawn();
-                       return std::any_of(beams.begin(), beams.end(), [](const auto& drawn_beam) {
-                           return drawn_beam.blueprint.find("build_beam") != std::string::npos;
-                       });
-                   });
+        tick_until(
+            [&] {
+                next();
+                shots.redraw_until_loaded();
+            },
+            "Test 7: a building engineer draws retail's build beams", 200,
+            [&] {
+                const auto& beams = r.beam_renderer().drawn();
+                return std::any_of(beams.begin(), beams.end(), [](const auto& drawn_beam) {
+                    return drawn_beam.blueprint.find("build_beam") != std::string::npos;
+                });
+            });
         // Test 7b: and no line of the overlay's from it to what it builds
         bool lined = false;
         bool building = false;

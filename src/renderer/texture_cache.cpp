@@ -937,6 +937,12 @@ const GPUTexture* TextureCache::get_blocking(const std::string& vfs_path) {
     return finalize_load(vfs_path, *file_data);
 }
 
+void TextureCache::wait_reads() const {
+    for (const auto& load : async_loads_) {
+        load.future.wait();
+    }
+}
+
 void TextureCache::flush_uploads(u32 max_per_frame) {
     u32 processed = 0;
 

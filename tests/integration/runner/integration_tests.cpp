@@ -1,5 +1,6 @@
 #include "core/test_status.hpp"
 #include "integration_tests.hpp"
+#include "render_probe.hpp"
 #include "tick_until.hpp"
 
 #include "app/world_sounds.hpp"
@@ -19477,11 +19478,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if (reg && r.init(static_cast<u32>(v[6]), static_cast<u32>(v[7]), "Game UI Test",
                           /*offscreen=*/true)) {
             r.init_ui_caches(&ctx.vfs);
-            int settled = 0;
-            for (int f = 0; f < 600 && settled < 3; ++f) {
-                r.render_ui_only(L, reg);
-                settled = r.texture_cache().loading() == 0 ? settled + 1 : 0;
-            }
+            draw_until_loaded(r, [&] { r.render_ui_only(L, reg); });
             ImageRGBA8 shot;
             r.request_capture([&](ImageRGBA8 image) { shot = std::move(image); });
             r.render_ui_only(L, reg);
