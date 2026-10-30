@@ -1282,6 +1282,11 @@ std::string upgrade_link(lua_State* L, std::string_view bp, const char* link, co
     return value.empty() ? std::string(absent) : value;
 }
 
+const Unit* carrier_of(const EntityRegistry& registry, const Unit& unit) {
+    const Entity* e = unit.transport_id() ? registry.find(unit.transport_id()) : nullptr;
+    return e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
+}
+
 bool takes_upgrade(lua_State* L, const blueprints::BlueprintStore* store, const Unit& unit,
                    const UnitCommand& command, const UnitCommand* last) {
     const auto* to = store ? store->find(command.blueprint_id) : nullptr;
@@ -1329,9 +1334,12 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     if (clear_existing && command.type != CommandType::Stop && unit.has_unit_state("Enhancing")) {
         return false;
     }
+    const Unit* carrier = carrier_of(entity_registry_, unit);
+    const bool pod = unit.has_category("POD");
+    const bool may_leave = !carrier || pod || carrier->has_category("CARRIER");
     if (command.type == CommandType::Move || command.type == CommandType::Patrol ||
         command.type == CommandType::AggressiveMove) {
-        return unit.motion_type() != "RULEUMT_None";
+        return may_leave && unit.motion_type() != "RULEUMT_None";
     }
     if (command.type == CommandType::BuildMobile || command.type == CommandType::BuildFactory) {
         return unit.has_category("FACTORY") || unit.has_category("ENGINEER") ||
@@ -1344,7 +1352,7 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
                         : command.type == CommandType::Capture ? "CAPTURE"
                         : command.type == CommandType::Repair  ? "REPAIR"
                                                                : nullptr;
-    if (needs && (!unit.has_category(needs) || (unit.transport_id() && unit.has_category("POD")))) {
+    if (needs && (!unit.has_category(needs) || (carrier && !pod))) {
         return false;
     }
     if (command.type == CommandType::Attack) {
@@ -1368,13 +1376,9 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
         return !unit.transport_id() && boards(entity_registry_, unit, command.target_id);
     }
     if (command.type != CommandType::Guard) return true;
-    // A pod, or a unit a carrier holds, guards nothing; nor does a unit
-    // without the order.
-    const Entity* by = unit.transport_id() ? entity_registry_.find(unit.transport_id()) : nullptr;
-    if (by && by->is_unit() &&
-        (static_cast<const Unit*>(by)->has_category("CARRIER") || unit.has_category("POD")))
+    if (!may_leave || !unit.has_command_cap("RULEUCC_Guard")) {
         return false;
-    if (!unit.has_command_cap("RULEUCC_Guard")) return false;
+    }
     const Entity* e = command.target_id ? entity_registry_.find(command.target_id) : nullptr;
     const Unit* target = e && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
     if (!target) return unit.is_mobile(); // a place to guard: only a mobile unit goes

@@ -234,6 +234,7 @@ constexpr Mode kModesBefore[] = {
     {"--unit-hooks-test", test_unit_hooks, false},
     {"--notify-upgrade-test", test_notify_upgrade, false},
     {"--upgrade-orders-test", test_upgrade_orders, false},
+    {"--issue-checks-test", test_issue_checks, false},
     {"--need-unpack-test", test_need_unpack, false},
     {"--guard-engage-test", test_guard_engage, false},
     {"--rebuilder-guard-test", test_rebuilder_guard, false},
