@@ -5,6 +5,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
+#include "lua/sim_bindings.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "sim/bone_data.hpp"
@@ -13,6 +15,7 @@
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
+#include "sim/projectile_script.hpp"
 #include "sim/prop.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/sim_state.hpp"
@@ -908,4 +911,59 @@ TEST_CASE("a shot crossing into the water hears OnEnterWater first on retail's r
         CHECK(shot->impact_kind == "Terrain");
         CHECK(global_number(L, "entered") == (faf ? 0 : 1));
     }
+}
+
+TEST_CASE("SetCollision turns a projectile's surface and entity collision on or off together, as "
+          "Moho's",
+          "[collision]") {
+    for (const bool on : {false, true}) {
+        CAPTURE(on);
+        osc::lua::LuaState lua;
+        lua_State* L = lua.raw();
+        osc::sim::SimState sim{L, nullptr};
+        osc::lua::register_sim_bindings(lua, sim);
+        osc::lua::register_moho_bindings(lua, sim);
+        EntityRegistry& reg = sim.entity_registry();
+        reg.init_spatial_grid(64, 64);
+        const osc::map::Terrain terrain(
+            osc::map::Heightmap(64, 64, 1.0f / 128.0f, std::vector<osc::u16>(65 * 65, 0)), 10.0f,
+            true);
+        const u32 box_id = add_unit(reg, {20, 11, 20}, box(1, 1, 1, 1));
+        Projectile* shot = add_shot(reg, {20, 9, 20}, {0, 40, 0});
+        shot->collide_surface = !on;
+        shot->collide_entity = !on;
+        osc::sim::create_projectile_object(L, *shot, true, true);
+        lua_setglobal(L, "shot");
+        run_lua(L, "exited = 0 shot.OnExitWater = function() exited = exited + 1 end");
+        run_lua(L, std::string("moho.projectile_methods.SetCollision(shot, ") +
+                       (on ? "true" : "false") + ")");
+        shot->update(0.1, reg, L, &terrain, 1);
+        CHECK(std::string(shot->layer()) == (on ? "Air" : "Water"));
+        CHECK(global_number(L, "exited") == (on ? 1 : 0));
+        CHECK(shot->impact_waiting() == on);
+        CHECK(shot->impact_entity_id == (on ? box_id : 0));
+    }
+}
+
+TEST_CASE("a homing shot sent to a point on the water goes in, and on to the ground under it, as "
+          "Moho's",
+          "[collision]") {
+    // TrackTargetGround puts the point on the water's surface (retail's Projectile.OnCreate)
+    EntityRegistry reg;
+    reg.init_spatial_grid(64, 64);
+    const osc::map::Terrain terrain(
+        osc::map::Heightmap(64, 64, 1.0f / 128.0f, std::vector<osc::u16>(65 * 65, 0)), 10.0f, true);
+    Projectile* shot = add_shot(reg, {20, 14, 20}, {0, -80, 0});
+    shot->tracking = true;
+    shot->has_target_position = true;
+    shot->target_position = {20, 10, 20};
+    shot->update(0.1, reg, nullptr, &terrain, 1);
+    reg.advance_coords();
+    CHECK_FALSE(shot->impact_waiting());
+    CHECK(std::string(shot->layer()) == "Water");
+    shot->update(0.1, reg, nullptr, &terrain, 2);
+    reg.advance_coords();
+    REQUIRE(shot->impact_waiting());
+    CHECK(shot->impact_kind == "Terrain");
+    CHECK(shot->position().y == Approx(0.0f).margin(0.05f));
 }

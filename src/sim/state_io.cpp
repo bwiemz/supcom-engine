@@ -26,111 +26,114 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 99; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
-                             // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
-                             // 6: weapons' lead physics;
-                             // 7: unit cap costs, the army's cap exemption, build cap waits;
-                             // 8: the scripts' consumption flag; 9: winged attack runs;
-                             // 10: weapons' AutoInitiateAttackCommand;
-                             // 11: NeedUnpack, orders' begun flag;
-                             // 12: guards' fights and the GuardReturnRadius leash;
-                             // 13: weapons' and aim controllers' YawOnlyOnTarget;
-                             // 14: units' lifebars;
-                             // 15: weapons' ground attacks (AttackGroundTries);
-                             // 16: units' LayerChangeOffsetHeight;
-                             // 17: hull facing (SlavedToBody, AttackAngle);
-                             // 18: no engine veterancy XP;
-                             // 19: platoons' unique names and DisbandOnIdle,
-                             //     collision detectors' bone states;
-                             // 20: aim spots (target points), BelowWaterTargetsOnly;
-                             // 21: units' footprints (footprint classes);
-                             // 22: launch rules (MuzzleVelocityRandom,
-                             //     UseFiringSolutionInsteadOfAimBone, StraightDownOrdinance);
-                             // 23: the occupation grid's occupants;
-                             // 24: projectiles' flight (LeadTarget, zig-zag state,
-                             //     the lost-target aim latch);
-                             // 25: units' creation ticks (build templates' order);
-                             // 26: Moho pathing (the switch, navigators' path state,
-                             //     army path queues, path maps' dirty bits);
-                             // 27: idle aircraft landing (AutoLandTime, the landing);
-                             // 28: hovering aircraft's circling;
-                             // 29: mobile units in the way (moved last tick, path owners);
-                             // 30: formation orders' slots (formation layers);
-                             // 31: jammers' fakes known fake (latched);
-                             // 32: factory builds' counts (IncreaseBuildCountInQueue);
-                             // 33: callbacks' Args as Lua data;
-                             // 34: patrol legs' start;
-                             // 35: reclaims' ticks before their first share;
-                             // 36: silos' preset blocks (GiveNukeSiloAmmo(blocks, true));
-                             // 37: builders' arm on target, and orders waiting for it;
-                             // 38: builds' cleared sites, props being cleared and rebuilt wrecks;
-                             // 39-42: unpublished PR snapshot formats;
-                             // 43: combined batch format: player command ids, formation Move flags,
-                             //     repairing assists, builder tracking and facing, aircraft lift,
-                             //     velocity and spin, motion-scaled animators, prop fall and
-                             //     bounds, raised platforms, alt footprints, ground stance, pending
-                             //     factory assists and sacrifice waits;
-                             // 44: the order given to build callbacks;
-                             // 45: weapons' PrefersPrimaryWeaponTarget, StopOnPrimaryWeaponBusy;
-                             // 46: entities' texture scrollers;
-                             // 47: the heightfield's flattenings (FlattenMapRect);
-                             // 48: units' Elevation, hover lean and wobble;
-                             // 49: aircraft's blueprint Elevation, for RevertElevation;
-                             // 50: FormAttack orders and their slots;
-                             // 51: collision cells' link order (Moho's rect queries);
-                             // 52: the economy's grants (Moho's ProcessArmyEconomy);
-                             // 53: units' grants and ResourceConsumed (the request pipeline);
-                             // 54: mobile builds' prepared tick;
-                             // 55: experimental aircraft made on the ground;
-                             // 56: aim controllers with no arc to their target
-                             // 57: units' order a Warp aborted
-                             // 58: armies' command sources and the cheats option
-                             // 59: path navigators' last repath tick
-                             // 60: no CommonArmy economy pool
-                             // 61: attack orders' target points;
-                             // 62: slaved bones' turn toward their master and max rate;
-                             // 63: the silo a unit's Guard helps;
-                             // 64: navigators' move ended in the last motion step;
-                             // 65: every attack order engages in reach;
-                             // 66: armies' resource banks; units' held storage;
-                             // 67: projectiles' waiting impact and lifetime end tick;
-                             // 68: entities' pending and last transforms; no units' tick position;
-                             // 69: the deletion queue; units' kill cleanup due;
-                             // 70: the entity walk's order, entities' parked state and last step;
-                             //     no collision beam list
-                             // 71: which of each army's fakes it sensed at its last recon tick
-                             // 72: the beat count and a single step due; no resumed pause serial
-                             // 73: no units' crash landing latch
-                             // 74: projectiles an engine weapon fired
-                             // 75: units' NaturalProducer
-                             // 76: no team share option, share banks or resources' overflow
-                             // 77: units' last banked production and reclaim for GetEconData
-                             // 78: stats triggers' category blueprints
-                             // 79: armies' reclaim totals and pending production
-                             // 80: whole-tick requests' grants; economy events' ticks left
-                             // 81: units' consumption requests' grants and spending
-                             // 82: armies' stores and storage as floats
-                             // 83: a navigator's spline gear (backing up, Moho's PPS_4-PPS_7)
-                             // 84: a unit's MaxSteerForce; a navigator's Moho spline
-                             // 85: Moho's entity ids: the registry's id pools
-                             // 86: no units' damage shares
-                             // 87: a unit's shore crossing (LayerTransitionDuration)
-                             // 88: a weapon's NeedPrep
-                             // 89: a unit's terrain type (CurrentTerrainType)
-                             // 90: a weapon's and its aim controller's AimsStraightOnDisable
-                             // 91: a weapon's ReTargetOnMiss: its misses, cooldown, given-up
-                             //     targets and held target; a shot's listening weapon
-                             // 92: a builder's last seen build fraction (OnBuildProgress)
-                             // 93: a projectile's terrain bounces
-                             // 94: a projectile's detonate heights set apart from its
-                             //     blueprint's, and no burst arming
-                             // 95: no entities a projectile was turned away from (it asks
-                             //     again every tick)
-                             // 96: units' lean into a dive (Moho's CalcRollHack)
-                             // 97: aim controllers' reset pose in ticks; weapons' aim reset ticks
-                             // 98: a unit's motion state and its fall's tumble, not the
-                             //     invented crash's fields
-                             // 99: the sim console's variables (NoDamage, AI_RunOpponentAI)
+constexpr u32 kVersion = 100; // 2: entities' wanted loops (M216b);
+                              // 3: emitter overrides (M214d);
+                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
+                              // 6: weapons' lead physics;
+                              // 7: unit cap costs, the army's cap exemption, build cap waits;
+                              // 8: the scripts' consumption flag; 9: winged attack runs;
+                              // 10: weapons' AutoInitiateAttackCommand;
+                              // 11: NeedUnpack, orders' begun flag;
+                              // 12: guards' fights and the GuardReturnRadius leash;
+                              // 13: weapons' and aim controllers' YawOnlyOnTarget;
+                              // 14: units' lifebars;
+                              // 15: weapons' ground attacks (AttackGroundTries);
+                              // 16: units' LayerChangeOffsetHeight;
+                              // 17: hull facing (SlavedToBody, AttackAngle);
+                              // 18: no engine veterancy XP;
+                              // 19: platoons' unique names and DisbandOnIdle,
+                              //     collision detectors' bone states;
+                              // 20: aim spots (target points), BelowWaterTargetsOnly;
+                              // 21: units' footprints (footprint classes);
+                              // 22: launch rules (MuzzleVelocityRandom,
+                              //     UseFiringSolutionInsteadOfAimBone, StraightDownOrdinance);
+                              // 23: the occupation grid's occupants;
+                              // 24: projectiles' flight (LeadTarget, zig-zag state,
+                              //     the lost-target aim latch);
+                              // 25: units' creation ticks (build templates' order);
+                              // 26: Moho pathing (the switch, navigators' path state,
+                              //     army path queues, path maps' dirty bits);
+                              // 27: idle aircraft landing (AutoLandTime, the landing);
+                              // 28: hovering aircraft's circling;
+                              // 29: mobile units in the way (moved last tick, path owners);
+                              // 30: formation orders' slots (formation layers);
+                              // 31: jammers' fakes known fake (latched);
+                              // 32: factory builds' counts (IncreaseBuildCountInQueue);
+                              // 33: callbacks' Args as Lua data;
+                              // 34: patrol legs' start;
+                              // 35: reclaims' ticks before their first share;
+                              // 36: silos' preset blocks (GiveNukeSiloAmmo(blocks, true));
+                              // 37: builders' arm on target, and orders waiting for it;
+                              // 38: builds' cleared sites, props being cleared and rebuilt wrecks;
+                              // 39-42: unpublished PR snapshot formats;
+                              // 43: combined batch format: player command ids, formation Move
+                              //     flags, repairing assists, builder tracking and facing, aircraft
+                              //     lift, velocity and spin, motion-scaled animators, prop fall and
+                              //     bounds, raised platforms, alt footprints, ground stance,
+                              //     pending factory assists and sacrifice waits;
+                              // 44: the order given to build callbacks;
+                              // 45: weapons' PrefersPrimaryWeaponTarget, StopOnPrimaryWeaponBusy;
+                              // 46: entities' texture scrollers;
+                              // 47: the heightfield's flattenings (FlattenMapRect);
+                              // 48: units' Elevation, hover lean and wobble;
+                              // 49: aircraft's blueprint Elevation, for RevertElevation;
+                              // 50: FormAttack orders and their slots;
+                              // 51: collision cells' link order (Moho's rect queries);
+                              // 52: the economy's grants (Moho's ProcessArmyEconomy);
+                              // 53: units' grants and ResourceConsumed (the request pipeline);
+                              // 54: mobile builds' prepared tick;
+                              // 55: experimental aircraft made on the ground;
+                              // 56: aim controllers with no arc to their target
+                              // 57: units' order a Warp aborted
+                              // 58: armies' command sources and the cheats option
+                              // 59: path navigators' last repath tick
+                              // 60: no CommonArmy economy pool
+                              // 61: attack orders' target points;
+                              // 62: slaved bones' turn toward their master and max rate;
+                              // 63: the silo a unit's Guard helps;
+                              // 64: navigators' move ended in the last motion step;
+                              // 65: every attack order engages in reach;
+                              // 66: armies' resource banks; units' held storage;
+                              // 67: projectiles' waiting impact and lifetime end tick;
+                              // 68: entities' pending and last transforms; no units' tick position;
+                              // 69: the deletion queue; units' kill cleanup due;
+                              // 70: the entity walk's order, entities' parked state and last step;
+                              //     no collision beam list
+                              // 71: which of each army's fakes it sensed at its last recon tick
+                              // 72: the beat count and a single step due; no resumed pause serial
+                              // 73: no units' crash landing latch
+                              // 74: projectiles an engine weapon fired
+                              // 75: units' NaturalProducer
+                              // 76: no team share option, share banks or resources' overflow
+                              // 77: units' last banked production and reclaim for GetEconData
+                              // 78: stats triggers' category blueprints
+                              // 79: armies' reclaim totals and pending production
+                              // 80: whole-tick requests' grants; economy events' ticks left
+                              // 81: units' consumption requests' grants and spending
+                              // 82: armies' stores and storage as floats
+                              // 83: a navigator's spline gear (backing up, Moho's PPS_4-PPS_7)
+                              // 84: a unit's MaxSteerForce; a navigator's Moho spline
+                              // 85: Moho's entity ids: the registry's id pools
+                              // 86: no units' damage shares
+                              // 87: a unit's shore crossing (LayerTransitionDuration)
+                              // 88: a weapon's NeedPrep
+                              // 89: a unit's terrain type (CurrentTerrainType)
+                              // 90: a weapon's and its aim controller's AimsStraightOnDisable
+                              // 91: a weapon's ReTargetOnMiss: its misses, cooldown, given-up
+                              //     targets and held target; a shot's listening weapon
+                              // 92: a builder's last seen build fraction (OnBuildProgress)
+                              // 93: a projectile's terrain bounces
+                              // 94: a projectile's detonate heights set apart from its
+                              //     blueprint's, and no burst arming
+                              // 95: no entities a projectile was turned away from (it asks
+                              //     again every tick)
+                              // 96: units' lean into a dive (Moho's CalcRollHack)
+                              // 97: aim controllers' reset pose in ticks; weapons' aim reset ticks
+                              // 98: a unit's motion state and its fall's tumble, not the
+                              //     invented crash's fields
+                              // 99: the sim console's variables (NoDamage, AI_RunOpponentAI)
+                              // 100: no projectile collision switch apart from its surface and
+                              //      entity ones (SetCollision sets both)
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a

@@ -355,7 +355,6 @@ Vector3 lerp(const Vector3& a, const Vector3& b, f32 t) {
 std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
                                                           EntityRegistry& registry, lua_State* L,
                                                           const map::Terrain* terrain) {
-    if (!collision_enabled) return std::nullopt;
     const Vector3 to = pending_position();
 
     // The surface, with CollideSurface (Moho's CheckCollision): the water, then the ground.
@@ -406,27 +405,6 @@ std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
         }
         if (crossing != Crossing::None && faf && !ground_first && !change_layer())
             return std::nullopt;
-    }
-
-    // A tracking shot sent to a place (a strategic missile, which skims no
-    // surface, or a missile whose target died) ends on reaching it.
-    if (tracking && has_target_position && target_entity_id == 0) {
-        const Vector3 d{to.x - from.x, to.y - from.y, to.z - from.z};
-        const Vector3 w{target_position.x - from.x, target_position.y - from.y,
-                        target_position.z - from.z};
-        const f32 dd = d.x * d.x + d.y * d.y + d.z * d.z;
-        const f32 t =
-            dd > 0 ? std::clamp((w.x * d.x + w.y * d.y + w.z * d.z) / dd, 0.0f, 1.0f) : 0.0f;
-        const Vector3 near = lerp(from, to, t);
-        const f32 mx = target_position.x - near.x;
-        const f32 my = target_position.y - near.y;
-        const f32 mz = target_position.z - near.z;
-        constexpr f32 kArrived = 1.0f;
-        if (mx * mx + my * my + mz * mz <= kArrived * kArrived && t < surface_t) {
-            surface_t = t;
-            surface_type = nullptr;
-            ground = false;
-        }
     }
 
     // What it meets on the way, nearest first, each asked again every tick. Retail's
