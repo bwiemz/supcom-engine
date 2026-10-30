@@ -252,6 +252,7 @@ TEST_CASE("GetCommandQueue holds the orders given and not yet run", "[userunit]"
     };
     osc::sim::UnitCommand move;
     move.type = osc::sim::CommandType::Move;
+    move.target_pos = {20.0f, 0.0f, 20.0f};
     CHECK(queued() == 0.0);
     w.sim.schedule_command(0, {w.id}, move, true);
     CHECK(queued() == 1.0);
@@ -282,6 +283,7 @@ TEST_CASE("GetIdleEngineers counts the orders given and not yet run", "[userunit
     CHECK(idle() == 1.0);
     osc::sim::UnitCommand move;
     move.type = osc::sim::CommandType::Move;
+    move.target_pos = {20.0f, 0.0f, 20.0f};
     w.sim.schedule_command(0, {w.id}, move, true);
     CHECK(idle() == 0.0);
 
@@ -336,6 +338,7 @@ TEST_CASE("UserUnit:IsIdle counts the orders given and not yet run", "[userunit]
     CHECK(idle());
     osc::sim::UnitCommand move;
     move.type = osc::sim::CommandType::Move;
+    move.target_pos = {20.0f, 0.0f, 20.0f};
     w.sim.schedule_command(0, {w.id}, move, true);
     CHECK_FALSE(idle());
 }

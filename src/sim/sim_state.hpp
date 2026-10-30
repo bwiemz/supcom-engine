@@ -583,9 +583,14 @@ public:
     void set_issuing_source(u32 source) { issuing_source_ = source; }
     /// Whether `unit` takes `command` as it is issued: Moho checks each unit
     /// of an order and leaves out one that can't carry it out
-    /// (func_ProcessUnitCommand). Checked here for Guard and Reclaim so far.
+    /// (func_ProcessUnitCommand). Checked here for some of its order types.
     bool takes_command(const Unit& unit, const UnitCommand& command,
                        bool clear_existing = false) const;
+    /// As above, for a queue that ends in `last` (null when empty): with the
+    /// orders not yet applied. `rejected`: set when a load is refused because
+    /// the transport can't carry the unit.
+    bool takes_command(const Unit& unit, const UnitCommand& command, bool clear_existing,
+                       const UnitCommand* last, bool* rejected = nullptr) const;
     /// An Attack's target point, drawn as the order is made: one for all its
     /// units (Moho's CAiTarget::UpdateTarget, Unit::PickTargetPoint).
     void pick_target_point(UnitCommand& command);
@@ -728,6 +733,9 @@ public:
     /// `damage_type`: the type OnKilled is given, as Moho's own Unit::Kill
     /// passes one (no instigator, no excess); none: a script's bare Kill().
     void kill_unit(Unit& unit, const char* damage_type = nullptr);
+    /// Whether a KillSelf order takes `unit`: finished, and its script's
+    /// CheckCanBeKilled agrees (Moho's ProcessIssuedUnitCommand).
+    bool takes_kill_self(Unit& unit);
 
     /// Number of alliance-connected "teams" still in the game (non-civilian,
     /// non-defeated armies grouped by their alliance graph). Exposed for tests
@@ -1058,6 +1066,19 @@ public:
                                        const Vector3& destination) const;
 
 private:
+    /// Whether an order's target lies where Moho's ProcessIssuedUnitCommand
+    /// lets the unit's army send it: on the map (STIMap::IsWithin) and in its
+    /// No Rush zone.
+    bool target_allowed(const Unit& unit, const UnitCommand& command) const;
+    /// Whether a cleared `order` to `unit_ids` repeats the unit's only order,
+    /// which Moho's ProcessIssuedUnitCommand then drops.
+    bool repeats_only_order(const Unit& unit, const UnitCommand& order,
+                            const std::vector<EntityId>& unit_ids) const;
+    /// Whether `unit` takes `order` as it is issued to `unit_ids` (Moho's
+    /// UNIT_IssueCommand): a transport that can't carry it hears
+    /// OnTransportReject, and past 500 orders a queued one is not taken.
+    bool issue_takes(Unit& unit, const UnitCommand& order, bool clear_existing,
+                     const std::vector<EntityId>& unit_ids);
     /// `pos` kept to the playable area (clamp_to_playable(pos, army)'s
     /// case for an army that keeps to it).
     Vector3 clamp_to_playable(const Vector3& pos) const {

@@ -565,7 +565,10 @@ TEST_CASE("An attack order draws its target point once, for all its units", "[ai
         {{0.0f, 0.0f, 3.0f}, {0.0f, 0.0f, -3.0f}, {1.0f, 0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}});
     target.set_bone_data(&bones);
     std::set<osc::i32> drawn;
+    osc::sim::UnitCommand stop;
+    stop.type = osc::sim::CommandType::Stop;
     for (int i = 0; i < 8; ++i) {
+        w.sim.route_command({a.entity_id(), b.entity_id()}, stop, true);
         REQUIRE(w.sim.route_command({a.entity_id(), b.entity_id()}, attack_order(target), true) !=
                 0);
         const osc::i32 point = a.command_queue().front().target_point;

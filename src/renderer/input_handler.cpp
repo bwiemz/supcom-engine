@@ -1569,7 +1569,7 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
                 last = nullptr;
             } else if (order.type != sim::CommandType::SiloBuildNuke &&
                        order.type != sim::CommandType::SiloBuildTactical &&
-                       sim.takes_command(u, order, scheduled.clear_existing)) {
+                       sim.takes_command(u, order, scheduled.clear_existing, last)) {
                 last = &order;
             }
         }
