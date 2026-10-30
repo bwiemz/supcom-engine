@@ -178,6 +178,7 @@ TEST_CASE("A UI script sees a unit as the last tick left it", "[userunit]") {
 
 TEST_CASE("A gone unit's UI object is dead, and GetEntityId on it raises", "[userunit][ids]") {
     UiWorld w;
+    osc::lua::register_user_bindings(w.ui);
     w.sim.tick();
     REQUIRE(w.ui.do_string("id = units[1]:GetEntityId()").ok());
     w.sim.entity_registry().destroy(w.unit());
