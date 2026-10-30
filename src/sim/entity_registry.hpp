@@ -35,7 +35,7 @@ public:
 
     /// Register an entity and assign it a unique ID. Returns the ID.
     ///
-    /// Its Moho id is EntityDB::DoReserveId's (0x00684480): a family and source in the
+    /// Its Moho id is EntityDB::DoReserveId's: a family and source in the
     /// high bits (a unit its army << 20; a projectile (army | 0x100) << 20; a prop
     /// 0x2FF << 20; a shield (army | 0x400) << 20; any other (army | 0x500) << 20; no
     /// army is 255), and the pool's serial: its least released one free again, else
