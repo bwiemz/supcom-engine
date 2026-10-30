@@ -1551,6 +1551,8 @@ static int l_ClearBuildTemplates(lua_State* L) {
     return 0;
 }
 
+/// SelectUnits(units): Moho's cfunc_SelectUnitsL, which gives back the live units it was handed;
+/// FAF's exe gives back nothing (FA-Binary-Patches SelecUnitsTableFix).
 static int l_SelectUnits(lua_State* L) {
     auto* ih = get_input_handler(L);
     auto* sim = get_sim(L);
@@ -1558,23 +1560,38 @@ static int l_SelectUnits(lua_State* L) {
         return 0;
     }
 
+    const bool gives_back = !(sim && sim->faf_exe());
+    if (gives_back) {
+        lua_newtable(L);
+    }
+    const int given = lua_gettop(L);
+    int taken = 0;
     std::unordered_set<sim::EntityId> new_sel;
     const int n = lua_istable(L, 1) ? luaL_getn(L, 1) : 0; // Lua 5.0: no lua_objlen
     for (int i = 1; i <= n; i++) {
         lua_rawgeti(L, 1, i);
         const auto* entity = sim ? check_entity(L, lua_gettop(L)) : nullptr;
-        if (entity && renderer::selectable(*entity)) {
+        if (!entity || !entity->is_unit() || entity->destroyed() ||
+            static_cast<const sim::Unit*>(entity)->is_dying()) {
+            lua_pop(L, 1);
+            continue;
+        }
+        if (renderer::selectable(*entity)) {
             new_sel.insert(entity->entity_id());
-        } else if (entity) {
+        } else {
             const auto* carrier = sim->entity_registry().find(renderer::carrier_of(*entity));
             if (carrier && renderer::selectable(*carrier)) {
                 new_sel.insert(carrier->entity_id());
             }
         }
-        lua_pop(L, 1);
+        if (gives_back) {
+            lua_rawseti(L, given, ++taken);
+        } else {
+            lua_pop(L, 1);
+        }
     }
     ih->set_selected(new_sel);
-    return 0;
+    return gives_back ? 1 : 0;
 }
 
 /// GetValidAttackingUnits() -> the selected units that can attack: those

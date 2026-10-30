@@ -887,6 +887,41 @@ TEST_CASE("SelectUnits takes a unit aboard as its transport", "[userunit][select
     CHECK(input.selected() == std::unordered_set<osc::sim::EntityId>{transport_id});
 }
 
+TEST_CASE("SelectUnits gives back the live units it was handed, but under FAF's exe",
+          "[userunit][selection]") {
+    const bool faf_exe = GENERATE(false, true);
+    UiWorld w;
+    w.sim.set_faf_exe(faf_exe);
+    osc::lua::register_user_bindings(w.ui);
+    osc::renderer::InputHandler input;
+    lua_State* L = w.ui.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    auto unselectable = std::make_unique<osc::sim::Unit>();
+    unselectable->set_army(0);
+    const osc::sim::EntityId unselectable_id =
+        w.sim.entity_registry().register_entity(std::move(unselectable));
+    auto gone = std::make_unique<osc::sim::Unit>();
+    gone->set_army(0);
+    gone->add_category("SELECTABLE");
+    osc::sim::Unit* gone_unit = gone.get();
+    const osc::sim::EntityId gone_id = w.sim.entity_registry().register_entity(std::move(gone));
+    osc::lua::push_units_for_ui(L, {w.id, gone_id, unselectable_id});
+    lua_setglobal(L, "handed");
+    w.sim.entity_registry().destroy(*gone_unit);
+    w.sim.tick();
+
+    REQUIRE(w.ui.do_string("given = SelectUnits(handed)").ok());
+    CHECK(input.selected() == std::unordered_set<osc::sim::EntityId>{w.id});
+    if (faf_exe) {
+        CHECK(w.ui.do_string("assert(given == nil)").ok());
+    } else {
+        CHECK(w.ui.do_string("assert(table.getn(given) == 2)").ok());
+        CHECK(w.ui.do_string("assert(given[1] == handed[1] and given[2] == handed[3])").ok());
+    }
+}
+
 TEST_CASE("A dead unit's object doesn't select the unit that takes its Moho id",
           "[userunit][selection][ids]") {
     UiWorld w;
