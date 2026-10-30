@@ -1066,6 +1066,10 @@ private:
     /// lets the unit's army send it: on the map (STIMap::IsWithin) and in its
     /// No Rush zone.
     bool target_allowed(const Unit& unit, const UnitCommand& command) const;
+    /// Whether a cleared `order` to `unit_ids` repeats the unit's only order,
+    /// which Moho's ProcessIssuedUnitCommand then drops.
+    bool repeats_only_order(const Unit& unit, const UnitCommand& order,
+                            const std::vector<EntityId>& unit_ids) const;
     /// `pos` kept to the playable area (clamp_to_playable(pos, army)'s
     /// case for an army that keeps to it).
     Vector3 clamp_to_playable(const Vector3& pos) const {

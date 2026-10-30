@@ -7,7 +7,11 @@
 
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
+#include "map/terrain.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
+#include "sim/unit_command.hpp"
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -41,6 +45,16 @@ bool run(TestContext& ctx, const char* what, const char* code) {
         return false;
     }
     return true;
+}
+
+sim::Unit* unit_of(TestContext& ctx, const std::string& expr) {
+    if (!ctx.lua_state.do_string("return " + expr + ":GetEntityId()")) {
+        return nullptr;
+    }
+    auto* e =
+        ctx.sim.entity_registry().find(sim::to_entity_id(ctx.L, -1, ctx.sim.entity_registry()));
+    lua_pop(ctx.L, 1);
+    return e && e->is_unit() ? static_cast<sim::Unit*>(e) : nullptr;
 }
 
 void check_all(TestContext& ctx, Tally& t, const char* what,
@@ -179,6 +193,39 @@ void test_issue_checks(TestContext& ctx) {
                   {"__ic_try(__ic_far, function() IssueGuard({__ic_far}, __ic_t) end)", "1"},
               });
     ctx.sim.set_no_rush(0.0f, 70.0f);
+
+    if (!run(ctx, "a repeated order", "__ic_rep = __ic_make('uel0201', -8, 14)")) {
+        return;
+    }
+    sim::Unit* rep = unit_of(ctx, "__ic_rep");
+    if (!rep) {
+        test_status::fail("[FAIL] issue-checks-test: no unit to repeat orders to");
+        return;
+    }
+    const auto point = [&](f32 x, f32 z) {
+        return sim::Vector3{x, ctx.sim.terrain()->get_surface_height(x, z), z};
+    };
+    const auto click = [&](const sim::Vector3& to) {
+        sim::UnitCommand move;
+        move.type = sim::CommandType::Move;
+        move.target_pos = to;
+        ctx.sim.set_human_input_active(true);
+        ctx.sim.route_player_command({rep->entity_id()}, move, true);
+        ctx.sim.set_human_input_active(false);
+        tick_for(ctx, 5);
+        return rep->command_queue().empty() ? 0u : rep->command_queue().front().command_id;
+    };
+    const sim::Vector3 to = point(rep->position().x, rep->position().z - 60.0f);
+    const u32 first = click(to);
+    const u32 again = click(to);
+    t.check(
+        first != 0 && again == first && rep->command_queue().size() == 1,
+        fmt::format("a player's move cleared to the point its only order goes: order {} then {}",
+                    first, again));
+    const u32 other = click(point(to.x + 10.0f, to.z));
+    t.check(
+        other != 0 && other != first,
+        fmt::format("a player's move cleared to another point: order {} then {}", first, other));
     spdlog::info("issue-checks-test: {} passed, {} failed", t.pass, t.fail);
 }
 

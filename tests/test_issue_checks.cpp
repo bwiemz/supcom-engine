@@ -16,6 +16,7 @@ extern "C" {
 #include <initializer_list>
 #include <memory>
 #include <string>
+#include <vector>
 
 using osc::sim::CommandType;
 using osc::sim::SimState;
@@ -155,5 +156,70 @@ TEST_CASE("An order whose target lies off the playable area or outside the No Ru
         }
         INFO(c.what);
         CHECK(w.sim.takes_command(u, order) == c.taken);
+    }
+}
+
+TEST_CASE("A cleared order that repeats its units' only order is dropped", "[routing]") {
+    struct Case {
+        const char* what;
+        CommandType first;
+        CommandType again;
+        osc::f32 x;
+        bool clear;
+        bool both;
+        bool queued_more;
+        bool dropped;
+    };
+    const Case cases[] = {
+        {"a move to the same point", CommandType::Move, CommandType::Move, 50.0f, true, false,
+         false, true},
+        {"queued, not cleared", CommandType::Move, CommandType::Move, 50.0f, false, false, false,
+         false},
+        {"to another point", CommandType::Move, CommandType::Move, 60.0f, true, false, false,
+         false},
+        {"to more units than hold it", CommandType::Move, CommandType::Move, 50.0f, true, true,
+         false, false},
+        {"behind another order", CommandType::Move, CommandType::Move, 50.0f, true, false, true,
+         false},
+        {"of another type", CommandType::Move, CommandType::Patrol, 50.0f, true, false, false,
+         false},
+        {"a patrol to the same point", CommandType::Patrol, CommandType::Patrol, 50.0f, true, false,
+         false, true},
+        {"an attack-move to the same point", CommandType::AggressiveMove,
+         CommandType::AggressiveMove, 50.0f, true, false, false, true},
+        {"a guard of the same unit", CommandType::Guard, CommandType::Guard, 50.0f, true, false,
+         false, false},
+        {"an attack on the same unit", CommandType::Attack, CommandType::Attack, 50.0f, true, false,
+         false, true},
+    };
+    for (const Case& c : cases) {
+        IssueWorld w;
+        Unit& a = w.make(0, {}, "RULEUMT_Land");
+        Unit& b = w.make(0, {}, "RULEUMT_Land");
+        Unit& enemy = w.make(1, {}, "RULEUMT_Land", {50.0f, 0.0f, 50.0f});
+        Unit& ward = w.make(0, {}, "RULEUMT_Land", {50.0f, 0.0f, 50.0f});
+        const auto order = [&](CommandType type, osc::f32 x) {
+            UnitCommand o;
+            o.type = type;
+            o.target_pos = {x, 0.0f, 50.0f};
+            o.target_id = type == CommandType::Attack  ? enemy.entity_id()
+                          : type == CommandType::Guard ? ward.entity_id()
+                                                       : osc::sim::EntityId{};
+            return o;
+        };
+        REQUIRE(w.sim.route_command({a.entity_id()}, order(c.first, 50.0f), true) != 0);
+        if (c.queued_more) {
+            w.sim.route_command({a.entity_id()}, order(CommandType::Move, 80.0f), false);
+        }
+        const osc::u32 before = a.command_queue().front().command_id;
+        const size_t size = a.command_queue().size();
+        std::vector<osc::sim::EntityId> to = {a.entity_id()};
+        if (c.both) {
+            to.push_back(b.entity_id());
+        }
+        w.sim.route_command(to, order(c.again, c.x), c.clear);
+        INFO(c.what);
+        CHECK((a.command_queue().front().command_id == before &&
+               a.command_queue().size() == size) == c.dropped);
     }
 }

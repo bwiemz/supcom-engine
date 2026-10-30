@@ -1195,7 +1195,9 @@ u32 SimState::route_command(const std::vector<EntityId>& unit_ids, const UnitCom
         auto* unit = static_cast<Unit*>(e);
         if (cmd.type == CommandType::Stop && clear_existing) {
             stop_unit(*unit);
-        } else if (!apply_silo_build(*unit, cmd) && takes_command(*unit, issued, clear_existing)) {
+        } else if (!apply_silo_build(*unit, cmd) &&
+                   !(clear_existing && repeats_only_order(*unit, issued, unit_ids)) &&
+                   takes_command(*unit, issued, clear_existing)) {
             if (clear_existing) {
                 SimContext ctx = sim_context();
                 unit->clear_commands(ctx);
@@ -1367,6 +1369,58 @@ bool SimState::target_allowed(const Unit& unit, const UnitCommand& command) cons
     const f32 dx = brain->start_position().x - at.x;
     const f32 dz = brain->start_position().z - at.z;
     return std::sqrt(dx * dx + dz * dz) <= no_rush_radius_;
+}
+
+bool SimState::repeats_only_order(const Unit& unit, const UnitCommand& order,
+                                  const std::vector<EntityId>& unit_ids) const {
+    switch (order.type) {
+    case CommandType::Move:
+    case CommandType::Attack:
+    case CommandType::Patrol:
+    case CommandType::Reclaim:
+    case CommandType::Repair:
+    case CommandType::Capture:
+    case CommandType::TransportLoad:
+    case CommandType::WaitForFerry:
+    case CommandType::Upgrade:
+    case CommandType::Sacrifice:
+    case CommandType::AggressiveMove:
+    case CommandType::Dock: break;
+    default: return false;
+    }
+    const auto& queue = unit.command_queue();
+    if (queue.size() != 1 || queue.front().type != order.type) {
+        return false;
+    }
+    const UnitCommand& current = queue.front();
+    if (order.target_id) {
+        if (order.target_id != current.target_id) {
+            return false;
+        }
+    } else if (has_target(order)) {
+        const f32 dx = order.target_pos.x - current.target_pos.x;
+        const f32 dy = order.target_pos.y - current.target_pos.y;
+        const f32 dz = order.target_pos.z - current.target_pos.z;
+        if (std::sqrt(dx * dx + dy * dy + dz * dz) >= 0.001f) {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    std::vector<EntityId> holders;
+    entity_registry_.for_each_unit([&](const Entity& e) {
+        const auto& q = static_cast<const Unit&>(e).command_queue();
+        if (!e.destroyed() && std::any_of(q.begin(), q.end(), [&](const UnitCommand& c) {
+                return c.command_id == current.command_id;
+            })) {
+            holders.push_back(e.entity_id());
+        }
+    });
+    std::vector<EntityId> ordered = unit_ids;
+    std::sort(holders.begin(), holders.end());
+    std::sort(ordered.begin(), ordered.end());
+    ordered.erase(std::unique(ordered.begin(), ordered.end()), ordered.end());
+    return holders == ordered;
 }
 
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
@@ -1978,7 +2032,10 @@ void SimState::dispatch_due_commands() {
             }
             // Each selected unit independently replaces (fresh order) or
             // appends (queued/shift) — matching the Issue* bindings.
-            if (!takes_command(*unit, base, sc.clear_existing)) continue;
+            if ((sc.clear_existing && repeats_only_order(*unit, base, sc.unit_ids)) ||
+                !takes_command(*unit, base, sc.clear_existing)) {
+                continue;
+            }
             if (sc.clear_existing) {
                 SimContext ctx = sim_context();
                 unit->clear_commands(ctx);
