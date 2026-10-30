@@ -11408,6 +11408,12 @@ void test_range(TestContext& ctx) {
         brain:GiveStorage('ENERGY', 1000000)
         brain:GiveResource('MASS', 100000)
         brain:GiveResource('ENERGY', 1000000)
+        -- Trees reaching a footprint are reclaimed before the build (FindObstructingPropToReclaim)
+        for _, p in GetReclaimablesInRect(Rect(595, 85, 675, 145)) do
+            if IsProp(p) then
+                p:Destroy()
+            end
+        end
 
         -- Builds: a T1 engineer (MaxBuildDistance 5) reaches 7 from point
         -- defence and 14 from a land factory; an ACU (10) 12 from point
@@ -11417,12 +11423,6 @@ void test_range(TestContext& ctx) {
         __osc_far = __osc_spawn('uel0105', 'ARMY_1', 600.5, 110.5)
         IssueBuildMobile({__osc_far}, __osc_at(609.5, 110.5), 'ueb2101', {})
         __osc_fac = __osc_spawn('uel0105', 'ARMY_1', 600.5, 120.5)
-        -- Trees on a footprint are reclaimed before the build (FindObstructingPropToReclaim)
-        for _, p in GetReclaimablesInRect(Rect(611, 117, 617, 124)) do
-            if IsProp(p) then
-                p:Destroy()
-            end
-        end
         IssueBuildMobile({__osc_fac}, __osc_at(614, 120.5), 'ueb0101', {})
         __osc_acu = __osc_spawn('uel0001', 'ARMY_1', 650.5, 100.5)
         IssueBuildMobile({__osc_acu}, __osc_at(662, 100.5), 'ueb2101', {})

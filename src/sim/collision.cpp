@@ -267,6 +267,27 @@ std::optional<BoxContact> box_contact(const OrientedBox& shape, const OrientedBo
     return best;
 }
 
+bool shape_meets_box(const Entity& e, const OrientedBox& box) {
+    const CollisionShape& s = e.collision_shape();
+    if (s.type == CollisionShapeType::BOX) {
+        return box_contact(*collision_box(e), box).has_value();
+    }
+    if (s.type != CollisionShapeType::SPHERE) {
+        return false;
+    }
+    // Wm3's IntrBox3Sphere3::Test.
+    const Vector3 c = collision_centre(e);
+    const Vector3 d{c.x - box.centre.x, c.y - box.centre.y, c.z - box.centre.z};
+    f32 outside = 0.0f;
+    for (int i = 0; i < 3; ++i) {
+        const f32 beyond = std::abs(dot(d, box.axis[i])) - box.extent[i];
+        if (beyond > 0.0f) {
+            outside += beyond * beyond;
+        }
+    }
+    return outside <= s.sx * s.sx;
+}
+
 std::optional<f32> terrain_crossing(const map::Terrain& terrain, const Vector3& from,
                                     const Vector3& to) {
     const auto at = [&](f32 t) {
