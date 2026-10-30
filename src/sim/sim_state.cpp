@@ -1447,6 +1447,9 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
         command.type == CommandType::AggressiveMove) {
         return may_leave && unit.motion_type() != "RULEUMT_None";
     }
+    if (command.type == CommandType::Dive) {
+        return unit.motion_type() == "RULEUMT_SurfacingSub";
+    }
     if (command.type == CommandType::BuildMobile || command.type == CommandType::BuildFactory) {
         return unit.has_category("FACTORY") || unit.has_category("ENGINEER") ||
                unit.has_category("NEEDMOBILEBUILD") || unit.has_category("POD");

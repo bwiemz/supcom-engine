@@ -226,6 +226,15 @@ void test_issue_checks(TestContext& ctx) {
     t.check(
         other != 0 && other != first,
         fmt::format("a player's move cleared to another point: order {} then {}", first, other));
+
+    if (!run(ctx, "a sub", "__ic_sub = __ic_make('ues0203', 30, -30)")) {
+        return;
+    }
+    check_all(ctx, t, "a Dive",
+              {
+                  {"__ic_try(__ic_sub, function() IssueDive({__ic_sub}) end)", "1"},
+                  {"__ic_try(__ic_t, function() IssueDive({__ic_t}) end)", "0"},
+              });
     spdlog::info("issue-checks-test: {} passed, {} failed", t.pass, t.fail);
 }
 

@@ -1663,7 +1663,9 @@ TEST_CASE("Only Move, Attack, the form moves, Dive and a rally point return thei
             osc::lua::register_sim_bindings(lua, sim);
             two_armies(sim);
             Unit* with = still(sim, 0, 12.0f, 10.0f);
-            with->set_motion_type("RULEUMT_Land");
+            with->set_motion_type(std::string(row.issue).rfind("IssueDive", 0) == 0
+                                      ? "RULEUMT_SurfacingSub"
+                                      : "RULEUMT_Land");
             with->add_command_cap(row.cap);
             for (const char* category : {"ENGINEER", "REPAIR", "CAPTURE", "RECLAIM"}) {
                 with->add_category(category);

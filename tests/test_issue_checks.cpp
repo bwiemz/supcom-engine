@@ -16,6 +16,7 @@ extern "C" {
 #include <initializer_list>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using osc::sim::CommandType;
@@ -221,5 +222,17 @@ TEST_CASE("A cleared order that repeats its units' only order is dropped", "[rou
         INFO(c.what);
         CHECK((a.command_queue().front().command_id == before &&
                a.command_queue().size() == size) == c.dropped);
+    }
+}
+
+TEST_CASE("Only a surfacing sub takes a Dive", "[routing]") {
+    for (const auto& [motion, taken] :
+         {std::pair{"RULEUMT_SurfacingSub", true}, std::pair{"RULEUMT_Water", false},
+          std::pair{"RULEUMT_Land", false}, std::pair{"RULEUMT_Air", false}}) {
+        IssueWorld w;
+        Unit& u = w.make(0, {"SUBMERSIBLE"}, motion);
+        u.add_command_cap("RULEUCC_Dive");
+        INFO(motion);
+        CHECK(w.takes(u, CommandType::Dive) == taken);
     }
 }
