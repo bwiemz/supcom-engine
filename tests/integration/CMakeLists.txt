@@ -7,6 +7,7 @@ add_executable(osc_integration
     runner/test_modes.cpp
     runner/lan_modes.cpp
     runner/integration_tests.cpp
+    runner/attack_move_click_test.cpp
     runner/audio_data_test.cpp
     runner/map_parse_test.cpp
     runner/terrain_glow_test.cpp
@@ -446,6 +447,21 @@ if(Python3_Interpreter_FOUND)
                          "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
     endif()
     set_tests_properties(data.command-issued_faf PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
+    # An attack-move click in the window's own frames, through a tick's: FAF's
+    # AttackMove SimCallback after the click's Script order
+    if(_osc_faf_data)
+        add_test(NAME data.attack-move-click_faf
+                 COMMAND osc_integration --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP}
+                         --camera 672,346,60 --attack-move-click-test)
+    else()
+        add_test(NAME data.attack-move-click_faf
+                 COMMAND ${Python3_EXECUTABLE} -c
+                         "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
+    endif()
+    set_tests_properties(data.attack-move-click_faf PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 600)

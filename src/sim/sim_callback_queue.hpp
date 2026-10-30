@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -111,7 +112,17 @@ struct SimCallbackEntry {
 
 class SimCallbackQueue {
 public:
+    /// Takes a pushed callback at once if it can (false: it waits for drain()).
+    using Send = std::function<bool(SimCallbackEntry&)>;
+
+    /// Moho's UI hands each SimCallback to its sim driver as it is made, in
+    /// turn with the orders issued around it.
+    void set_send(Send send) { send_ = std::move(send); }
+
     void push(SimCallbackEntry entry) {
+        if (send_ && send_(entry)) {
+            return;
+        }
         queue_.push_back(std::move(entry));
     }
 
@@ -124,6 +135,7 @@ public:
     bool empty() const { return queue_.empty(); }
 
 private:
+    Send send_;
     std::vector<SimCallbackEntry> queue_;
 };
 

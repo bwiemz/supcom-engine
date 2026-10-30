@@ -9,6 +9,7 @@
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/user_bindings.hpp"
+#include "renderer/input_handler.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/command_codec.hpp"
 #include "sim/lockstep_session.hpp"
@@ -1079,4 +1080,48 @@ TEST_CASE("A dropped player's defeat is a command in the next beat", "[simcallba
     w.sim.schedule_callback(osc::sim::kEngineSource, defeat);
     w.sim.tick();
     CHECK_FALSE(w.sim.army_at(0)->is_defeated());
+}
+
+TEST_CASE("A SimCallback sent at once keeps its place after the order issued before it",
+          "[simcallback]") {
+    osc::lua::LuaState sim_lua;
+    osc::sim::SimState sim{sim_lua.raw(), nullptr};
+    auto unit = std::make_unique<osc::sim::Unit>();
+    unit->set_army(0);
+    const osc::u32 id = sim.entity_registry().register_entity(std::move(unit));
+    osc::lua::LuaState ui;
+    osc::lua::register_moho_bindings(ui, sim);
+    osc::lua::register_user_bindings(ui);
+    osc::renderer::InputHandler input;
+    input.set_selected({id});
+    osc::sim::SimCallbackQueue queue;
+    queue.set_send([&](osc::sim::SimCallbackEntry& callback) {
+        sim.submit_callback(std::move(callback));
+        return true;
+    });
+    lua_State* L = ui.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "__osc_sim_callback_queue");
+    lua_pushlightuserdata(L, &queue);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    REQUIRE(ui.do_string("IssueCommand('UNITCOMMAND_Script', {TaskName = 'AttackMove'})"
+                         " SimCallback({Func = 'AttackMove'}, true)")
+                .ok());
+    CHECK(queue.empty());
+    const auto pending = sim.command_scheduler().pending();
+    REQUIRE(pending.size() == 2);
+    CHECK_FALSE(pending[0].callback);
+    CHECK(pending[0].command.type == osc::sim::CommandType::Script);
+    REQUIRE(pending[1].callback);
+    CHECK(pending[1].callback->func_name == "AttackMove");
+    CHECK(pending[1].callback->unit_ids == std::vector<osc::u32>{id});
+    CHECK(pending[1].exec_beat == pending[0].exec_beat);
+
+    queue.set_send([](osc::sim::SimCallbackEntry&) { return false; });
+    REQUIRE(ui.do_string("SimCallback({Func = 'Later'})").ok());
+    CHECK(sim.command_scheduler().pending().size() == 2);
+    CHECK(queue.drain().size() == 1);
 }
