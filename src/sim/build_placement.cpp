@@ -114,6 +114,28 @@ StructurePlacement::StructurePlacement(const SimState& sim, i32 army, PlacementR
                                        bool scheduled, u32 moving)
     : sim_(sim), army_(army), lookup_(std::move(rules)), scheduled_(scheduled), moving_(moving) {}
 
+const UnitCommand* reserved_order(const SimState& sim, const BuildReservation& r) {
+    const Entity* e = sim.entity_registry().find(r.builder);
+    if (r.command == 0 || !e || e->destroyed() || !e->is_unit()) {
+        return nullptr;
+    }
+    const auto& builder = static_cast<const Unit&>(*e);
+    if (builder.is_dying()) {
+        return nullptr;
+    }
+    for (const UnitCommand& cmd : builder.command_queue()) {
+        if (cmd.command_id == r.command) {
+            return &cmd;
+        }
+    }
+    return nullptr;
+}
+
+void drop_stale_build_reservations(const SimState& sim, ArmyBrain& brain) {
+    std::erase_if(brain.build_reservations(),
+                  [&](const auto& entry) { return !reserved_order(sim, entry.second); });
+}
+
 const std::vector<StructureSite>& StructurePlacement::reserved() const {
     if (reserved_) return *reserved_;
     auto& sites = reserved_.emplace();
@@ -124,8 +146,17 @@ const std::vector<StructureSite>& StructurePlacement::reserved() const {
                 StructureSite::of(rules(cmd.blueprint_id), cmd.target_pos.x, cmd.target_pos.z));
         }
     };
-    const auto pending =
-        scheduled_ ? sim_.queues_with_pending() : std::map<u32, SimState::QueueWithPending>();
+    if (!scheduled_) {
+        if (const ArmyBrain* brain = sim_.army_at(static_cast<size_t>(army_))) {
+            for (const auto& [cell, reservation] : brain->build_reservations()) {
+                if (const UnitCommand* cmd = reserved_order(sim_, reservation)) {
+                    reserve(*cmd);
+                }
+            }
+        }
+        return sites;
+    }
+    const auto pending = sim_.queues_with_pending();
     sim_.entity_registry().for_each_unit([&](const Entity& e) {
         if (e.destroyed() || !e.is_unit() || e.army() != army_) return;
         if (const auto it = pending.find(e.entity_id()); it != pending.end()) {

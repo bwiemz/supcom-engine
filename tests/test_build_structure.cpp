@@ -12,6 +12,7 @@
 #include "sim/manipulator.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/state_io.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 
@@ -20,6 +21,7 @@ extern "C" {
 }
 
 #include <deque>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -44,6 +46,7 @@ struct World {
         sim.get_army(0)->set_start_position({20.0f, 0.0f, 20.0f});
         sim.add_resource_deposit({30.5f, 0, 30.5f, 1.0f, osc::sim::ResourceDeposit::Mass});
         engineer = spawn("uel0105", 40.0f, 40.0f);
+        engineer->add_category("ENGINEER");
         osc::lua::register_moho_bindings(lua, sim);
         osc::lua::register_sim_bindings(lua, sim);
         REQUIRE(lua.do_string(R"(
@@ -95,7 +98,38 @@ struct World {
         REQUIRE(r);
         return engineer->command_queue();
     }
+
+    std::string answer(const std::string& expr) {
+        INFO(expr);
+        REQUIRE(lua.do_string("answer = tostring(" + expr + ")"));
+        lua_State* L = lua.raw();
+        lua_getglobal(L, "answer");
+        std::string out = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        return out;
+    }
+
+    bool can_build(const std::string& at) {
+        return answer("moho.aibrain_methods.CanBuildStructureAt(brain, 'ueb1101', " + at + ")") ==
+               "true";
+    }
+
+    std::string site(const std::string& expr) {
+        REQUIRE(lua.do_string("site = " + expr));
+        return answer("site and site[1] .. ' ' .. site[2] or site");
+    }
 };
+
+void reserve(World& w, bool structure, const std::string& bp, osc::f32 x, osc::f32 z) {
+    REQUIRE(w.lua.do_string("bp = '" + bp + "'"));
+    REQUIRE(w.lua.do_string("x, z = " + std::to_string(x) + ", " + std::to_string(z)));
+    if (structure) {
+        REQUIRE(w.lua.do_string(
+            "moho.aibrain_methods.BuildStructure(brain, engineer, bp, {x, z, 0}, false)"));
+    } else {
+        REQUIRE(w.lua.do_string("IssueBuildMobile({engineer}, {x, 0, z}, bp, {})"));
+    }
+}
 
 } // namespace
 
@@ -247,4 +281,103 @@ TEST_CASE("BuildStructure gives the order its place's angle", "[brain][build]") 
     REQUIRE(queue.size() == 1);
     CHECK(queue.front().has_facing == (angle != 0));
     CHECK(queue.front().facing == static_cast<osc::f32>(angle));
+}
+
+TEST_CASE("CanBuildStructureAt refuses the site of a BuildStructure order, not of other orders",
+          "[brain][build]") {
+    const bool structure = GENERATE(true, false);
+    World w;
+    reserve(w, structure, "ueb1101", 30, 40);
+    REQUIRE(w.engineer->command_queue().size() == 1);
+    CHECK(w.can_build("{30, 0, 40}") == !structure);
+    CHECK(w.can_build("{31, 0, 41}") == !structure);
+    CHECK(w.can_build("{30, 0, 50}"));
+}
+
+TEST_CASE("A BuildStructure reservation lasts while its builder lives and has the order",
+          "[brain][build]") {
+    struct Row {
+        const char* name;
+        std::function<void(World&, Unit*)> then;
+        bool free;
+    };
+    const std::vector<Row> rows = {
+        {"kept", [](World&, Unit*) {}, false},
+        {"orders cleared", [](World& w, Unit*) { w.engineer->clear_commands(); }, true},
+        {"builder dying", [](World& w, Unit*) { w.engineer->begin_dying(); }, true},
+        {"builder destroyed", [](World& w, Unit*) { w.engineer->mark_destroyed(); }, true},
+        {"a second order of the cell kept",
+         [](World& w, Unit*) {
+             REQUIRE(w.lua.do_string("moho.aibrain_methods.BuildStructure(brain, other, "
+                                     "'ueb1101', {30.3, 40.3, 0}, false)"));
+         },
+         false},
+        {"a second order of the cell, its builder dying",
+         [](World& w, Unit* other) {
+             REQUIRE(w.lua.do_string("moho.aibrain_methods.BuildStructure(brain, other, "
+                                     "'ueb1101', {30.3, 40.3, 0}, false)"));
+             REQUIRE(other->command_queue().size() == 1);
+             other->begin_dying();
+         },
+         true},
+    };
+    for (const auto& row : rows) {
+        DYNAMIC_SECTION(row.name) {
+            World w;
+            Unit* other = w.spawn("uel0105", 44.0f, 40.0f);
+            w.global("other", static_cast<osc::sim::Entity*>(other));
+            REQUIRE(w.order("'ueb1101', {30, 40, 0}, false").size() == 1);
+            row.then(w, other);
+            CHECK(w.can_build("{30, 0, 40}") == row.free);
+        }
+    }
+}
+
+TEST_CASE("FindPlaceToBuild and CreateResourceBuildingNearest pass over BuildStructure's sites",
+          "[brain][build]") {
+    const bool structure = GENERATE(true, false);
+    World w;
+    w.sim.add_resource_deposit({50.5f, 0, 30.5f, 1.0f, osc::sim::ResourceDeposit::Mass});
+    REQUIRE(w.lua.do_string(
+        "rawset(_G, 'CreateUnitHPR', function(bp, army, x, y, z) return {x, z} end)"));
+    reserve(w, structure, "ueb1101", 30, 40);
+    reserve(w, structure, "ueb1103", 30.5f, 30.5f);
+    REQUIRE(w.engineer->command_queue().size() == 2);
+    CHECK(w.site("moho.aibrain_methods.FindPlaceToBuild(brain, 'OscSite', 'ueb1101', "
+                 "{{{'OscSite'}, {30, 40, 0}, {30, 52, 0}}}, false, engineer)") ==
+          (structure ? "30 52" : "30 40"));
+    const std::string mass = structure ? "50.5 30.5" : "30.5 30.5";
+    CHECK(w.site("moho.aibrain_methods.FindPlaceToBuild(brain, 'T1Resource', 'ueb1103', {}, false, "
+                 "engineer)") == mass);
+    CHECK(w.site("moho.aibrain_methods.CreateResourceBuildingNearest(brain, 'ueb1103', 20, 20)") ==
+          mass);
+}
+
+TEST_CASE("CreateUnitNearSpot puts a unit on a site BuildStructure has ordered", "[brain][build]") {
+    World w;
+    REQUIRE(w.lua.do_string(
+        "rawset(_G, 'CreateUnitHPR', function(bp, army, x, y, z) return {x, z} end)"));
+    REQUIRE(w.order("'ueb1101', {30, 40, 0}, false").size() == 1);
+    CHECK(w.site("moho.aibrain_methods.CreateUnitNearSpot(brain, 'ueb1101', 30, 40)") == "30 40");
+}
+
+TEST_CASE("A brain's BuildStructure reservations survive a save", "[brain][build][save]") {
+    World w;
+    REQUIRE(w.order("'ueb1101', {30.7, 40.2, 0}, false").size() == 1);
+    REQUIRE(w.order("'ueb1301', {12, 50, 0}, false").size() == 1);
+    const auto bytes = osc::sim::save_sim_state(w.sim);
+
+    osc::lua::LuaState lua;
+    osc::sim::SimState loaded(lua.raw(), nullptr);
+    loaded.add_army("ARMY_1", "ARMY_1");
+    const std::string error = osc::sim::load_sim_state(loaded, bytes);
+    INFO(error);
+    REQUIRE(error.empty());
+    const auto& kept = loaded.get_army(0)->build_reservations();
+    REQUIRE(kept.size() == 2);
+    CHECK(kept.at({30, 40}).builder == w.engineer->entity_id());
+    CHECK(kept.at({30, 40}).command == w.engineer->command_queue().front().command_id);
+    CHECK(kept.at({30, 40}).command != 0);
+    CHECK(kept.at({12, 50}).builder == w.engineer->entity_id());
+    CHECK(kept.at({12, 50}).command == 0);
 }
