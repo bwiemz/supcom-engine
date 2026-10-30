@@ -9531,7 +9531,24 @@ void test_steer(TestContext& ctx) {
     //    Pillar of its own army (footprint 2, so the Pillar never yields on
     //    its own). The Striker steps aside, and the Pillar is made to stop
     //    while it passes (Moho's repath of the unit overtaken).
+    // With Moho pathing the closest pass hangs on the tick and the two ids (the navigator's
+    // look-ahead tick is the id mod 7): the scene is set as the original game's was probed.
+    constexpr osc::u32 kOvertakeTick = 1600;
+    if (moho) {
+        if (ctx.sim.tick_count() > kOvertakeTick) {
+            check(false, fmt::format("Test 5: the scene's tick {} has passed", kOvertakeTick));
+        }
+        while (ctx.sim.tick_count() < kOvertakeTick) {
+            ctx.sim.tick();
+        }
+    }
     lua(moho ? R"(
+        local d = __osc_spawn('uel0201', 'ARMY_1', 30, 30, 0)
+        while tonumber(d:GetEntityId()) < 63 do
+            d:Destroy()
+            d = __osc_spawn('uel0201', 'ARMY_1', 30, 30, 0)
+        end
+        d:Destroy()
         __osc_pillar = __osc_spawn('uel0202', 'ARMY_1', 0, -40, 0)
         __osc_striker = __osc_spawn('uel0201', 'ARMY_1', 0, -46, 0)
         __osc_move(__osc_pillar, 0, -5)
@@ -9545,19 +9562,24 @@ void test_steer(TestContext& ctx) {
     )");
     {
         const float r = reach("__osc_striker", "__osc_pillar");
-        const Watch w = watch("__osc_striker", "__osc_pillar", 300, false, false);
         auto* striker = unit("__osc_striker");
         auto* pillar = unit("__osc_pillar");
-        // With Moho pathing the pass is its navigator's (see test 1): nothing is made to stop. Its
-        // look-ahead falls on the tick the unit's id matches mod 7, so the closest point shifts
-        // with the ids the scenes before left free.
-        const float keeps_apart = moho ? 0.85f : 0.9f;
-        check((moho || (w.stepped[0] && w.held[1])) && w.closest >= keeps_apart * r && striker &&
-                  pillar && striker->position().z > pillar->position().z && w.arrived[0] &&
-                  w.arrived[1],
+        const osc::u32 ids[2] = {striker ? striker->entity_id().moho() : 0,
+                                 pillar ? pillar->entity_id().moho() : 0};
+        const Watch w = watch("__osc_striker", "__osc_pillar", 300, false, false);
+        striker = unit("__osc_striker");
+        pillar = unit("__osc_pillar");
+        // With Moho pathing the pass is its navigator's (see test 1): nothing is made to stop.
+        // The original game's Striker comes within 0.972 of its Pillar in this scene.
+        const bool as_original =
+            !moho || (ids[0] == 65 && ids[1] == 64 && std::abs(w.closest - 0.972f) < 0.01f);
+        check((moho || (w.stepped[0] && w.held[1])) && as_original && w.closest >= 0.9f * r &&
+                  striker && pillar && striker->position().z > pillar->position().z &&
+                  w.arrived[0] && w.arrived[1],
               fmt::format("Test 5: overtaking one that outranks it, it steps aside and the other "
-                          "stops (stepped {}, overtaken held {}, closest {:.2f} of {:.2f})",
-                          w.stepped[0], w.held[1], w.closest, r));
+                          "stops (stepped {}, overtaken held {}, closest {:.3f} of {:.2f}, ids "
+                          "{} {})",
+                          w.stepped[0], w.held[1], w.closest, r, ids[0], ids[1]));
     }
     clear({"__osc_pillar", "__osc_striker"});
 
