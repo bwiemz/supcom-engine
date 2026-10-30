@@ -68,11 +68,17 @@ bool read_xz(lua_State* L, int idx, f32& x, f32& z);
 /// A player's order for these units, through the command path.
 void issue_player_order(lua_State* L, const std::vector<u32>& ids, const sim::UnitCommand& cmd,
                         bool clear);
-/// A targetless order by its UI name (RULEUCC_Stop, ...).
-void issue_targetless_order(lua_State* L, const std::vector<u32>& ids, const std::string& name,
-                            int data, bool clear);
+/// A targetless order by its UI name (RULEUCC_Stop, ...), told to OnCommandIssued if `tell`;
+/// false for one the engine can't give.
+bool issue_targetless_order(lua_State* L, const std::vector<u32>& ids, const std::string& name,
+                            int data, bool clear, bool tell = true,
+                            const std::string& blueprint = {});
 /// The command name the UI gives an order (e.g. "Stop" for RULEUCC_Stop).
 std::string ui_command_name(const char* name);
+/// report_command_issued for a UI script's order with no target, its Lua data
+/// at `data` (0: none) the LuaParams.
+void report_script_order(lua_State* L, const std::string& type, const std::vector<u32>& ids,
+                         bool clear, int data, const std::string& blueprint = {});
 
 // ── Shared by the binding files (M191 step 2: moho_bindings.cpp split by
 // class into lua/bindings/) ──

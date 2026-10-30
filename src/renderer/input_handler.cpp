@@ -1475,6 +1475,7 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         if (!verdict) return std::nullopt;
         cmd.script_args = verdict->args;
         out.type = "Script";
+        out.lua_params = verdict->args;
         for (u32 uid : verdict->units) {
             const auto* e = sim.entity_registry().find(uid);
             if (e && e->is_unit() && !e->destroyed()) ids.push_back(uid);

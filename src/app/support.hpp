@@ -81,8 +81,6 @@ std::array<f32, 2> ui_blueprint_footprint(lua_State* uiL, const std::string& bp_
 /// What a unit blueprint in the UI state's blueprint store picks by; the
 /// defaults for one it doesn't hold.
 renderer::PickBlueprint ui_blueprint_pick(lua_State* uiL, const std::string& bp_id);
-/// A command a world click issued, told to the UI (OnCommandIssued).
-void report_command_issued(lua_State* uiL, const renderer::IssuedCommand& c);
 /// The UI's SimCallbacks, into the sim.
 void submit_sim_callbacks(sim::SimCallbackQueue& queue, sim::SimState& sim);
 
