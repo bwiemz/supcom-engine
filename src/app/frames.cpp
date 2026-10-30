@@ -474,6 +474,17 @@ void dispatch_selection_change(lua_State* uL, std::unordered_set<osc::sim::Entit
     dispatch_selection_change(uL, prev, cur, action || refresh);
 }
 
+void refresh_selection(lua_State* uL, osc::renderer::InputHandler& input,
+                       const osc::sim::SimState& sim, std::unordered_set<osc::sim::EntityId>& prev,
+                       std::vector<std::pair<osc::sim::EntityId, osc::u32>>& prev_upgrades) {
+    const size_t before = input.selected().size();
+    input.prune_selection(sim.entity_registry());
+    if (input.selected().size() < before) {
+        dispatch_selection_change(uL, prev, prev_upgrades, sim, input.selected(),
+                                  input.take_selection_event());
+    }
+}
+
 /// Moho's world-UI start (see ui::WldUIProvider): the user side of the
 /// sync channel (/lua/UserSync.lua and its hooks: OnSync, a fresh Sync and
 /// UnitData) is loaded for the new session -- by its SessionInit.lua, when

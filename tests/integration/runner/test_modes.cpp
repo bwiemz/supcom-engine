@@ -1344,18 +1344,15 @@ void IntegrationModes::headless(Engine& e) {
         };
         // As the windowed loop plays: a sim tick, its beat, 6 UI frames.
         osc::lua::SyncQueue sync;
-        const auto refresh_selection = [&] {
-            headless_input.prune_selection(sim_state->entity_registry());
-            dispatch_selection_change(uL, prev_sel, prev_sel_upgrades, *sim_state,
-                                      headless_input.selected(),
-                                      headless_input.take_selection_event());
+        const auto refresh = [&] {
+            refresh_selection(uL, headless_input, *sim_state, prev_sel, prev_sel_upgrades);
         };
         auto play = [&](int ticks) {
             for (int t = 0; t < ticks; ++t) {
                 submit_sim_callbacks(test_callbacks, *sim_state);
                 sim_state->tick();
                 world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw(), sync,
-                           refresh_selection);
+                           refresh);
                 note_game_over_if_ended(sim_state.get(), game_state_mgr, uL);
                 pump(6);
             }

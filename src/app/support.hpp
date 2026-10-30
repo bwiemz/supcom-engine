@@ -75,6 +75,11 @@ void dispatch_selection_change(lua_State* uL, std::unordered_set<sim::EntityId>&
                                std::vector<std::pair<sim::EntityId, u32>>& prev_upgrades,
                                const sim::SimState& sim,
                                const std::unordered_set<sim::EntityId>& cur, bool action);
+/// A beat's CWldSession::CheckForNecessaryUIRefresh: a selected unit gone or dead leaves the
+/// selection, and the UI hears of it in that beat.
+void refresh_selection(lua_State* uL, renderer::InputHandler& input, const sim::SimState& sim,
+                       std::unordered_set<sim::EntityId>& prev,
+                       std::vector<std::pair<sim::EntityId, u32>>& prev_upgrades);
 /// FA's command mode (commandmode.lua), as world clicks read it.
 renderer::CommandMode read_command_mode(lua_State* uiL);
 /// A blueprint's footprint (SizeX, SizeZ) from the UI state's blueprint
