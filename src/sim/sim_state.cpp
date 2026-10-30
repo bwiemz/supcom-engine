@@ -1195,7 +1195,7 @@ u32 SimState::route_command(const std::vector<EntityId>& unit_ids, const UnitCom
         auto* unit = static_cast<Unit*>(e);
         if (cmd.type == CommandType::Stop && clear_existing) {
             stop_unit(*unit);
-        } else if (!apply_silo_build(*unit, cmd) && takes_command(*unit, cmd, clear_existing)) {
+        } else if (!apply_silo_build(*unit, cmd) && takes_command(*unit, issued, clear_existing)) {
             if (clear_existing) {
                 SimContext ctx = sim_context();
                 unit->clear_commands(ctx);
@@ -1282,6 +1282,21 @@ std::string upgrade_link(lua_State* L, std::string_view bp, const char* link, co
     return value.empty() ? std::string(absent) : value;
 }
 
+bool has_target(const UnitCommand& command) {
+    switch (command.type) {
+    case CommandType::Stop:
+    case CommandType::Dive:
+    case CommandType::BuildFactory:
+    case CommandType::Upgrade:
+    case CommandType::Enhance:
+    case CommandType::SiloBuildNuke:
+    case CommandType::SiloBuildTactical: return false;
+    default:
+        return static_cast<bool>(command.target_id) || command.target_pos.x != 0.0f ||
+               command.target_pos.y != 0.0f || command.target_pos.z != 0.0f;
+    }
+}
+
 const Unit* carrier_of(const EntityRegistry& registry, const Unit& unit) {
     const Entity* e = unit.transport_id() ? registry.find(unit.transport_id()) : nullptr;
     return e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
@@ -1320,6 +1335,40 @@ bool takes_upgrade(lua_State* L, const blueprints::BlueprintStore* store, const 
 
 } // namespace
 
+bool SimState::target_allowed(const Unit& unit, const UnitCommand& command) const {
+    if (!has_target(command)) {
+        return true;
+    }
+    Vector3 at = command.target_pos;
+    if (const Entity* e = command.target_id ? entity_registry_.find(command.target_id) : nullptr;
+        e && !e->destroyed()) {
+        at = e->position();
+    }
+    const ArmyBrain* brain = unit.army() >= 0 ? army_at(static_cast<size_t>(unit.army())) : nullptr;
+    if (brain && brain->use_whole_map()) {
+        if (terrain_ &&
+            (at.x < 0.0f || at.z < 0.0f || at.x >= static_cast<f32>(terrain_->map_width()) ||
+             at.z >= static_cast<f32>(terrain_->map_height()))) {
+            return false;
+        }
+    } else if (has_playable_rect_) {
+        if (at.x < playable_x0_ || at.z < playable_z0_ || at.x > playable_x1_ ||
+            at.z > playable_z1_) {
+            return false;
+        }
+    } else if (terrain_ &&
+               (at.x < 0.0f || at.z < 0.0f || at.x > static_cast<f32>(terrain_->map_width()) ||
+                at.z > static_cast<f32>(terrain_->map_height()))) {
+        return false;
+    }
+    if (!brain || !no_rush_active()) {
+        return true;
+    }
+    const f32 dx = brain->start_position().x - at.x;
+    const f32 dz = brain->start_position().z - at.z;
+    return std::sqrt(dx * dx + dz * dz) <= no_rush_radius_;
+}
+
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
                              bool clear_existing) const {
     const auto& queue = unit.command_queue();
@@ -1329,6 +1378,9 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool clear_existing,
                              const UnitCommand* last) const {
     if (unit.is_being_built() && !unit.takes_orders_unfinished()) {
+        return false;
+    }
+    if (!target_allowed(unit, command)) {
         return false;
     }
     if (clear_existing && command.type != CommandType::Stop && unit.has_unit_state("Enhancing")) {
@@ -1833,7 +1885,6 @@ void SimState::terminate_command_source(u32 source) {
 
 void SimState::dispatch_due_commands() {
     PROFILE_ZONE("Sim::commands");
-    const bool no_rush = no_rush_active();
     command_scheduler_.dispatch_due(beat_count_, [&](const ScheduledCommand& scheduled) {
         ScheduledCommand sc = scheduled;
         // Its source runs it, as Moho's sim plays a source's part of the
@@ -1925,15 +1976,9 @@ void SimState::dispatch_due_commands() {
                 unit->cancel_enhance(L_);
                 if (unit->destroyed()) continue;
             }
-            // During No Rush, clamp movement/attack goals into the unit's zone
-            // so scheduler-routed orders stop cleanly at the line.
-            if (no_rush && (cmd.type == CommandType::Move ||
-                            cmd.type == CommandType::Attack)) {
-                cmd.target_pos = clamp_to_no_rush(*unit, cmd.target_pos);
-            }
             // Each selected unit independently replaces (fresh order) or
             // appends (queued/shift) — matching the Issue* bindings.
-            if (!takes_command(*unit, cmd, sc.clear_existing)) continue;
+            if (!takes_command(*unit, base, sc.clear_existing)) continue;
             if (sc.clear_existing) {
                 SimContext ctx = sim_context();
                 unit->clear_commands(ctx);

@@ -123,6 +123,62 @@ void test_issue_checks(TestContext& ctx) {
                   {"__ic_orders(__ic_make('uea0001', 48, 10))",
                    "move=1 guard=1 reclaim=1 repair=1 capture=1"},
               });
+
+    if (!run(ctx, "off the map", R"(
+        __ic_t = __ic_make('uel0201', 0, 14)
+        __ic_w, __ic_h = ScenarioInfo.size[1], ScenarioInfo.size[2]
+        function __ic_to(issue, x, z)
+            return __ic_try(__ic_t, function() issue({__ic_t}, {x, 0, z}) end)
+        end
+    )")) {
+        return;
+    }
+    check_all(ctx, t, "an order off the map",
+              {
+                  {"__ic_to(IssueMove, __ic_p[1] + 10, __ic_p[3] + 10)", "1"},
+                  {"__ic_to(IssueMove, -5, __ic_p[3])", "0"},
+                  {"__ic_to(IssueMove, __ic_w + 5, __ic_p[3])", "0"},
+                  {"__ic_to(IssueMove, __ic_p[1], __ic_h + 5)", "0"},
+                  {"__ic_to(IssueAttack, -5, __ic_p[3])", "0"},
+                  {"__ic_to(IssuePatrol, -5, __ic_p[3])", "0"},
+              });
+    if (!run(ctx, "the playable area", R"(
+        SetPlayableRect(__ic_p[1] - 100, __ic_p[3] - 100, __ic_p[1] + 100, __ic_p[3] + 100)
+        __ic_far = __ic_make('uel0201', 150, 0)
+    )")) {
+        return;
+    }
+    check_all(ctx, t, "an order off the playable area",
+              {
+                  {"__ic_to(IssueMove, __ic_p[1] + 20, __ic_p[3] + 20)", "1"},
+                  {"__ic_to(IssueMove, __ic_p[1] + 150, __ic_p[3])", "0"},
+                  {"__ic_try(__ic_t, function() IssueGuard({__ic_t}, __ic_far) end)", "0"},
+              });
+    if (!run(ctx, "the playable area back", R"(
+        SetPlayableRect(0, 0, __ic_w, __ic_h)
+        __ic_far:Destroy()
+        local sx, sz = GetArmyBrain('ARMY_1'):GetArmyStartPos()
+        __ic_in = {sx, 0, sz + 10}
+        __ic_out = {sx, 0, sz - 150}
+        __ic_far = CreateUnitHPR('uel0201', 'ARMY_1', sx, GetSurfaceHeight(sx, sz - 150), sz - 150, 0, 0, 0)
+        function __ic_rush(issue, at)
+            return __ic_try(__ic_t, function() issue({__ic_t}, at) end)
+        end
+    )")) {
+        return;
+    }
+    ctx.sim.set_no_rush(300.0f, 70.0f);
+    check_all(ctx, t, "an order in No Rush",
+              {
+                  {"__ic_rush(IssueMove, __ic_in)", "1"},
+                  {"__ic_rush(IssueMove, __ic_out)", "0"},
+                  {"__ic_rush(IssueAggressiveMove, __ic_out)", "0"},
+                  {"__ic_rush(IssueAttack, __ic_out)", "0"},
+                  {"__ic_rush(IssuePatrol, __ic_out)", "0"},
+                  {"__ic_rush(IssueGuard, __ic_far)", "0"},
+                  {"__ic_try(__ic_far, function() IssueGuard({__ic_far}, __ic_t) end)", "1"},
+              });
+    ctx.sim.set_no_rush(0.0f, 70.0f);
     spdlog::info("issue-checks-test: {} passed, {} failed", t.pass, t.fail);
 }
 

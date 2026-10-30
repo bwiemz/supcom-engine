@@ -1,5 +1,5 @@
 // No Rush option tests: units are confined near their army start for the
-// no-rush period, via both the scheduler (goal clamp) and a per-tick pin.
+// no-rush period: an order out of the zone is refused, and a per-tick pin.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -86,7 +86,7 @@ TEST_CASE("No Rush pins a straying unit at the boundary", "[norush]") {
     CHECK(dist_xz(u->position(), origin) <= 50.5f);
 }
 
-TEST_CASE("No Rush clamps a scheduled move goal to the zone", "[norush]") {
+TEST_CASE("No Rush refuses a scheduled move out of the zone, and takes one in it", "[norush]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     sim.add_army("ARMY_1", "ARMY_1");
@@ -95,13 +95,14 @@ TEST_CASE("No Rush clamps a scheduled move goal to the zone", "[norush]") {
 
     EntityId id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 10.0f);
     sim.schedule_command(0, {id}, move_to(500.0f, 0.0f), true);
-    sim.tick(); // dispatch clamps the goal
-
+    sim.tick();
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
+    CHECK(u->command_queue().empty());
+
+    sim.schedule_command(0, {id}, move_to(40.0f, 0.0f), true);
+    sim.tick();
     REQUIRE_FALSE(u->command_queue().empty());
-    // Goal clamped onto the radius circle (x ~= 50).
-    CHECK(u->command_queue().front().target_pos.x <= 50.1f);
-    CHECK(u->command_queue().front().target_pos.x >= 49.9f);
+    CHECK(u->command_queue().front().target_pos.x == 40.0f);
 }
 
 TEST_CASE("Units confined during No Rush are freed once it expires", "[norush]") {

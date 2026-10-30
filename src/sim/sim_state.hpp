@@ -1062,6 +1062,10 @@ public:
                                        const Vector3& destination) const;
 
 private:
+    /// Whether an order's target lies where Moho's ProcessIssuedUnitCommand
+    /// lets the unit's army send it: on the map (STIMap::IsWithin) and in its
+    /// No Rush zone.
+    bool target_allowed(const Unit& unit, const UnitCommand& command) const;
     /// `pos` kept to the playable area (clamp_to_playable(pos, army)'s
     /// case for an army that keeps to it).
     Vector3 clamp_to_playable(const Vector3& pos) const {

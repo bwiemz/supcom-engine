@@ -37,9 +37,10 @@ struct IssueWorld {
     IssueWorld& operator=(const IssueWorld&) = delete;
 
     Unit& make(int army, std::initializer_list<const char*> categories,
-               const char* motion = "RULEUMT_Air") {
+               const char* motion = "RULEUMT_Air", osc::sim::Vector3 at = {}) {
         auto u = std::make_unique<Unit>();
         u->set_army(army);
+        u->set_position(at);
         u->set_motion_type(motion);
         for (const char* c : categories) {
             u->add_category(c);
@@ -106,5 +107,53 @@ TEST_CASE("A carried unit takes a move or a guard only as a pod or from a carrie
                  << (c.pod ? " pod" : "") << ", order " << static_cast<int>(orders[i]));
             CHECK(w.takes(u, orders[i], target) == c.taken[i]);
         }
+    }
+}
+
+TEST_CASE("An order whose target lies off the playable area or outside the No Rush zone is refused",
+          "[routing][norush]") {
+    struct Case {
+        const char* what;
+        CommandType type;
+        osc::f32 x;
+        bool at_unit;
+        bool whole_map;
+        bool no_rush;
+        bool taken;
+    };
+    const Case cases[] = {
+        {"a move inside", CommandType::Move, 90.0f, false, false, false, true},
+        {"a move outside", CommandType::Move, 110.0f, false, false, false, false},
+        {"a patrol outside", CommandType::Patrol, 110.0f, false, false, false, false},
+        {"an attack-move outside", CommandType::AggressiveMove, 110.0f, false, false, false, false},
+        {"a ground attack outside", CommandType::Attack, 110.0f, false, false, false, false},
+        {"a guard of a unit outside", CommandType::Guard, 110.0f, true, false, false, false},
+        {"a guard of a unit inside", CommandType::Guard, 90.0f, true, false, false, true},
+        {"a move outside by a whole-map army", CommandType::Move, 110.0f, false, true, false, true},
+        {"a stop, no target", CommandType::Stop, 110.0f, false, false, false, true},
+        {"a move in the zone", CommandType::Move, 40.0f, false, false, true, true},
+        {"a move out of the zone", CommandType::Move, 60.0f, false, false, true, false},
+        {"a guard of a unit out of the zone", CommandType::Guard, 60.0f, true, false, true, false},
+        {"a stop in No Rush", CommandType::Stop, 60.0f, false, false, true, true},
+    };
+    for (const Case& c : cases) {
+        IssueWorld w;
+        w.sim.set_playable_rect(0.0f, 0.0f, 100.0f, 100.0f);
+        w.sim.get_army(0)->set_use_whole_map(c.whole_map);
+        w.sim.get_army(0)->set_start_position({0.0f, 0.0f, 0.0f});
+        if (c.no_rush) {
+            w.sim.set_no_rush(300.0f, 50.0f);
+        }
+        Unit& u = w.make(0, {}, "RULEUMT_Land");
+        UnitCommand order;
+        order.type = c.type;
+        order.target_pos = {c.x, 0.0f, 10.0f};
+        if (c.at_unit) {
+            Unit& target = w.make(0, {}, "RULEUMT_Land", {c.x, 0.0f, 10.0f});
+            order.target_id = target.entity_id();
+            order.target_pos = {};
+        }
+        INFO(c.what);
+        CHECK(w.sim.takes_command(u, order) == c.taken);
     }
 }
