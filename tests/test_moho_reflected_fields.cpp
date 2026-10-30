@@ -1,8 +1,8 @@
-// A unit or projectile blueprint reads, once registered, as Moho's write-back
-// leaves it (RBlueprint::InitBlueprint, 0x0050DF10): each reflected field the
-// .bp leaves out as its class constructor's default, the derived ones
-// derived, resource ids lowercased; a field Moho doesn't reflect stays as the
-// .bp gives it (moho_reflected_fields.hpp).
+// A unit, projectile, prop or mesh blueprint reads, once registered, as
+// Moho's write-back leaves it (RBlueprint::InitBlueprint, 0x0050DF10): each
+// reflected field as its typed copy holds it, the derived ones derived; a
+// field Moho doesn't reflect stays as the .bp gives it
+// (moho_reflected_fields.hpp).
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -188,33 +188,212 @@ TEST_CASE("A blueprint's resource ids read lowercased, with forward slashes",
     )"));
 }
 
-TEST_CASE("A projectile blueprint's omitted spreads read as Moho's",
+TEST_CASE("A projectile blueprint's omitted reflected fields read as RProjectileBlueprint's",
           "[blueprints][moho-reflection]") {
     BlueprintWorld w;
     CHECK(w.check(R"(
-        local bp = {BlueprintId = 'shell', Physics = {MaxSpeed = 40, TurnRateRange = 2}}
+        local bp = {BlueprintId = '/projectiles/shell/shell_proj.bp',
+                    Source = '/projectiles/shell/shell_proj.bp',
+                    Physics = {MaxSpeed = 40, TurnRateRange = 2},
+                    Display = {MeshBlueprint = 'Shell_Mesh'}}
         RegisterProjectileBlueprint(bp)
         local p = bp.Physics
         assert(p.DirectionXRange == 1.5 and p.DirectionZRange == 1.5, 'direction spread')
         assert(p.MaxSpeedRange == 0 and p.LifetimeRange == 0, 'other spreads')
         assert(p.TurnRateRange == 2 and p.MaxSpeed == 40, 'own values lost')
-        -- The rest of its physics isn't filled: the engine's projectile
-        -- reads an absent one as its own preset
-        assert(p.Acceleration == nil, 'Acceleration filled')
+        assert(p.Acceleration == 0 and p.Lifetime == 15 and p.InitialSpeed == 1, 'physics')
+        assert(p.UseGravity == true and p.TrackTarget == false and p.LeadTarget == true, 'flags')
+        assert(p.MinBounceCount == 0 and p.BounceVelDamp == 0.5 and p.MaxZigZag == 0, 'bounces')
+        assert(bp.CollisionShape == 'None' and bp.DevStatus == '', 'CollisionShape, DevStatus')
+        assert(bp.Display.UniformScale == 0 and bp.Display.CameraFollowTimeout == 1, 'Display')
+        assert(bp.Economy.BuildTime == 10 and bp.Economy.BuildCostMass == 0, 'Economy')
+        assert(bp.SizeX == 1 and bp.Footprint.SizeX == 1 and bp.LifeBarRender == false, 'entity')
+        assert(bp.Display.MeshBlueprint == '/projectiles/shell/shell_mesh',
+               'MeshBlueprint ' .. bp.Display.MeshBlueprint)
+    )"));
+}
+
+TEST_CASE("A prop blueprint's reflected fields read as RPropBlueprint's",
+          "[blueprints][moho-reflection]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local rock = {BlueprintId = '/env/rocks/rock_prop.bp', Source = '/env/rocks/rock_prop.bp',
+                      SizeX = 2.5, SizeZ = 0, Display = {MeshBlueprint = '../Shared\\Rock_mesh'},
+                      Economy = {ReclaimMassMax = 12, ReclaimEnergyMax = '', ReclaimTime = ''}}
+        RegisterPropBlueprint(rock)
+        assert(rock.Defense.MaxHealth == 1 and rock.Defense.Health == 1, 'Defense')
+        assert(rock.Economy.ReclaimMassMax == 12 and rock.Economy.ReclaimEnergyMax == 0, 'reclaim')
+        assert(rock.Economy.ReclaimTime == '', 'ReclaimTime is not reflected')
+        assert(rock.Display.UniformScale == 1 and rock.CollisionShape == 'Box', 'Display, shape')
+        assert(rock.SizeY == 1 and rock.Footprint.SizeX == 3 and rock.Footprint.SizeZ == 0,
+               'a footprint is its size rounded up')
+        assert(rock.Display.MeshBlueprint == '/env/shared/rock_mesh',
+               'MeshBlueprint ' .. rock.Display.MeshBlueprint)
+    )"));
+}
+
+TEST_CASE("A mesh blueprint's LODs read as RMeshBlueprintLOD::Init completes them",
+          "[blueprints][moho-reflection]") {
+    BlueprintWorld w;
+    const std::set<std::string> files = {
+        "/units/uel0101/uel0101_lod0.scm", "/units/uel0101/uel0101_lod1.scm",
+        "/units/uel0101/uel0101_albedo.dds", "/units/uel0101/uel0101_SpecTeam.dds"};
+    w.store.set_file_exists([&files](const std::string& path) { return files.count(path) > 0; });
+    CHECK(w.check(R"(
+        local mesh = {BlueprintId = '/units/uel0101/uel0101_mesh',
+                      Source = '/units/uel0101/uel0101_unit.bp',
+                      LODs = {{LODCutoff = 100, ShaderName = 'Unit'},
+                              {AlbedoName = 'uel0101_lod1_albedo.dds', NormalsName = '..\\Shared/N.dds',
+                               LookupName = './a//b.dds', SecondaryName = 'Rel.dds'},
+                              {MeshName = '/Abs/Other.scm'}}}
+        RegisterMeshBlueprint(mesh)
+        local l1, l2, l3 = mesh.LODs[1], mesh.LODs[2], mesh.LODs[3]
+        assert(l1.MeshName == '/units/uel0101/uel0101_lod0.scm', 'LOD 1 ' .. l1.MeshName)
+        assert(l2.MeshName == '/units/uel0101/uel0101_lod1.scm', 'LOD 2 ' .. l2.MeshName)
+        assert(l1.AlbedoName == '/units/uel0101/uel0101_albedo.dds' and
+               l1.SpecularName == '/units/uel0101/uel0101_SpecTeam.dds', 'textures by the source')
+        assert(l1.NormalsName == '' and l1.LookupName == '', 'a file that is not there')
+        assert(l2.AlbedoName == '/units/uel0101/uel0101_lod1_albedo.dds', l2.AlbedoName)
+        assert(l2.NormalsName == '/units/Shared/N.dds', l2.NormalsName)
+        assert(l2.LookupName == '/units/uel0101/a/b.dds', l2.LookupName)
+        assert(l2.SecondaryName == 'Rel.dds', 'SecondaryName completed')
+        assert(l3.MeshName == '/Abs/Other.scm' and l3.AlbedoName == l1.AlbedoName, 'LOD 3')
+        assert(l2.LODCutoff == 1000 and l2.ShaderName == '' and l2.Scrolling == false, 'LOD')
+        assert(mesh.UniformScale == 1 and mesh.SortOrder == 0 and mesh.StraddleWater == false,
+               'mesh')
+    )"));
+}
+
+TEST_CASE("A reflected value reads as SCR_LuaBuildObject reads its .bp value",
+          "[blueprints][moho-reflection]") {
+    // The original game's readings of each (retail probe bp-typed).
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local n = 0
+        local function read(section, name, value)
+            n = n + 1
+            local bp = {BlueprintId = 'case' .. n}
+            local t = bp
+            if section == 'Weapon' then
+                bp.Weapon = {{}}
+                t = bp.Weapon[1]
+            elseif section ~= '' then
+                bp[section] = {}
+                t = bp[section]
+            end
+            if section == 'Physics' then
+                t.MaxSpeed = 1
+            end
+            t[name] = value
+            RegisterUnitBlueprint(bp)
+            return t[name]
+        end
+        local cases = {
+            {'General', 'SelectionPriority', '0x1f', 31},
+            {'General', 'SelectionPriority', '017', 15},
+            {'General', 'SelectionPriority', '-0x10', -16},
+            {'General', 'SelectionPriority', 'A', -22},
+            {'General', 'SelectionPriority', '08', 1},
+            {'General', 'SelectionPriority', '0xFF', 1},
+            {'General', 'SelectionPriority', 'b', 1},
+            {'General', 'SelectionPriority', 1.5, 1},
+            {'General', 'SelectionPriority', true, 1},
+            {'General', 'SelectionPriority', false, 0},
+            {'Intel', 'VisionRadius', '-5', 4294967291},
+            {'Intel', 'VisionRadius', 'abc', 10},
+            {'Intel', 'JammerBlips', 300, 44},
+            {'Intel', 'JammerBlips', -1, 255},
+            {'Physics', 'MaxSpeed', '2.5', 2.5},
+            {'Physics', 'MaxSpeed', ' 3.5x', 3.5},
+            {'Physics', 'MaxSpeed', '1d1', 10},
+            {'Physics', 'MaxSpeed', '1E1', 10},
+            {'Physics', 'MaxSpeed', '+0.25e+1', 2.5},
+            {'Physics', 'MaxSpeed', '1e', 1},
+            {'Physics', 'MaxSpeed', '.5', 0.5},
+            {'Physics', 'MaxSpeed', '0x10', 0},
+            {'Physics', 'MaxSpeed', 'inf', 0},
+            {'Physics', 'MaxSpeed', 'abc', 0},
+            {'Physics', 'MaxSpeed', true, 1},
+            {'Physics', 'MaxSpeed', {}, 0},
+            {'Weapon', 'ManualFire', 1, true},
+            {'Weapon', 'ManualFire', 'yes', true},
+            {'Weapon', 'ManualFire', 'TRUE', true},
+            {'Weapon', 'ManualFire', 2, false},
+            {'Weapon', 'IgnoresAlly', 'No', false},
+            {'Weapon', 'IgnoresAlly', 0.5, true},
+            {'Weapon', 'IgnoresAlly', {}, true},
+            {'', 'Description', 12, '12'},
+            {'', 'Description', true, '1'},
+            {'', 'Description', {}, ''},
+            {'General', 'UpgradesTo', 5, '5'},
+            {'', 'StrategicIconName', 'Icon\\Land', 'icon/land'},
+            {'Weapon', 'RangeCategory', 3, 'UWRC_AntiAir'},
+            {'Weapon', 'BallisticArc', 'rulEUba_lowarc', 'RULEUBA_LowArc'},
+            {'Weapon', 'TargetType', 'Prop', 'RULEWTT_Unit'},
+            {'Physics', 'MotionType', 'Land', 'RULEUMT_None'},
+            {'Physics', 'MotionType', 'RULEUMT_Land|RULEUMT_Air', 'RULEUMT_Water'},
+            {'Physics', 'AltMotionType', 42, '42'},
+            {'Physics', 'BuildRestriction', 2, 'RULEUBR_OnMassDeposit'},
+            {'', 'CollisionShape', 'sphere', 'Sphere'},
+            {'Physics', 'TurnRadius', '2.5', 2.5},
+        }
+        for _, c in cases do
+            local got = read(c[1], c[2], c[3])
+            assert(got == c[4], c[1] .. '.' .. c[2] .. ' of ' .. tostring(c[3]) .. ' reads ' ..
+                   tostring(got) .. ', not ' .. tostring(c[4]))
+        end
+    )"));
+}
+
+TEST_CASE("A reflected list or struct reads as Moho's, whatever the .bp gives in its place",
+          "[blueprints][moho-reflection]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local bp = {BlueprintId = 'lists', Weapon = {5, {Label = 'Gun'}}, Economy = 7,
+                    Defense = {Shield = 5, MaxHealth = 10},
+                    AI = {TargetBones = {1, true, {}, 'Ab'}},
+                    Physics = {OccupyRects = {1, '2.5', true, {}}},
+                    Intel = {JamRadius = {Min = '5', Max = 7.5}, SpoofRadius = 3}}
+        RegisterUnitBlueprint(bp)
+        assert(bp.Weapon[1].Label == '' and bp.Weapon[1].MinRadius == 0, 'a weapon that is 5')
+        assert(bp.Weapon[2].Label == 'Gun' and bp.Weapon[2].RateOfFire == 1, 'a weapon')
+        assert(bp.Economy.MaxBuildDistance == 5 and bp.Economy.BuildRate == 1, 'Economy of 7')
+        assert(bp.Defense.MaxHealth == 10 and bp.Defense.Shield.RegenAssistMult == 1, 'Shield')
+        local bones = bp.AI.TargetBones
+        assert(bones[1] == '1' and bones[2] == '1' and bones[3] == '' and bones[4] == 'Ab',
+               'TargetBones')
+        local rects = bp.Physics.OccupyRects
+        assert(rects[1] == 1 and rects[2] == 2.5 and rects[3] == 1 and rects[4] == 0, 'rects')
+        assert(bp.Intel.JamRadius.Min == 5 and bp.Intel.JamRadius.Max == 0, 'JamRadius')
+        assert(bp.Intel.SpoofRadius.Min == 0 and bp.Intel.SpoofRadius.Max == 0, 'SpoofRadius')
+
+        local none = {BlueprintId = 'none', Weapon = 'abc', Economy = {RebuildBonusIds = 'abc'}}
+        RegisterUnitBlueprint(none)
+        assert(type(none.Weapon) == 'table' and table.getn(none.Weapon) == 0, 'Weapon of abc')
+        assert(type(none.Economy.RebuildBonusIds) == 'table' and
+               table.getn(none.Economy.RebuildBonusIds) == 0, 'RebuildBonusIds of abc')
+
+        local mesh = {BlueprintId = 'm', LODs = {5, {LODCutoff = 100}}}
+        RegisterMeshBlueprint(mesh)
+        assert(mesh.LODs[1].LODCutoff == 1000 and mesh.LODs[2].LODCutoff == 100, 'LODs')
+        local bare = {BlueprintId = 'bare_mesh', LODs = 'abc'}
+        RegisterMeshBlueprint(bare)
+        assert(type(bare.LODs) == 'table' and table.getn(bare.LODs) == 0, 'LODs of abc')
     )"));
 }
 
 TEST_CASE("Each reflected field is filled once, from the constructor that sets it",
           "[blueprints][moho-reflection]") {
-    std::set<std::string> filled;
-    for (const auto& f : osc::blueprints::unit_reflected_fields()) {
-        CHECK(f.address != 0);
-        CHECK(filled.insert(path(f.section, f.name)).second);
-    }
-    std::set<std::string> weapon;
-    for (const auto& f : osc::blueprints::weapon_reflected_fields()) {
-        CHECK(f.address != 0);
-        CHECK(weapon.insert(f.name).second);
+    for (const auto fields :
+         {osc::blueprints::unit_reflected_fields(), osc::blueprints::weapon_reflected_fields(),
+          osc::blueprints::entity_reflected_fields(),
+          osc::blueprints::projectile_reflected_fields(), osc::blueprints::prop_reflected_fields(),
+          osc::blueprints::mesh_reflected_fields(), osc::blueprints::mesh_lod_reflected_fields()}) {
+        std::set<std::string> names;
+        for (const auto& f : fields) {
+            CHECK(f.address != 0);
+            CHECK(names.insert(path(f.section, f.name)).second);
+        }
     }
 }
 
