@@ -3,9 +3,9 @@
 // Where may a structure go? The rules behind the engine's AI placement
 // queries, brain:CanBuildStructureAt and brain:FindPlaceToBuild (roadmap
 // M185). The AI calls FindPlaceToBuild repeatedly while queueing a base,
-// issuing each build order before asking for the next spot, so a site one of
-// the army's units already has an order for must count as taken -- otherwise
-// every call returns the same spot.
+// ordering each build with BuildStructure before asking for the next spot, so
+// a site the brain has ordered counts as taken (Moho's build reservations) --
+// otherwise every call returns the same spot.
 
 #include "blueprints/footprint.hpp"
 #include "core/types.hpp"
@@ -24,9 +24,12 @@ class Terrain;
 
 namespace osc::sim {
 
+class ArmyBrain;
+struct BuildReservation;
 class EntityRegistry;
 class SimState;
 struct ResourceDeposit;
+struct UnitCommand;
 
 /// What placement needs to know about a structure blueprint.
 struct PlacementRules {
@@ -135,14 +138,17 @@ public:
 
     /// Can `bp_id` be built centered at (x, z)? Requires the footprint inside
     /// the playable area, over cells of a layer the blueprint builds on, clear
-    /// of every structure (finished or under construction) and of the army's
-    /// pending build orders, and -- for extractors -- over a deposit.
+    /// of every structure (finished or under construction) and of reserved()
+    /// sites, and -- for extractors -- over a deposit.
     bool can_build(const std::string& bp_id, f32 x, f32 z) const;
+    /// can_build without reserved() sites (Moho's func_LocationIsFree).
+    bool location_free(const std::string& bp_id, f32 x, f32 z) const;
 
     /// The rules for `bp_id` (cached per query object).
     const PlacementRules& rules(const std::string& bp_id) const;
 
 private:
+    bool fits(const std::string& bp_id, f32 x, f32 z, bool pending_orders) const;
     /// `layers`: the placement_layer bits occupy_layers allows there.
     bool terrain_allows(const StructureSite& site, u8 layers) const;
     bool in_playable(const StructureSite& site) const;
@@ -152,7 +158,8 @@ private:
     /// a hydrocarbon). Only an extractor or a hydrocarbon plant goes there.
     bool deposit_under(const StructureSite& skirt) const;
 
-    /// The army's pending build orders.
+    /// `scheduled`: the army's build orders; else its brain's live build reservations
+    /// (Moho's CAiBrain::CanBuildStructureAt).
     const std::vector<StructureSite>& reserved() const;
 
     const SimState& sim_;
@@ -163,6 +170,16 @@ private:
     mutable std::optional<std::vector<StructureSite>> reserved_; ///< see reserved()
     mutable std::map<std::string, PlacementRules> rules_cache_;
 };
+
+const UnitCommand* reserved_order(const SimState& sim, const BuildReservation& r);
+void drop_stale_build_reservations(const SimState& sim, ArmyBrain& brain);
+
+/// Moho's TryBuildStructureAt (faf-re unit/tasks/CUnitCallTeleport.cpp) for a script's build
+/// order: the centre `bp_id` is built at for one asked at (x, z), or none.
+std::optional<std::pair<f32, f32>> try_build_structure_at(const SimState& sim,
+                                                          const StructurePlacement& placement,
+                                                          const std::string& bp_id, f32 x, f32 z,
+                                                          bool whole_map);
 
 /// Where a structure stands at (x, z): on the ground for one that can sit
 /// on the seabed, else on the water's surface where there is water

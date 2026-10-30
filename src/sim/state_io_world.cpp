@@ -277,6 +277,13 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
         }
     }
     w.vec3(a.start_position_);
+    w.size(a.build_reservations_.size());
+    for (const auto& [cell, reservation] : a.build_reservations_) {
+        w.i32v(cell.first);
+        w.i32v(cell.second);
+        w.u32v(reservation.builder);
+        w.u32v(reservation.command);
+    }
     w.b(a.influence_map_ != nullptr); // made when first asked for
     if (a.influence_map_) save(w, *a.influence_map_);
     w.i32v(a.current_enemy_index_);
@@ -365,6 +372,15 @@ void StateIO::load(StateReader& r, ArmyBrain& a, SimState& sim) {
         a.alliances_[army] = enum32<Alliance>(r);
     }
     a.start_position_ = r.vec3();
+    a.build_reservations_.clear();
+    const size_t reservations = r.size(16);
+    for (size_t i = 0; i < reservations; ++i) {
+        const i32 x = r.i32v();
+        const i32 z = r.i32v();
+        auto& reservation = a.build_reservations_[{x, z}];
+        reservation.builder = r.u32v();
+        reservation.command = r.u32v();
+    }
     a.influence_map_.reset();
     if (r.b()) {
         const map::Terrain* terrain = sim.terrain();

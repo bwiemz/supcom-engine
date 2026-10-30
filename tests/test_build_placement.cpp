@@ -127,12 +127,12 @@ TEST_CASE("placement: pending build orders reserve their site for the army",
     order_build(engineer, "factory", 30.0f, 30.0f);
     order_build(engineer, "pgen", 40.0f, 30.0f);
 
-    StructurePlacement mine(sim, 0, rules_for);
+    StructurePlacement mine(sim, 0, rules_for, true);
     CHECK_FALSE(mine.can_build("pgen", 30.0f, 30.0f)); // inside the queued factory
     CHECK_FALSE(mine.can_build("pgen", 40.0f, 30.0f)); // the queued pgen itself
     CHECK(mine.can_build("pgen", 42.0f, 30.0f));
 
-    StructurePlacement theirs(sim, 1, rules_for); // another army's plans
+    StructurePlacement theirs(sim, 1, rules_for, true); // another army's plans
     CHECK(theirs.can_build("pgen", 30.0f, 30.0f));
 }
 
@@ -147,9 +147,9 @@ TEST_CASE("placement: a build order being moved doesn't block its own new site",
     cmd.blueprint_id = "factory";
     cmd.command_id = 6;
     engineer->push_command(cmd, false);
-    CHECK_FALSE(StructurePlacement(sim, 0, rules_for).can_build("factory", 32.0f, 30.0f));
-    CHECK(StructurePlacement(sim, 0, rules_for, false, 6).can_build("factory", 32.0f, 30.0f));
-    CHECK_FALSE(StructurePlacement(sim, 0, rules_for, false, 7).can_build("factory", 32.0f, 30.0f));
+    CHECK_FALSE(StructurePlacement(sim, 0, rules_for, true).can_build("factory", 32.0f, 30.0f));
+    CHECK(StructurePlacement(sim, 0, rules_for, true, 6).can_build("factory", 32.0f, 30.0f));
+    CHECK_FALSE(StructurePlacement(sim, 0, rules_for, true, 7).can_build("factory", 32.0f, 30.0f));
 }
 
 TEST_CASE("placement: extractors need a free deposit", "[placement]") {
@@ -267,7 +267,7 @@ TEST_CASE("placement: a structure's skirt is its pad", "[placement]") {
     int along = 0;
     for (int i = 0; i < 7; ++i) {
         const osc::f32 x = 27.5f + static_cast<osc::f32>(i);
-        if (StructurePlacement(sim, 0, rules).can_build("pgen", x, 35.5f)) {
+        if (StructurePlacement(sim, 0, rules, true).can_build("pgen", x, 35.5f)) {
             order_build(engineer, "pgen", x, 35.5f);
             ++along;
         }
@@ -500,10 +500,13 @@ TEST_CASE("placement: pending orders are gathered only for a site the terrain al
     order_build(engineer, "factory", 30.0f, 30.0f);
 
     std::vector<std::string> looked_up;
-    StructurePlacement p(sim, 0, [&](const std::string& bp) {
-        looked_up.push_back(bp);
-        return rules_for(bp);
-    });
+    StructurePlacement p(
+        sim, 0,
+        [&](const std::string& bp) {
+            looked_up.push_back(bp);
+            return rules_for(bp);
+        },
+        true);
     CHECK(looked_up.empty());
     CHECK_FALSE(p.can_build("pgen", 100.0f, 20.0f)); // at sea: the terrain refuses it
     CHECK(looked_up == std::vector<std::string>{"pgen"});

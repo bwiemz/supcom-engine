@@ -132,6 +132,7 @@ struct UnitCommand {
     std::string formation;
     /// The formation's facing, as IssueFormMove's degrees give it (south 0,
     /// east 90: the engine's heading). Unset: from the group to the target.
+    /// For BuildMobile, the structure's angle as BuildStructure's place gives it.
     bool has_facing = false;
     f32 facing = 0;
     /// The formation moves as one, at its slowest unit's pace (Moho's

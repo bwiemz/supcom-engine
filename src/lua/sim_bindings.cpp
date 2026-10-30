@@ -694,6 +694,11 @@ static int l_create_building_unit(lua_State* L) {
     int tbl = lua_gettop(L);
     if (auto* sim = get_sim(L)) {
         auto* built = sim->entity_registry().find(id);
+        if (lua_isnumber(L, 8) && built) {
+            // func_OrderBuildStructure's build orientation from its angle in degrees.
+            const f32 half = static_cast<f32>(lua_tonumber(L, 8)) * 0.017453292f * -0.5f;
+            built->set_orientation({0.0f, osc::dmath::sin(half), 0.0f, osc::dmath::cos(half)});
+        }
         if (lua_isnumber(L, 7) && built && built->is_unit()) {
             static_cast<sim::Unit*>(built)->set_creator_id(static_cast<u32>(lua_tonumber(L, 7)));
         }

@@ -1348,8 +1348,12 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
         // Held to the unit cap, but for an upgrade (Moho makes those uncapped).
         lua_pushboolean(L, cmd.type != CommandType::Upgrade);
         lua_pushnumber(L, entity_id());
+        const bool facing = cmd.type == CommandType::BuildMobile && cmd.has_facing;
+        if (facing) {
+            lua_pushnumber(L, cmd.facing);
+        }
 
-        if (lua_pcall(L, 7, 2, 0) != 0) {
+        if (lua_pcall(L, facing ? 8 : 7, 2, 0) != 0) {
             spdlog::warn("start_build pcall failed: {}", lua_tostring(L, -1));
             lua_pop(L, 1);
             return BuildStart::Failed;

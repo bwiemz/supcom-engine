@@ -1272,6 +1272,7 @@ static int brain_FindPlaceToBuild(lua_State* L) {
         }
     }
 
+    sim::drop_stale_build_reservations(*sim, *brain);
     const auto placement = placement_for(L, *sim, brain->index());
     const i32 threat_over = lua_isnumber(L, 10) ? static_cast<i32>(lua_tonumber(L, 10)) : 0;
     const sim::InfluenceMap* threat_map =
@@ -1359,10 +1360,10 @@ static int brain_FindPlaceToBuild(lua_State* L) {
     return 1;
 }
 
-// brain:BuildStructure(unit, whatToBuild, location, relative)
-// unit = arg 2 (Lua table with _c_object), whatToBuild = arg 3 (bp string),
-// location = arg 4 ({x, z, dist} from FindPlaceToBuild)
+// brain:BuildStructure(unit, whatToBuild, {x, z, angle}[, relative]) -> its last argument
+// (faf-re cfunc_CAiBrainBuildStructureL, func_OrderBuildStructure)
 static int brain_BuildStructure(lua_State* L) {
+    const int args = lua_gettop(L);
     if (!lua_istable(L, 2)) {
         spdlog::debug("brain_BuildStructure: arg2 not table");
         return 0;
@@ -1382,6 +1383,7 @@ static int brain_BuildStructure(lua_State* L) {
     const char* bp_id = luaL_checkstring(L, 3);
 
     sim::Vector3 pos;
+    f32 angle = 0.0f;
     if (lua_istable(L, 4)) {
         lua_rawgeti(L, 4, 1);
         pos.x = static_cast<f32>(lua_tonumber(L, -1));
@@ -1389,19 +1391,46 @@ static int brain_BuildStructure(lua_State* L) {
         lua_rawgeti(L, 4, 2);
         pos.z = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
+        lua_rawgeti(L, 4, 3);
+        angle = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
     }
 
-    if (lua_toboolean(L, 5)) { // buildRelative: an offset from the builder
-        pos.x += unit->position().x;
-        pos.z += unit->position().z;
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (lua_toboolean(L, 5) && brain) {
+        pos.x += brain->start_position().x;
+        pos.z += brain->start_position().z;
     }
 
-    sim::UnitCommand cmd;
-    cmd.type = sim::CommandType::BuildMobile;
-    cmd.target_pos = pos;
-    cmd.blueprint_id = bp_id;
-    unit->push_command(cmd, false);
-    return 0;
+    std::optional<std::pair<f32, f32>> site{{pos.x, pos.z}};
+    if (sim) {
+        const sim::ArmyBrain* own = sim->army_at(static_cast<size_t>(std::max(unit->army(), 0)));
+        site = sim::try_build_structure_at(*sim, placement_for(L, *sim, unit->army()), bp_id, pos.x,
+                                           pos.z, own && own->use_whole_map());
+    }
+    u32 ordered = 0;
+    if (site && sim::blueprint_can_build(L, unit->blueprint_id(), bp_id)) {
+        sim::UnitCommand cmd;
+        cmd.type = sim::CommandType::BuildMobile;
+        cmd.target_pos = {site->first, 0.0f, site->second};
+        cmd.blueprint_id = bp_id;
+        if (angle != 0.0f) {
+            cmd.has_facing = true;
+            cmd.facing = angle;
+        }
+        if (sim) {
+            cmd.command_id = sim->next_command_id();
+            ordered = cmd.command_id;
+        }
+        unit->push_command(cmd, false);
+    }
+    if (brain) {
+        brain->build_reservations()[{static_cast<i32>(pos.x), static_cast<i32>(pos.z)}] = {
+            unit->entity_id(), ordered};
+    }
+    lua_settop(L, args);
+    return 1;
 }
 
 // brain:BuildUnit(factory, blueprintId)
@@ -1948,6 +1977,7 @@ static int brain_CanBuildStructureAt(lua_State* L) {
     const f32 x = static_cast<f32>(lua_tonumber(L, -2));
     const f32 z = static_cast<f32>(lua_tonumber(L, -1));
     lua_pop(L, 2);
+    sim::drop_stale_build_reservations(*sim, *brain);
     const auto placement = placement_for(L, *sim, brain->index());
     lua_pushboolean(L, placement.can_build(lua_tostring(L, 2), x, z) ? 1 : 0);
     return 1;
@@ -2008,6 +2038,7 @@ static int brain_CreateResourceBuildingNearest(lua_State* L) {
     const std::string bp = blueprint_name(lua_tostring(L, 2));
     const f32 x = static_cast<f32>(lua_tonumber(L, 3));
     const f32 z = static_cast<f32>(lua_tonumber(L, 4));
+    sim::drop_stale_build_reservations(*sim, *brain);
     const auto placement = placement_for(L, *sim, brain->index());
     const auto wanted = placement.rules(bp).deposit == sim::PlacementRules::Deposit::Hydrocarbon
                             ? sim::ResourceDeposit::Hydrocarbon
@@ -2060,7 +2091,9 @@ static int brain_CreateUnitNearSpot(lua_State* L) {
     const auto free_at = [&](f32 cx, f32 cz, f32& out_x, f32& out_z) {
         sim::snap_structure_center(cx, cz, rules.size_x, rules.size_z);
         if (start_box.overlaps({cx, cz, rules.size_x, rules.size_z})) return false;
-        if (!placement.can_build(bp, cx, cz)) return false;
+        if (!placement.location_free(bp, cx, cz)) {
+            return false;
+        }
         out_x = cx;
         out_z = cz;
         return true;

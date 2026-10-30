@@ -15,6 +15,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -81,6 +82,11 @@ struct StatTrigger {
     std::optional<std::set<std::string>> blueprints;
 };
 
+struct BuildReservation {
+    u32 builder = 0;
+    u32 command = 0;
+};
+
 class ArmyBrain {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
@@ -104,6 +110,15 @@ public:
     /// playable area (SetIgnorePlayableRect; Moho's CArmyImpl::UseWholeMap):
     /// a campaign's reinforcements come in from off the playable area.
     bool use_whole_map() const { return use_whole_map_; }
+
+    /// Moho's CAiBrain::mBuildStructureMap.
+    std::map<std::pair<i32, i32>, BuildReservation>& build_reservations() {
+        return build_reservations_;
+    }
+    const std::map<std::pair<i32, i32>, BuildReservation>& build_reservations() const {
+        return build_reservations_;
+    }
+
     /// Its units' path searches (Moho's CArmyImpl PathQueue, roadmap item
     /// 4c), served kArmyPathBudget a tick.
     path::PathQueue& path_queue() { return path_queue_; }
@@ -356,6 +371,7 @@ private:
     i32 faction_ = 1;
     std::string ai_personality_;
     bool use_whole_map_ = false;
+    std::map<std::pair<i32, i32>, BuildReservation> build_reservations_;
     bool is_human_ = true;
     bool is_civilian_ = false;
 
