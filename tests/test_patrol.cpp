@@ -1656,7 +1656,9 @@ TEST_CASE("Only Move, Attack, the form moves, Dive and a rally point return thei
     for (const auto& row : rows) {
         DYNAMIC_SECTION(row.issue) {
             osc::lua::LuaState lua;
-            SimState sim(lua.raw(), nullptr);
+            const bool upgrade = std::string(row.issue).rfind("IssueUpgrade", 0) == 0;
+            osc::blueprints::BlueprintStore store{lua.raw()};
+            SimState sim(lua.raw(), upgrade ? &store : nullptr);
             osc::lua::register_moho_bindings(lua, sim);
             osc::lua::register_sim_bindings(lua, sim);
             two_armies(sim);
@@ -1686,6 +1688,18 @@ TEST_CASE("Only Move, Attack, the form moves, Dive and a rally point return thei
             global("friend", still(sim, 0, 14.0f, 10.0f));
             global("enemy", still(sim, 1, 60.0f, 10.0f));
             global("rock", rock(sim, 20.0f, 20.0f, 10.0f, 0.0f));
+            if (upgrade) {
+                with->set_blueprint_id("from");
+                for (const char* bp : {"return {BlueprintId = 'from', General = {UpgradesTo = "
+                                       "'uel0001'}}",
+                                       "return {BlueprintId = 'uel0001'}"}) {
+                    REQUIRE(lua.do_string(bp));
+                    store.register_blueprint(L, osc::blueprints::BlueprintType::Unit,
+                                             lua_gettop(L));
+                    lua_pop(L, 1);
+                }
+                store.expose_to_lua(L);
+            }
             // A mobile build goes only to a unit that can build it
             if (std::string(row.issue).rfind("IssueBuildMobile", 0) == 0) {
                 with->set_blueprint_id("builder");

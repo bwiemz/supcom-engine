@@ -583,9 +583,13 @@ public:
     void set_issuing_source(u32 source) { issuing_source_ = source; }
     /// Whether `unit` takes `command` as it is issued: Moho checks each unit
     /// of an order and leaves out one that can't carry it out
-    /// (func_ProcessUnitCommand). Checked here for Guard and Reclaim so far.
+    /// (func_ProcessUnitCommand). Checked here for some of its order types.
     bool takes_command(const Unit& unit, const UnitCommand& command,
                        bool clear_existing = false) const;
+    /// As above, for a queue that ends in `last` (null when empty): with the
+    /// orders not yet applied.
+    bool takes_command(const Unit& unit, const UnitCommand& command, bool clear_existing,
+                       const UnitCommand* last) const;
     /// An Attack's target point, drawn as the order is made: one for all its
     /// units (Moho's CAiTarget::UpdateTarget, Unit::PickTargetPoint).
     void pick_target_point(UnitCommand& command);

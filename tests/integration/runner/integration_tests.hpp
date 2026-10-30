@@ -234,6 +234,7 @@ void test_change_army(TestContext& ctx);
 void test_unit_cap(TestContext& ctx);
 void test_unit_hooks(TestContext& ctx);
 void test_notify_upgrade(TestContext& ctx);
+void test_upgrade_orders(TestContext& ctx);
 void test_need_unpack(TestContext& ctx);
 void test_guard_engage(TestContext& ctx);
 void test_rebuilder_guard(TestContext& ctx);

@@ -1255,8 +1255,74 @@ void SimState::pick_target_point(UnitCommand& command) {
     }
 }
 
+namespace {
+
+bool same_id(std::string_view a, std::string_view b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
+        return std::tolower(static_cast<unsigned char>(x)) ==
+               std::tolower(static_cast<unsigned char>(y));
+    });
+}
+
+std::string upgrade_link(lua_State* L, std::string_view bp, const char* link, const char* absent) {
+    const int top = lua_gettop(L);
+    std::string value;
+    if (blueprints::push_blueprint(L, bp)) {
+        lua_pushstring(L, "General");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, link);
+            lua_rawget(L, -2);
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                value.assign(lua_tostring(L, -1), lua_strlen(L, -1));
+            }
+        }
+    }
+    lua_settop(L, top);
+    return value.empty() ? std::string(absent) : value;
+}
+
+bool takes_upgrade(lua_State* L, const blueprints::BlueprintStore* store, const Unit& unit,
+                   const UnitCommand& command, const UnitCommand* last) {
+    const auto* to = store ? store->find(command.blueprint_id) : nullptr;
+    if (!to || to->type != blueprints::BlueprintType::Unit) {
+        return false;
+    }
+    const std::string& from = unit.blueprint_id();
+    const std::string seed = upgrade_link(L, to->id, "SeedUnit", "");
+    if (!seed.empty()) {
+        if (!same_id(from, seed)) {
+            return false;
+        }
+    } else {
+        const std::string upgrades_to = upgrade_link(L, from, "UpgradesTo", "");
+        if (upgrades_to.empty()) {
+            return false;
+        }
+        const std::string base = upgrade_link(L, to->id, "UpgradesFromBase", "none");
+        if (!same_id(base, "none")) {
+            if (!same_id(from, base) &&
+                !same_id(upgrade_link(L, from, "UpgradesFromBase", "none"), base)) {
+                return false;
+            }
+        } else if (!same_id(upgrades_to, to->id) &&
+                   !same_id(upgrades_to, upgrade_link(L, to->id, "UpgradesFrom", "none"))) {
+            return false;
+        }
+    }
+    return !last || last->type != CommandType::Upgrade || !same_id(last->blueprint_id, to->id);
+}
+
+} // namespace
+
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
                              bool clear_existing) const {
+    const auto& queue = unit.command_queue();
+    return takes_command(unit, command, clear_existing, queue.empty() ? nullptr : &queue.back());
+}
+
+bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool clear_existing,
+                             const UnitCommand* last) const {
     if (unit.is_being_built() && !unit.takes_orders_unfinished()) {
         return false;
     }
@@ -1270,6 +1336,9 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
     if (command.type == CommandType::BuildMobile || command.type == CommandType::BuildFactory) {
         return unit.has_category("FACTORY") || unit.has_category("ENGINEER") ||
                unit.has_category("NEEDMOBILEBUILD") || unit.has_category("POD");
+    }
+    if (command.type == CommandType::Upgrade) {
+        return takes_upgrade(L_, blueprint_store_, unit, command, last);
     }
     const char* needs = command.type == CommandType::Reclaim   ? "RECLAIM"
                         : command.type == CommandType::Capture ? "CAPTURE"
@@ -1437,7 +1506,8 @@ std::map<EntityId, SimState::QueueWithPending> SimState::queues_with_pending() c
             }
             if (cmd.type == CommandType::SiloBuildNuke ||
                 cmd.type == CommandType::SiloBuildTactical ||
-                !takes_command(*unit, cmd, scheduled.clear_existing)) {
+                !takes_command(*unit, cmd, scheduled.clear_existing,
+                               queue.orders.empty() ? nullptr : &queue.orders.back())) {
                 continue;
             }
             if (scheduled.clear_existing) {
