@@ -535,9 +535,11 @@ void test_chain(TestContext& ctx) {
 // AI test: inject simple AI thread for ARMY_2, run ticks, verify results
 void test_ai(TestContext& ctx) {
     spdlog::info("=== AI TEST: Autonomous base building (ARMY_2) ===");
+    ctx.sim.set_run_opponent_ai(false);
 
     // Inject AI thread: builds base, then engineers assist ACU
     auto ai_result = ctx.lua_state.do_string(R"(
+        __osc_ai_done = false
         ForkThread(function()
             WaitTicks(30) -- let session stabilize
 
@@ -581,9 +583,9 @@ void test_ai(TestContext& ctx) {
             -- Phase 3: Queue 3 engineers from factory (continuous production)
             local facs = brain:GetListOfUnits(catFac, false)
             if facs and facs[1] then
-                brain:BuildUnit(facs[1], 'uel0105')
-                brain:BuildUnit(facs[1], 'uel0105')
-                brain:BuildUnit(facs[1], 'uel0105')
+                brain:BuildUnit(facs[1], 'uel0105', 1)
+                brain:BuildUnit(facs[1], 'uel0105', 1)
+                brain:BuildUnit(facs[1], 'uel0105', 1)
                 LOG('AI thread: queued 3 engineers from factory')
             end
 
@@ -616,12 +618,14 @@ void test_ai(TestContext& ctx) {
             LOG('AI thread: ACU has ' .. table.getn(guards) .. ' guards')
 
             local engs = brain:GetListOfUnits(catEng, false)
-            if engs and engs[1] then
-                local guarded = engs[1]:GetGuardedUnit()
-                if guarded then
-                    LOG('AI thread: engineer guarding entity #' .. guarded:GetEntityId())
-                end
+            local guarded = engs and engs[1] and engs[1]:GetGuardedUnit()
+            if guarded then
+                LOG('AI thread: engineer guarding entity #' .. guarded:GetEntityId())
             end
+            if not guarded or guarded:GetEntityId() ~= acu:GetEntityId() then
+                LOG('AI TEST FAILED: the first engineer does not guard the ACU')
+            end
+            __osc_ai_done = true
         end)
     )");
     if (!ai_result) {
@@ -629,15 +633,9 @@ void test_ai(TestContext& ctx) {
                      ai_result.error().message);
     }
 
-    // Run 1200 ticks (enough for all builds + assist to complete)
-    spdlog::info("Running 1200 AI ticks...");
-    for (int i = 0; i < 1200; i++) {
-        ctx.sim.tick();
-        if ((i + 1) % 300 == 0) {
-            spdlog::info("  tick {}: {} entities",
-                         i + 1, ctx.sim.entity_registry().count());
-        }
-    }
+    spdlog::info("Running AI ticks...");
+    tick_until(ctx, "the AI thread builds its base and its engineer guards the commander", 1200,
+               "__osc_ai_done");
 
     // Verify results: 8 ACUs + 4 pgens + 1 factory + 3 engineers = 16
     auto entity_count = ctx.sim.entity_registry().count();
@@ -1054,8 +1052,10 @@ void test_threat(TestContext& ctx) {
 
 void test_combat(TestContext& ctx) {
     spdlog::info("=== COMBAT TEST: AI produces army, forms platoons, attacks ===");
+    ctx.sim.set_run_opponent_ai(false);
 
     auto ct_result = ctx.lua_state.do_string(R"(
+        __osc_combat_done = false
         ForkThread(function()
             WaitTicks(30) -- let session stabilize
 
@@ -1099,7 +1099,7 @@ void test_combat(TestContext& ctx) {
                 return
             end
             for i = 1, 4 do
-                brain:BuildUnit(facs[1], 'uel0201')
+                brain:BuildUnit(facs[1], 'uel0201', 1)
             end
             LOG('Combat test: queued 4 assault bots')
 
@@ -1144,11 +1144,18 @@ void test_combat(TestContext& ctx) {
             local enemyPos = enemyUnits[1]:GetPosition()
             CreateVisibleAreaAtPoint(brain:GetArmyIndex(), enemyPos[1], enemyPos[2],
                 enemyPos[3], 40, 120)
-            WaitTicks(2)
             local startPos = acu:GetPosition()
-            local numEnemy = brain:GetNumUnitsAroundPoint(
-                ParseEntityCategory('ALLUNITS'),
-                startPos, 4096, 'Enemy')
+            local numEnemy = 0
+            -- The blip comes with the army's ReconTick, and the armies take theirs in turn.
+            for i = 1, table.getn(ArmyBrains) do
+                WaitTicks(1)
+                numEnemy = brain:GetNumUnitsAroundPoint(
+                    ParseEntityCategory('ALLUNITS'),
+                    startPos, 4096, 'Enemy')
+                if numEnemy > 0 then
+                    break
+                end
+            end
             LOG('Combat test: ' .. numEnemy .. ' enemy units on map')
             if numEnemy <= 0 then
                 LOG('COMBAT TEST FAILED: GetNumUnitsAroundPoint returned 0')
@@ -1240,6 +1247,7 @@ void test_combat(TestContext& ctx) {
             end
 
             LOG('COMBAT TEST: ALL PASSED')
+            __osc_combat_done = true
         end)
     )");
     if (!ct_result) {
@@ -1248,9 +1256,7 @@ void test_combat(TestContext& ctx) {
     }
 
     spdlog::info("Running combat test ticks...");
-    for (int i = 0; i < 2000; i++) {
-        ctx.sim.tick();
-    }
+    tick_until(ctx, "the combat thread runs its checks", 2000, "__osc_combat_done");
 
     spdlog::info("Combat test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
@@ -1886,6 +1892,7 @@ void test_path(TestContext& ctx) {
 
     // 2) Move ACU across the map — verify Y tracks terrain height
     auto pt_result = ctx.lua_state.do_string(R"(
+        __osc_path_moved = false
         ForkThread(function()
             WaitTicks(10)
 
@@ -1899,8 +1906,8 @@ void test_path(TestContext& ctx) {
             LOG('Path test: ACU start at (' ..
                 string.format('%.1f, %.1f, %.1f', start_pos[1], start_pos[2], start_pos[3]) .. ')')
 
-            -- Move to a distant location on the map
-            local target = {start_pos[1] + 80, 0, start_pos[3] + 80}
+            -- Move to a distant location on the map, on land (start + (80, 80) is a lake's floor)
+            local target = {start_pos[1] + 80, 0, start_pos[3]}
             LOG('Path test: moving ACU to (' ..
                 string.format('%.1f, %.1f', target[1], target[3]) .. ')')
             IssueMove({acu}, target)
@@ -1941,10 +1948,9 @@ void test_path(TestContext& ctx) {
             end
 
             -- Wait for arrival
-            for i = 1, 60 do
+            repeat
                 WaitTicks(5)
-                if not acu:IsMoving() then break end
-            end
+            until not acu:IsMoving()
 
             local final_pos = acu:GetPosition()
             local dx = final_pos[1] - target[1]
@@ -1957,10 +1963,11 @@ void test_path(TestContext& ctx) {
             if dist < 5 then
                 LOG('Path test: movement OK (arrived within 5 units)')
             else
-                LOG('PATH TEST WARNING: did not arrive close to target')
+                LOG('PATH TEST FAILED: did not arrive close to target')
             end
 
             LOG('PATH TEST: BASIC MOVEMENT PASSED')
+            __osc_path_moved = true
         end)
     )");
     if (!pt_result) {
@@ -1969,12 +1976,11 @@ void test_path(TestContext& ctx) {
     }
 
     spdlog::info("Running path test ticks (phase 1: movement)...");
-    for (int i = 0; i < 500; i++) {
-        ctx.sim.tick();
-    }
+    tick_until(ctx, "Path test phase 1: the commander arrives", 800, "__osc_path_moved");
 
     // 3) Build a wall of structures, then move around them
     auto pt2_result = ctx.lua_state.do_string(R"(
+        __osc_path_done = false
         ForkThread(function()
             WaitTicks(5)
 
@@ -1991,8 +1997,9 @@ void test_path(TestContext& ctx) {
                 return
             end
 
-            -- Build 3 pgens in a line to form a wall
-            local pos = acu:GetPosition()
+            -- Build 3 pgens in a line to form a wall. Moho's GetPosition refreshes one table per unit.
+            local at = acu:GetPosition()
+            local pos = {at[1], at[2], at[3]}
             LOG('Path test phase 2: ACU at (' ..
                 string.format('%.1f, %.1f', pos[1], pos[3]) .. ')')
             LOG('Path test phase 2: building 3-pgen wall')
@@ -2000,7 +2007,7 @@ void test_path(TestContext& ctx) {
             for i = 0, 2 do
                 local bx = pos[1] + 20
                 local bz = pos[3] - 8 + i * 8
-                local build_pos = {bx, 0, bz}
+                local build_pos = {bx, bz, 0}
                 brain:BuildStructure(acu, 'ueb1101', build_pos, false)
                 while not acu:IsIdleState() do WaitTicks(10) end
             end
@@ -2014,10 +2021,9 @@ void test_path(TestContext& ctx) {
             IssueMove({acu}, target)
 
             -- Wait for movement to complete
-            for i = 1, 100 do
+            repeat
                 WaitTicks(5)
-                if not acu:IsMoving() then break end
-            end
+            until not acu:IsMoving()
 
             local final_pos = acu:GetPosition()
             local dx = final_pos[1] - target[1]
@@ -2030,10 +2036,11 @@ void test_path(TestContext& ctx) {
             if dist < 10 then
                 LOG('Path test phase 2: obstacle avoidance OK')
             else
-                LOG('PATH TEST phase 2 WARNING: may not have routed around wall')
+                LOG('PATH TEST FAILED: phase 2 did not get past the wall')
             end
 
             LOG('PATH TEST: ALL PHASES COMPLETE')
+            __osc_path_done = true
         end)
     )");
     if (!pt2_result) {
@@ -2042,13 +2049,8 @@ void test_path(TestContext& ctx) {
     }
 
     spdlog::info("Running path test ticks (phase 2: obstacles)...");
-    for (int i = 0; i < 1500; i++) {
-        ctx.sim.tick();
-        if ((i + 1) % 500 == 0) {
-            spdlog::info("  tick {}: {} entities",
-                         i + 1, ctx.sim.entity_registry().count());
-        }
-    }
+    tick_until(ctx, "Path test phase 2: the commander builds its wall and walks past it", 1500,
+               "__osc_path_done");
 
     spdlog::info("Path test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
