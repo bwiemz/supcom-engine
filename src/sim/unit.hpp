@@ -620,6 +620,8 @@ public:
     /// old unit's orders, a patrol's points in their order).
     void append_command(const UnitCommand& cmd) { command_queue_.push_back(cmd); }
     void clear_commands(const char* source = "?");
+    /// Moho's IAiNavigator::AbortMove: on the ground, its steering brakes along its spline.
+    void abort_move();
     /// Moho's CUnitCommandQueue::NeedsUIRefresh: a head order of these types
     /// taken off the queue sets the unit's UI refresh flag.
     void note_queue_head();
@@ -1632,12 +1634,12 @@ private:
     /// ends before it got there (its target gone, taken or whole): Moho's
     /// task ends its move with it, so the unit isn't left Moving.
     void end_approach(const UnitCommand& cmd) {
-        if (cmd.approached) navigator_.abort_move();
+        if (cmd.approached) abort_move();
     }
     /// An order ending before its tick's move (its target gone) lets go of
     /// the move it was making, if any: the head order's is the only one.
     void release_navigator() {
-        if (navigator_.busy()) navigator_.abort_move();
+        if (navigator_.busy()) abort_move();
     }
 
     bool attached() const;

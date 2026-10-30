@@ -80,6 +80,7 @@ public:
     void set_speed_through_goal(bool b) { speed_through_goal_ = b; }
 
     void set_sim_state(SimState* sim) { sim_ = sim; }
+    SimState* sim_state() const { return sim_; }
 
     /// Following, or about to follow, a path as Moho's units do (roadmap
     /// item 4c-2c; SimState::moho_pathing).

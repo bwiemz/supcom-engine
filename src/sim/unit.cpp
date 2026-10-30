@@ -19,6 +19,7 @@
 #include "sim/script_warning.hpp"
 #include "sim/terrain_types.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/steering.hpp"
 #include "sim/thread_manager.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
@@ -71,7 +72,7 @@ void Unit::push_command(const UnitCommand& cmd, bool clear_existing) {
     // block push_command here.
     if (clear_existing) {
         command_queue_.clear();
-        navigator_.abort_move();
+        abort_move();
     }
     // Moho's queue puts a patrol point added to a running patrol before the
     // loop's oldest point: the loop goes on through it in the order given
@@ -92,7 +93,7 @@ void Unit::push_command(const UnitCommand& cmd, bool clear_existing) {
 
 void Unit::clear_commands(const char*) {
     command_queue_.clear();
-    navigator_.abort_move();
+    abort_move();
 }
 
 void Unit::note_queue_head() {
@@ -280,7 +281,7 @@ void Unit::remove_command(u32 id, SimContext& ctx) {
     const bool upgrade = upgrading();
     const bool enhancing = it->type == CommandType::Enhance && is_enhancing();
     command_queue_.pop_front();
-    navigator_.abort_move();
+    abort_move();
     if (factory_build) {
         cancel_factory_build(registry, L);
     }
@@ -556,6 +557,18 @@ void Unit::kill_cleanup(lua_State* L) {
 void Unit::stop_air() {
     navigator_.abort_move();
     navigator_.set_air_hold(air_stop_point());
+}
+
+void Unit::abort_move() {
+    if (is_air_unit()) {
+        navigator_.abort_move();
+        return;
+    }
+    navigator_.abort_move(true);
+    navigator_.set_speed_through_goal(false);
+    if (SimState* sim = navigator_.sim_state()) {
+        steer_no_waypoints(*sim, *this);
+    }
 }
 
 Vector3 Unit::air_stop_point() const {
@@ -2964,7 +2977,7 @@ void Unit::warp(const map::Terrain* terrain, const Vector3& at, lua_State* L) {
     // CUnitMotion::Warp's target is where it now is, and the navigator's
     // move is aborted: AINAVEVENT_Aborted reaches the task listening, the
     // order running now (a Move's task takes it as a failure)
-    navigator_.abort_move();
+    abort_move();
     warp_aborted_command_ = !command_queue_.empty() && command_queue_.front().begun
                                 ? command_queue_.front().command_id
                                 : 0;
@@ -3127,7 +3140,7 @@ void Unit::attach_to_transport(Unit* transport, EntityRegistry& registry,
     transport_id_ = transport->entity_id();
     transport->add_cargo(entity_id());
     set_unit_state("Attached", true);
-    navigator_.abort_move();
+    abort_move();
     ground_speed_ = 0; // aboard, it no longer drives
     // Boarding pops the unit onto its bone; the renderer jumps it.
     hang_from(*transport);

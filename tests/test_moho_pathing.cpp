@@ -755,3 +755,20 @@ TEST_CASE("With Moho pathing a patrol leg's end brakes its unit along its spline
     }
     CHECK(tank->position().x - ended > 1.2f);
 }
+
+TEST_CASE("With Moho pathing a moving tank whose orders are cleared brakes along its spline",
+          "[pathing]") {
+    World w(true);
+    Unit* tank = w.make("tank", 20.5f, 30.5f);
+    World::move(*tank, 60.5f, 30.5f);
+    for (int t = 0; t < 60; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(tank->navigator().busy());
+    const f32 cleared = tank->position().x;
+    tank->clear_commands();
+    for (int t = 0; t < 30; ++t) {
+        w.sim.tick();
+    }
+    CHECK(tank->position().x - cleared > 1.2f);
+}

@@ -15,7 +15,6 @@
 #include "sim/sim_state.hpp"
 #include "sim/prepare_move.hpp"
 #include "sim/script_class.hpp"
-#include "sim/steering.hpp"
 #include "sim/work_range.hpp"
 #include "map/terrain.hpp"
 
@@ -491,7 +490,7 @@ OrderStep Unit::order_destroy_self(SimContext& ctx) {
 }
 
 OrderStep Unit::order_stop(lua_State* L) {
-    navigator_.abort_move();
+    abort_move();
     command_queue_.pop_front();
     run_stop(L);
     return OrderStep::Next;
@@ -589,7 +588,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
             const f32 az = position().z - anchor.z;
             if (ax * ax + ay * ay + az * az > guard_return_radius_ * guard_return_radius_) {
                 if (cmd.engaged) end_attack_run(*this);
-                navigator_.abort_move();
+                abort_move();
                 command_queue_.pop_front();
                 return OrderStep::Next;
             }
@@ -701,7 +700,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
         if (can_fly()) {
             close_in();
         } else {
-            navigator_.abort_move();
+            abort_move();
         }
         // In reach, every 9 ticks it asks to face its target AttackAngle off
         // the bow (Moho's attack task, Complete: SetFacing, return 10).
@@ -750,12 +749,12 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, SimContext& ctx) {
                        static_cast<i64>(weapon->shots_at_target) >= weapon->attack_ground_tries;
     const bool form_attack_unarmed = !weapon && cmd.form_attack && !has_category("DIRECTFIRE");
     if (form_attack_unarmed && command_queue_.size() < 2) {
-        navigator_.abort_move();
+        abort_move();
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     if (command_queue_.size() >= 2 && (spent || form_attack_unarmed)) {
-        navigator_.abort_move();
+        abort_move();
         auto finished = std::move(cmd); // cmd is the element pop_front destroys
         finished.begun = false;
         finished.engaged = false;
@@ -823,7 +822,7 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, SimContext& ctx) {
         }
         cmd.has_slot = false; // the formation dropped, as on a unit
         if (!can_fly()) {
-            navigator_.abort_move();
+            abort_move();
             return OrderStep::Hold;
         }
     }
@@ -969,7 +968,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             command_queue_.pop_front();
             return OrderStep::Next;
         }
-        navigator_.abort_move();
+        abort_move();
         {
             const Vector3 site{cmd.target_pos.x, cmd.target_pos.y + 0.5f, cmd.target_pos.z};
             aim_builder_arms(&site, L);
@@ -1183,7 +1182,10 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, SimContext& ctx) {
         order.patrol_scan = is_air_unit() ? 0 : 5;
         cmd.patrol_scan = 0;
         cmd.patrol_moving = false;
-        navigator_.abort_move();
+        // Of the tasks a patrol hands its unit to, the reclaim task alone aborts the move.
+        if (order.type == CommandType::Reclaim) {
+            abort_move();
+        }
         command_queue_.push_front(std::move(order)); // cmd stays valid: a deque keeps references
         return OrderStep::Hold;
     };
@@ -1230,11 +1232,7 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, SimContext& ctx) {
             if (is_air_unit()) {
                 stop_air();
             } else {
-                navigator_.abort_move(true);
-                navigator_.set_speed_through_goal(false);
-                if (ctx.sim) {
-                    steer_no_waypoints(*ctx.sim, *this);
-                }
+                abort_move();
             }
         }
         // Moho's dispatch removes an attack-move whose patrol task is done.
@@ -1340,7 +1338,7 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Next;
         }
     }
-    navigator_.abort_move();
+    abort_move();
 
     // Start reclaim if not already reclaiming this target
     if (reclaim_target_id_ != cmd.target_id) {
@@ -1488,7 +1486,7 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
             return OrderStep::Next;
         }
     }
-    navigator_.abort_move();
+    abort_move();
 
     if (under_construction) {
         if (is_repairing()) stop_repairing(L, registry);
@@ -1633,7 +1631,7 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Next;
         }
     }
-    navigator_.abort_move();
+    abort_move();
 
     // Start capture if not already capturing this target
     if (capture_target_id_ != cmd.target_id) {
@@ -1785,7 +1783,7 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
     attack.leash_anchor_id = guarded ? guarded->entity_id() : EntityId();
     attack.leash_anchor_pos = ref;
     cmd.guard_returning = true;
-    navigator_.abort_move();
+    abort_move();
     command_queue_.push_front(std::move(attack)); // cmd stays valid: a deque keeps references
     return OrderStep::Next;
 }
@@ -1880,7 +1878,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         }
         const f32 limit = helping && skirt ? 2 * max_build_distance_ : max_build_distance_;
         if (work_gap(*this, work.position(), extent) <= limit) {
-            navigator_.abort_move();
+            abort_move();
             return true;
         }
         if (effective_speed() > 0) {
@@ -2553,7 +2551,7 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
             if (destroyed() || !in_registry()) return OrderStep::Gone;
             pickup_phase_ = PickupPhase::Flying;
         } else {
-            navigator_.abort_move();
+            abort_move();
             pickup_center_ = position();
             pickup_phase_ = PickupPhase::Waiting;
         }
@@ -2568,7 +2566,7 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
         if (nav_update()) {
             return OrderStep::Hold;
         }
-        navigator_.abort_move();
+        abort_move();
         pickup_phase_ = PickupPhase::Landing;
     }
     // Over the centre, it comes down to its hover height; only then is it at
@@ -2789,7 +2787,7 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, SimContext& ctx) {
         walk_to({bone_at.x, position().y, bone_at.z});
         return OrderStep::Hold;
     }
-    navigator_.abort_move();
+    abort_move();
     ground_speed_ = 0;
     beam_from_ = position();
     beam_from_orientation_ = orientation();
@@ -2835,7 +2833,7 @@ OrderStep Unit::order_transport_unload(UnitCommand& cmd, SimContext& ctx) {
         nav_update();
         return OrderStep::Hold;
     }
-    navigator_.abort_move();
+    abort_move();
     set_unit_state("TransportUnloading", true);
 
     // Over the drop: down to its hover height, then its cargo is set down
@@ -2969,7 +2967,7 @@ OrderStep Unit::order_launch(UnitCommand& cmd, SimContext& ctx) {
         }
         nav_update();
     } else {
-        navigator_.abort_move();
+        abort_move();
         if (overcharge && !cmd.started) {
             cmd.started = true;
             overcharge_armed_ = true;
@@ -3313,7 +3311,7 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, SimContext& ctx) {
             ferry_fly(ctx, drop);
             return OrderStep::Hold;
         }
-        navigator_.abort_move();
+        abort_move();
         ferry_leg_set_ = false;
         if (!unload_step(ctx, {})) {
             return OrderStep::Hold;
@@ -3363,7 +3361,7 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, SimContext& ctx) {
             const f32 ldx = ferry->position().x - position().x;
             const f32 ldz = ferry->position().z - position().z;
             if (ldx * ldx + ldz * ldz <= load_range * load_range) {
-                navigator_.abort_move();
+                abort_move();
                 set_unit_state("WaitForFerry", false);
                 attach_to_transport(ferry, registry, L);
                 command_queue_.pop_front();
@@ -3382,7 +3380,7 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, SimContext& ctx) {
     const f32 bdx = beacon->position().x - position().x;
     const f32 bdz = beacon->position().z - position().z;
     if (has_unit_state("WaitForFerry") || bdx * bdx + bdz * bdz <= wait_range * wait_range) {
-        navigator_.abort_move();
+        abort_move();
         set_unit_state("WaitForFerry", true);
         return OrderStep::Hold;
     }
