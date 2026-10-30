@@ -19558,7 +19558,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if table.getn(sel) ~= 1 or sel[1]:GetEntityId() ~= acu:GetEntityId() then
             error('not selected alone: ' .. table.getn(sel))
         end
-        SelectUnits({{acu, {{EntityId = {}}}}})
+        SelectUnits({{acu, GetUnitById({})}})
         if table.getn(GetSelectedUnits()) ~= 2 then error('the power generator was not selected') end
         local attackers = GetValidAttackingUnits()
         if table.getn(attackers) ~= 1 or attackers[1]:GetEntityId() ~= acu:GetEntityId() then
@@ -19595,7 +19595,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     const std::string select_unselectable = fmt::format(
         R"(
         local acu = GetSelectedUnits()[1]
-        SelectUnits({{{{EntityId = {}}}, {{EntityId = {}}}}})
+        SelectUnits({{GetUnitById({}), GetUnitById({})}})
         local n = table.getn(GetSelectedUnits())
         SelectUnits({{acu}})
         if n ~= 0 then error(n .. ' selected') end
@@ -19632,7 +19632,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         const std::string select_factory =
             fmt::format(R"(
             __osc_rally_acu = GetSelectedUnits()[1]
-            SelectUnits({{{{EntityId = {}}}}})
+            SelectUnits({{GetUnitById({})}})
         )",
                         osc::sim::EntityRegistry::moho_id(rally_factory));
         lua_ok("Test 10b5: select a factory", select_factory.c_str());
@@ -19685,7 +19685,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             local acu = GetSelectedUnits()[1]
             local bt = import('/lua/ui/game/build_templates.lua')
             -- the later one first: the order is the build order
-            SelectUnits({{{{EntityId = {}}}, {{EntityId = {}}}}})
+            SelectUnits({{GetUnitById({}), GetUnitById({})}})
             bt.CreateBuildTemplate()
             SelectUnits({{acu}})
             local all = bt.GetTemplates()
@@ -19753,9 +19753,9 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
                 for _, v in list do if v == name then return true end end
                 return false
             end
-            SelectUnits({{{{EntityId = {}}}}})
+            SelectUnits({{GetUnitById({})}})
             local _, radar_toggles = GetUnitCommandData(GetSelectedUnits())
-            SelectUnits({{{{EntityId = {}}}}})
+            SelectUnits({{GetUnitById({})}})
             local scout_orders = GetUnitCommandData(GetSelectedUnits())
             SelectUnits({{acu}})
             if not has(radar_toggles, 'RULEUTC_IntelToggle') then error('the radar has no intel toggle') end
@@ -19821,7 +19821,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         lua_ok("Test 10g0c: the nuke order's mode, the cursor updated",
                fmt::format(R"(
             __osc_nuke_acu = GetSelectedUnits()[1]
-            SelectUnits({{{{EntityId = {}}}}})
+            SelectUnits({{GetUnitById({})}})
             import('/lua/ui/game/commandmode.lua').StartCommandMode('order', {{name = 'RULEUCC_Nuke'}})
             import('/lua/ui/game/worldview.lua').viewLeft:OnUpdateCursor()
         )",
@@ -19917,7 +19917,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     play(2);
     const std::string select_mex = fmt::format(R"(
         __osc_test_acu = GetSelectedUnits()[1]
-        SelectUnits({{{{EntityId = {}}}}})
+        SelectUnits({{GetUnitById({})}})
         local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
         local list = EntityCategoryGetUnitList(buildable)
         if table.getn(list) ~= 1 or list[1] ~= 'ueb1202' then
@@ -19936,7 +19936,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if not upgrade then error('no ueb1202 among ' .. table.getn(shown) .. ' items') end
         SelectUnits({__osc_test_acu})
     )");
-    const std::string reselect_mex = fmt::format("SelectUnits({{{{EntityId = {}}}}})",
+    const std::string reselect_mex = fmt::format("SelectUnits({{GetUnitById({})}})",
                                                  osc::sim::EntityRegistry::moho_id(mex_id));
     lua_ok("Test 10g5 setup: the extractor selected", reselect_mex.c_str());
     play(2);
@@ -19959,7 +19959,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         end
     )");
     const std::string upgrade_rollover = fmt::format(R"(
-        SelectUnits({{{{EntityId = {}}}}})
+        SelectUnits({{GetUnitById({})}})
         local info = GetRolloverInfo()
         SelectUnits({{__osc_test_acu}})
         if info.focus then error('focus ' .. tostring(info.focus.blueprintId)) end
