@@ -12551,6 +12551,11 @@ void test_naval_depth(TestContext& ctx) {
             end
             return low, high, __osc_trace[table.getn(__osc_trace)].pitch
         end
+        function __osc_settled(layer)
+            local n = table.getn(__osc_trace)
+            return __osc_sub:GetCurrentLayer() == layer and n > 1 and
+                   math.abs(__osc_trace[n].pitch - __osc_trace[n - 1].pitch) < 1e-3
+        end
     )");
     run(5);
     lua_check("Test 0: made on deep water, it starts under, at its depth, on Sub", R"(
@@ -12559,8 +12564,8 @@ void test_naval_depth(TestContext& ctx) {
         if math.abs(t.y + 1.5) > 1e-3 then error('it is ' .. t.y .. ' under, not 1.5') end
         IssueDive({__osc_sub})
     )");
-    tick_until([&] { run(1); }, "the sub surfaces", 120,
-               [&] { return lua_true(ctx.lua_state, "__osc_sub:GetCurrentLayer() == 'Water'"); });
+    tick_until([&] { run(1); }, "the sub surfaces and levels off", 120,
+               [&] { return lua_true(ctx.lua_state, "__osc_settled('Water')"); });
     lua_check(
         "Test 1: told to dive where it stands, it sinks to its depth; its layer is Sub only there",
         R"(
@@ -12569,8 +12574,8 @@ void test_naval_depth(TestContext& ctx) {
         __osc_trace = {}
         IssueDive({__osc_sub})
     )");
-    tick_until([&] { run(1); }, "the sub reaches its depth", 120,
-               [&] { return lua_true(ctx.lua_state, "__osc_sub:GetCurrentLayer() == 'Sub'"); });
+    tick_until([&] { run(1); }, "the sub reaches its depth and levels off", 120,
+               [&] { return lua_true(ctx.lua_state, "__osc_settled('Sub')"); });
     lua_check("Test 1 (checked)", R"(
         local first, last = __osc_trace[1], __osc_trace[table.getn(__osc_trace)]
         if first.layer ~= 'Water' then error('it was ' .. first.layer .. ' as it began') end
@@ -12609,8 +12614,8 @@ void test_naval_depth(TestContext& ctx) {
         __osc_trace = {}
         IssueDive({__osc_sub})
     )");
-    tick_until([&] { run(1); }, "the sub surfaces again", 120,
-               [&] { return lua_true(ctx.lua_state, "__osc_sub:GetCurrentLayer() == 'Water'"); });
+    tick_until([&] { run(1); }, "the sub surfaces again and levels off", 120,
+               [&] { return lua_true(ctx.lua_state, "__osc_settled('Water')"); });
     lua_check("Test 3 (checked)", R"(
         local last = __osc_trace[table.getn(__osc_trace)]
         if last.layer ~= 'Water' or math.abs(last.y) > 1e-3 then
