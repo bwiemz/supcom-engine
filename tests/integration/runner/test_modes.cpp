@@ -77,6 +77,7 @@ using app::parse_string_arg;
 using app::pump_ui_frames;
 using app::pump_ui_frames_with_controls;
 using app::read_command_mode;
+using app::refresh_selection;
 using app::report_command_issued;
 using app::submit_sim_callbacks;
 using app::world_beat;
