@@ -168,6 +168,9 @@ int push_bool_of(lua_State* L, bool(sim::EntityRecord::* field)) {
 // --- Identity -------------------------------------------------------------
 
 int uu_GetEntityId(lua_State* L) {
+    if (!record(L)) {
+        return luaL_error(L, "Game object has been destroyed");
+    }
     sim::push_entity_id(L, user_unit_id(L));
     return 1;
 }

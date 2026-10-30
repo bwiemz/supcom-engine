@@ -176,6 +176,22 @@ TEST_CASE("A UI script sees a unit as the last tick left it", "[userunit]") {
     CHECK(number("return units[1]:GetHealth()") == 0.0);
 }
 
+TEST_CASE("A gone unit's UI object is dead, and GetEntityId on it raises", "[userunit][ids]") {
+    UiWorld w;
+    w.sim.tick();
+    REQUIRE(w.ui.do_string("id = units[1]:GetEntityId()").ok());
+    w.sim.entity_registry().destroy(w.unit());
+    w.sim.tick();
+    auto r = w.ui.do_string(R"(
+        local ok, err = pcall(units[1].GetEntityId, units[1])
+        assert(not ok and string.find(err, 'Game object has been destroyed', 1, true),
+               tostring(err))
+        assert(units[1]:IsDead() and IsDestroyed(units[1]))
+    )");
+    INFO((r.ok() ? std::string() : r.error().message));
+    CHECK(r.ok());
+}
+
 TEST_CASE("A UI unit has UserUnit's methods, not the sim's", "[userunit]") {
     // The sim's Unit methods change the unit (Kill, SetHealth, Destroy...);
     // the UI's reach it only through commands, as Moho's UserUnit does.
