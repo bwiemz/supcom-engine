@@ -938,9 +938,7 @@ TEST_CASE("A gone unit leaves the selection in its beat, before the UI's beat fu
                 .ok());
     std::unordered_set<osc::sim::EntityId> prev;
     std::vector<std::pair<osc::sim::EntityId, osc::u32>> prev_upgrades;
-    const auto refresh = [&] {
-        osc::app::refresh_selection(L, input, w.sim, prev, prev_upgrades);
-    };
+    const auto refresh = [&] { osc::app::refresh_selection(L, input, w.sim, prev, prev_upgrades); };
     input.set_selected({w.id});
     osc::app::dispatch_selection_change(L, prev, prev_upgrades, w.sim, input.selected(),
                                         input.take_selection_event());

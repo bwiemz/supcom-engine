@@ -1352,8 +1352,7 @@ void IntegrationModes::headless(Engine& e) {
             for (int t = 0; t < ticks; ++t) {
                 submit_sim_callbacks(test_callbacks, *sim_state);
                 sim_state->tick();
-                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw(), sync,
-                           refresh);
+                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw(), sync, refresh);
                 note_game_over_if_ended(sim_state.get(), game_state_mgr, uL);
                 pump(6);
             }
