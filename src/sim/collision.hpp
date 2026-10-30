@@ -73,6 +73,9 @@ struct BoxContact {
 /// `shape`, and that overlap. None when they are apart.
 std::optional<BoxContact> box_contact(const OrientedBox& shape, const OrientedBox& box);
 
+/// Whether `e`'s collision shape meets `box` (Moho's CollideBox of its box or sphere primitive).
+bool shape_meets_box(const Entity& e, const OrientedBox& box);
+
 /// Where along the segment `from` to `to` (0 to 1) it first goes below the
 /// terrain, sampled about every unit (the heightmap's spacing) and refined
 /// by halving. None if it stays above.

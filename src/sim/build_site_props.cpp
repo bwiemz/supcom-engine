@@ -15,6 +15,7 @@
 #include <cmath>
 #include <limits>
 #include <unordered_set>
+#include <vector>
 
 extern "C" {
 #include <lua.h>
@@ -159,16 +160,21 @@ BuildSiteProp find_build_site_prop(lua_State* L, const EntityRegistry& registry,
     const f32 x0 = std::nearbyint(site.x - size_x * 0.5f);
     const f32 z0 = std::nearbyint(site.z - size_z * 0.5f);
     const bool by_obstructs = data_has_obstructs_building(L);
+    // Moho's FindObstructingPropToReclaim takes the props whose shape meets the footprint's box.
+    const OrientedBox box = oriented_box({x0 + size_x * 0.5f, site.y, z0 + size_z * 0.5f},
+                                         Quaternion{}, {size_x * 0.5f, 1000.0f, size_z * 0.5f});
+    std::vector<Entity*> near;
+    registry.props_touching(x0, z0, x0 + size_x, z0 + size_z, near);
 
     const Prop* nearest = nullptr;
     f32 nearest_d2 = std::numeric_limits<f32>::infinity();
-    for (const u32 id : registry.collect_in_rect(x0, z0, x0 + size_x, z0 + size_z)) {
-        const Entity* e = registry.find(id);
-        if (!e || e->destroyed() || !e->is_prop()) {
+    for (const Entity* e : near) {
+        if (e->destroyed() || !e->is_prop()) {
             continue;
         }
         const auto& prop = static_cast<const Prop&>(*e);
-        if (!(by_obstructs ? prop.obstructs_building : prop.reclaimable_category)) {
+        if (!(by_obstructs ? prop.obstructs_building : prop.reclaimable_category) ||
+            !shape_meets_box(prop, box)) {
             continue;
         }
         const f32 dx = builder.position().x - prop.position().x;
