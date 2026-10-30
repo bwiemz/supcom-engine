@@ -10,6 +10,15 @@
 #include "blueprints/moho_reflected_fields.hpp"
 #include "lua/blueprint_bindings.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
+#include "lua/sim_bindings.hpp"
+#include "renderer/range_overlays.hpp"
+#include "sim/build_placement.hpp"
+#include "sim/sim_state.hpp"
+
+extern "C" {
+#include <lua.h>
+}
 
 #include <set>
 #include <string>
@@ -230,4 +239,191 @@ TEST_CASE("Both Lua states read a registered blueprint's reflected fields",
         assert(bp.Weapon[1].MinRadius == 0, 'MinRadius')
         assert(bp.Description == '', 'Description')
     )"));
+}
+
+TEST_CASE("A unit blueprint's flag enums read as Moho writes them back",
+          "[blueprints][moho-reflection]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local function reg(id, general, physics)
+            local bp = {BlueprintId = id, General = general, Physics = physics}
+            RegisterUnitBlueprint(bp)
+            return bp.General, bp.Physics
+        end
+        local g, p = reg('uel0201',
+            {CommandCaps = {RULEUCC_Move = true, RULEUCC_Stop = true, RULEUCC_Attack = true,
+                            RULEUCC_Guard = true, RULEUCC_Patrol = true,
+                            RULEUCC_RetaliateToggle = true, RULEUCC_CallTransport = true,
+                            RULEUCC_Nuke = false},
+             ToggleCaps = {}},
+            {BuildOnLayerCaps = {LAYER_Land = true, LAYER_Water = false}})
+        assert(g.CommandCaps == '575', 'several caps: ' .. tostring(g.CommandCaps))
+        assert(g.ToggleCaps == '0', 'no toggles: ' .. tostring(g.ToggleCaps))
+        assert(p.BuildOnLayerCaps == 'Land', 'one layer: ' .. tostring(p.BuildOnLayerCaps))
+        g, p = reg('uel0203', {ToggleCaps = {RULEUTC_ShieldToggle = true}},
+                   {BuildOnLayerCaps = {LAYER_Land = true, LAYER_Seabed = true}})
+        assert(g.ToggleCaps == 'RULEUTC_ShieldToggle', g.ToggleCaps)
+        assert(p.BuildOnLayerCaps == '3', p.BuildOnLayerCaps)
+        g, p = reg('bare')
+        assert(g.CommandCaps == '0' and g.ToggleCaps == '0' and p.BuildOnLayerCaps == 'Land',
+               'constructor values')
+        g, p = reg('empty', {CommandCaps = {RULEUCC_Repair = true}}, {BuildOnLayerCaps = {}})
+        assert(g.CommandCaps == 'RULEUCC_Repair', g.CommandCaps)
+        assert(p.BuildOnLayerCaps == 'None', p.BuildOnLayerCaps)
+        local lexical = {
+            {'RULEUCC_Move|RULEUCC_Stop', '3'}, {'rulEUCC_move', 'RULEUCC_Move'}, {575, '575'},
+            {'6', '6'}, {true, 'RULEUCC_Move'}, {{RULEUCC_Fly = true}, '0'}, {'Fly', '0'},
+        }
+        for _, case in lexical do
+            g = reg('caps', {CommandCaps = case[1]})
+            assert(g.CommandCaps == case[2],
+                   tostring(case[1]) .. ' read ' .. tostring(g.CommandCaps))
+        end
+        local layers = {
+            {'LAYER_Land|Water', '9'}, {'0x10', 'Air'}, {127, 'All'}, {'Water', 'Water'},
+            {{LAYER_Land = true, LAYER_Seabed = true, LAYER_Sub = true, LAYER_Water = true,
+              LAYER_Air = true, LAYER_Orbit = true}, '63'}, {'Moon', 'Land'},
+        }
+        for _, case in layers do
+            local _, physics = reg('layers', nil, {BuildOnLayerCaps = case[1]})
+            assert(physics.BuildOnLayerCaps == case[2],
+                   tostring(case[1]) .. ' read ' .. tostring(physics.BuildOnLayerCaps))
+        end
+    )"));
+}
+
+TEST_CASE("A mobile unit's footprint reads as its class of footprints.lua",
+          "[blueprints][moho-reflection]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        SpecFootprints {
+            {Name = 'Vehicle1x1', SizeX = 1, SizeZ = 1, Caps = 1, MaxWaterDepth = 0.05,
+             MaxSlope = 0.75, Flags = 0},
+            {Name = 'Vehicle5x5', SizeX = 5, SizeZ = 5, Caps = 1, MaxWaterDepth = 0.05,
+             MaxSlope = 0.75, Flags = 1},
+            {Name = 'WaterLand1x1', SizeX = 1, SizeZ = 1, Caps = 9, MaxWaterDepth = 1,
+             MinWaterDepth = 0.1, MaxSlope = 0.75, Flags = 0},
+            {Name = 'Water4x4', SizeX = 4, SizeZ = 4, Caps = 8, MinWaterDepth = 1.5, Flags = 0},
+        }
+        local function reg(id, motion, footprint, size, physics)
+            physics = physics or {}
+            physics.MotionType = motion
+            physics.MaxSpeed = motion ~= 'RULEUMT_None' and 1 or 0
+            local bp = {BlueprintId = id, SizeX = size and size[1], SizeZ = size and size[2],
+                        Footprint = footprint, Physics = physics}
+            RegisterUnitBlueprint(bp)
+            return bp.Footprint, bp.Physics
+        end
+        local fp, p = reg('uel0201', 'RULEUMT_Land', nil, {0.6, 1.2},
+                          {SkirtSizeX = 3, SkirtOffsetX = 0.5, SkirtSizeZ = 0.5})
+        assert(fp.SizeX == 1 and fp.SizeZ == 1, 'a 1x2 tank is a Vehicle1x1: ' .. fp.SizeZ)
+        assert(fp.MaxSlope == 0.75 and fp.OccupancyCaps == 1 and fp.Flags == 0, 'its class whole')
+        assert(fp.MaxWaterDepth == nil, 'MaxWaterDepth is not reflected')
+        assert(p.SkirtSizeX == 3 and p.SkirtOffsetX == 0, 'a skirt is never offset outward')
+        assert(p.SkirtSizeZ == 1 and p.SkirtOffsetZ == 0, 'a skirt is at least the class')
+        fp = reg('uel0203', 'RULEUMT_Hover', {SizeX = 1, SizeZ = 2, Flags = 1})
+        assert(fp.SizeZ == 1 and fp.OccupancyCaps == 9 and fp.Flags == 0, 'a hover')
+        assert(math.abs(fp.MinWaterDepth - 0.1) < 1e-6, 'its class MinWaterDepth')
+        fp = reg('ues0201', 'RULEUMT_Water', {SizeX = 2, SizeZ = 8})
+        assert(fp.SizeX == 4 and fp.SizeZ == 4 and fp.MinWaterDepth == 1.5, 'a frigate')
+        fp = reg('uel0401', 'RULEUMT_Land', {SizeX = 6, SizeZ = 8})
+        assert(fp.SizeX == 5 and fp.Flags == 1, 'the class flags')
+        fp = reg('uea0104', 'RULEUMT_Air', {SizeX = 1, SizeZ = 6, MaxSlope = 0.25})
+        assert(fp.SizeZ == 6 and fp.MaxSlope == 0.25 and fp.OccupancyCaps == 16,
+               'an aircraft has no class')
+        fp, p = reg('ueb2101', 'RULEUMT_None', {SizeX = 1, SizeZ = 1, Flags = 1, OccupancyCaps = 9},
+                    nil, {BuildOnLayerCaps = {LAYER_Land = true, LAYER_Seabed = true},
+                          SkirtOffsetX = 0.5, SkirtSizeX = 0.5})
+        assert(fp.OccupancyCaps == 3 and fp.Flags == 1, 'a structure: where it is built')
+        assert(p.SkirtSizeX == 1 and p.SkirtOffsetX == 0, 'a structure skirt')
+    )"));
+}
+
+TEST_CASE("A unit's AltFootprint reads as its alt motion type's class, else the main one's",
+          "[blueprints][moho-reflection]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        SpecFootprints {
+            {Name = 'Vehicle1x1', SizeX = 1, SizeZ = 1, Caps = 1, MaxWaterDepth = 0.05,
+             MaxSlope = 0.75, Flags = 0},
+            {Name = 'WaterLand5x5', SizeX = 5, SizeZ = 5, Caps = 9, MaxWaterDepth = 5,
+             MaxSlope = 0.75, Flags = 0},
+            {Name = 'Water4x4', SizeX = 4, SizeZ = 4, Caps = 8, MinWaterDepth = 1.5, Flags = 0},
+            {Name = 'Water6x6', SizeX = 6, SizeZ = 6, Caps = 8, MinWaterDepth = 1.5, Flags = 0},
+        }
+        local function reg(id, physics, extra)
+            local bp = extra or {}
+            bp.BlueprintId, bp.SizeX, bp.SizeZ, bp.Physics = id, 1.5, 5.4, physics
+            RegisterUnitBlueprint(bp)
+            return bp.AltFootprint, bp.Footprint
+        end
+        local alt, fp = reg('urs0201', {MotionType = 'RULEUMT_AmphibiousFloating', MaxSpeed = 1,
+                                        AltMotionType = 'RULEUMT_Water'},
+                            {Footprint = {SizeX = 2, SizeZ = 8}})
+        assert(fp.SizeX == 5 and fp.OccupancyCaps == 9, 'the main class')
+        assert(alt.SizeX == 4 and alt.SizeZ == 4 and alt.OccupancyCaps == 8 and
+               alt.MinWaterDepth == 1.5, 'its own 2x6 is a Water4x4: ' .. alt.SizeX)
+        alt, fp = reg('url0107', {MotionType = 'RULEUMT_Land', MaxSpeed = 1},
+                      {AltFootprint = {SizeX = 6, SizeZ = 6, Flags = 1}})
+        for _, key in {'SizeX', 'SizeZ', 'MaxSlope', 'MinWaterDepth', 'OccupancyCaps', 'Flags'} do
+            assert(alt[key] == fp[key], 'no AltMotionType: the main footprint, but ' .. key)
+        end
+        alt = reg('uea0102', {MotionType = 'RULEUMT_Air', MaxSpeed = 1,
+                              AltMotionType = 'RULEUMT_Land'})
+        assert(alt.SizeX == 2 and alt.SizeZ == 6 and alt.OccupancyCaps == 1,
+               'an aircraft keeps its own with the alt caps')
+        alt, fp = reg('ueb2101', {MotionType = 'RULEUMT_None'},
+                      {AltFootprint = {SizeX = 3, OccupancyCaps = 5, Flags = 1, MaxSlope = 0.5}})
+        assert(alt.SizeX == 3 and alt.SizeZ == 6 and alt.OccupancyCaps == 5 and alt.Flags == 1 and
+               alt.MaxSlope == 0.5 and alt.MinWaterDepth == 0, 'a structure keeps its own')
+        assert(fp.OccupancyCaps == 1, 'its main one is where it is built')
+    )"));
+}
+
+TEST_CASE("The engine reads a registered blueprint's flag enums as Moho writes them back",
+          "[blueprints][moho-reflection]") {
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store{state.raw()};
+    osc::sim::SimState sim{state.raw(), &store};
+    state.set_blueprint_store(&store);
+    osc::lua::register_blueprint_store_bindings(state);
+    osc::lua::register_moho_bindings(state, sim);
+    osc::lua::register_sim_bindings(state, sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    REQUIRE(state
+                .do_string(R"(
+        RegisterUnitBlueprint({BlueprintId = 'tank', Defense = {MaxHealth = 100},
+            General = {CommandCaps = {RULEUCC_Move = true, RULEUCC_Attack = true,
+                                      RULEUCC_Stop = false},
+                       ToggleCaps = {RULEUTC_ShieldToggle = true, RULEUTC_CloakToggle = true}}})
+        RegisterUnitBlueprint({BlueprintId = 'barge', Defense = {MaxHealth = 100},
+            Physics = {MotionType = 'RULEUMT_None',
+                       BuildOnLayerCaps = {LAYER_Water = true, LAYER_Sub = true}}})
+    )")
+                .ok());
+    store.expose_to_lua(state.raw());
+    lua_State* L = state.raw();
+    REQUIRE(state
+                .do_string(R"(
+        local g = __blueprints.tank.General
+        assert(g.CommandCaps == '5' and g.ToggleCaps == '257', 'not the lexical form')
+        local M = moho.unit_methods
+        local tank = CreateUnit('tank', 1, 0, 0, 0)
+        assert(M.TestCommandCaps(tank, 'RULEUCC_Move') and
+               M.TestCommandCaps(tank, 'RULEUCC_Attack'),
+               'its orders')
+        assert(not M.TestCommandCaps(tank, 'RULEUCC_Stop'), 'an order it has not')
+        assert(M.TestToggleCaps(tank, 'RULEUTC_CloakToggle'), 'its toggles')
+    )")
+                .ok());
+
+    const osc::sim::PlacementRules barge = osc::lua::structure_rules(L, sim, "barge");
+    CHECK_FALSE(barge.on_land);
+    CHECK(barge.on_water);
+    CHECK(barge.on_sub);
+    CHECK_FALSE(barge.on_seabed);
+
+    REQUIRE(osc::blueprints::push_blueprint(L, "tank"));
+    CHECK(osc::renderer::read_range_blueprint(L, -1).toggle_caps == 0x101);
+    lua_pop(L, 1);
 }

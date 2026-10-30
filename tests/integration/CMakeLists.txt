@@ -25,6 +25,7 @@ add_executable(osc_integration
     runner/window_test.cpp
     runner/options_test.cpp
     runner/world_views_test.cpp
+    runner/bp_reflect_test.cpp
     runner/unitview_sweep_test.cpp
     runner/lighting_test.cpp
     runner/render_probe.cpp
@@ -445,6 +446,22 @@ if(Python3_Interpreter_FOUND)
                          "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
     endif()
     set_tests_properties(data.command-issued_faf PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
+
+    # A blueprint's flag enums and footprint under FAF's scripts: its unit view
+    # and formations (the retail run is data.bp-reflect-test).
+    if(_osc_faf_data)
+        add_test(NAME data.bp-reflect_faf
+                 COMMAND osc_integration --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP}
+                         --bp-reflect-test)
+    else()
+        add_test(NAME data.bp-reflect_faf
+                 COMMAND ${Python3_EXECUTABLE} -c
+                         "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
+    endif()
+    set_tests_properties(data.bp-reflect_faf PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 600)

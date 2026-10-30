@@ -43,6 +43,7 @@
 #include "map/pathfinding_grid.hpp"
 #include "sim/weapon.hpp"
 #include "blueprints/blueprint_store.hpp"
+#include "blueprints/flag_enums.hpp"
 #include "audio/sound_manager.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/world_view.hpp"
@@ -1153,19 +1154,12 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const sim::SimState&
         const int phys = lua_gettop(L);
         lua_pushstring(L, "BuildOnLayerCaps"); // absent: land only
         lua_rawget(L, phys);
-        if (lua_istable(L, -1)) {
-            const int caps = lua_gettop(L);
-            auto cap = [L, caps](const char* layer) {
-                lua_pushstring(L, layer);
-                lua_rawget(L, caps);
-                const bool on = lua_toboolean(L, -1) != 0;
-                lua_pop(L, 1);
-                return on;
-            };
-            r.on_land = cap("LAYER_Land");
-            r.on_water = cap("LAYER_Water");
-            r.on_seabed = cap("LAYER_Seabed");
-            r.on_sub = cap("LAYER_Sub");
+        if (const auto layers = blueprints::read_flag_enum(L, -1, blueprints::kLayerEnum)) {
+            namespace oc = blueprints::occupancy;
+            r.on_land = (*layers & oc::kLand) != 0;
+            r.on_water = (*layers & oc::kWater) != 0;
+            r.on_seabed = (*layers & oc::kSeabed) != 0;
+            r.on_sub = (*layers & oc::kSub) != 0;
         }
         lua_pop(L, 1);
         const auto number = [L, phys](const char* key) {
@@ -1207,7 +1201,7 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const sim::SimState&
     lua_settop(L, top);
     if (!motion.empty() && motion != "RULEUMT_None" && sim.blueprint_store()) {
         r.mobile = blueprints::resolve_unit_footprints(sim.blueprint_store()->footprint_classes(),
-                                                       own, motion, {}, 0)
+                                                       own, own, motion, {}, 0)
                        .main;
     }
     return r;

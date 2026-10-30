@@ -1,6 +1,7 @@
 add_library(osc_blueprints STATIC
     blueprint_store.cpp
     blueprint_loader.cpp
+    flag_enums.cpp
     footprint.cpp
     moho_reflected_fields.cpp
 )

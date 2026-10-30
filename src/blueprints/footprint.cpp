@@ -42,17 +42,17 @@ bool is_none(std::string_view motion) {
 } // namespace
 
 UnitFootprints resolve_unit_footprints(const std::vector<NamedFootprint>& classes,
-                                       const Footprint& own, std::string_view motion,
-                                       std::string_view alt_motion, u8 build_on_layer_caps) {
+                                       const Footprint& own, const Footprint& own_alt,
+                                       std::string_view motion, std::string_view alt_motion,
+                                       u8 build_on_layer_caps) {
     UnitFootprints out;
     out.main = own;
-    out.alt = own;
+    out.alt = own_alt;
     if (is_none(motion)) {
         // A structure: where it may be built.
         out.main.caps = build_on_layer_caps;
         if ((build_on_layer_caps & occupancy::kSeabed) != 0 && out.main.max_water_depth == 0.0f)
             out.main.max_water_depth = std::numeric_limits<f32>::max();
-        out.alt = out.main;
         return out;
     }
     out.main.caps = motion_type_caps(motion);
