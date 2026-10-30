@@ -489,11 +489,16 @@ void begin_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld) {
 }
 
 /// One Moho sim beat on the user side: the sync channel (sim -> UI data and
-/// focus changes, OnSync), then the game UI's beat functions.
+/// focus changes, OnSync), the selection's refresh
+/// (CWldSession::CheckForNecessaryUIRefresh), then the factory queue and the
+/// game UI's beat functions (CUIManager::DoBeat).
 void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua_State* uiL,
-                osc::lua::SyncQueue& sync) {
+                osc::lua::SyncQueue& sync, const std::function<void()>& refresh_selection) {
     if (sim_lua) {
         sync.deliver(sim_lua->raw(), uiL);
+    }
+    if (refresh_selection) {
+        refresh_selection();
     }
     lua_pushstring(uiL, "__osc_factory_queue");
     lua_rawget(uiL, LUA_REGISTRYINDEX);

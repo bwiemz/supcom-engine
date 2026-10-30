@@ -929,7 +929,10 @@ void InputHandler::select_blueprint_of(sim::SimState& sim, sim::EntityId picked,
 void InputHandler::prune_selection(const sim::EntityRegistry& registry) {
     std::erase_if(selected_, [&](sim::EntityId id) {
         const sim::Entity* e = registry.find(id);
-        if (!e || !e->is_unit() || e->destroyed()) {
+        if (!e || e->destroyed()) {
+            return true;
+        }
+        if (!e->is_unit()) {
             return false;
         }
         const auto& unit = static_cast<const sim::Unit&>(*e);

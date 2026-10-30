@@ -5,10 +5,13 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include "app/support.hpp"
 #include "blueprints/blueprint_store.hpp"
+#include "core/ui_registry_keys.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
+#include "lua/sim_sync.hpp"
 #include "lua/user_bindings.hpp"
 #include "map/heightmap.hpp"
 #include "renderer/camera.hpp"
@@ -34,6 +37,7 @@ extern "C" {
 #include <unordered_set>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -907,6 +911,52 @@ TEST_CASE("A dead unit's object doesn't select the unit that takes its Moho id",
         REQUIRE(w.ui.do_string(select).ok());
         CHECK(input.selected().empty());
     }
+}
+
+TEST_CASE("A gone unit leaves the selection in its beat, before the UI's beat functions",
+          "[userunit][selection][ids]") {
+    UiWorld w;
+    osc::lua::register_user_bindings(w.ui);
+    osc::renderer::InputHandler input;
+    lua_State* L = w.ui.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, osc::core::kWorldUiActiveKey);
+    lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    REQUIRE(w.ui.do_string(R"(
+        __modules = __modules or {}
+        __modules['/lua/ui/game/gamemain.lua'] = {
+            OnSelectionChanged = function(old, new)
+                table.insert(calls, 'selection ' .. table.getn(new))
+            end,
+            OnBeat = function() table.insert(calls, 'beat') end,
+        }
+        calls = {}
+    )")
+                .ok());
+    std::unordered_set<osc::sim::EntityId> prev;
+    std::vector<std::pair<osc::sim::EntityId, osc::u32>> prev_upgrades;
+    const auto refresh = [&] {
+        input.prune_selection(w.sim.entity_registry());
+        osc::app::dispatch_selection_change(L, prev, prev_upgrades, w.sim, input.selected(),
+                                            input.take_selection_event());
+    };
+    input.set_selected({w.id});
+    refresh();
+    w.sim.entity_registry().destroy(w.unit());
+    w.sim.tick();
+    REQUIRE(w.ui.do_string("calls = {}").ok());
+
+    osc::lua::SyncQueue sync;
+    osc::app::world_beat(nullptr, &w.sim, L, sync, refresh);
+    CHECK(input.selected().empty());
+    auto r = w.ui.do_string(R"(
+        assert(table.concat(calls, ', ') == 'selection 0, beat', table.concat(calls, ', '))
+    )");
+    INFO((r.ok() ? std::string() : r.error().message));
+    CHECK(r.ok());
 }
 
 TEST_CASE("A selected unit that boards leaves the selection", "[selection]") {

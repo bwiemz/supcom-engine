@@ -339,8 +339,8 @@ public:
     /// Moho's CWldSession::ReleaseDrag with Ctrl held.
     void select_blueprint_of(sim::SimState& sim, sim::EntityId picked, bool shift);
 
-    /// A unit that boards (Moho's UserUnit::UpdateUnitData) or dies (its
-    /// selection refresh keeps no dead unit) leaves the selection; a selected
+    /// A unit that boards (Moho's UserUnit::UpdateUnitData), dies or is gone
+    /// (its selection refresh keeps no dead unit) leaves the selection; a selected
     /// unit's RequestRefreshUI reports the selection again
     /// (CWldSession::CheckForNecessaryUIRefresh).
     void prune_selection(const sim::EntityRegistry& registry);

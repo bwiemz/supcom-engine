@@ -10,6 +10,7 @@
 #include "sim/game_setup.hpp"
 
 #include <array>
+#include <functional>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -57,7 +58,8 @@ void pump_ui_frames_with_controls(lua::LuaState& ui_lua_state,
                                   u32& ui_frame_counter);
 
 /// One Moho sim beat reaching the user side.
-void world_beat(lua::LuaState* sim_lua, sim::SimState* sim, lua_State* uiL, lua::SyncQueue& sync);
+void world_beat(lua::LuaState* sim_lua, sim::SimState* sim, lua_State* uiL, lua::SyncQueue& sync,
+                const std::function<void()>& refresh_selection = {});
 /// The game has ended: tell the UI once (NoteGameOver).
 void note_game_over_if_ended(sim::SimState* sim, GameStateManager& mgr, lua_State* uiL);
 /// FA's game interface: the loading dialog, then the interface itself.
