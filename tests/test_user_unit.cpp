@@ -8,6 +8,7 @@
 #include "app/support.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "core/ui_registry_keys.hpp"
+#include "lua/factory_queue.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
@@ -920,6 +921,37 @@ TEST_CASE("SelectUnits gives back the live units it was handed, but under FAF's 
         CHECK(w.ui.do_string("assert(table.getn(given) == 2)").ok());
         CHECK(w.ui.do_string("assert(given[1] == handed[1] and given[2] == handed[3])").ok());
     }
+}
+
+TEST_CASE("A gone factory's queue reaches the UI as nil, once", "[userunit][ids]") {
+    UiWorld w;
+    w.unit().add_category("SHOWQUEUE");
+    osc::sim::UnitCommand build;
+    build.type = osc::sim::CommandType::BuildFactory;
+    build.blueprint_id = "uel0105";
+    build.count = 2;
+    w.unit().push_command(build, false);
+    lua_State* L = w.ui.raw();
+    osc::lua::FactoryQueueDisplay queue;
+    queue.set_current(L, &w.unit());
+    lua_pop(L, 1);
+    REQUIRE(w.ui.do_string(R"(
+        __modules = __modules or {}
+        __modules['/lua/ui/game/gamemain.lua'] = {
+            OnQueueChanged = function(q)
+                table.insert(told, q == nil and 'nil' or table.getn(q))
+            end,
+        }
+        told = {}
+    )")
+                .ok());
+    w.sim.entity_registry().destroy(w.unit());
+    w.sim.tick();
+    queue.report_change(L, w.sim);
+    queue.report_change(L, w.sim);
+    auto r = w.ui.do_string("assert(table.concat(told, ', ') == 'nil', table.concat(told, ', '))");
+    INFO((r.ok() ? std::string() : r.error().message));
+    CHECK(r.ok());
 }
 
 TEST_CASE("A dead unit's object doesn't select the unit that takes its Moho id",

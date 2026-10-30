@@ -23,7 +23,7 @@ public:
     }
     sim::EntityId current_factory_id() const { return current_factory_id_; }
     /// Gives gamemain.OnQueueChanged the shown unit's queue when it changed,
-    /// as Moho does
+    /// and nil once the unit is gone, as Moho does (UI_FactoryCommandQueueHandlerBeat)
     void report_change(lua_State* L, sim::SimState& sim);
 
 private:
