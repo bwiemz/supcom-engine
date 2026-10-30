@@ -3842,7 +3842,15 @@ static int l_ui_GameTick(lua_State* L) {
     return 1;
 }
 
-/// GetGameTime() → formatted string "MM:SS"
+/// Moho's clock text: wx 2.6's wxTimeSpan(0, 0, seconds).Format("%H:%M:%S").
+static void push_clock_text(lua_State* L, double seconds) {
+    const auto total = static_cast<long long>(seconds);
+    char text[64];
+    std::snprintf(text, sizeof(text), "%02lld:%02lld:%02lld", total / 3600, total / 60 % 60,
+                  total % 60);
+    lua_pushstring(L, text);
+}
+
 static int l_GetGameTime(lua_State* L) {
     if (lua_gettop(L) != 0)
         return arg_count_error(L,
@@ -3851,12 +3859,7 @@ static int l_GetGameTime(lua_State* L) {
                                0, lua_gettop(L));
     if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
     auto* sim = get_sim(L);
-    f64 t = sim ? sim->game_time() : 0.0;
-    int minutes = static_cast<int>(t) / 60;
-    int seconds = static_cast<int>(t) % 60;
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%02d:%02d", minutes, seconds);
-    lua_pushstring(L, buf);
+    push_clock_text(L, sim ? sim->game_time() : 0.0);
     return 1;
 }
 
@@ -3896,19 +3899,6 @@ static int l_GetSystemTimeSeconds(lua_State* L) {
     double secs = duration<double>(now).count();
     lua_pushnumber(L, secs);
     return 1;
-}
-
-/// Moho's clock text: `seconds` as HH:MM:SS, the hours wrapping at 24, with a
-/// leading '-' when negative.
-static void push_clock_text(lua_State* L, double seconds) {
-    const auto total = static_cast<long long>(seconds);
-    const unsigned long long abs_s = total < 0 ? static_cast<unsigned long long>(-(total + 1)) + 1
-                                               : static_cast<unsigned long long>(total);
-    char text[24];
-    std::snprintf(text, sizeof(text), total < 0 ? "-%02d:%02d:%02d" : "%02d:%02d:%02d",
-                  static_cast<int>((abs_s / 3600) % 24), static_cast<int>((abs_s / 60) % 60),
-                  static_cast<int>(abs_s % 60));
-    lua_pushstring(L, text);
 }
 
 /// FormatTime(seconds) → "HH:MM:SS" (FAF's logger and replay UI). Moho's
