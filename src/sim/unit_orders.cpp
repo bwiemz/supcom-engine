@@ -1222,7 +1222,7 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, SimContext& ctx) {
         }
         return break_off(std::move(order));
     }
-    if (cmd.patrol_moving && cmd.patrol_runs > 3 && patrol_leg_reached(cmd)) {
+    if (cmd.patrol_moving && cmd.patrol_runs > 3 && patrol_leg_reached(cmd, ctx.registry)) {
         // ~CUnitPatrolTask aborts the move of a unit that moved this tick (AbortMove).
         const Vector3& now = position();
         const Vector3& before = last_position();
@@ -1266,14 +1266,15 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, SimContext& ctx) {
     return OrderStep::Hold;
 }
 
-bool Unit::patrol_leg_reached(const UnitCommand& cmd) const {
+bool Unit::patrol_leg_reached(const UnitCommand& cmd, const EntityRegistry& registry) const {
     // Moho's PatrolGoalCoversUnitOrigin (faf-re CUnitPatrolTask.cpp).
     const blueprints::Footprint& fp = footprint();
     const auto cell = [](f32 at, u8 size) {
         return static_cast<i32>(std::lrint(at - static_cast<f32>(size) * 0.5f));
     };
-    // Moho's mFormationTopSpeed: a flier's air speed.
-    const f32 top = can_fly() ? max_airspeed() * speed_mult() : nav_speed();
+    // Moho's mFormationTopSpeed: a flier's air speed over its load.
+    const f32 top =
+        can_fly() ? max_airspeed() * speed_mult() / transport_load_factor(registry) : nav_speed();
     const i32 grow = static_cast<i32>(std::ceil(top));
     const i32 goal_x = cell(cmd.target_pos.x, fp.size_x);
     const i32 goal_z = cell(cmd.target_pos.z, fp.size_z);

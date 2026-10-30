@@ -1707,7 +1707,7 @@ private:
     OrderStep hold_for_unit_cap(u32 command_id);
     /// A leg of Moho's CUnitPatrolTask; done, the order goes to the back, or ends.
     OrderStep order_patrol(UnitCommand& cmd, SimContext& ctx);
-    bool patrol_leg_reached(const UnitCommand& cmd) const;
+    bool patrol_leg_reached(const UnitCommand& cmd, const EntityRegistry& registry) const;
     /// An enemy a patrol on leg `cmd` breaks off to attack (Moho's
     /// CUnitPatrolTask::FindTarget), or null.
     Entity* find_patrol_target(const UnitCommand& cmd, SimContext& ctx);
