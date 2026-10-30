@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 #include <array>
 #include <functional>
@@ -170,7 +171,7 @@ public:
     // --- Moves (M217g) ---
     /// An entity's pose by id (the frame's interpolated view), for the
     /// targets that follow one; false when it is gone.
-    using EntityLookup = std::function<bool(u32 id, CameraEntityPose& out)>;
+    using EntityLookup = std::function<bool(sim::EntityId id, CameraEntityPose& out)>;
     void set_entity_lookup(EntityLookup lookup) { entity_lookup_ = std::move(lookup); }
     /// This frame's clocks: the system's seconds, and the game's
     /// ((tick + interpolant) x 0.1, GameTimeSource).
@@ -183,21 +184,21 @@ public:
     /// TargetBox: the box's centre, zoomed to its wider x or z extent.
     void target_box(const std::array<f32, 3>& min, const std::array<f32, 3>& max, f32 seconds);
     /// TargetEntities: the first live one, at `zoom`; followed if tracked.
-    void target_entities(std::vector<u32> ids, bool track, f32 zoom, f32 seconds);
+    void target_entities(std::vector<sim::EntityId> ids, bool track, f32 zoom, f32 seconds);
     /// TargetNoseCam: behind the first live one's nose, at its heading and
     /// its pitch plus `pitch_adjust`.
-    void target_nose_cam(std::vector<u32> ids, f32 pitch_adjust, f32 zoom, f32 seconds,
+    void target_nose_cam(std::vector<sim::EntityId> ids, f32 pitch_adjust, f32 zoom, f32 seconds,
                          f32 transition);
     /// TargetNothing: a location, followed no more.
     void target_nothing();
     /// CameraFollow: following `source`, it goes on to `target`, and back
     /// `seconds` after that is gone.
-    void camera_follow(u32 source, u32 target, f32 seconds);
+    void camera_follow(sim::EntityId source, sim::EntityId target, f32 seconds);
     /// GetTargetEntity: the entity it follows (0: none).
-    u32 target_entity() const {
+    sim::EntityId target_entity() const {
         return target_type_ == CameraTarget::Entity && active_target_ < target_ids_.size()
                    ? target_ids_[active_target_]
-                   : 0;
+                   : sim::EntityId();
     }
     /// Spin (Lua): turn `heading_rate` revolutions a second, zoom
     /// `zoom_rate` a second.
@@ -423,7 +424,7 @@ private:
     f32 heading_rate_ = 0.0f;
     f32 zoom_rate_ = 0.0f;
     f32 nose_pitch_adjust_ = 0.0f;
-    std::vector<u32> target_ids_;
+    std::vector<sim::EntityId> target_ids_;
     size_t active_target_ = 0;
     bool target_time_armed_ = false; ///< mTargetTime
     f32 target_time_left_ = 0.0f;

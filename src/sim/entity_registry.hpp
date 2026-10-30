@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 #include "sim/collision_cells.hpp"
+#include "sim/entity_id.hpp"
 #include "sim/sim_random.hpp"
 
 #include <algorithm>
@@ -34,33 +35,36 @@ public:
 
     /// Register an entity and assign it a unique ID. Returns the ID.
     ///
-    /// Ids are Moho's (EntityDB::DoReserveId, 0x00684480), plus one so that 0 stays
-    /// "none": a family and source in the high bits (a unit its army << 20; a
-    /// projectile (army | 0x100) << 20; a prop 0x2FF << 20; a shield
-    /// (army | 0x400) << 20; any other (army | 0x500) << 20; no army is 255), and the
-    /// next serial of that pool (Moho reuses released ones; see reserve_id).
-    u32 register_entity(std::unique_ptr<Entity> entity);
-    /// Moho's id of the entity the engine numbers `id`.
-    static u32 moho_id(u32 id) { return id - 1; }
-    /// The engine's number of the entity Moho numbers `moho`.
-    static u32 from_moho_id(u32 moho) { return moho + 1; }
+    /// Its Moho id is EntityDB::DoReserveId's: a family and source in the
+    /// high bits (a unit its army << 20; a projectile (army | 0x100) << 20; a prop
+    /// 0x2FF << 20; a shield (army | 0x400) << 20; any other (army | 0x500) << 20; no
+    /// army is 255), and the pool's serial: its least released one free again, else
+    /// its next.
+    EntityId register_entity(std::unique_ptr<Entity> entity);
+    /// Moho's id of the entity keyed `id`.
+    static u32 moho_id(EntityId id) { return id.moho(); }
+    /// The live entity Moho numbers `moho`; none if there is none.
+    EntityId live_id(u32 moho) const;
 
     /// Remove an entity by ID: Moho's EntityDB::Purge. The deletion queue
     /// (destroy, purge_destroyed) comes here, so the unregister hook sees each
     /// entity exactly once, while still valid.
-    void unregister_entity(u32 id);
+    void unregister_entity(EntityId id);
 
     /// Moho's Entity::Destroy: the entity is marked (BeenDestroyed) and queued, once, and stays
     /// registered, found and in the grids until the queue is run at the end of the beat.
     void destroy(Entity& entity);
-    /// The next entity of the deletion queue, first in first out; 0 when it is empty.
-    u32 take_destroyed();
+    /// The next entity of the deletion queue, first in first out; none when it is empty.
+    EntityId take_destroyed();
     /// Unregister everything the deletion queue holds, in its order (a sim runs OnDestroy first).
     void purge_destroyed();
+    /// Moho's IdPool::Update on every pool, the tail of EntityDB::Purge: a serial released
+    /// kIdHeldBeats updates ago is free again.
+    void update_id_pools();
 
     /// Moho's stage A list (CTaskStage): the order the entities step in, kept from walk to walk.
-    std::vector<u32>& walk() { return walk_; }
-    const std::vector<u32>& walk() const { return walk_; }
+    std::vector<EntityId>& walk() { return walk_; }
+    const std::vector<EntityId>& walk() const { return walk_; }
     void wake(Entity& entity);
 
     /// Called for each entity just before it is removed. SimState uses it to
@@ -70,7 +74,7 @@ public:
     void set_unregister_hook(UnregisterHook hook) { unregister_hook_ = std::move(hook); }
 
     /// Look up an entity by ID. Returns nullptr if not found.
-    Entity* find(u32 id) const;
+    Entity* find(EntityId id) const;
 
     /// Whether `e` is a registered entity, asked without reading it: a Lua
     /// handle's pointer may be a platoon's, a brain's, or a freed entity's.
@@ -117,7 +121,7 @@ public:
 
     /// Collect entity IDs within radius of a point (2D distance, ignoring Y),
     /// in ascending id order.
-    std::vector<u32> collect_in_radius(f32 x, f32 z, f32 radius) const;
+    std::vector<EntityId> collect_in_radius(f32 x, f32 z, f32 radius) const;
 
     /// The live units within radius of a point (2D, ignoring Y), in ascending
     /// id order: collect_in_radius's units, from a grid of units alone (a
@@ -128,7 +132,7 @@ public:
 
     /// Collect entity IDs within an axis-aligned rectangle (2D, ignoring Y),
     /// in ascending id order.
-    std::vector<u32> collect_in_rect(f32 x0, f32 z0, f32 x1, f32 z1) const;
+    std::vector<EntityId> collect_in_rect(f32 x0, f32 z0, f32 x1, f32 z1) const;
 
     /// The live units within an axis-aligned rectangle, in ascending id
     /// order: collect_in_rect's units, from the grid of units alone (as
@@ -162,7 +166,7 @@ public:
                     for (const UnitRef& unit : unit_cells_[cell])
                         if (within(*unit.entity)) fn(*unit.entity);
                 } else {
-                    for (const u32 id : grid_cells_[cell])
+                    for (const EntityId id : grid_cells_[cell])
                         if (Entity* e = find(id); e && within(*e)) fn(*e);
                 }
             }
@@ -175,7 +179,7 @@ public:
 
     /// Into `out`, in ascending id order: every entity with a collision
     /// shape that could meet the segment from (x0, z0) to (x1, z1).
-    void collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1, std::vector<u32>& out) const;
+    void collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1, std::vector<EntityId>& out) const;
 
     /// Whether `visit` says yes to a live unit with a collision shape that
     /// could reach the rectangle [x0, x1] x [z0, z1] (its position within
@@ -242,28 +246,35 @@ public:
 
 private:
     /// Every live entity by its id: looked up, never walked (order_ is the order).
-    std::unordered_map<u32, std::unique_ptr<Entity>> entities_;
+    std::unordered_map<EntityId, std::unique_ptr<Entity>> entities_;
+    std::unordered_map<u32, EntityId> live_by_moho_;
     size_t live_count_ = 0;
     std::unordered_set<const void*> live_; ///< the registered entities, for holds()
     /// Every live entity in the order it was made (a new one appends).
     /// A removed entity leaves a null slot until compact(), so a walk in
     /// progress keeps its place.
     struct Slot {
-        u32 id;
+        EntityId id{};
         Entity* entity;
     };
     std::vector<Slot> order_;
     std::vector<Slot> unit_order_; ///< the units of order_, for for_each_unit
     size_t removed_slots_ = 0;     ///< null slots in order_ (and so in unit_order_)
     /// Each live entity's slot in order_ and in unit_order_ (npos for a non-unit).
-    std::unordered_map<u32, std::pair<size_t, size_t>> slot_of_;
+    std::unordered_map<EntityId, std::pair<size_t, size_t>> slot_of_;
     static constexpr size_t kNoSlot = static_cast<size_t>(-1);
-    /// Moho's id pools, by family and source bits: each one's next serial.
+    /// Moho's id pools (sim/IdPool.cpp), by family and source bits.
     struct IdPool {
         u32 next = 0;
+        std::set<u32> released;
+        /// The serials released in each of the last updates, the newest open: Moho's ring.
+        std::deque<std::vector<u32>> held = std::deque<std::vector<u32>>(1);
+        /// Each serial's last generation, of the ids in this pool's range.
+        std::vector<u32> generations;
     };
+    static constexpr size_t kIdHeldBeats = 99;
     std::map<u32, IdPool> id_pools_;
-    u32 reserve_id(const Entity& e);
+    EntityId reserve_id(const Entity& e);
     void index_slots();
     /// Walks in progress (a walk's callback may start another).
     mutable u32 walking_ = 0;
@@ -276,8 +287,8 @@ private:
     };
     void compact();
     std::vector<std::unique_ptr<Entity>> graveyard_; ///< see collect_garbage()
-    std::deque<u32> deletion_queue_;
-    std::vector<u32> walk_;
+    std::deque<EntityId> deletion_queue_;
+    std::vector<EntityId> walk_;
     UnregisterHook unregister_hook_;
 
     SimRandom default_random_;
@@ -292,10 +303,10 @@ private:
     bool faf_exe_ = false; // see faf_exe
     u32 grid_width_ = 0;
     u32 grid_height_ = 0;
-    std::vector<std::vector<u32>> grid_cells_;
+    std::vector<std::vector<EntityId>> grid_cells_;
     /// grid_cells_' units, with their entities.
     struct UnitRef {
-        u32 id;
+        EntityId id{};
         Entity* entity;
     };
     std::vector<std::vector<UnitRef>> unit_cells_;
@@ -303,7 +314,7 @@ private:
     u32 prop_grid_height_ = 0;
     std::vector<std::vector<UnitRef>> prop_cells_;
     /// Entities whose shape reaches beyond COLLIDER_REACH, in id order.
-    std::set<u32> large_colliders_;
+    std::set<EntityId> large_colliders_;
     /// Units and props by the cells their collision boxes cover. An entity
     /// leaves as collect_garbage frees it, not as it is unregistered: Moho's
     /// gathers find a destroyed one until the end of the beat.

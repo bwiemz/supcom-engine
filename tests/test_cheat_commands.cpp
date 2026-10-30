@@ -219,7 +219,8 @@ TEST_CASE("TeleportSelectedUnits warps the focus army's selected units, a cheat 
     auto sent = w.queue.drain();
     REQUIRE(sent.size() == 1); // the focus army's only
     CHECK(sent[0].func_name == osc::sim::kWarpEntityCallback);
-    CHECK(std::get<double>(sent[0].args.at("Entity")) == static_cast<double>(mine.entity_id()));
+    CHECK(std::get<double>(sent[0].args.at("Entity")) ==
+          static_cast<double>(mine.entity_id().key()));
     // (no world view here: the cursor's place is the origin's corner)
     sent[0].args["X"] = 60.0;
     sent[0].args["Z"] = 70.0;

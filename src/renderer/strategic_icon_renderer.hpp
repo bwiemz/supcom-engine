@@ -3,6 +3,7 @@
 #include "renderer/vk_types.hpp"
 #include "renderer/ui_renderer.hpp" // UIInstance, UIDrawGroup
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 #include "sim/game_colors.hpp"
 
 #include <array>
@@ -79,16 +80,16 @@ public:
     /// blueprints (__blueprints) and imports strategicIcons.lua. Returns true
     /// if strategic zoom is active (meshes give way to icons).
     bool update(const sim::FrameView& view, const Camera& camera,
-                const std::array<f32, 16>& vp_matrix, const std::unordered_set<u32>* selected_ids,
-                TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, lua_State* L = nullptr,
-                f32 frame_seconds = 0.0f);
+                const std::array<f32, 16>& vp_matrix,
+                const std::unordered_set<sim::EntityId>* selected_ids, TextureCache& tex_cache,
+                u32 viewport_w, u32 viewport_h, lua_State* L = nullptr, f32 frame_seconds = 0.0f);
 
     /// A minimap's icons, the map drawn at `area`: its own world view through
     /// the same pass (faf-re CUIWorldView::Render), fully zoomed out. The
     /// units' only with `icon_pass`, that view's gate; the projectiles'
     /// regardless.
     void paint_map(const sim::FrameView& view, const MapArea& area, f32 map_w, f32 map_h,
-                   const std::unordered_set<u32>* selected_ids, TextureCache& tex_cache,
+                   const std::unordered_set<sim::EntityId>* selected_ids, TextureCache& tex_cache,
                    lua_State* L, std::vector<UIQuad>& out, bool icon_pass = true);
 
     /// Forget what the last game's blueprints and strategicIcons.lua said:
@@ -208,7 +209,7 @@ private:
     /// selected.
     using Runs = std::array<std::vector<Icon>, 4>;
     template <class Place>
-    Runs collect(const sim::FrameView& view, const std::unordered_set<u32>* selected_ids,
+    Runs collect(const sim::FrameView& view, const std::unordered_set<sim::EntityId>* selected_ids,
                  TextureCache& tex_cache, lua_State* L, bool fade, f32 cam_dist, f32 fade_cap,
                  Place&& place);
     template <class Emit> void emit_runs(const Runs& runs, TextureCache& tex_cache, Emit&& emit);

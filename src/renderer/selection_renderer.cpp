@@ -122,8 +122,9 @@ const SelectionBlueprint& SelectionRenderer::box_blueprint(const std::string& id
 }
 
 void SelectionRenderer::update(const sim::FrameView& view, const Camera& camera, u32 viewport_h,
-                               const std::unordered_set<u32>* selected, u32 hovered,
-                               i32 player_army, const std::optional<std::array<Vector3, 4>>& drag,
+                               const std::unordered_set<sim::EntityId>* selected,
+                               sim::EntityId hovered, i32 player_army,
+                               const std::optional<std::array<Vector3, 4>>& drag,
                                TextureCache& tex_cache, MeshCache& mesh_cache, lua_State* L,
                                u32 fi) {
     brackets_.clear();
@@ -157,7 +158,7 @@ void SelectionRenderer::update(const sim::FrameView& view, const Camera& camera,
     const auto vertex = [](const Vector3& p, f32 u, f32 v) {
         return WorldQuadBatch::Vertex{{p.x, p.y, p.z}, {u, v}, {1.0f, 1.0f, 1.0f, 1.0f}};
     };
-    const auto add_brackets = [&](u32 id, bool is_selected) {
+    const auto add_brackets = [&](sim::EntityId id, bool is_selected) {
         const sim::EntityRecord* e = view.find(id);
         if (!e || !e->is_unit) {
             return;
@@ -203,11 +204,11 @@ void SelectionRenderer::update(const sim::FrameView& view, const Camera& camera,
         }
     };
     if (selected) {
-        for (u32 id : *selected) {
+        for (sim::EntityId id : *selected) {
             add_brackets(id, true);
         }
     }
-    if (hovered != 0 && !(selected && selected->count(hovered))) {
+    if (hovered && !(selected && selected->count(hovered))) {
         add_brackets(hovered, false);
     }
     if (drag) {

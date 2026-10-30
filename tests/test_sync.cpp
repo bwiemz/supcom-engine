@@ -31,8 +31,8 @@ struct LuaGuard {
 };
 
 // Populate a sim with an identical starting layout; the commanders' ids.
-std::vector<osc::u32> populate(SimState& sim) {
-    std::vector<osc::u32> ids;
+std::vector<osc::sim::EntityId> populate(SimState& sim) {
+    std::vector<osc::sim::EntityId> ids;
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2");
     for (int army = 0; army < 2; ++army) {
@@ -70,7 +70,7 @@ TEST_CASE("A state divergence changes the checksum", "[sync]") {
     LuaGuard ga, gb;
     SimState a(ga.L, nullptr);
     SimState b(gb.L, nullptr);
-    const std::vector<osc::u32> ids = populate(a);
+    const std::vector<osc::sim::EntityId> ids = populate(a);
     populate(b);
     REQUIRE(a.compute_sync_checksum() == b.compute_sync_checksum());
 

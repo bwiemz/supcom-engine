@@ -87,9 +87,9 @@ static sim::Entity* entity_by_handle_id(lua_State* L, int idx) {
     if (!sim) return nullptr;
     lua_pushstring(L, "_c_entity_id");
     lua_rawget(L, idx);
-    const u32 id = lua_isnumber(L, -1) ? static_cast<u32>(lua_tonumber(L, -1)) : 0;
+    const sim::EntityId id = sim::to_entity_key(L, -1);
     lua_pop(L, 1);
-    return id != 0 ? sim->entity_registry().find(id) : nullptr;
+    return id ? sim->entity_registry().find(id) : nullptr;
 }
 
 /// _c_CreateEntity(self, spec) — creates a C++ Entity and stores it.
@@ -125,7 +125,7 @@ static int l_c_CreateEntity(lua_State* L) {
         }
         lua_pop(L, 2);
     }
-    u32 id = sim->entity_registry().register_entity(std::move(entity));
+    sim::EntityId id = sim->entity_registry().register_entity(std::move(entity));
     auto* ent = sim->entity_registry().find(id);
 
     // Store C++ pointer in the Lua table (self at index 1)
@@ -134,7 +134,7 @@ static int l_c_CreateEntity(lua_State* L) {
     lua_rawset(L, 1);
 
     lua_pushstring(L, "_entity_id");
-    lua_pushnumber(L, id);
+    sim::push_entity_key(L, id);
     lua_rawset(L, 1);
 
     // Store Lua table ref for reverse lookup
@@ -220,7 +220,7 @@ static bool blueprint_initial_auto_mode(lua_State* L, const blueprints::Blueprin
 }
 
 /// Moho's Unit, made: its army's unit stats (faf-re unit/core/Unit.cpp:13160-13195)
-static void count_made(sim::SimState& sim, u32 id) {
+static void count_made(sim::SimState& sim, sim::EntityId id) {
     auto* e = sim.entity_registry().find(id);
     auto* brain = e ? sim.get_army(e->army()) : nullptr;
     if (brain && e->is_unit()) {
@@ -230,7 +230,7 @@ static void count_made(sim::SimState& sim, u32 id) {
 
 /// Moho's Unit ctor: UpdateTerrainType after OnPreCreate, so its script hears
 /// the type it is made on.
-static void tell_terrain_type(lua_State* L, sim::SimState& sim, u32 id) {
+static void tell_terrain_type(lua_State* L, sim::SimState& sim, sim::EntityId id) {
     auto* made = sim.entity_registry().find(id);
     if (made && made->is_unit()) {
         static_cast<sim::Unit*>(made)->update_terrain_type(sim.terrain(), made->position(), L);
@@ -240,7 +240,7 @@ static void tell_terrain_type(lua_State* L, sim::SimState& sim, u32 id) {
 /// Moho's Unit, as it is made: SetAutoMode(AI.InitialAutoMode) just before
 /// OnPreCreate, which tells the script OnAutoModeOn or OnAutoModeOff either
 /// way (Unit::SetAutoMode always does). `tbl` is the unit's table.
-static void tell_initial_auto_mode(lua_State* L, sim::SimState& sim, u32 id, int tbl) {
+static void tell_initial_auto_mode(lua_State* L, sim::SimState& sim, sim::EntityId id, int tbl) {
     const auto* e = sim.entity_registry().find(id);
     if (!e || !e->is_unit()) return;
     const bool on = static_cast<const sim::Unit*>(e)->auto_mode();
@@ -266,12 +266,14 @@ static void tell_initial_auto_mode(lua_State* L, sim::SimState& sim, u32 id, int
 // OnUnitCapLimitReached, under CapGate::Tell). A unit over its army's cap
 // is not made: 0, with *at_cap set.
 // ====================================================================
-static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f32 y, f32 z,
-                            bool being_built, CapGate gate = CapGate::None,
-                            bool* at_cap = nullptr) {
+static sim::EntityId create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f32 y,
+                                      f32 z, bool being_built, CapGate gate = CapGate::None,
+                                      bool* at_cap = nullptr) {
     if (at_cap) *at_cap = false;
     auto* sim = get_sim(L);
-    if (!sim) return 0;
+    if (!sim) {
+        return sim::EntityId();
+    }
 
     auto* store = sim->blueprint_store();
     // A blueprint the store doesn't know makes no unit (the reads below
@@ -279,12 +281,12 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
     auto* entry = store ? store->find(bp_id) : nullptr;
     if (store && !entry) {
         spdlog::warn("CreateUnit: unknown unit blueprint '{}'", bp_id);
-        return 0;
+        return sim::EntityId();
     }
     const f32 cap_cost = entry ? blueprint_cap_cost(L, *store, *entry) : 1.0f;
     if (gate != CapGate::None && !sim->unit_cap_allows(army, cap_cost, gate == CapGate::Tell)) {
         if (at_cap) *at_cap = true;
-        return 0;
+        return sim::EntityId();
     }
 
     // Its id as the store keeps it -- lowercase, as Moho's blueprint names
@@ -322,7 +324,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
     }
 
     unit->set_creation_tick(sim->tick_count());
-    u32 id = sim->entity_registry().register_entity(std::move(unit));
+    sim::EntityId id = sim->entity_registry().register_entity(std::move(unit));
     auto* unit_ptr = static_cast<sim::Unit*>(sim->entity_registry().find(id));
     unit_ptr->navigator().set_sim_state(sim);
 
@@ -393,6 +395,9 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
     // Standard fields
     lua_pushstring(L, "EntityId");
     sim::push_entity_id(L, id);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "_c_entity_id");
+    sim::push_entity_key(L, id);
     lua_rawset(L, -3);
     lua_pushstring(L, "Army");
     lua_pushnumber(L, army + 1);
@@ -490,7 +495,7 @@ static void create_unit_weapons(lua_State* L, int unit_tbl, const char* what) {
 
 // Moho's Unit constructor (faf-re Unit.cpp): a factory's initial rally
 // (BuilderSetUpInitialRally) after its weapons, before OnCreate.
-static void set_up_initial_rally(sim::SimState& sim, u32 id) {
+static void set_up_initial_rally(sim::SimState& sim, sim::EntityId id) {
     if (auto* unit = static_cast<sim::Unit*>(sim.entity_registry().find(id))) {
         unit->validated_rally_orders(sim.lua_state(), &sim);
     }
@@ -529,12 +534,16 @@ static int l_CreateUnit(lua_State* L) {
 /// height and heading. Leaves its table on the stack and returns its id; 0,
 /// with nothing pushed, when the blueprint makes none or `gate` finds the
 /// army at its unit cap (*at_cap set).
-static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_id, int army,
-                               const sim::Vector3& pos, const sim::Quaternion& orientation,
-                               const sim::Unit* place_of, CapGate gate, bool* at_cap = nullptr) {
-    u32 id =
+static sim::EntityId spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_id,
+                                         int army, const sim::Vector3& pos,
+                                         const sim::Quaternion& orientation,
+                                         const sim::Unit* place_of, CapGate gate,
+                                         bool* at_cap = nullptr) {
+    sim::EntityId id =
         create_unit_core(L, bp_id, army, pos.x, pos.y, pos.z, /*being_built=*/false, gate, at_cap);
-    if (id == 0) return 0;
+    if (!id) {
+        return sim::EntityId();
+    }
     if (auto* made = static_cast<sim::Unit*>(sim.entity_registry().find(id))) {
         made->set_orientation(orientation);
         if (made->can_fly()) {
@@ -652,7 +661,7 @@ static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation
                static_cast<f32>(lua_tonumber(L, 5))};
     }
     bool at_cap = false;
-    if (spawn_complete_unit(L, *sim, bp_id, army, pos, orientation, nullptr, gate, &at_cap) == 0) {
+    if (!spawn_complete_unit(L, *sim, bp_id, army, pos, orientation, nullptr, gate, &at_cap)) {
         if (at_cap) return luaL_error(L, "%s(%s) failed", what, bp_id);
         lua_pushnil(L);
     }
@@ -681,9 +690,9 @@ static int l_create_building_unit(lua_State* L) {
 
     const bool capped = lua_gettop(L) < 6 || lua_isnil(L, 6) || lua_toboolean(L, 6) != 0;
     bool at_cap = false;
-    u32 id = create_unit_core(L, bp_id, army, x, y, z, /*being_built=*/true,
-                              capped ? CapGate::Tell : CapGate::None, &at_cap);
-    if (id == 0) {
+    sim::EntityId id = create_unit_core(L, bp_id, army, x, y, z, /*being_built=*/true,
+                                        capped ? CapGate::Tell : CapGate::None, &at_cap);
+    if (!id) {
         lua_pushnil(L);
         if (at_cap) lua_pushstring(L, "cap");
         else lua_pushnil(L);
@@ -700,7 +709,7 @@ static int l_create_building_unit(lua_State* L) {
             built->set_orientation({0.0f, osc::dmath::sin(half), 0.0f, osc::dmath::cos(half)});
         }
         if (lua_isnumber(L, 7) && built && built->is_unit()) {
-            static_cast<sim::Unit*>(built)->set_creator_id(static_cast<u32>(lua_tonumber(L, 7)));
+            static_cast<sim::Unit*>(built)->set_creator_id(sim::to_entity_key(L, 7));
         }
         tell_initial_auto_mode(L, *sim, id, tbl);
     }
@@ -745,7 +754,7 @@ static int l_create_building_unit(lua_State* L) {
     // Do NOT call OnStopBeingBuilt — that happens when construction finishes
 
     // Return entity_id and the Lua table
-    lua_pushnumber(L, id);
+    sim::push_entity_key(L, id);
     lua_pushvalue(L, tbl);
     // Remove the original table copy, leave the two return values
     lua_remove(L, tbl);
@@ -959,7 +968,7 @@ static int l_GetEntityById(lua_State* L) {
         return 1;
     }
     luaL_checknumber(L, 1);
-    auto* entity = sim->entity_registry().find(sim::to_entity_id(L, 1));
+    auto* entity = sim->entity_registry().find(sim::to_entity_id(L, 1, sim->entity_registry()));
     if (!entity || entity->lua_table_ref() < 0) {
         lua_pushnil(L);
         return 1;
@@ -1529,7 +1538,7 @@ struct Blast {
 
 /// A shield the blast meets from outside, and how much of it it absorbs.
 struct Cover {
-    u32 id = 0;
+    sim::EntityId id{};
     f32 absorbed = 0;
     sim::CollisionShape shape;
     sim::Vector3 position;
@@ -1593,10 +1602,12 @@ static bool no_splash(const sim::Entity& e) {
 static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
     auto& registry = sim.entity_registry();
     const sim::Entity* instigator = extract_entity(L, 1);
-    const u32 instigator_id = instigator ? instigator->entity_id() : 0;
+    const sim::EntityId instigator_id = instigator ? instigator->entity_id() : sim::EntityId();
     const i32 instigator_army = instigator ? instigator->army() : -1;
     const auto spared = [&](const sim::Entity& e) {
-        if (instigator_id != 0 && e.entity_id() == instigator_id) return !blast.self;
+        if (instigator_id && e.entity_id() == instigator_id) {
+            return !blast.self;
+        }
         return !blast.friendly && instigator_army >= 0 && e.army() >= 0 &&
                sim.is_ally(instigator_army, e.army());
     };
@@ -1606,11 +1617,11 @@ static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
     // takes part as any target does: one the blast spares (an ally's, without
     // friendly fire) neither takes it nor shields anyone from it, so it gives
     // no protection for free.
-    std::vector<u32> near;
+    std::vector<sim::EntityId> near;
     registry.collect_colliders(blast.at.x - blast.outer, blast.at.z - blast.outer,
                                blast.at.x + blast.outer, blast.at.z + blast.outer, near);
     std::vector<Cover> covers;
-    for (const u32 id : near) {
+    for (const sim::EntityId id : near) {
         const sim::Entity* e = registry.find(id);
         if (!e || e->destroyed() || !e->is_shield() || e->lua_table_ref() < 0 || spared(*e))
             continue;
@@ -1629,12 +1640,13 @@ static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
     // prop's shape, not its position (its feet), or a beam ending on a
     // Galactic Colossus's hull, or a shell on a tall structure's roof, would
     // miss them. One with no shape is measured from its position.
-    std::vector<u32> candidates = registry.collect_in_radius(blast.at.x, blast.at.z, blast.outer);
+    std::vector<sim::EntityId> candidates =
+        registry.collect_in_radius(blast.at.x, blast.at.z, blast.outer);
     candidates.insert(candidates.end(), near.begin(), near.end());
     std::sort(candidates.begin(), candidates.end());
     candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
-    std::vector<std::pair<u32, f32>> hits;
-    for (const u32 id : candidates) {
+    std::vector<std::pair<sim::EntityId, f32>> hits;
+    for (const sim::EntityId id : candidates) {
         const sim::Entity* e = registry.find(id);
         if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
         if (!e->is_unit() && !e->is_prop() && !e->is_projectile()) continue;
@@ -2156,7 +2168,7 @@ static int l_CreateEmitterAtEntity(lua_State* L) {
     const char* bp = luaL_optstring(L, 3, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::EMITTER_AT_ENTITY);
-    fx->set_entity_id(entity ? entity->entity_id() : 0);
+    fx->set_entity_id(entity ? entity->entity_id() : sim::EntityId());
     fx->set_army(army);
     fx->set_blueprint_path(bp);
     frame_at(*fx, entity, -1);
@@ -2180,7 +2192,7 @@ static int l_CreateEmitterOnEntity(lua_State* L) {
     const char* bp = luaL_optstring(L, 3, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::ATTACHED_EMITTER);
-    fx->set_entity_id(entity ? entity->entity_id() : 0);
+    fx->set_entity_id(entity ? entity->entity_id() : sim::EntityId());
     fx->set_army(army);
     fx->set_blueprint_path(bp);
     time_emitter(L, *sim, *fx);
@@ -2198,7 +2210,7 @@ static int l_CreateEmitterAtBone(lua_State* L) {
     const char* bp = luaL_optstring(L, 4, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::EMITTER_AT_BONE);
-    fx->set_entity_id(entity ? entity->entity_id() : 0);
+    fx->set_entity_id(entity ? entity->entity_id() : sim::EntityId());
     fx->set_bone_index(bone);
     fx->set_army(army);
     fx->set_blueprint_path(bp);
@@ -2218,7 +2230,7 @@ static int l_CreateAttachedEmitter(lua_State* L) {
     const char* bp = luaL_optstring(L, 4, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::ATTACHED_EMITTER);
-    fx->set_entity_id(entity ? entity->entity_id() : 0);
+    fx->set_entity_id(entity ? entity->entity_id() : sim::EntityId());
     fx->set_bone_index(bone);
     fx->set_army(army);
     fx->set_blueprint_path(bp);
@@ -2242,7 +2254,7 @@ static int l_CreateTrail(lua_State* L) {
     const char* bp = luaL_optstring(L, 4, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::TRAIL_EMITTER);
-    fx->set_entity_id(entity ? entity->entity_id() : 0);
+    fx->set_entity_id(entity ? entity->entity_id() : sim::EntityId());
     fx->set_bone_index(bone);
     fx->set_army(army);
     fx->set_blueprint_path(bp);
@@ -2275,7 +2287,7 @@ static int l_CreateAttachedBeam(lua_State* L) {
     const char* bp = luaL_optstring(L, 6, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::ATTACHED_BEAM);
-    fx->set_entity_id(entity ? entity->entity_id() : 0);
+    fx->set_entity_id(entity ? entity->entity_id() : sim::EntityId());
     fx->set_bone_index(bone);
     fx->set_army(army);
     fx->set_blueprint_path(bp);
@@ -2299,7 +2311,7 @@ static int l_AttachBeamToEntity(lua_State* L) {
         lua_pop(L, 1);
         if (fx) {
             auto* entity = effect_check_entity(L, 2);
-            fx->set_entity_id(entity ? entity->entity_id() : 0);
+            fx->set_entity_id(entity ? entity->entity_id() : sim::EntityId());
             fx->set_bone_index(effect_bone_arg(L, 3, entity, -1));
         }
     }
@@ -2320,9 +2332,9 @@ static int l_AttachBeamEntityToEntity(lua_State* L) {
     const char* bp = luaL_optstring(L, 6, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::BEAM_ENTITY_TO_ENTITY);
-    fx->set_entity_id(start_ent ? start_ent->entity_id() : 0);
+    fx->set_entity_id(start_ent ? start_ent->entity_id() : sim::EntityId());
     fx->set_bone_index(start_bone);
-    fx->set_target_entity_id(end_ent ? end_ent->entity_id() : 0);
+    fx->set_target_entity_id(end_ent ? end_ent->entity_id() : sim::EntityId());
     fx->set_target_bone_index(end_bone);
     fx->set_army(army);
     fx->set_blueprint_path(bp);
@@ -3002,7 +3014,8 @@ static int l_CreateEconomyEvent(lua_State* L) {
     if (!sim) { lua_pushnil(L); return 1; }
 
     auto* unit = extract_entity(L, 1);
-    u32 unit_id = (unit && !unit->destroyed() && unit->is_unit()) ? unit->entity_id() : 0;
+    sim::EntityId unit_id =
+        (unit && !unit->destroyed() && unit->is_unit()) ? unit->entity_id() : sim::EntityId();
     f64 energy = luaL_optnumber(L, 2, 0.0);
     f64 mass = luaL_optnumber(L, 3, 0.0);
     f64 duration = luaL_optnumber(L, 4, 0.0);
@@ -4387,8 +4400,8 @@ static sim::Vector3 extract_position(lua_State* L, int idx) {
 // blips, which stand for their units (an AI orders an attack on the blips it
 // sees). One unit on its own counts too, as in Moho: FAF's AI calls
 // IssueClearCommands(scout).
-static std::vector<u32> collect_unit_ids(lua_State* L, int table_idx) {
-    std::vector<u32> ids;
+static std::vector<sim::EntityId> collect_unit_ids(lua_State* L, int table_idx) {
+    std::vector<sim::EntityId> ids;
     if (!lua_istable(L, table_idx)) return ids;
     if (table_idx < 0) table_idx = lua_gettop(L) + table_idx + 1;
     if (is_object_handle(L, table_idx)) {
@@ -4419,13 +4432,13 @@ static u32 route_units_command(lua_State* L, int table_idx, const sim::UnitComma
 }
 
 // Moho's func_Validate_IssueCommand; factories_only is IssueFactoryAssist's filter.
-static std::vector<u32> units_with_command_cap(lua_State* L, const std::string& cap,
-                                               bool factories_only = false) {
+static std::vector<sim::EntityId> units_with_command_cap(lua_State* L, const std::string& cap,
+                                                         bool factories_only = false) {
     auto* sim = get_sim(L);
     auto ids = collect_unit_ids(L, 1);
     const bool movement = cap == "RULEUCC_Move" || cap == "RULEUCC_Guard" ||
                           cap == "RULEUCC_Patrol" || cap == "RULEUCC_Ferry";
-    std::erase_if(ids, [&](u32 id) {
+    std::erase_if(ids, [&](sim::EntityId id) {
         const sim::Entity* e = sim ? sim->entity_registry().find(id) : nullptr;
         if (!e || !e->is_unit()) {
             return true;
@@ -4558,7 +4571,7 @@ static int l_IssueClearCommands(lua_State* L) {
     }
     sim::SimContext ctx = sim->sim_context();
     ctx.L = L;
-    for (const u32 id : collect_unit_ids(L, 1)) {
+    for (const sim::EntityId id : collect_unit_ids(L, 1)) {
         auto* e = sim->entity_registry().find(id);
         if (e && !e->destroyed() && e->is_unit()) {
             static_cast<sim::Unit*>(e)->clear_commands(ctx);
@@ -4761,7 +4774,7 @@ sim::Entity* check_entity(lua_State* L, int idx);
 int entity_Destroy(lua_State* L);
 
 /// A live unit (not destroyed, not dying) by id, or null.
-static sim::Unit* transferable_unit(sim::SimState& sim, u32 id) {
+static sim::Unit* transferable_unit(sim::SimState& sim, sim::EntityId id) {
     auto* e = sim.entity_registry().find(id);
     if (!e || e->destroyed() || !e->is_unit()) return nullptr;
     auto* u = static_cast<sim::Unit*>(e);
@@ -4772,14 +4785,17 @@ static sim::Unit* transferable_unit(sim::SimState& sim, u32 id) {
 /// stored and carried units with it: the new unit's id, 0 when none was
 /// made (the unit is dead, its blueprint makes none, or the new army is at
 /// its unit cap -- its brain then hears OnFailedUnitTransfer).
-static u32 transfer_unit(lua_State* L, sim::SimState& sim, u32 unit_id, int army) {
+static sim::EntityId transfer_unit(lua_State* L, sim::SimState& sim, sim::EntityId unit_id,
+                                   int army) {
     auto& registry = sim.entity_registry();
     sim::Unit* unit = transferable_unit(sim, unit_id);
-    if (!unit) return 0;
+    if (!unit) {
+        return sim::EntityId();
+    }
 
     // Its stored units come out of storage and change army first.
-    std::vector<u32> stored;
-    for (const u32 id : std::vector<u32>(unit->stored_ids())) {
+    std::vector<sim::EntityId> stored;
+    for (const sim::EntityId id : std::vector<sim::EntityId>(unit->stored_ids())) {
         unit = transferable_unit(sim, unit_id);
         auto* s = transferable_unit(sim, id);
         if (!unit || !s) continue;
@@ -4789,34 +4805,44 @@ static u32 transfer_unit(lua_State* L, sim::SimState& sim, u32 unit_id, int army
     // So do the mobile units it carries, taken off in the order their
     // slots were given, so each gets the same slot on the new transport.
     unit = transferable_unit(sim, unit_id);
-    if (!unit) return 0;
-    std::vector<u32> carried;
+    if (!unit) {
+        return sim::EntityId();
+    }
+    std::vector<sim::EntityId> carried;
     if (const auto* slots = unit->built_transport_slots())
         for (const auto& slot : slots->slots()) carried.push_back(slot.unit_id);
-    for (const u32 id : unit->cargo_ids())
+    for (const sim::EntityId id : unit->cargo_ids()) {
         if (std::find(carried.begin(), carried.end(), id) == carried.end()) carried.push_back(id);
-    std::erase_if(carried, [&](u32 id) {
+    }
+    std::erase_if(carried, [&](sim::EntityId id) {
         const auto* c = transferable_unit(sim, id);
         return !c || !c->is_mobile() || c->transport_id() != unit_id || unit->is_stored_unit(id);
     });
     unit->detach_cargo(carried, registry, L);
-    for (u32& id : carried) id = transfer_unit(L, sim, id, army);
+    for (sim::EntityId& id : carried) {
+        id = transfer_unit(L, sim, id, army);
+    }
 
     // The replacement: made where the old one stands, complete.
     unit = transferable_unit(sim, unit_id);
-    if (!unit) return 0;
+    if (!unit) {
+        return sim::EntityId();
+    }
     const std::string bp = unit->blueprint_id();
     bool at_cap = false;
-    const u32 new_id = spawn_complete_unit(L, sim, bp.c_str(), army, unit->position(),
-                                           unit->orientation(), unit, CapGate::Silent, &at_cap);
-    if (new_id == 0) {
+    const sim::EntityId new_id =
+        spawn_complete_unit(L, sim, bp.c_str(), army, unit->position(), unit->orientation(), unit,
+                            CapGate::Silent, &at_cap);
+    if (!new_id) {
         if (at_cap) sim.brain_hears(army, "OnFailedUnitTransfer");
-        return 0;
+        return sim::EntityId();
     }
     lua_pop(L, 1);
     unit = transferable_unit(sim, unit_id);
     auto* fresh = transferable_unit(sim, new_id);
-    if (!fresh) return 0;
+    if (!fresh) {
+        return sim::EntityId();
+    }
     if (unit) {
         if (unit->health() != fresh->health()) fresh->set_health(unit->health());
         fresh->set_custom_name(unit->custom_name());
@@ -4824,13 +4850,13 @@ static u32 transfer_unit(lua_State* L, sim::SimState& sim, u32 unit_id, int army
 
     // Its stored and carried units come back aboard (each one's scripts
     // run, so the new unit is looked up again every time).
-    for (const u32 id : stored) {
+    for (const sim::EntityId id : stored) {
         fresh = transferable_unit(sim, new_id);
         if (auto* s = transferable_unit(sim, id);
             s && fresh && fresh->transport_has_available_storage())
             fresh->add_to_storage(*s, registry, L);
     }
-    for (const u32 id : carried) {
+    for (const sim::EntityId id : carried) {
         fresh = transferable_unit(sim, new_id);
         if (auto* c = transferable_unit(sim, id); c && fresh)
             c->attach_to_transport(fresh, registry, L);
@@ -4850,7 +4876,7 @@ static u32 transfer_unit(lua_State* L, sim::SimState& sim, u32 unit_id, int army
             lua_pop(L, 1);
         }
     }
-    return transferable_unit(sim, new_id) ? new_id : 0;
+    return transferable_unit(sim, new_id) ? new_id : sim::EntityId();
 }
 
 /// NotifyUpgrade(from, to): an upgrade's new unit takes over from the old
@@ -4901,7 +4927,7 @@ static int l_NotifyUpgrade(lua_State* L) {
     }
 
     if (auto* brain = sim->get_army(from->army())) {
-        const auto platoon_of = [brain](u32 id) -> sim::Platoon* {
+        const auto platoon_of = [brain](sim::EntityId id) -> sim::Platoon* {
             for (size_t i = 0; i < brain->platoon_count(); ++i) {
                 sim::Platoon* p = brain->platoon_at(i);
                 if (p && !p->destroyed() && p->has_unit(id)) return p;
@@ -4917,8 +4943,8 @@ static int l_NotifyUpgrade(lua_State* L) {
         }
     }
 
-    const u32 from_id = from->entity_id();
-    const u32 to_id = to->entity_id();
+    const sim::EntityId from_id = from->entity_id();
+    const sim::EntityId to_id = to->entity_id();
     const bool repeat = from->repeat_queue();
     const bool was = to->repeat_queue();
     to->set_repeat_queue(repeat);
@@ -4962,15 +4988,15 @@ static int l_ChangeUnitArmy(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    for (const u32 id : unit->cargo_ids()) {
+    for (const sim::EntityId id : unit->cargo_ids()) {
         const auto* c = sim->entity_registry().find(id);
         if (c && c->is_unit() && static_cast<const sim::Unit*>(c)->has_category("COMMAND")) {
             lua_pushnil(L);
             return 1;
         }
     }
-    const u32 old_id = unit->entity_id(); // the unit is gone after
-    const u32 new_id = transfer_unit(L, *sim, old_id, army);
+    const sim::EntityId old_id = unit->entity_id(); // the unit is gone after
+    const sim::EntityId new_id = transfer_unit(L, *sim, old_id, army);
     auto* fresh = new_id ? sim->entity_registry().find(new_id) : nullptr;
     if (fresh && fresh->lua_table_ref() >= 0) {
         spdlog::info("ChangeUnitArmy: #{} to army {} as #{}", old_id, army, new_id);
@@ -5044,9 +5070,9 @@ static int l_IssueBuildMobile(lua_State* L) {
     cmd.blueprint_id = bp_id;
 
     const auto ids = collect_unit_ids(L, 1);
-    u32 nearest = 0;
+    sim::EntityId nearest{};
     f32 nearest_d2 = 0.0f;
-    for (const u32 id : ids) {
+    for (const sim::EntityId id : ids) {
         const sim::Entity* e = sim->entity_registry().find(id);
         if (!e || !e->is_unit()) continue;
         const auto& u = static_cast<const sim::Unit&>(*e);
@@ -5059,12 +5085,14 @@ static int l_IssueBuildMobile(lua_State* L) {
         const f32 dy = p.y - target_pos.y;
         const f32 dz = p.z - target_pos.z;
         const f32 d2 = dx * dx + dy * dy + dz * dz;
-        if (nearest == 0 || d2 < nearest_d2) {
+        if (!nearest || d2 < nearest_d2) {
             nearest = id;
             nearest_d2 = d2;
         }
     }
-    if (nearest == 0) return 0;
+    if (!nearest) {
+        return 0;
+    }
     if (lua_toboolean(L, 5)) {
         sim->route_command(ids, cmd, false);
     } else {
@@ -5250,7 +5278,7 @@ static int l_CreateShield(lua_State* L) {
     shield->set_health(max_hp);
     shield->set_fraction_complete(1.0f);
 
-    u32 id = sim->entity_registry().register_entity(std::move(shield));
+    sim::EntityId id = sim->entity_registry().register_entity(std::move(shield));
     auto* shield_ptr = static_cast<sim::Shield*>(sim->entity_registry().find(id));
     if (!shield_ptr) {
         spdlog::warn("_c_CreateShield: failed to register shield entity");
@@ -5414,10 +5442,10 @@ static int l_IssueTransportUnloadSpecific(lua_State* L) {
     cmd.type = sim::CommandType::TransportUnload;
     cmd.target_pos = extract_position(L, 3);
     const CategoryMatcher category(L, 2);
-    for (u32 transport_id : collect_unit_ids(L, 1)) {
+    for (sim::EntityId transport_id : collect_unit_ids(L, 1)) {
         const auto* te = sim->entity_registry().find(transport_id);
         if (!te || te->destroyed() || !te->is_unit()) continue;
-        for (u32 cargo_id : static_cast<const sim::Unit*>(te)->cargo_ids()) {
+        for (sim::EntityId cargo_id : static_cast<const sim::Unit*>(te)->cargo_ids()) {
             const auto* e = sim->entity_registry().find(cargo_id);
             if (!e || e->destroyed() || !e->is_unit()) continue;
             if (category.matches(static_cast<const sim::Unit*>(e)->category_bits()))
@@ -5529,17 +5557,17 @@ static int l_CreateVisibleAreaAtPoint(lua_State* L) {
 // IssueKillSelf(units_table) — ctrl+K self-destruct: each unit is killed, so
 // its script plays the death out (death weapon, wreck) as for any other.
 static int l_IssueKillSelf(lua_State* L) {
-    std::vector<u32> ids;
+    std::vector<sim::EntityId> ids;
     for_each_unit_in_table(
         L, 1,
         [](sim::Unit* u, void* out) {
             if (u && !u->is_dying() && !u->destroyed())
-                static_cast<std::vector<u32>*>(out)->push_back(u->entity_id());
+                static_cast<std::vector<sim::EntityId>*>(out)->push_back(u->entity_id());
         },
         &ids);
     auto* sim = get_sim(L);
     if (!sim) return 0;
-    for (const u32 id : ids) {
+    for (const sim::EntityId id : ids) {
         auto* e = sim->entity_registry().find(id);
         if (e && !e->destroyed() && e->is_unit()) sim->kill_unit(static_cast<sim::Unit&>(*e));
     }

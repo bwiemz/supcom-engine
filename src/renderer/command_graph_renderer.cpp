@@ -153,8 +153,8 @@ std::array<f32, 4> build_pad(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x, 
 }
 
 std::vector<std::pair<const sim::EntityRecord*, bool>>
-command_graph_units(const sim::WorldSnapshot& world, const std::unordered_set<u32>* selected,
-                    i32 player_army) {
+command_graph_units(const sim::WorldSnapshot& world,
+                    const std::unordered_set<sim::EntityId>* selected, i32 player_army) {
     std::vector<std::pair<const sim::EntityRecord*, bool>> out;
     for (const sim::EntityRecord& e : world.entities) {
         const bool chosen = selected && selected->count(e.id) > 0;
@@ -167,7 +167,7 @@ command_graph_units(const sim::WorldSnapshot& world, const std::unordered_set<u3
 
 bool build_started(const sim::WorldSnapshot& world, const sim::EntityRecord& builder, size_t index,
                    const sim::CommandRecord& order) {
-    if (index == 0 && !order.pending && builder.build_target_id != 0) {
+    if (index == 0 && !order.pending && builder.build_target_id) {
         return true;
     }
     for (const auto& e : world.entities) {
@@ -181,7 +181,7 @@ bool build_started(const sim::WorldSnapshot& world, const sim::EntityRecord& bui
 }
 
 std::vector<PlannedSite> planned_build_sites(const sim::WorldSnapshot& world,
-                                             const std::unordered_set<u32>* selected,
+                                             const std::unordered_set<sim::EntityId>* selected,
                                              i32 player_army) {
     std::vector<PlannedSite> sites;
     for (const auto& [e, chosen] : command_graph_units(world, selected, player_army)) {
@@ -197,7 +197,7 @@ std::vector<PlannedSite> planned_build_sites(const sim::WorldSnapshot& world,
 }
 
 std::vector<CommandGraphPath>
-command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* selected,
+command_graph_paths(const sim::FrameView& view, const std::unordered_set<sim::EntityId>* selected,
                     i32 player_army,
                     const std::function<const CommandGraphStyle*(sim::CommandType)>& style_of) {
     std::vector<CommandGraphPath> paths;
@@ -219,7 +219,7 @@ command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* s
                 continue;
             }
             Vector3 to = c.target_pos;
-            if (c.target_id > 0) {
+            if (c.target_id) {
                 if (const sim::EntityRecord* target = view.find(c.target_id)) {
                     to = view.position(*target);
                 } else if (to.x == 0.0f && to.y == 0.0f && to.z == 0.0f) {
@@ -238,7 +238,7 @@ command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* s
             std::find_if(path.legs.begin(), path.legs.end(), [](const CommandGraphPath::Leg& l) {
                 return l.order.type == sim::CommandType::Patrol ||
                        l.order.type == sim::CommandType::Guard ||
-                       (l.order.type == sim::CommandType::Attack && l.order.target_id == 0);
+                       (l.order.type == sim::CommandType::Attack && !l.order.target_id);
             });
         if (anchor != path.legs.end() && anchor + 1 != path.legs.end()) {
             const auto at = static_cast<size_t>(anchor - path.legs.begin());
@@ -264,7 +264,7 @@ command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* s
 }
 
 CommandGraph command_graph(const std::vector<CommandGraphPath>& paths, u32 highlight,
-                           u32 hovered_unit) {
+                           sim::EntityId hovered_unit) {
     struct Point {
         Vector3 sum{0, 0, 0};
         f32 weight = 0;
@@ -363,8 +363,8 @@ CommandGraph command_graph(const std::vector<CommandGraphPath>& paths, u32 highl
         const size_t lanes = std::max<size_t>({points[p].ins.size(), points[p].outs.size(), 1});
         node.unit_scale = std::sqrt(static_cast<f32>(lanes));
         node.highlighted = (highlight != 0 && node.order.command_id == highlight) ||
-                           (hovered_unit != 0 && std::find(node.units.begin(), node.units.end(),
-                                                           hovered_unit) != node.units.end());
+                           (hovered_unit && std::find(node.units.begin(), node.units.end(),
+                                                      hovered_unit) != node.units.end());
         const CommandGraphStyle& s = *node.style;
         if (node.highlighted) {
             node.color = s.waypoint_highlight_color;
@@ -385,7 +385,7 @@ CommandGraph command_graph(const std::vector<CommandGraphPath>& paths, u32 highl
 }
 
 std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraphPath>& paths,
-                                                  u32 highlight, u32 hovered_unit) {
+                                                  u32 highlight, sim::EntityId hovered_unit) {
     return command_graph(paths, highlight, hovered_unit).nodes;
 }
 
@@ -646,9 +646,9 @@ const CommandGraphStyle* CommandGraphRenderer::style(sim::CommandType type, lua_
 }
 
 void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& camera,
-                                  const std::unordered_set<u32>* selected, i32 player_army,
-                                  TextureCache& tex_cache, lua_State* L, f32 time, u32 viewport_h,
-                                  bool shown, u32 fi) {
+                                  const std::unordered_set<sim::EntityId>* selected,
+                                  i32 player_army, TextureCache& tex_cache, lua_State* L, f32 time,
+                                  u32 viewport_h, bool shown, u32 fi) {
     legs_.clear();
     planned_.clear();
     const sim::WorldSnapshot* cur = view.cur();

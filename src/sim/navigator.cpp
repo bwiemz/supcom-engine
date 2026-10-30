@@ -130,7 +130,7 @@ void Navigator::reset_steering() {
     sidestep_ = false;
     sidestep_index_ = 0;
     hold_ticks_ = 0;
-    held_for_ = 0;
+    held_for_ = EntityId();
     gear_fresh_ = true; // its next target chooses its gear again
 }
 
@@ -178,7 +178,7 @@ void Navigator::sidestep(const Vector3& point) {
     sidestep_index_ = waypoint_index_;
 }
 
-void Navigator::hold(int ticks, u32 for_id) {
+void Navigator::hold(int ticks, EntityId for_id) {
     hold_ticks_ = std::max(ticks, 1);
     held_for_ = for_id;
 }

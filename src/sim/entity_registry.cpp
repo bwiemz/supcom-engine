@@ -11,29 +11,70 @@ namespace osc::sim {
 EntityRegistry::EntityRegistry() = default;
 EntityRegistry::~EntityRegistry() = default;
 
-u32 EntityRegistry::reserve_id(const Entity& e) {
+EntityId EntityRegistry::reserve_id(const Entity& e) {
     const u32 source = e.army() >= 0 ? static_cast<u32>(e.army()) & 0xFFu : 0xFFu;
     u32 bits = source << 20;
     if (e.is_projectile()) bits = (source | 0x100u) << 20;
     else if (e.is_prop()) bits = 0x2FFu << 20;
     else if (e.is_shield()) bits = (source | 0x400u) << 20;
     else if (!e.is_unit()) bits = (source | 0x500u) << 20;
-    // shortcut: Moho reuses a released serial, the least first; the engine's orders,
-    // weapons and steering keep bare ids (where Moho keeps weak pointers), so a reused
-    // id would retarget them. Serials only grow until those carry a generation.
     IdPool& pool = id_pools_[bits];
-    u32 id = 0;
-    // Past 2^20 serials Moho's id runs into another pool's, whose entity may be alive.
-    do {
-        id = (bits | pool.next++) + 1;
-    } while (entities_.contains(id));
-    return id;
+    for (;;) {
+        u32 serial = 0;
+        if (pool.released.empty()) {
+            serial = pool.next++;
+        } else {
+            serial = *pool.released.begin();
+            pool.released.erase(pool.released.begin());
+        }
+        const u32 moho = bits | serial;
+        // Past 2^20 serials Moho's id runs into another pool's, whose entity may be alive.
+        if (live_by_moho_.contains(moho)) {
+            continue;
+        }
+        std::vector<u32>& generations = id_pools_[moho & 0xFFF00000u].generations;
+        const u32 index = moho & 0xFFFFFu;
+        if (index >= generations.size()) {
+            generations.resize(index + 1);
+        }
+        u32& generation = generations[index];
+        generation = generation % EntityId::kMaxGeneration + 1;
+        return EntityId::of(moho, generation);
+    }
+}
+
+EntityId EntityRegistry::live_id(u32 moho) const {
+    const auto it = live_by_moho_.find(moho);
+    return it == live_by_moho_.end() ? EntityId() : it->second;
+}
+
+void EntityRegistry::update_id_pools() {
+    for (auto& [bits, pool] : id_pools_) {
+        if (pool.held.size() == kIdHeldBeats) {
+            const std::vector<u32>& oldest = pool.held.front();
+            if (!oldest.empty()) {
+                pool.released.insert(oldest.begin(), oldest.end());
+                auto top = pool.released.lower_bound(pool.next);
+                u32 next = pool.next;
+                while (top != pool.released.begin() && *std::prev(top) == next - 1) {
+                    --top;
+                    --next;
+                }
+                if (next != pool.next) {
+                    pool.released.erase(top, pool.released.end());
+                    pool.next = next;
+                }
+            }
+            pool.held.pop_front();
+        }
+        pool.held.emplace_back();
+    }
 }
 
 std::array<u32, 16> EntityRegistry::family_counts() const {
     std::array<u32, 16> counts{};
     for (const Slot& slot : order_)
-        if (slot.entity) ++counts[((slot.id - 1u) >> 28) & 0xFu]; // reserve_id's ids are one past
+        if (slot.entity) ++counts[slot.id.moho() >> 28];
     return counts;
 }
 
@@ -45,8 +86,8 @@ void EntityRegistry::index_slots() {
         if (unit_order_[i].entity) slot_of_[unit_order_[i].id].second = i;
 }
 
-u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
-    const u32 id = reserve_id(*entity);
+EntityId EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
+    const EntityId id = reserve_id(*entity);
     entity->set_entity_id(id);
     entity->place_now();
     entity->set_registry(this);
@@ -61,6 +102,7 @@ u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
     walk_.push_back(id);
     Entity* const made = entity.get();
     entities_[id] = std::move(entity);
+    live_by_moho_[id.moho()] = id;
     ++live_count_;
 
     notify_collision_shape_changed(*made);
@@ -78,7 +120,7 @@ u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
     return id;
 }
 
-void EntityRegistry::unregister_entity(u32 id) {
+void EntityRegistry::unregister_entity(EntityId id) {
     const auto found = entities_.find(id);
     if (found == entities_.end() || !found->second) return;
     // Take the entity out before the hook: the hook runs scripts (OnDestroy),
@@ -86,6 +128,9 @@ void EntityRegistry::unregister_entity(u32 id) {
     std::unique_ptr<Entity> entity = std::move(found->second);
     entities_.erase(found);
     --live_count_;
+    const u32 moho = id.moho();
+    live_by_moho_.erase(moho);
+    id_pools_[moho & 0xFFF00000u].held.back().push_back(moho & 0xFFFFFu);
     if (const auto slot = slot_of_.find(id); slot != slot_of_.end()) {
         if (order_[slot->second.first].entity) {
             order_[slot->second.first].entity = nullptr;
@@ -126,22 +171,22 @@ void EntityRegistry::wake(Entity& entity) {
     walk_.push_back(entity.entity_id());
 }
 
-u32 EntityRegistry::take_destroyed() {
+EntityId EntityRegistry::take_destroyed() {
     if (deletion_queue_.empty()) {
-        return 0;
+        return EntityId();
     }
-    const u32 id = deletion_queue_.front();
+    const EntityId id = deletion_queue_.front();
     deletion_queue_.pop_front();
     return id;
 }
 
 void EntityRegistry::purge_destroyed() {
-    while (const u32 id = take_destroyed()) {
+    while (const EntityId id = take_destroyed()) {
         unregister_entity(id);
     }
 }
 
-Entity* EntityRegistry::find(u32 id) const {
+Entity* EntityRegistry::find(EntityId id) const {
     const auto it = entities_.find(id);
     return it == entities_.end() ? nullptr : it->second.get();
 }
@@ -271,9 +316,8 @@ void EntityRegistry::notify_moved(Entity& entity, bool moved) {
     entity.set_grid_cell(new_cx, new_cz);
 }
 
-std::vector<u32> EntityRegistry::collect_in_radius(f32 x, f32 z,
-                                                    f32 radius) const {
-    std::vector<u32> result;
+std::vector<EntityId> EntityRegistry::collect_in_radius(f32 x, f32 z, f32 radius) const {
+    std::vector<EntityId> result;
     f32 r2 = radius * radius;
 
     if (!grid_initialized_) {
@@ -296,7 +340,7 @@ std::vector<u32> EntityRegistry::collect_in_radius(f32 x, f32 z,
     for (i32 cz = cz_min; cz <= cz_max; ++cz) {
         for (i32 cx = cx_min; cx <= cx_max; ++cx) {
             const auto& cell = grid_cells_[cell_index(cx, cz)];
-            for (u32 id : cell) {
+            for (EntityId id : cell) {
                 auto* e = find(id);
                 if (!e || e->destroyed()) continue;
                 f32 dx = e->position().x - x;
@@ -344,9 +388,8 @@ std::vector<Entity*> EntityRegistry::units_in_radius(f32 x, f32 z, f32 radius) c
     return result;
 }
 
-std::vector<u32> EntityRegistry::collect_in_rect(f32 x0, f32 z0,
-                                                  f32 x1, f32 z1) const {
-    std::vector<u32> result;
+std::vector<EntityId> EntityRegistry::collect_in_rect(f32 x0, f32 z0, f32 x1, f32 z1) const {
+    std::vector<EntityId> result;
     if (x0 > x1) std::swap(x0, x1);
     if (z0 > z1) std::swap(z0, z1);
 
@@ -369,7 +412,7 @@ std::vector<u32> EntityRegistry::collect_in_rect(f32 x0, f32 z0,
     for (i32 cz = cz_min; cz <= cz_max; ++cz) {
         for (i32 cx = cx_min; cx <= cx_max; ++cx) {
             const auto& cell = grid_cells_[cell_index(cx, cz)];
-            for (u32 id : cell) {
+            for (EntityId id : cell) {
                 auto* e = find(id);
                 if (!e || e->destroyed()) continue;
                 f32 ex = e->position().x;
@@ -487,7 +530,7 @@ void EntityRegistry::props_touching(f32 x0, f32 z0, f32 x1, f32 z1,
             }
         }
     }
-    for (const u32 id : large_colliders_) {
+    for (const EntityId id : large_colliders_) {
         if (Entity* e = find(id); e && e->is_prop()) {
             consider(*e, e->shape_reach());
         }
@@ -545,7 +588,7 @@ bool EntityRegistry::any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1,
                 for (const UnitRef& unit : unit_cells_[cell_index(cx, cz)])
                     if (may_reach(*unit.entity) && visit(*unit.entity, ctx)) return true;
     }
-    for (const u32 id : large_colliders_) {
+    for (const EntityId id : large_colliders_) {
         const Entity* e = find(id);
         if (e && e->is_unit() && near(*e, e->shape_reach()) && visit(*e, ctx)) return true;
     }
@@ -553,7 +596,7 @@ bool EntityRegistry::any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1,
 }
 
 void EntityRegistry::collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1,
-                                       std::vector<u32>& out) const {
+                                       std::vector<EntityId>& out) const {
     out.clear();
     if (x0 > x1) std::swap(x0, x1);
     if (z0 > z1) std::swap(z0, z1);
@@ -571,10 +614,10 @@ void EntityRegistry::collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1,
         world_to_cell(x1 + COLLIDER_REACH, z1 + COLLIDER_REACH, cx_max, cz_max);
         for (i32 cz = cz_min; cz <= cz_max; ++cz)
             for (i32 cx = cx_min; cx <= cx_max; ++cx)
-                for (u32 id : grid_cells_[cell_index(cx, cz)])
+                for (EntityId id : grid_cells_[cell_index(cx, cz)])
                     if (const Entity* e = find(id)) consider(*e, COLLIDER_REACH);
     }
-    for (u32 id : large_colliders_)
+    for (EntityId id : large_colliders_)
         if (const Entity* e = find(id)) consider(*e, e->shape_reach());
     // A cell lists ids in the order they moved in, and a large shape may be
     // in a cell too: one canonical list.

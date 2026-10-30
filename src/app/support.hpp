@@ -10,6 +10,7 @@
 #include "sim/game_setup.hpp"
 
 #include <array>
+#include <functional>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -57,7 +58,8 @@ void pump_ui_frames_with_controls(lua::LuaState& ui_lua_state,
                                   u32& ui_frame_counter);
 
 /// One Moho sim beat reaching the user side.
-void world_beat(lua::LuaState* sim_lua, sim::SimState* sim, lua_State* uiL, lua::SyncQueue& sync);
+void world_beat(lua::LuaState* sim_lua, sim::SimState* sim, lua_State* uiL, lua::SyncQueue& sync,
+                const std::function<void()>& refresh_selection = {});
 /// The game has ended: tell the UI once (NoteGameOver).
 void note_game_over_if_ended(sim::SimState* sim, GameStateManager& mgr, lua_State* uiL);
 /// FA's game interface: the loading dialog, then the interface itself.
@@ -66,13 +68,18 @@ void finish_world_ui(lua_State* uiL, ui::WldUIProvider& wld, bool is_replay, lua
                      sim::SimState* sim, lua::SyncQueue& sync);
 
 /// The UI's OnSelectionChanged, when the selection changed.
-void dispatch_selection_change(lua_State* uL, std::unordered_set<u32>& prev,
-                               const std::unordered_set<u32>& cur, bool action);
+void dispatch_selection_change(lua_State* uL, std::unordered_set<sim::EntityId>& prev,
+                               const std::unordered_set<sim::EntityId>& cur, bool action);
 /// And when a selected unit's upgrade orders changed (Moho's RequestRefreshUI).
-void dispatch_selection_change(lua_State* uL, std::unordered_set<u32>& prev,
-                               std::vector<std::pair<u32, u32>>& prev_upgrades,
-                               const sim::SimState& sim, const std::unordered_set<u32>& cur,
-                               bool action);
+void dispatch_selection_change(lua_State* uL, std::unordered_set<sim::EntityId>& prev,
+                               std::vector<std::pair<sim::EntityId, u32>>& prev_upgrades,
+                               const sim::SimState& sim,
+                               const std::unordered_set<sim::EntityId>& cur, bool action);
+/// A beat's CWldSession::CheckForNecessaryUIRefresh: a selected unit gone or dead leaves the
+/// selection, and the UI hears of it in that beat.
+void refresh_selection(lua_State* uL, renderer::InputHandler& input, const sim::SimState& sim,
+                       std::unordered_set<sim::EntityId>& prev,
+                       std::vector<std::pair<sim::EntityId, u32>>& prev_upgrades);
 /// FA's command mode (commandmode.lua), as world clicks read it.
 renderer::CommandMode read_command_mode(lua_State* uiL);
 /// A blueprint's footprint (SizeX, SizeZ) from the UI state's blueprint
@@ -127,16 +134,14 @@ int human_army(lua_State* simL, sim::SimState& sim);
 /// the sim's state, and the renderer must not touch that one. A `restart`
 /// is a new game's own setup, seed included, in place of the launch's
 /// (RestartSession). False on a critical failure.
-bool execute_reload_sequence(std::unique_ptr<lua::LuaState>& sim_lua_state,
-                             std::unique_ptr<sim::SimState>& sim_state, lua::LuaState& ui_lua_state,
-                             vfs::VirtualFileSystem& vfs, blueprints::BlueprintStore& store,
-                             lua::InitLoader& loader, const lua::InitConfig& config,
-                             lua::ScenarioMetadata& scenario_meta, GameStateManager& game_state_mgr,
-                             renderer::Renderer* renderer, blueprints::BlueprintStore* ui_store,
-                             renderer::InputHandler* input_handler,
-                             std::unordered_set<u32>* prev_selection, WorldInterp* world_interp,
-                             u64 seed, double& sim_accumulator, const std::string& launch_scenario,
-                             const sim::Replay* replay = nullptr,
-                             const sim::GameSetup* restart = nullptr);
+bool execute_reload_sequence(
+    std::unique_ptr<lua::LuaState>& sim_lua_state, std::unique_ptr<sim::SimState>& sim_state,
+    lua::LuaState& ui_lua_state, vfs::VirtualFileSystem& vfs, blueprints::BlueprintStore& store,
+    lua::InitLoader& loader, const lua::InitConfig& config, lua::ScenarioMetadata& scenario_meta,
+    GameStateManager& game_state_mgr, renderer::Renderer* renderer,
+    blueprints::BlueprintStore* ui_store, renderer::InputHandler* input_handler,
+    std::unordered_set<sim::EntityId>* prev_selection, WorldInterp* world_interp, u64 seed,
+    double& sim_accumulator, const std::string& launch_scenario,
+    const sim::Replay* replay = nullptr, const sim::GameSetup* restart = nullptr);
 
 } // namespace osc::app

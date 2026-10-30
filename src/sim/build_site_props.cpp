@@ -202,7 +202,7 @@ BuildSiteProp find_build_site_prop(lua_State* L, const EntityRegistry& registry,
         lua_settop(L, top);
         return found;
     }
-    found.reclaim_id = 0;
+    found.reclaim_id = EntityId();
     f32 bonus = 0.0f;
     if (!rebuild_bonus(L, builder, bonus)) {
         spdlog::warn("Failed to get valid rebuild bonus from the script");

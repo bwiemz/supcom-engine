@@ -38,7 +38,7 @@ void test_world_fog(TestContext& ctx) {
     const f32 x = spot->x;
     const f32 z = spot->z;
     // A land scout: its vision, a circle round it on the ground
-    const u32 scout = spawn_unit(ctx, "__osc_wf_scout", "uel0101", "ARMY_1", {x, z});
+    const sim::EntityId scout = spawn_unit(ctx, "__osc_wf_scout", "uel0101", "ARMY_1", {x, z});
     ctx.sim.tick();
     const auto* e = ctx.sim.entity_registry().find(scout);
     const auto* u = e && e->is_unit() ? static_cast<const sim::Unit*>(e) : nullptr;

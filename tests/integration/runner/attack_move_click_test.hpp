@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 #include <array>
 #include <optional>
@@ -42,7 +43,7 @@ private:
     f32 z_ = 0;
     std::optional<std::array<f32, 2>> at_;
     bool covered_ = false;
-    std::vector<u32> units_;
+    std::vector<sim::EntityId> units_;
     std::vector<Click> clicks_;
 };
 

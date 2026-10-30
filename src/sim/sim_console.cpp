@@ -118,7 +118,7 @@ void bool_var(const char* name, bool& value, const std::vector<std::string>& arg
 }
 
 /// The live unit `id` names, or null.
-Unit* live_unit(SimState& sim, u32 id) {
+Unit* live_unit(SimState& sim, EntityId id) {
     Entity* e = sim.entity_registry().find(id);
     return e && !e->destroyed() && e->is_unit() ? static_cast<Unit*>(e) : nullptr;
 }
@@ -129,7 +129,7 @@ void destroy_entity(SimState& sim, lua_State* L, Entity& e) {
     if (e.destroyed()) {
         return;
     }
-    const u32 id = e.entity_id();
+    const EntityId id = e.entity_id();
     if (L && e.lua_table_ref() >= 0) {
         const int top = lua_gettop(L);
         lua_rawgeti(L, LUA_REGISTRYINDEX, e.lua_table_ref());
@@ -153,7 +153,7 @@ void destroy_entity(SimState& sim, lua_State* L, Entity& e) {
 /// (0-based; one that isn't a number or an army is passed over, and if none
 /// is left, no unit), or every army's. Army by army, as CUnitIterAllArmies
 /// walks them.
-std::vector<u32> target_army_units(SimState& sim, const std::vector<std::string>& args) {
+std::vector<EntityId> target_army_units(SimState& sim, const std::vector<std::string>& args) {
     std::vector<i32> armies;
     for (size_t i = 1; i < args.size(); ++i) {
         const std::string& text = args[i];
@@ -171,7 +171,7 @@ std::vector<u32> target_army_units(SimState& sim, const std::vector<std::string>
     if (args.size() > 1 && armies.empty()) {
         return {};
     }
-    std::vector<u32> ids;
+    std::vector<EntityId> ids;
     for (size_t a = 0; a < sim.army_count(); ++a) {
         const auto army = static_cast<i32>(a);
         if (!armies.empty() && std::find(armies.begin(), armies.end(), army) == armies.end()) {
@@ -256,7 +256,7 @@ void damage_unit(SimConContext& ctx) {
     }
     const f32 amount = parse_float(ctx.args[1]);
     lua_State* L = ctx.L;
-    for (const u32 id : ctx.selected) {
+    for (const EntityId id : ctx.selected) {
         Unit* unit = live_unit(ctx.sim, id);
         if (!L || !unit || unit->lua_table_ref() < 0) {
             continue;
@@ -281,7 +281,7 @@ void damage_unit(SimConContext& ctx) {
 
 /// KillAll [armies] (0x006B6B40): each unit killed, by no one.
 void kill_all(SimConContext& ctx) {
-    for (const u32 id : target_army_units(ctx.sim, ctx.args)) {
+    for (const EntityId id : target_army_units(ctx.sim, ctx.args)) {
         if (Unit* unit = live_unit(ctx.sim, id)) {
             ctx.sim.kill_unit(*unit, "");
         }
@@ -290,7 +290,7 @@ void kill_all(SimConContext& ctx) {
 
 /// DestroyAll [armies] (0x006B6DC0): each unit destroyed.
 void destroy_all(SimConContext& ctx) {
-    for (const u32 id : target_army_units(ctx.sim, ctx.args)) {
+    for (const EntityId id : target_army_units(ctx.sim, ctx.args)) {
         if (Unit* unit = live_unit(ctx.sim, id)) {
             destroy_entity(ctx.sim, ctx.L, *unit);
         }
@@ -317,7 +317,7 @@ void purge(SimConContext& ctx) {
         return;
     }
     const i32 army = ctx.args.size() > 2 ? parse_int(ctx.args[2]) : -1;
-    std::vector<u32> ids;
+    std::vector<EntityId> ids;
     ctx.sim.entity_registry().for_each([&](Entity& e) {
         bool match = false;
         switch (kind) {
@@ -335,7 +335,7 @@ void purge(SimConContext& ctx) {
             ids.push_back(e.entity_id());
         }
     });
-    for (const u32 id : ids) {
+    for (const EntityId id : ids) {
         if (Entity* e = ctx.sim.entity_registry().find(id)) {
             destroy_entity(ctx.sim, ctx.L, *e);
         }
@@ -383,7 +383,7 @@ void scenario_method(SimConContext& ctx) {
 }
 
 void set_consumption(SimConContext& ctx, bool on) {
-    for (const u32 id : ctx.selected) {
+    for (const EntityId id : ctx.selected) {
         if (Unit* unit = live_unit(ctx.sim, id)) {
             unit->set_consumption_active(on, ctx.sim.get_army(unit->army()));
         }
@@ -393,7 +393,7 @@ void set_consumption(SimConContext& ctx, bool on) {
 /// DebugSetProductionActive / InActive: each selected unit's production
 /// switched, its script told (OnProductionActive / OnProductionInActive).
 void set_production(SimConContext& ctx, bool on) {
-    for (const u32 id : ctx.selected) {
+    for (const EntityId id : ctx.selected) {
         if (Unit* unit = live_unit(ctx.sim, id)) {
             unit->economy().production_active = on;
             unit->call_lua_method(ctx.L, on ? "OnProductionActive" : "OnProductionInActive");
@@ -523,11 +523,11 @@ std::string unparse_sim_command(const std::vector<std::string>& tokens) {
 }
 
 void execute_debug_command(SimState& sim, lua_State* L, std::string_view text, const Vector3& at,
-                           i32 focus_army, const std::vector<u32>& selected) {
+                           i32 focus_army, const std::vector<EntityId>& selected) {
     // ExecuteDebugCommand's selection: those of the ids still units, a set
     // (BVSet<EntId>) that walks them in id order, each once.
-    std::vector<u32> units;
-    for (const u32 id : selected) {
+    std::vector<EntityId> units;
+    for (const EntityId id : selected) {
         if (live_unit(sim, id)) {
             units.push_back(id);
         }

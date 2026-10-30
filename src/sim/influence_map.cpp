@@ -99,7 +99,8 @@ CellRect InfluenceMap::cells_in(f32 x0, f32 z0, f32 x1, f32 z1) const {
             static_cast<i32>(x1) / grid_, static_cast<i32>(z1) / grid_};
 }
 
-void InfluenceMap::insert(u32 id, i32 source_army, const Vector3& pos, const ThreatSource& source) {
+void InfluenceMap::insert(EntityId id, i32 source_army, const Vector3& pos,
+                          const ThreatSource& source) {
     if (cells_.empty()) return;
     const i32 cell = cell_of(pos);
     Entry entry;
@@ -112,7 +113,8 @@ void InfluenceMap::insert(u32 id, i32 source_army, const Vector3& pos, const Thr
     entry_cells_[id] = cell;
 }
 
-void InfluenceMap::report(u32 id, i32 source_army, const Vector3& pos, const ThreatSource& source) {
+void InfluenceMap::report(EntityId id, i32 source_army, const Vector3& pos,
+                          const ThreatSource& source) {
     const auto known = entry_cells_.find(id);
     if (known == entry_cells_.end()) {
         insert(id, source_army, pos, source);
@@ -129,14 +131,14 @@ void InfluenceMap::report(u32 id, i32 source_army, const Vector3& pos, const Thr
     insert(id, source_army, pos, source);
 }
 
-void InfluenceMap::remove(u32 id) {
+void InfluenceMap::remove(EntityId id) {
     const auto known = entry_cells_.find(id);
     if (known == entry_cells_.end()) return;
     cells_[static_cast<size_t>(known->second)].entries.erase(id);
     entry_cells_.erase(known);
 }
 
-f32 InfluenceMap::strength(u32 id) const {
+f32 InfluenceMap::strength(EntityId id) const {
     const auto known = entry_cells_.find(id);
     return known == entry_cells_.end()
                ? 0.0f
@@ -144,7 +146,7 @@ f32 InfluenceMap::strength(u32 id) const {
 }
 
 void InfluenceMap::update(const std::function<bool(i32 army)>& allied_or_self,
-                          const std::function<std::optional<UnitState>(u32 id)>& unit_state) {
+                          const std::function<std::optional<UnitState>(EntityId id)>& unit_state) {
     for (auto& cell : cells_) {
         // Scripts' threat fades; its Overall is the rest summed (Moho's
         // DecayInfluence).

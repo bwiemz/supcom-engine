@@ -20,7 +20,7 @@ struct Vector3;
 namespace osc::app {
 
 /// The key of entity `entity_id`'s loop slot `slot`.
-u64 entity_loop_key(u32 entity_id, std::string_view slot);
+u64 entity_loop_key(sim::EntityId entity_id, std::string_view slot);
 
 /// Every live entity's wanted loops, at `where` it is, in view if `in_view`
 /// says so for its position and radius; underwater for a sub or a seabed
@@ -32,7 +32,7 @@ gather_entity_loops(const sim::SimState& sim,
 
 /// The same, of the entities `ids` names alone (EntityLoopSources').
 std::vector<audio::SoundManager::EntityLoop>
-gather_entity_loops(const sim::SimState& sim, const std::vector<u32>& ids,
+gather_entity_loops(const sim::SimState& sim, const std::vector<sim::EntityId>& ids,
                     const std::function<sim::Vector3(const sim::Entity&)>& where,
                     const std::function<bool(const sim::Vector3&, f32 radius)>& in_view);
 
@@ -43,10 +43,10 @@ gather_entity_loops(const sim::SimState& sim, const std::vector<u32>& ids,
 /// a save restored into it moves its tick.
 class EntityLoopSources {
 public:
-    const std::vector<u32>& ids(const sim::SimState& sim);
+    const std::vector<sim::EntityId>& ids(const sim::SimState& sim);
 
 private:
-    std::vector<u32> ids_;
+    std::vector<sim::EntityId> ids_;
     const sim::SimState* sim_ = nullptr;
     u32 generation_ = 0; ///< SimState::sim_generation() when walked
     u32 tick_ = 0;

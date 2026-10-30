@@ -4,6 +4,7 @@
 #include "renderer/mesh_cache.hpp"
 #include "renderer/frustum.hpp"
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 #include "sim/game_colors.hpp"
 
 #include <iosfwd>
@@ -64,14 +65,14 @@ class MeshBirths {
 public:
     /// The tick entity `id`'s mesh instance was made: the one it had at the
     /// last update with these `mesh_changes`, else `now`.
-    u32 tick(u32 id, u32 mesh_changes, u32 now);
+    u32 tick(sim::EntityId id, u32 mesh_changes, u32 now);
     /// Ends the update: keeps what it asked for, one each.
     void finish();
     size_t size() const { return births_.size(); }
 
 private:
     struct Birth {
-        u32 id = 0;
+        sim::EntityId id{};
         u32 mesh_changes = 0; ///< the entity's Entity::mesh_changes when drawn
         u32 tick = 0;
     };
@@ -255,7 +256,7 @@ private:
         u32 mesh_changes = 0;
         f32 reach = -1.0f; ///< below 0: not read
     };
-    std::unordered_map<u32, CachedReach> reaches_;
+    std::unordered_map<sim::EntityId, CachedReach> reaches_;
 
     sim::GameColors game_colors_;
     const ReconView* recon_ = nullptr;

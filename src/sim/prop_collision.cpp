@@ -71,8 +71,8 @@ void collide_with_props(Unit& unit, EntityRegistry& registry, lua_State* L, u32 
             return;
         }
     }
-    if (unit.is_dying() || unit.is_being_built() || unit.can_fly() || unit.transport_id() != 0 ||
-        unit.parent_entity_id() != 0 || unit.layer() == "Air" || unit.layer() == "Sub" ||
+    if (unit.is_dying() || unit.is_being_built() || unit.can_fly() || unit.transport_id() ||
+        unit.parent_entity_id() || unit.layer() == "Air" || unit.layer() == "Sub" ||
         unit.has_category("NAVAL")) {
         return;
     }

@@ -348,7 +348,7 @@ void test_runtime_decal(TestContext& ctx) {
     // an 8 by 2 splat 10 ahead of it lies at (32, 32), its 8 along z.
     {
         forget();
-        const u32 acu = army_acu_id(ctx.sim, 0);
+        const sim::EntityId acu = army_acu_id(ctx.sim, 0);
         sim::Entity* e = ctx.sim.entity_registry().find(acu);
         if (e) {
             e->set_position({22, 0, 32});

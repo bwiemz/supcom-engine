@@ -59,8 +59,9 @@ void test_scroll_render(TestContext& ctx) {
         return;
     }
 
-    const u32 still_id = spawn_unit(ctx, "__osc_scroll_still", "uel0201", "ARMY_1", *spot);
-    const u32 mover_id =
+    const sim::EntityId still_id =
+        spawn_unit(ctx, "__osc_scroll_still", "uel0201", "ARMY_1", *spot);
+    const sim::EntityId mover_id =
         spawn_unit(ctx, "__osc_scroll_mover", "uel0201", "ARMY_1", {spot->x + 30, spot->z});
     for (int i = 0; i < 3; ++i) {
         ctx.sim.tick();

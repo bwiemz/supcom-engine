@@ -38,7 +38,9 @@ bool disable_maintenance_intel(Unit& unit) {
 }
 
 bool turn_off_maintained_shield(Unit& unit, const EntityRegistry& registry) {
-    if (unit.shield_entity_id() == 0) return false;
+    if (!unit.shield_entity_id()) {
+        return false;
+    }
 
     auto* entity = registry.find(unit.shield_entity_id());
     if (!entity || entity->destroyed() || !entity->is_shield()) return false;

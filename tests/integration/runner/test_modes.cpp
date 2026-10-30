@@ -80,6 +80,7 @@ using app::parse_string_arg;
 using app::pump_ui_frames;
 using app::pump_ui_frames_with_controls;
 using app::read_command_mode;
+using app::refresh_selection;
 using app::submit_sim_callbacks;
 using app::world_beat;
 using lua::report_command_issued;
@@ -848,7 +849,9 @@ void IntegrationModes::frame_rendered(Engine& e, app::Frame& frame) {
     if (render_dump_path_.empty()) return;
     render_dump_->on_frame(
         *e.sim_state, [&](const char* code) { return run_sim_lua(e, code); },
-        [&](const std::vector<u32>& ids) { frame.input.set_selected({ids.begin(), ids.end()}); },
+        [&](const std::vector<sim::EntityId>& ids) {
+            frame.input.set_selected({ids.begin(), ids.end()});
+        },
         [&](std::ostream& out) {
             std::ostringstream dump;
             frame.renderer.dump_frame(dump);
@@ -1341,8 +1344,8 @@ void IntegrationModes::headless(Engine& e) {
         // Selection is input-handler state; a headless one lets the test
         // select units (SelectUnits) and drive the selection UI.
         osc::renderer::InputHandler headless_input;
-        std::unordered_set<osc::u32> prev_sel;
-        std::vector<std::pair<osc::u32, osc::u32>> prev_sel_upgrades;
+        std::unordered_set<osc::sim::EntityId> prev_sel;
+        std::vector<std::pair<osc::sim::EntityId, osc::u32>> prev_sel_upgrades;
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_input_handler");
         lua_pushlightuserdata(uL, &headless_input);
@@ -1367,11 +1370,14 @@ void IntegrationModes::headless(Engine& e) {
         };
         // As the windowed loop plays: a sim tick, its beat, 6 UI frames.
         osc::lua::SyncQueue sync;
+        const auto refresh = [&] {
+            refresh_selection(uL, headless_input, *sim_state, prev_sel, prev_sel_upgrades);
+        };
         auto play = [&](int ticks) {
             for (int t = 0; t < ticks; ++t) {
                 submit_sim_callbacks(test_callbacks, *sim_state);
                 sim_state->tick();
-                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw(), sync);
+                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw(), sync, refresh);
                 note_game_over_if_ended(sim_state.get(), game_state_mgr, uL);
                 pump(6);
             }

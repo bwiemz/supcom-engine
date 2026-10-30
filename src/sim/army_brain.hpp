@@ -83,7 +83,7 @@ struct StatTrigger {
 };
 
 struct BuildReservation {
-    u32 builder = 0;
+    EntityId builder{};
     u32 command = 0;
 };
 

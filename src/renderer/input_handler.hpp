@@ -89,9 +89,10 @@ bool aboard(const sim::Unit& unit);
 /// INSIGNIFICANTUNIT (the Cybran build bots, which Moho's selection skips)
 bool selectable(const sim::Entity& e);
 
-u32 carrier_of(const sim::Entity& e);
+sim::EntityId carrier_of(const sim::Entity& e);
 
-std::vector<u32> highest_selection_priority(const std::vector<std::pair<u32, int>>& units);
+std::vector<sim::EntityId>
+highest_selection_priority(const std::vector<std::pair<sim::EntityId, int>>& units);
 
 /// A unit's priority in a drag box, the lowest number taken: its
 /// General.SelectionPriority. On FAF's data an unfinished LOWSELECTPRIO unit's
@@ -102,7 +103,7 @@ int drag_selection_priority(const sim::Unit& unit, bool faf_exe);
 /// its AuthorizedUnits, and the rest of its answer, the task's data, as
 /// sim::lua_to_bytes writes it.
 struct VerifiedScript {
-    std::vector<u32> units;
+    std::vector<sim::EntityId> units;
     std::string args;
 };
 
@@ -120,8 +121,9 @@ struct CommandMode {
     /// 0 and the point) and whether the order replaces the units' queues.
     /// Its verdict, VerifyScriptCommand's in /lua/user/UserScriptCommand.lua:
     /// none, or the units it goes to and the task's data.
-    std::function<std::optional<VerifiedScript>(const std::vector<u32>& units, u32 target_id,
-                                                const sim::Vector3& at, bool clear)>
+    std::function<std::optional<VerifiedScript>(const std::vector<sim::EntityId>& units,
+                                                sim::EntityId target_id, const sim::Vector3& at,
+                                                bool clear)>
         verify_script{};
 };
 
@@ -129,12 +131,12 @@ struct CommandMode {
 struct IssuedCommand {
     std::string type;      ///< "BuildMobile", "Move", "Attack", ...
     sim::Vector3 position; ///< target point (build: the snapped center)
-    u32 target_id = 0;     ///< target entity, if any
+    sim::EntityId target_id{}; ///< target entity, if any
     std::string blueprint; ///< build: blueprint id
     bool clear = true;     ///< replaced the units' queues (no Shift)
-    std::vector<u32> units; ///< the units it was issued to
-    bool targeted = true;   ///< false: none (Target.Type "None")
-    std::string lua_params; ///< its Lua data, as sim::lua_to_bytes writes it; empty: none
+    std::vector<sim::EntityId> units; ///< the units it was issued to
+    bool targeted = true;             ///< false: none (Target.Type "None")
+    std::string lua_params;           ///< its Lua data, as sim::lua_to_bytes writes it; empty: none
 };
 
 /// The engine side of FA's command mode, provided by the game loop (the
@@ -175,7 +177,7 @@ struct FormationDrag {
     sim::Vector3 mouse;
     f32 facing = 0;
     f32 wait = kWait;
-    std::vector<u32> units;
+    std::vector<sim::EntityId> units;
     std::string script;
     bool settled() const { return wait <= 0; }
 };
@@ -220,7 +222,7 @@ public:
                 const std::function<bool()>& mouse_over_ui = {});
 
     /// Currently selected unit IDs.
-    const std::unordered_set<u32>& selected() const { return selected_; }
+    const std::unordered_set<sim::EntityId>& selected() const { return selected_; }
     /// The session's active build template (Moho's CWldSession one), empty
     /// when none: GenerateBuildTemplateFromSelection, Set/Get and
     /// ClearBuildTemplates keep it.
@@ -309,7 +311,7 @@ public:
 
     /// The orders a right-click at (wx, wz) would give the selection, each
     /// with its units, unissued
-    std::vector<std::pair<sim::UnitCommand, std::vector<u32>>>
+    std::vector<std::pair<sim::UnitCommand, std::vector<sim::EntityId>>>
     right_click_orders(sim::SimState& sim, f32 wx, f32 wz, bool* invalid = nullptr) const;
 
     /// Moho's RULEUCC_Invalid: on an enemy no selected unit can hit, no order
@@ -337,16 +339,16 @@ public:
                                 const std::array<f32, 16>& view_proj);
 
     /// Moho's CWldSession::ReleaseDrag with Ctrl held.
-    void select_blueprint_of(sim::SimState& sim, u32 picked, bool shift);
+    void select_blueprint_of(sim::SimState& sim, sim::EntityId picked, bool shift);
 
-    /// A unit that boards (Moho's UserUnit::UpdateUnitData) or dies (its
-    /// selection refresh keeps no dead unit) leaves the selection; a selected
+    /// A unit that boards (Moho's UserUnit::UpdateUnitData), dies or is gone
+    /// (its selection refresh keeps no dead unit) leaves the selection; a selected
     /// unit's RequestRefreshUI reports the selection again
     /// (CWldSession::CheckForNecessaryUIRefresh).
     void prune_selection(const sim::EntityRegistry& registry);
 
     /// Replace the current selection (called from Lua SelectUnits).
-    void set_selected(const std::unordered_set<u32>& sel) {
+    void set_selected(const std::unordered_set<sim::EntityId>& sel) {
         selected_ = sel;
         selection_event_ = true;
     }
@@ -369,7 +371,7 @@ public:
     }
 
     /// The unit under the cursor, of any army (0: none)
-    u32 hovered() const { return hovered_; }
+    sim::EntityId hovered() const { return hovered_; }
 
     /// The order whose command graph waypoint is under the cursor, while
     /// Shift shows the graph (0: none)
@@ -417,7 +419,7 @@ public:
     /// nearest the cursor (Moho's CUIWorldView::UpdateSelection). For a
     /// world point the cursor isn't on (a script's click), the nearest box a
     /// ray straight down onto (wx, wz) meets. 0 for none.
-    u32 unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only = false) const;
+    sim::EntityId unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only = false) const;
     /// worldview.lua's WorldViewParams.ui_SelectTolerance
     static constexpr f32 kSelectTolerance = 7.0f;
     /// The cursor at (mx, my) on a `width` x `height` view of `camera`, and
@@ -476,8 +478,8 @@ private:
     const ReconView* recon_ = nullptr;
     /// Whether the player's intel shows `e` (anything, without a view).
     bool shown(const sim::Entity& e) const;
-    std::unordered_set<u32> selected_;
-    std::unordered_map<u32, u32> refresh_requests_;
+    std::unordered_set<sim::EntityId> selected_;
+    std::unordered_map<sim::EntityId, u32> refresh_requests_;
     BuildTemplate build_template_;
     bool selection_event_ = false;
 
@@ -509,7 +511,7 @@ private:
     f32 drag_world_x0_ = 0, drag_world_z0_ = 0;
     f32 drag_world_x1_ = 0, drag_world_z1_ = 0;
     std::array<sim::Vector3, 4> drag_quad_{};
-    u32 hovered_ = 0;
+    sim::EntityId hovered_{};
     u32 hovered_command_ = 0;
     bool converts_to_patrol_ = false;
     bool in_view_ = false;
@@ -521,12 +523,13 @@ private:
     f64 dropped_for_ = 0;
     bool rmb_removes_ = false;
     std::optional<CommandGraphNode> graph_node(u32 command_id) const;
-    std::vector<u32> own_units(sim::SimState& sim, const std::vector<u32>& ids) const;
+    std::vector<sim::EntityId> own_units(sim::SimState& sim,
+                                         const std::vector<sim::EntityId>& ids) const;
     /// IssueMoveOrderForDrag over a waypoint that starts a patrol: the moves restarted as one, and
     /// the cursor text saying so at the last mouse event; whether it was such a waypoint
     bool patrol_click(sim::SimState& sim);
     OrderDrag order_drop(sim::SimState& sim, const CommandGraphNode& node, f32 wx, f32 wz,
-                         bool released, u32& target) const;
+                         bool released, sim::EntityId& target) const;
     static constexpr f32 DRAG_THRESHOLD = 5.0f; // pixels before drag starts
     std::optional<std::array<f32, 4>> build_line_;
     f32 snap_radius_ = 4.0f;
@@ -539,7 +542,7 @@ private:
     bool rmb_on_ui_ = false;     // current right press began over the UI
     bool rmb_raw_prev_ = false;
     struct PendingRight {
-        std::vector<std::pair<sim::UnitCommand, std::vector<u32>>> orders;
+        std::vector<std::pair<sim::UnitCommand, std::vector<sim::EntityId>>> orders;
         bool shift = false;
     };
     std::optional<PendingRight> pending_right_;
@@ -548,19 +551,19 @@ private:
     std::vector<std::string> formation_scripts_;
     std::vector<FormationGhost> formation_ghosts_;
     std::optional<std::pair<std::string, f32>> formation_ghosts_for_;
-    std::vector<IssuedCommand>
-    issue_right_orders(sim::SimState& sim,
-                       const std::vector<std::pair<sim::UnitCommand, std::vector<u32>>>& orders,
-                       bool shift, const FormationDrag* formation);
+    std::vector<IssuedCommand> issue_right_orders(
+        sim::SimState& sim,
+        const std::vector<std::pair<sim::UnitCommand, std::vector<sim::EntityId>>>& orders,
+        bool shift, const FormationDrag* formation);
 
     void handle_drag_select(Renderer& renderer, sim::SimState& sim);
 
     /// What an order of `type` clicked at (wx, wz) targets: the unit under the
     /// cursor if the order takes it, else for Reclaim a prop there. 0 for none.
-    u32 target_under(sim::SimState& sim, f32 wx, f32 wz, sim::CommandType type) const;
+    sim::EntityId target_under(sim::SimState& sim, f32 wx, f32 wz, sim::CommandType type) const;
     /// The reclaimable prop (tree, rock, wreck) whose footprint holds (wx, wz), or 0;
     /// none past zoom 150, where Moho's UpdateSelection collects only units.
-    u32 prop_under(sim::SimState& sim, f32 wx, f32 wz) const;
+    sim::EntityId prop_under(sim::SimState& sim, f32 wx, f32 wz) const;
     CommandModeHooks mode_hooks_;
 };
 

@@ -40,6 +40,7 @@ using osc::i32;
 using osc::u32;
 using osc::u8;
 using osc::blueprints::NamedFootprint;
+using osc::sim::EntityId;
 using osc::sim::Unit;
 using osc::test::tick_until;
 namespace oc = osc::blueprints::occupancy;
@@ -184,7 +185,7 @@ TEST_CASE("With Moho pathing tanks go round a wall through its gap, never standi
         osc::sim::GroundOccupant wall;
         wall.caps = oc::kLand;
         wall.rects = {{60, 0, 62, 70}, {60, 76, 62, static_cast<i32>(kMap)}};
-        w.sim.occupy_ground(9999, wall);
+        w.sim.occupy_ground(EntityId::of(9999, 1), wall);
         Unit& tank = *w.make(bp, 30.5f, 20.5f);
         World::move(tank, 100.5f, 20.5f);
         int ticks = 0;
@@ -223,7 +224,7 @@ TEST_CASE("With Moho pathing a game saved with searches waiting and one in fligh
         osc::sim::GroundOccupant wall;
         wall.caps = oc::kLand;
         wall.rects = {{60, 0, 62, 70}, {60, 76, 62, static_cast<i32>(kMap)}};
-        w.sim.occupy_ground(9999, wall);
+        w.sim.occupy_ground(EntityId::of(9999, 1), wall);
     };
     World a(true);
     setup(a);
@@ -275,7 +276,7 @@ TEST_CASE("With Moho pathing a destination the unit won't fit moves to the neare
     osc::sim::GroundOccupant site;
     site.caps = oc::kLand;
     site.rects = {{60, 60, 64, 64}};
-    w.sim.occupy_ground(9999, site);
+    w.sim.occupy_ground(EntityId::of(9999, 1), site);
     Unit& tank = *w.make("tank", 20.5f, 20.5f);
     World::move(tank, 62.0f, 62.0f); // inside it
     int ticks = 0;
@@ -336,7 +337,7 @@ TEST_CASE("With Moho pathing its state is in the sync checksum's navigation doma
         osc::sim::GroundOccupant wall;
         wall.caps = oc::kLand;
         wall.rects = {{60, 0, 62, 70}, {60, 76, 62, static_cast<i32>(kMap)}};
-        w.sim.occupy_ground(9999, wall);
+        w.sim.occupy_ground(EntityId::of(9999, 1), wall);
         std::vector<Unit*> tanks;
         tanks.reserve(24);
         for (int i = 0; i < 24; ++i) {
@@ -427,7 +428,7 @@ void wall_with_gap(World& w, i32 gap0, i32 gap1) {
     osc::sim::GroundOccupant wall;
     wall.caps = oc::kLand;
     wall.rects = {{60, 0, 62, gap0}, {60, gap1, 62, static_cast<i32>(kMap)}};
-    w.sim.occupy_ground(9999, wall);
+    w.sim.occupy_ground(EntityId::of(9999, 1), wall);
 }
 
 } // namespace
@@ -460,7 +461,7 @@ TEST_CASE("With Moho pathing a goal walled in all round ends the move outside, b
     osc::sim::GroundOccupant box;
     box.caps = oc::kLand;
     box.rects = {{90, 90, 110, 92}, {90, 108, 110, 110}, {90, 92, 92, 108}, {108, 92, 110, 108}};
-    w.sim.occupy_ground(9999, box);
+    w.sim.occupy_ground(EntityId::of(9999, 1), box);
     Unit& tank = *w.make("tank", 30.5f, 30.5f);
     World::move(tank, 100.5f, 100.5f);
     w.sim.tick();
@@ -494,7 +495,7 @@ TEST_CASE("With Moho pathing a tank wedged at a wall's end stands still and give
     osc::sim::GroundOccupant wall;
     wall.caps = oc::kLand;
     wall.rects = {{60, 76, 62, static_cast<i32>(kMap)}};
-    w.sim.occupy_ground(9999, wall);
+    w.sim.occupy_ground(EntityId::of(9999, 1), wall);
     Unit& tank = *w.make("tank", 61.77f, 75.998f);
     World::move(tank, 90.5f, 78.5f);
     osc::sim::Vector3 last = tank.position();
@@ -660,7 +661,7 @@ TEST_CASE("With Moho pathing a unit walled in where it stands gives its move up 
     osc::sim::GroundOccupant box;
     box.caps = oc::kLand;
     box.rects = {{19, 19, 22, 20}, {19, 21, 22, 22}, {19, 20, 20, 21}, {21, 20, 22, 21}};
-    w.sim.occupy_ground(9999, box);
+    w.sim.occupy_ground(EntityId::of(9999, 1), box);
     Unit& tank = *w.make("tank", 20.5f, 20.5f);
     World::move(tank, 60.5f, 60.5f);
     for (int t = 1; t <= 4; ++t) {

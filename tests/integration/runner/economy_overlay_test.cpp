@@ -28,9 +28,10 @@ void test_economy_overlay(TestContext& ctx) {
     }
     const f32 sx = spot->x;
     const f32 sz = spot->z;
-    const u32 gen = spawn_unit(ctx, "__osc_eo_gen", "ueb1101", "ARMY_1", {sx, sz});
-    const u32 tank = spawn_unit(ctx, "__osc_eo_tank", "uel0201", "ARMY_1", {sx + 16, sz});
-    const u32 other = spawn_unit(ctx, "__osc_eo_other", "ueb1101", "ARMY_2", {sx - 16, sz});
+    const sim::EntityId gen = spawn_unit(ctx, "__osc_eo_gen", "ueb1101", "ARMY_1", {sx, sz});
+    const sim::EntityId tank = spawn_unit(ctx, "__osc_eo_tank", "uel0201", "ARMY_1", {sx + 16, sz});
+    const sim::EntityId other =
+        spawn_unit(ctx, "__osc_eo_other", "ueb1101", "ARMY_2", {sx - 16, sz});
     ctx.sim.tick();
     ctx.sim.tick();
 
@@ -42,7 +43,7 @@ void test_economy_overlay(TestContext& ctx) {
     renderer::Renderer& r = shots.renderer();
     r.set_player_army(0);
     const auto& overlay = r.economy_overlay_renderer();
-    const auto readout = [&](u32 id) -> const renderer::EconomyReadout* {
+    const auto readout = [&](sim::EntityId id) -> const renderer::EconomyReadout* {
         const auto& all = overlay.readouts();
         const auto it =
             std::find_if(all.begin(), all.end(),

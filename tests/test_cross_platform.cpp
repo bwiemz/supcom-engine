@@ -44,7 +44,7 @@ Result play_synthetic_game(osc::u32 ticks) {
     sim.add_army("ARMY_2", "ARMY_2");
 
     auto& rng = sim.random();
-    std::vector<osc::u32> ids;
+    std::vector<osc::sim::EntityId> ids;
     std::vector<osc::sim::Vector3> start;
     for (int i = 0; i < 18; ++i) {
         auto u = std::make_unique<Unit>();
@@ -107,5 +107,5 @@ TEST_CASE("A synthetic game reaches the same checksum on every platform",
     // changes, a rule or the sim's arithmetic changed: update it on purpose,
     // from a run on any one platform.
     INFO("checksum " << std::hex << first.checksum);
-    CHECK(first.checksum == 0x3b9bd60du);
+    CHECK(first.checksum == 0xa40438c0u);
 }

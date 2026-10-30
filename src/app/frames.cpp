@@ -18,6 +18,7 @@
 #include "renderer/renderer.hpp"
 #include "ui/world_view.hpp"
 #include "lua/sim_sync.hpp"
+#include "sim/script_class.hpp"
 
 namespace osc::app {
 
@@ -151,8 +152,8 @@ static void build_mode_blueprint(lua_State* uiL, osc::renderer::CommandMode& m) 
 }
 
 std::optional<osc::renderer::VerifiedScript>
-verify_script_command(lua_State* uiL, const std::vector<osc::u32>& units, osc::u32 target_id,
-                      const osc::sim::Vector3& at, bool clear) {
+verify_script_command(lua_State* uiL, const std::vector<osc::sim::EntityId>& units,
+                      osc::sim::EntityId target_id, const osc::sim::Vector3& at, bool clear) {
     const int top = lua_gettop(uiL);
     osc::renderer::IssuedCommand order;
     order.type = "Script";
@@ -193,8 +194,9 @@ verify_script_command(lua_State* uiL, const std::vector<osc::u32>& units, osc::u
                     if (lua_istable(uiL, -1)) {
                         lua_pushstring(uiL, "_c_entity_id");
                         lua_rawget(uiL, -2);
-                        if (lua_isnumber(uiL, -1))
-                            v.units.push_back(static_cast<osc::u32>(lua_tonumber(uiL, -1)));
+                        if (const osc::sim::EntityId id = osc::sim::to_entity_key(uiL, -1)) {
+                            v.units.push_back(id);
+                        }
                         lua_pop(uiL, 1);
                     }
                     lua_pop(uiL, 1);
@@ -213,7 +215,7 @@ verify_script_command(lua_State* uiL, const std::vector<osc::u32>& units, osc::u
     return verdict;
 }
 
-bool detect_adjacency_bonus(lua_State* uiL, osc::u32 unit, const std::string& blueprint) {
+bool detect_adjacency_bonus(lua_State* uiL, osc::sim::EntityId unit, const std::string& blueprint) {
     const int top = lua_gettop(uiL);
     osc::core::push_imported_function(uiL, osc::core::kGameMainModule, "OnDetectAdjacencyBonus");
     osc::lua::push_units_for_ui(uiL, {unit});
@@ -265,8 +267,9 @@ osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
         build_mode_blueprint(uiL, m);
     }
     if (m.mode == "order" && m.name == "RULEUCC_Script") {
-        m.verify_script = [uiL](const std::vector<osc::u32>& units, osc::u32 target_id,
-                                const osc::sim::Vector3& at, bool clear) {
+        m.verify_script = [uiL](const std::vector<osc::sim::EntityId>& units,
+                                osc::sim::EntityId target_id, const osc::sim::Vector3& at,
+                                bool clear) {
             return verify_script_command(uiL, units, target_id, at, clear);
         };
     }
@@ -316,10 +319,11 @@ void sync_build_ghost(osc::sim::SimState& sim, const osc::renderer::CommandMode&
     }
 }
 
-static std::vector<std::pair<osc::u32, osc::u32>>
-selection_upgrades(const osc::sim::SimState& sim, const std::unordered_set<osc::u32>& sel) {
-    std::vector<std::pair<osc::u32, osc::u32>> out;
-    for (const osc::u32 id : sel) {
+static std::vector<std::pair<osc::sim::EntityId, osc::u32>>
+selection_upgrades(const osc::sim::SimState& sim,
+                   const std::unordered_set<osc::sim::EntityId>& sel) {
+    std::vector<std::pair<osc::sim::EntityId, osc::u32>> out;
+    for (const osc::sim::EntityId id : sel) {
         const auto* e = sim.entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit()) {
             continue;
@@ -340,14 +344,14 @@ selection_upgrades(const osc::sim::SimState& sim, const std::unordered_set<osc::
 /// action (`action`), even one that leaves the selection unchanged -- retail
 /// refreshes the orders and construction panels on those -- as well as any
 /// change. `prev` becomes `cur`.
-void dispatch_selection_change(lua_State* uL, std::unordered_set<osc::u32>& prev,
-                               const std::unordered_set<osc::u32>& cur, bool action) {
+void dispatch_selection_change(lua_State* uL, std::unordered_set<osc::sim::EntityId>& prev,
+                               const std::unordered_set<osc::sim::EntityId>& cur, bool action) {
     if (cur == prev && !action) return;
-    std::vector<osc::u32> old_ids(prev.begin(), prev.end());
-    std::vector<osc::u32> new_ids(cur.begin(), cur.end());
+    std::vector<osc::sim::EntityId> old_ids(prev.begin(), prev.end());
+    std::vector<osc::sim::EntityId> new_ids(cur.begin(), cur.end());
     std::sort(old_ids.begin(), old_ids.end());
     std::sort(new_ids.begin(), new_ids.end());
-    std::vector<osc::u32> added, removed;
+    std::vector<osc::sim::EntityId> added, removed;
     std::set_difference(new_ids.begin(), new_ids.end(), old_ids.begin(),
                         old_ids.end(), std::back_inserter(added));
     std::set_difference(old_ids.begin(), old_ids.end(), new_ids.begin(),
@@ -387,14 +391,25 @@ void dispatch_selection_change(lua_State* uL, std::unordered_set<osc::u32>& prev
     lua_pop(uL, 1); // callbacks table (or nil)
 }
 
-void dispatch_selection_change(lua_State* uL, std::unordered_set<osc::u32>& prev,
-                               std::vector<std::pair<osc::u32, osc::u32>>& prev_upgrades,
+void dispatch_selection_change(lua_State* uL, std::unordered_set<osc::sim::EntityId>& prev,
+                               std::vector<std::pair<osc::sim::EntityId, osc::u32>>& prev_upgrades,
                                const osc::sim::SimState& sim,
-                               const std::unordered_set<osc::u32>& cur, bool action) {
+                               const std::unordered_set<osc::sim::EntityId>& cur, bool action) {
     auto upgrades = selection_upgrades(sim, cur);
     const bool refresh = upgrades != prev_upgrades;
     prev_upgrades = std::move(upgrades);
     dispatch_selection_change(uL, prev, cur, action || refresh);
+}
+
+void refresh_selection(lua_State* uL, osc::renderer::InputHandler& input,
+                       const osc::sim::SimState& sim, std::unordered_set<osc::sim::EntityId>& prev,
+                       std::vector<std::pair<osc::sim::EntityId, osc::u32>>& prev_upgrades) {
+    const size_t before = input.selected().size();
+    input.prune_selection(sim.entity_registry());
+    if (input.selected().size() < before) {
+        dispatch_selection_change(uL, prev, prev_upgrades, sim, input.selected(),
+                                  input.take_selection_event());
+    }
 }
 
 /// Moho's world-UI start (see ui::WldUIProvider): the user side of the
@@ -412,11 +427,16 @@ void begin_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld) {
 }
 
 /// One Moho sim beat on the user side: the sync channel (sim -> UI data and
-/// focus changes, OnSync), then the game UI's beat functions.
+/// focus changes, OnSync), the selection's refresh
+/// (CWldSession::CheckForNecessaryUIRefresh), then the factory queue and the
+/// game UI's beat functions (CUIManager::DoBeat).
 void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua_State* uiL,
-                osc::lua::SyncQueue& sync) {
+                osc::lua::SyncQueue& sync, const std::function<void()>& refresh_selection) {
     if (sim_lua) {
         sync.deliver(sim_lua->raw(), uiL);
+    }
+    if (refresh_selection) {
+        refresh_selection();
     }
     lua_pushstring(uiL, "__osc_factory_queue");
     lua_rawget(uiL, LUA_REGISTRYINDEX);

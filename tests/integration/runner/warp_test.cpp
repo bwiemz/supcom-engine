@@ -123,20 +123,20 @@ void test_warp(TestContext& ctx) {
     t.check(static_cast<bool>(warp), warp ? std::string("every scene warped")
                                           : fmt::format("warped: {}", warp.error().message));
 
-    std::array<u32, kScenes.size()> ids{};
+    std::array<sim::EntityId, kScenes.size()> ids{};
     lua_State* L = ctx.L;
     lua_pushstring(L, "__osc_warp");
     lua_rawget(L, LUA_GLOBALSINDEX);
     for (size_t i = 0; i < ids.size(); ++i) {
         lua_rawgeti(L, -1, static_cast<int>(i + 1));
         lua_rawgeti(L, -1, 1);
-        ids[i] = osc::sim::to_entity_id(L, -1);
+        ids[i] = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 2);
     }
     lua_pop(L, 1);
     auto& registry = ctx.sim.entity_registry();
     const auto unit = [&](size_t i) -> const sim::Unit* {
-        const sim::Entity* e = ids[i] != 0 ? registry.find(ids[i]) : nullptr;
+        const sim::Entity* e = ids[i] ? registry.find(ids[i]) : nullptr;
         return e && e->is_unit() && !e->destroyed() ? static_cast<const sim::Unit*>(e) : nullptr;
     };
     const f32 surface = terrain->water_elevation();
@@ -215,7 +215,7 @@ void test_warp(TestContext& ctx) {
             "Warp(__osc_mover, Vector(p[1] + 20, GetTerrainHeight(p[1] + 20, p[3]), p[3]))\n");
         lua_pushstring(L, "__osc_mover_id");
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = osc::sim::to_entity_id(L, -1);
+        const auto id = osc::sim::to_entity_id(L, -1, registry);
         lua_pop(L, 1);
         const sim::Entity* e = registry.find(id);
         const auto* tank = e && e->is_unit() ? static_cast<const sim::Unit*>(e) : nullptr;

@@ -12,6 +12,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -190,7 +191,7 @@ TEST_CASE("A repairer on an unfinished unit keeps it from decaying, paused too",
         sim.tick();
     }
     CHECK(u->health() == 50.0f);
-    builder->set_build_target_id(0);
+    builder->set_build_target_id(osc::sim::EntityId());
     sim.tick();
     CHECK(u->health() == 50.0f);
     sim.tick();
@@ -343,8 +344,7 @@ TEST_CASE("A unit is made with its consumption off, for its script to switch on"
     lua_pushnumber(L, 10);
     REQUIRE(lua_pcall(L, 5, 2, 0) == 0);
     lua_setglobal(L, "radar");
-    auto* radar =
-        static_cast<Unit*>(sim.entity_registry().find(static_cast<osc::u32>(lua_tonumber(L, -1))));
+    auto* radar = static_cast<Unit*>(sim.entity_registry().find(osc::sim::to_entity_key(L, -1)));
     lua_settop(L, 0);
     REQUIRE(radar);
     CHECK_FALSE(radar->economy().consumption_active);

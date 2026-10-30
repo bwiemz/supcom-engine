@@ -29,6 +29,7 @@ extern "C" {
 using osc::f32;
 using osc::u8;
 using osc::blueprints::Footprint;
+using osc::sim::EntityId;
 using osc::sim::GroundOccupant;
 using osc::sim::OccupancyGrid;
 using osc::sim::OccupancyRect;
@@ -181,12 +182,12 @@ TEST_CASE("Claims on the ground come and go; an overlapping one keeps its cells,
     GroundOccupant b;
     b.caps = oc::kLand;
     b.rects.push_back({42, 12, 46, 16}); // overlaps a's corner
-    sim.occupy_ground(101, a);
-    sim.occupy_ground(102, b);
+    sim.occupy_ground(EntityId::of(101, 1), a);
+    sim.occupy_ground(EntityId::of(102, 1), b);
     CHECK(sim.occupancy().ground_at(41, 11));
     CHECK(sim.occupancy().ground_at(43, 13));
     CHECK(sim.footprint_fits_at(kVehicle2x2, 43.0f, 13.0f) == 0);
-    sim.release_ground(101);
+    sim.release_ground(EntityId::of(101, 1));
     CHECK_FALSE(sim.occupancy().ground_at(41, 11));
     CHECK(sim.occupancy().ground_at(43, 13)); // b still stands there
     CHECK(sim.occupancy().ground_at(45, 15));
@@ -204,7 +205,7 @@ TEST_CASE("Claims on the ground come and go; an overlapping one keeps its cells,
     GroundOccupant boot; // a claim the boot made, which the save replaces
     boot.caps = oc::kLand;
     boot.rects.push_back({0, 0, 4, 4});
-    restored.occupy_ground(7, boot);
+    restored.occupy_ground(EntityId::of(7, 1), boot);
     const std::string err = osc::sim::load_snapshot(restored, save.snapshot);
     INFO(err);
     REQUIRE(err.empty());

@@ -151,15 +151,15 @@ public:
     int lua_table_ref = -2;     // LUA_NOREF = Lua ref to weapon Lua table
     bool script_class = false;  // the Lua object is an instance of a weapon class
     i32 weapon_index = 0;       // 0-based index within unit
-    u32 owner_entity_id = 0;    // back-pointer to owning unit
+    EntityId owner_entity_id{}; // back-pointer to owning unit
 
     // Runtime state
-    u32 target_entity_id = 0;   // 0 = no target
+    EntityId target_entity_id{}; // 0 = no target
     /// Which of its target unit's target points it aims at (Moho's
     /// CAiTarget::targetPoint; -1: the unit's centre), and the target it
     /// was picked for: see current_aim_spot and pick_aim_spot.
     i32 aim_spot = -1;
-    u32 aim_spot_target = 0;
+    EntityId aim_spot_target{};
     /// A point on the ground it is aimed at instead of a unit (SetTargetGround,
     /// a launch order). Only valid while target_entity_id is 0.
     bool has_ground_target = false;
@@ -186,7 +186,7 @@ public:
     /// moves first.
     i32 retarget_misses = 0;
     i32 retarget_cooldown = 0;
-    std::vector<std::pair<u32, i32>> blacklist;
+    std::vector<std::pair<EntityId, i32>> blacklist;
     /// Moho's target of the ReTargetOnMiss probe: an entity target with no
     /// entity. It has nothing to aim or fire at, but its script wasn't told
     /// it lost its target (see report_target_change).
@@ -207,7 +207,7 @@ public:
     /// its first result's truth (true when there is no such method).
     bool call_script(lua_State* L, const char* method, const char* arg = nullptr) const;
 
-    bool has_target() const { return target_entity_id != 0 || has_ground_target; }
+    bool has_target() const { return target_entity_id || has_ground_target; }
     /// The target point it aims at on its target now: -1 (the centre) for
     /// a target it hasn't picked one on yet.
     i32 current_aim_spot() const { return aim_spot_target == target_entity_id ? aim_spot : -1; }
@@ -220,19 +220,19 @@ public:
     /// Aim at a point on the ground (dropping any unit target). A new
     /// target starts its shot count again, as Moho's SetTarget does.
     void set_target_ground(const Vector3& at) {
-        if (target_entity_id != 0 || !has_ground_target || ground_target.x != at.x ||
+        if (target_entity_id || !has_ground_target || ground_target.x != at.x ||
             ground_target.y != at.y || ground_target.z != at.z) {
             shots_at_target = 0;
             retarget_misses = 0;
         }
-        target_entity_id = 0;
+        target_entity_id = EntityId();
         has_ground_target = true;
         ground_target = at;
         ground_from_order = false;
         target_held = false;
     }
     /// Aim at a unit (0: at nothing), dropping any ground target.
-    void set_target_entity(u32 id) {
+    void set_target_entity(EntityId id) {
         if (id != target_entity_id || has_ground_target) {
             shots_at_target = 0;
             retarget_misses = 0;
@@ -256,7 +256,7 @@ public:
     /// given-up target counts one change, and goes once its count is out or
     /// once it is gone or has moved.
     void age_blacklist(const EntityRegistry& registry);
-    bool blacklisted(u32 id) const;
+    bool blacklisted(EntityId id) const;
     /// Moho's UnitWeapon::CanAttackTarget for a ground target: not
     /// CannotAttackGround, and the weapon hits the layer there (Land where
     /// the terrain is above the water, Water where it is under; neither
@@ -272,7 +272,7 @@ public:
     /// A CannotAttackGround weapon aimed at the ground (its script's
     /// SetTargetGround) holds its fire, as Moho's fire task does.
     bool ground_fire_barred() const {
-        return cannot_attack_ground && has_ground_target && target_entity_id == 0;
+        return cannot_attack_ground && has_ground_target && !target_entity_id;
     }
     /// One of the weapons an attack order is carried out with: not a death,
     /// dummy or launch-order (ManualFire) weapon.
@@ -352,7 +352,7 @@ public:
 
     /// What it was aiming at: the script hears when that changes.
     struct TargetMark {
-        u32 entity = 0;
+        EntityId entity{};
         bool ground = false;
         Vector3 point;
         bool held = false;

@@ -31,7 +31,7 @@ struct IssueWorld {
     osc::blueprints::BlueprintStore store{ui.raw()};
     osc::ui::UIControlRegistry registry;
     osc::renderer::InputHandler input;
-    osc::u32 id = 0;
+    osc::sim::EntityId id{};
 
     IssueWorld() {
         auto unit = std::make_unique<osc::sim::Unit>();
@@ -66,13 +66,13 @@ struct IssueWorld {
 
     /// A unit of army 1 of `bp` and `category`, called `name` in what the
     /// UI is told (told()).
-    osc::u32 add_unit(const char* bp, const char* category, const char* name) {
+    osc::sim::EntityId add_unit(const char* bp, const char* category, const char* name) {
         auto unit = std::make_unique<osc::sim::Unit>();
         unit->set_army(0);
         unit->set_blueprint_id(bp);
         unit->add_category("SELECTABLE");
         unit->add_category(category);
-        const osc::u32 added = sim.entity_registry().register_entity(std::move(unit));
+        const osc::sim::EntityId added = sim.entity_registry().register_entity(std::move(unit));
         lua_State* L = ui.raw();
         lua_getglobal(L, "names");
         if (!lua_istable(L, -1)) {
@@ -118,7 +118,7 @@ struct IssueWorld {
         for (std::size_t i = scheduled_; i < pending.size(); ++i) {
             const auto& c = pending[i];
             text += c.command.blueprint_id + ':';
-            for (const osc::u32 unit : c.unit_ids) {
+            for (const osc::sim::EntityId unit : c.unit_ids) {
                 text += names[unit];
             }
             text += c.clear_existing ? "! " : " ";
@@ -133,7 +133,7 @@ struct IssueWorld {
         return r.ok() ? std::string() : r.error().message;
     }
 
-    std::map<osc::u32, std::string> names;
+    std::map<osc::sim::EntityId, std::string> names;
     std::size_t scheduled_ = 0;
 
     bool check(const std::string& code) {
@@ -192,8 +192,8 @@ TEST_CASE("A command-mode Script order hands OnCommandIssued VerifyScriptCommand
     osc::renderer::CommandMode mode;
     mode.mode = "order";
     mode.name = "RULEUCC_Script";
-    mode.verify_script = [&](const std::vector<osc::u32>&, osc::u32, const osc::sim::Vector3&,
-                             bool) {
+    mode.verify_script = [&](const std::vector<osc::sim::EntityId>&, osc::sim::EntityId,
+                             const osc::sim::Vector3&, bool) {
         return std::optional(osc::renderer::VerifiedScript{{w.id}, *args});
     };
     const auto issued = w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, true);
@@ -211,11 +211,11 @@ TEST_CASE("IssueBlueprintCommand's factory build goes count times to each select
           "order told",
           "[ui][command_issued]") {
     IssueWorld w;
-    const osc::u32 f1 = w.add_unit("ueb0101", "FACTORY", "F1");
-    const osc::u32 f2 = w.add_unit("ueb0101", "FACTORY", "F2");
-    const osc::u32 e = w.add_unit("uel0105", "ENGINEER", "E");
+    const osc::sim::EntityId f1 = w.add_unit("ueb0101", "FACTORY", "F1");
+    const osc::sim::EntityId f2 = w.add_unit("ueb0101", "FACTORY", "F2");
+    const osc::sim::EntityId e = w.add_unit("uel0105", "ENGINEER", "E");
     struct Case {
-        std::unordered_set<osc::u32> selection;
+        std::unordered_set<osc::sim::EntityId> selection;
         const char* args;
         const char* told;
         const char* scheduled;
@@ -257,8 +257,8 @@ TEST_CASE("IssueBlueprintCommand's factory build goes count times to each select
 TEST_CASE("IssueBlueprintCommand gives other orders count times to the whole selection, as Moho's",
           "[ui][command_issued]") {
     IssueWorld w;
-    const osc::u32 f1 = w.add_unit("ueb0101", "FACTORY", "F1");
-    const osc::u32 e = w.add_unit("uel0105", "ENGINEER", "E");
+    const osc::sim::EntityId f1 = w.add_unit("ueb0101", "FACTORY", "F1");
+    const osc::sim::EntityId e = w.add_unit("uel0105", "ENGINEER", "E");
     w.input.set_selected({f1, e});
     REQUIRE(w.check("IssueBlueprintCommand('UNITCOMMAND_Upgrade', 'ueb0201', 2, false)"));
     CHECK(w.told() == "Upgrade:ueb0201:F1E Upgrade:ueb0201:F1E ");
@@ -272,7 +272,7 @@ TEST_CASE("IssueBlueprintCommand gives other orders count times to the whole sel
 TEST_CASE("The UI's issue functions take and refuse their arguments in Moho's words",
           "[ui][command_issued]") {
     IssueWorld w;
-    const osc::u32 f1 = w.add_unit("ueb0101", "FACTORY", "F1");
+    const osc::sim::EntityId f1 = w.add_unit("ueb0101", "FACTORY", "F1");
     w.input.set_selected({f1});
     osc::lua::push_units_for_ui(w.ui.raw(), {f1});
     lua_setglobal(w.ui.raw(), "units");

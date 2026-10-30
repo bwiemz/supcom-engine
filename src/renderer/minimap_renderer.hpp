@@ -100,8 +100,8 @@ public:
 
     /// Build the C++ HUD's corner minimap and upload it for render().
     void update(const sim::FrameView& view, const Camera& camera, TextureCache& tex_cache,
-                const std::unordered_set<u32>* selected_ids, u32 viewport_w, u32 viewport_h,
-                lua_State* L);
+                const std::unordered_set<sim::EntityId>* selected_ids, u32 viewport_w,
+                u32 viewport_h, lua_State* L);
 
     /// Draw the minimap into the view rect (x, y, w, h): its quads are
     /// appended to `out`, for the UI renderer to draw at the view's depth.
@@ -110,7 +110,8 @@ public:
     /// terrain texture.
     void paint(const sim::FrameView& view, const Camera& camera, TextureCache& tex_cache, f32 x,
                f32 y, f32 w, f32 h, u32 viewport_w, u32 viewport_h,
-               const std::unordered_set<u32>* selected_ids, lua_State* L, std::vector<UIQuad>& out,
+               const std::unordered_set<sim::EntityId>* selected_ids, lua_State* L,
+               std::vector<UIQuad>& out,
                const std::optional<PlayableRect>& resources = std::nullopt,
                VkDescriptorSet cartographic = VK_NULL_HANDLE);
 
@@ -148,7 +149,7 @@ private:
     /// Build the map's quads into quads_ for the map drawn at area_.
     void build(const sim::FrameView& view, const Camera& camera, TextureCache& tex_cache,
                u32 viewport_w, u32 viewport_h, bool framed,
-               const std::unordered_set<u32>* selected_ids, lua_State* L,
+               const std::unordered_set<sim::EntityId>* selected_ids, lua_State* L,
                const std::optional<PlayableRect>& resources = std::nullopt,
                VkDescriptorSet cartographic = VK_NULL_HANDLE);
 

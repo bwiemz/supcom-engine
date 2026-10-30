@@ -156,7 +156,7 @@ bool shooter_room(Projectile& proj, const EntityRegistry& registry) {
     auto& shooters = proj.shooters;
     shooters.erase(
         std::remove_if(shooters.begin(), shooters.end(),
-                       [&](const std::pair<u32, i32>& s) {
+                       [&](const std::pair<EntityId, i32>& s) {
                            const Entity* e = registry.find(s.first);
                            if (!e || e->destroyed() || !e->is_unit()) return true;
                            const auto& weapons = static_cast<const Unit*>(e)->weapons();
@@ -172,11 +172,11 @@ bool shooter_room(Projectile& proj, const EntityRegistry& registry) {
 /// order. One that shoots units takes the grid of units alone, which a
 /// map's props and the projectiles in flight aren't in; one that shoots
 /// projectiles takes every entity (can_pick keeps the projectiles).
-std::vector<u32> target_candidates(const EntityRegistry& registry, bool projectiles, f32 x, f32 z,
-                                   f32 reach) {
+std::vector<EntityId> target_candidates(const EntityRegistry& registry, bool projectiles, f32 x,
+                                        f32 z, f32 reach) {
     if (projectiles) return registry.collect_in_radius(x, z, reach);
     const std::vector<Entity*> units = registry.units_in_radius(x, z, reach);
-    std::vector<u32> ids;
+    std::vector<EntityId> ids;
     ids.reserve(units.size());
     for (const Entity* unit : units) ids.push_back(unit->entity_id());
     return ids;
@@ -193,12 +193,14 @@ const Weapon* primary_weapon(const Unit& owner) {
 
 /// The unit an attack order at the head of the queue has handed its attacker (Moho's desired
 /// target), or 0.
-u32 attack_order_target(const Unit& owner) {
+EntityId attack_order_target(const Unit& owner) {
     const auto& queue = owner.command_queue();
-    if (queue.empty() || queue.front().type != CommandType::Attack) return 0;
+    if (queue.empty() || queue.front().type != CommandType::Attack) {
+        return {};
+    }
     const UnitCommand& order = queue.front();
     if (!order.engaged) {
-        return 0;
+        return {};
     }
     return order.target_id;
 }
@@ -250,7 +252,7 @@ bool impact_missed(const Weapon::TargetMark& target, const Entity* hit, const ch
     // CAiTarget::ImpactDidHitEntity. An entity target with no entity (`held`) is struck by
     // anything not attached to something.
     bool struck = true;
-    if (target.entity != 0 || target.held) {
+    if (target.entity || target.held) {
         struck =
             hit && (hit->entity_id() == target.entity || hit->parent_entity_id() == target.entity);
     } else if (target.ground) {
@@ -269,7 +271,7 @@ u32 Weapon::fire_period() const {
 }
 
 std::optional<Vector3> Weapon::target_point(const EntityRegistry& registry) const {
-    if (target_entity_id != 0) {
+    if (target_entity_id) {
         const Entity* target = registry.find(target_entity_id);
         if (!target || target->destroyed()) return std::nullopt;
         return target->position();
@@ -323,7 +325,7 @@ bool Weapon::bomb_ready(const Unit& owner, const Vector3& at,
     // At a unit, its target point; where a moving one will be, for a bomber
     // that predicts ahead (Moho's CanFire).
     Vector3 aim = at;
-    const Entity* target = target_entity_id != 0 ? registry.find(target_entity_id) : nullptr;
+    const Entity* target = target_entity_id ? registry.find(target_entity_id) : nullptr;
     if (target && target->is_unit()) {
         const auto& unit = static_cast<const Unit&>(*target);
         if (air.predict_ahead_for_bomb_drop > 0.0f && unit.is_mobile()) {
@@ -382,7 +384,7 @@ void Weapon::fire_step(Unit& owner, EntityRegistry& registry, lua_State* L, cons
         owner.fire_state() == 1) {
         return;
     }
-    if (target_entity_id != 0) {
+    if (target_entity_id) {
         const Entity* target = registry.find(target_entity_id);
         if (!target || !can_attack(*target, sim)) {
             return;
@@ -473,15 +475,15 @@ void Weapon::fire_direct(Unit& owner, EntityRegistry& registry, lua_State* L, co
 void Weapon::take_order_target(const Unit& owner, const EntityRegistry& registry) {
     const UnitCommand* order = owner.launch_order_for(*this);
     if (!order) {
-        set_target_entity(0);
+        set_target_entity(EntityId());
         return;
     }
-    if (order->target_id == 0) {
+    if (!order->target_id) {
         set_target_ground(order->target_pos);
     } else {
         // A unit it was sent at that is gone: nothing (the order ends).
         const Entity* target = registry.find(order->target_id);
-        set_target_entity(target && !target->destroyed() ? order->target_id : 0);
+        set_target_entity(target && !target->destroyed() ? order->target_id : EntityId());
     }
     if (const std::optional<Vector3> at = target_point(registry)) last_order_point = at;
 }
@@ -489,7 +491,7 @@ void Weapon::take_order_target(const Unit& owner, const EntityRegistry& registry
 void Weapon::pick_aim_spot(EntityRegistry& registry, const SimState* sim) {
     aim_spot_target = target_entity_id;
     aim_spot = -1;
-    const Entity* target = target_entity_id != 0 ? registry.find(target_entity_id) : nullptr;
+    const Entity* target = target_entity_id ? registry.find(target_entity_id) : nullptr;
     if (!target || !target->is_unit()) return;
     const auto& unit = static_cast<const Unit&>(*target);
     if (above_water_targets_only || below_water_targets_only) {
@@ -502,7 +504,7 @@ void Weapon::pick_aim_spot(EntityRegistry& registry, const SimState* sim) {
 
 void Weapon::drop_target(lua_State* L) {
     const bool had = has_target();
-    set_target_entity(0);
+    set_target_entity(EntityId());
     if (had && fires_through_script()) call_script(L, "OnLostTarget");
 }
 
@@ -516,8 +518,8 @@ void Weapon::note_impact(Unit& owner, bool missed, EntityRegistry& registry, con
     // Moho's HandleRetargetProbeOnListenerTick asks of the attacker's desired target first, for
     // its first weapon
     if (weapon_index == 0) {
-        const u32 ordered = attack_order_target(owner);
-        const Entity* desired = ordered != 0 ? registry.find(ordered) : nullptr;
+        const EntityId ordered = attack_order_target(owner);
+        const Entity* desired = ordered ? registry.find(ordered) : nullptr;
         if (desired && !desired->destroyed() && owner.is_mobile() && stood_still(owner) &&
             off_air(*desired) && stood_still(*desired)) {
             if (++retarget_misses > kRetargetCooldownMisses) {
@@ -528,7 +530,7 @@ void Weapon::note_impact(Unit& owner, bool missed, EntityRegistry& registry, con
             return;
         }
     }
-    const Entity* target = target_entity_id != 0 ? registry.find(target_entity_id) : nullptr;
+    const Entity* target = target_entity_id ? registry.find(target_entity_id) : nullptr;
     if (!target || target->destroyed() || !stood_still(owner) || !off_air(*target) ||
         !stood_still(*target)) {
         return;
@@ -546,7 +548,7 @@ void Weapon::note_impact(Unit& owner, bool missed, EntityRegistry& registry, con
     } else {
         blacklist.emplace_back(target_entity_id, kRetargetBlacklistChanges);
     }
-    set_target_entity(0);
+    set_target_entity(EntityId());
     target_held = true;
     age_blacklist(registry);
 }
@@ -563,7 +565,7 @@ void Weapon::age_blacklist(const EntityRegistry& registry) {
     }
 }
 
-bool Weapon::blacklisted(u32 id) const {
+bool Weapon::blacklisted(EntityId id) const {
     return std::any_of(blacklist.begin(), blacklist.end(),
                        [id](const auto& e) { return e.first == id; });
 }
@@ -576,7 +578,7 @@ bool Weapon::report_target_change(const Unit& owner, lua_State* L, const TargetM
         return true;
     }
     // A held target (ReTargetOnMiss gave its target up) was never reported lost.
-    if (previous.entity != 0 || previous.ground || previous.held) {
+    if (previous.entity || previous.ground || previous.held) {
         // Moho's OnHaltFire: a manual weapon whose order went must not fire on.
         if (manual_fire) {
             call_script(L, "OnHaltFire");
@@ -682,7 +684,7 @@ bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState*
 
 bool Weapon::can_attack_target_of(const Unit& owner, const Weapon& holder,
                                   const EntityRegistry& registry, const SimState* sim) const {
-    if (holder.target_entity_id != 0) {
+    if (holder.target_entity_id) {
         const Entity* target = registry.find(holder.target_entity_id);
         return target && can_pick(owner, *target, sim);
     }
@@ -708,7 +710,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         primary && primary != this && primary->has_target()) {
         if (stop_on_primary_weapon_busy &&
             primary->can_attack_target_of(owner, *primary, registry, sim)) {
-            set_target_entity(0);
+            set_target_entity(EntityId());
             return;
         }
         if (prefers_primary_weapon_target && can_attack_target_of(owner, *primary, registry, sim)) {
@@ -716,7 +718,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
             if (at && in_firing_range(owner, *at) && in_heading_arc(owner, *at) &&
                 (max_height_diff <= 0 ||
                  std::fabs(at->y - owner.position().y) <= max_height_diff)) {
-                if (primary->target_entity_id != 0) {
+                if (primary->target_entity_id) {
                     set_target_entity(primary->target_entity_id);
                 } else {
                     set_target_ground(primary->ground_target);
@@ -736,7 +738,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     // ground there takes the point within its own range, or at any range on
     // an aircraft (CAcquireTargetTask), and keeps it while the order lasts.
     const UnitCommand* order = queue.empty() ? nullptr : &queue.front();
-    if (!passing_over && order && order->type == CommandType::Attack && order->target_id == 0 &&
+    if (!passing_over && order && order->type == CommandType::Attack && !order->target_id &&
         order->engaged && attacks_on_order() &&
         can_attack_ground(order->target_pos, sim ? sim->terrain() : nullptr) &&
         (flier || in_firing_range(owner, order->target_pos))) {
@@ -746,24 +748,27 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     }
     // The order gone, or the point out of this weapon's reach: it looks for
     // targets again.
-    if (ground_from_order) set_target_entity(0);
+    if (ground_from_order) {
+        set_target_entity(EntityId());
+    }
     // An aircraft's weapons take its ordered target once the attack engages,
     // then at any range: Moho's CAcquireTargetTask gives a flier the
     // attacker's desired target out of reach too, so it is kept through the
     // runs' loops.
-    const u32 ordered = attack_order_target(owner);
+    const EntityId ordered = attack_order_target(owner);
     // Remove vanished targets before following an order or reading their priority.
     // Range and recon are checked on TargetCheckInterval, like acquisition.
-    if (target_entity_id != 0) {
+    if (target_entity_id) {
         const Entity* target = registry.find(target_entity_id);
         if (!target || target->destroyed() ||
-            (target_entity_id == ordered && !can_target(owner, *target, sim, !flier)))
-            target_entity_id = 0;
+            (target_entity_id == ordered && !can_target(owner, *target, sim, !flier))) {
+            target_entity_id = EntityId();
+        }
     }
 
     // An attack order's target comes first, for every weapon that can hit
     // it, whatever the priorities say.
-    if (ordered != 0 && !passing_over) {
+    if (ordered && !passing_over) {
         if (ordered == target_entity_id) return;
         const Entity* target = registry.find(ordered);
         if (target && can_target(owner, *target, sim, !flier)) {
@@ -785,12 +790,12 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     }
     target_check_clock = target_check_period > 0 ? target_check_period - 1 : 0;
     int current_priority = -1;
-    if (target_entity_id != 0) {
+    if (target_entity_id) {
         const Entity& target = *registry.find(target_entity_id);
         if (!can_target(owner, target, sim) ||
-            (always_recheck_target && !known_to_army(owner, target, sim)))
-            target_entity_id = 0;
-        else {
+            (always_recheck_target && !known_to_army(owner, target, sim))) {
+            target_entity_id = EntityId();
+        } else {
             if (!always_recheck_target) return;
             current_priority = priority_of(target);
         }
@@ -798,14 +803,14 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
 
     // Best: the earliest priority, then the nearest, then the lowest id
     // (candidates come in id order, so ties keep the first).
-    u32 best_id = 0;
+    EntityId best_id{};
     int best_priority = 0;
     bool best_in_arc = false;
     f32 best_dist2 = 0;
     const f32 reach = max_range * std::max(1.0f, tracking_radius);
     static const CategoryName kBenign{"BENIGN"};
-    for (const u32 id : target_candidates(registry, targets_projectiles, owner.position().x,
-                                          owner.position().z, reach)) {
+    for (const EntityId id : target_candidates(registry, targets_projectiles, owner.position().x,
+                                               owner.position().z, reach)) {
         Entity* e = registry.find(id);
         if (!e || !can_target(owner, *e, sim)) continue;
         if (e->is_unit() && static_cast<const Unit&>(*e).has_category(kBenign)) {
@@ -825,7 +830,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         // slaved weapon's; Moho's FindBestEnemy penalises NoSolution).
         const bool in_arc = in_heading_arc(owner, e->position());
         const bool better_arc = in_arc && !best_in_arc;
-        if (best_id == 0 || priority < best_priority ||
+        if (!best_id || priority < best_priority ||
             (priority == best_priority &&
              (better_arc || (in_arc == best_in_arc && dist2 < best_dist2)))) {
             best_id = id;
@@ -835,8 +840,10 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         }
     }
     // A recheck changes target only for a better priority.
-    if (current_priority >= 0 && (best_id == 0 || best_priority >= current_priority)) return;
-    if (best_id == 0) {
+    if (current_priority >= 0 && (!best_id || best_priority >= current_priority)) {
+        return;
+    }
+    if (!best_id) {
         // Moho's acquire task, finding no enemy, clears the target ReTargetOnMiss gave up
         target_held = false;
         return;
@@ -952,7 +959,7 @@ void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
         if (aim && !aim->is_destroyed() && aim->weapon_index() == weapon_index) aims.push_back(aim);
     }
     if (aims.empty()) return;
-    const Entity* target = target_entity_id != 0 ? registry.find(target_entity_id) : nullptr;
+    const Entity* target = target_entity_id ? registry.find(target_entity_id) : nullptr;
     const bool aiming = target || has_ground_target;
     constexpr f32 kDegToRad = 3.14159265358979f / 180.0f;
     const bool scripted = script_class && L;
@@ -992,13 +999,13 @@ void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
 
 bool Weapon::try_fire(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim) {
     // At a unit, or at its ground target.
-    auto* target = target_entity_id != 0 ? registry.find(target_entity_id) : nullptr;
-    if (target_entity_id != 0 &&
+    auto* target = target_entity_id ? registry.find(target_entity_id) : nullptr;
+    if (target_entity_id &&
         (!target || target->destroyed() || target->do_not_target() ||
          !is_weapon_targetable(owner, *target, sim) ||
          (fire_target_layer_caps != 0xFF && target->is_unit() &&
           !(layer_to_bit(static_cast<Unit*>(target)->layer()) & fire_target_layer_caps)))) {
-        target_entity_id = 0;
+        target_entity_id = EntityId();
         return false;
     }
     if (!target && !has_ground_target) return false;
@@ -1201,9 +1208,9 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     proj->set_position(spawn_pos);
     proj->set_army(owner.army());
     proj->velocity = vel;
-    proj->target_entity_id = (need_compute_bomb_drop || !target) ? 0 : target->entity_id();
+    proj->target_entity_id = (need_compute_bomb_drop || !target) ? EntityId() : target->entity_id();
     // It homes on the point its weapon aimed at (Moho copies the target in).
-    proj->target_point = proj->target_entity_id != 0 ? current_aim_spot() : -1;
+    proj->target_point = proj->target_entity_id ? current_aim_spot() : -1;
     proj->target_position = aim;
     // Sent somewhere: at a target, a ground target or a manual order's
     // point. Fired along its facing with none, it has no target (Moho's
@@ -1213,7 +1220,7 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     proj->launcher_id = owner.entity_id();
     // ReTargetOnMiss: its weapon hears where it lands, if the weapon has a target unit (Moho's
     // UnitWeapon::CreateProjectile, TransmitProjectileImpactEvent)
-    if (retarget_on_miss && !manual_fire && target_entity_id != 0) {
+    if (retarget_on_miss && !manual_fire && target_entity_id) {
         proj->impact_listener_weapon = weapon_index;
         proj->impact_listener_target = target_entity_id;
     }
@@ -1274,7 +1281,7 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
         proj->ballistic_accel = -kGravity;
     }
     proj->in_water = in_water;
-    u32 proj_id = registry.register_entity(std::move(proj));
+    EntityId proj_id = registry.register_entity(std::move(proj));
     auto* proj_ptr = static_cast<Projectile*>(registry.find(proj_id));
     // The launch order it fired for is done.
     if (manual_fire) {

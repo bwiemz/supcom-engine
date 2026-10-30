@@ -16,7 +16,8 @@ TEST_CASE("SimCallbackQueue push and drain", "[phase1][simcallback]") {
     entry.args["key1"] = std::string("value1");
     entry.args["key2"] = osc::f64(42.0);
     entry.args["key3"] = true;
-    entry.unit_ids = {1, 2, 3};
+    entry.unit_ids = {osc::sim::EntityId::of(1, 1), osc::sim::EntityId::of(2, 1),
+                      osc::sim::EntityId::of(3, 1)};
 
     queue.push(entry);
     REQUIRE_FALSE(queue.empty());
@@ -29,7 +30,7 @@ TEST_CASE("SimCallbackQueue push and drain", "[phase1][simcallback]") {
     REQUIRE(std::get<osc::f64>(drained[0].args.at("key2")) == 42.0);
     REQUIRE(std::get<bool>(drained[0].args.at("key3")) == true);
     REQUIRE(drained[0].unit_ids.size() == 3);
-    REQUIRE(drained[0].unit_ids[0] == 1);
+    REQUIRE(drained[0].unit_ids[0] == osc::sim::EntityId::of(1, 1));
 }
 
 TEST_CASE("SimCallbackQueue drain clears queue", "[phase1][simcallback]") {

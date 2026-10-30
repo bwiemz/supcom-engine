@@ -13,7 +13,7 @@ using namespace osc::sim;
 
 TEST_CASE("Unit: begin_dying makes the unit dead", "[death]") {
     Unit u;
-    u.set_entity_id(1);
+    u.set_entity_id(EntityId::of(0, 1));
     u.set_fraction_complete(1.0f);
     CHECK_FALSE(u.is_dying());
 

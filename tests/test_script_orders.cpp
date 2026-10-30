@@ -25,6 +25,7 @@ extern "C" {
 }
 
 using osc::sim::CommandType;
+using osc::sim::EntityId;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
@@ -117,11 +118,11 @@ struct TaskSim {
     TaskSim(const TaskSim&) = delete;
     TaskSim& operator=(const TaskSim&) = delete;
 
-    osc::u32 spawn() {
+    EntityId spawn() {
         auto u = std::make_unique<Unit>();
         u->set_army(0);
         Unit* raw = u.get();
-        const osc::u32 id = sim.entity_registry().register_entity(std::move(u));
+        const EntityId id = sim.entity_registry().register_entity(std::move(u));
         lua_newtable(L); // its script object, as the sim gives every unit
         lua_pushstring(L, "_c_object");
         lua_pushlightuserdata(L, raw);
@@ -132,7 +133,7 @@ struct TaskSim {
         raw->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
         return id;
     }
-    Unit& unit(osc::u32 id) { return *static_cast<Unit*>(sim.entity_registry().find(id)); }
+    Unit& unit(EntityId id) { return *static_cast<Unit*>(sim.entity_registry().find(id)); }
 
     /// A Script order of `table` (Lua source of its table).
     UnitCommand script(const std::string& table) {
@@ -180,7 +181,7 @@ struct CountingLuaFailures {
 TEST_CASE("A Script order runs its task: TaskTick's statuses in ticks, then OnDestroy",
           "[script_orders]") {
     TaskSim w;
-    const osc::u32 id = w.spawn();
+    const EntityId id = w.spawn();
     // Wait, then wait 2 ticks (3), then repeat (0) in the same tick, wait,
     // done: ticks 1, 2, 4, 4, 5
     w.unit(id).push_command(w.script("{ TaskName = 'Seq', Payload = 'p', "
@@ -198,7 +199,7 @@ TEST_CASE("A Script order runs its task: TaskTick's statuses in ticks, then OnDe
 TEST_CASE("A Script task ends with its order: cleared, replaced, suspended, aborted",
           "[script_orders]") {
     TaskSim w;
-    const osc::u32 id = w.spawn();
+    const EntityId id = w.spawn();
     Unit& u = w.unit(id);
     // Cleared while it waits: its OnDestroy runs the next tick
     u.push_command(w.script("{ TaskName = 'Seq', Statuses = { 1, 1, 1 } }"), false);
@@ -231,8 +232,8 @@ TEST_CASE("A Script task ends with its order: cleared, replaced, suspended, abor
 
 TEST_CASE("A Script task's unit dying or destroyed ends it", "[script_orders]") {
     TaskSim w;
-    const osc::u32 dying = w.spawn();
-    const osc::u32 gone = w.spawn();
+    const EntityId dying = w.spawn();
+    const EntityId gone = w.spawn();
     w.unit(dying).push_command(w.script("{ TaskName = 'Seq', Statuses = { 1, 1, 1 } }"), false);
     w.unit(gone).push_command(w.script("{ TaskName = 'Seq', Statuses = { 1, 1, 1 } }"), false);
     w.sim.tick();
@@ -250,7 +251,7 @@ TEST_CASE("A Script task: the fallback class, errors, endless repeats, no status
           "[script_orders]") {
     TaskSim w;
     CountingLuaFailures counting;
-    const osc::u32 id = w.spawn();
+    const EntityId id = w.spawn();
     Unit& u = w.unit(id);
 
     // No such task: retail's ScriptTask, which fails its order
@@ -290,7 +291,7 @@ TEST_CASE("A Script task: the fallback class, errors, endless repeats, no status
 
 TEST_CASE("A Script task reaches its unit, and gives the order's AI result", "[script_orders]") {
     TaskSim w;
-    const osc::u32 id = w.spawn();
+    const EntityId id = w.spawn();
     w.unit(id).push_command(w.script("{ TaskName = 'Unit' }"), false);
     w.sim.tick();
     CHECK(w.log() == "true");
@@ -334,7 +335,7 @@ TEST_CASE("The construction panel's IssueCommand gives a Script order", "[script
     // Retail's construction panel: IssueCommand("UNITCOMMAND_Script",
     // {TaskName = 'EnhanceTask', Enhancement = ...}, true) for the selection.
     TaskSim w;
-    const osc::u32 id = w.spawn();
+    const EntityId id = w.spawn();
     osc::sim::set_sim(w.L, &w.sim);
     const std::string table = "return { TaskName = 'Seq', Payload = 'panel', Statuses = { -1 } }";
     REQUIRE(luaL_loadbuffer(w.L, table.c_str(), table.size(), "t") == 0);
@@ -351,7 +352,7 @@ TEST_CASE("A version 10 replay's commands load without a Script table", "[script
     osc::sim::ScheduledCommand c;
     c.exec_beat = 3;
     c.command.type = CommandType::Move;
-    c.unit_ids = {7};
+    c.unit_ids = {EntityId(7)};
     r.commands.push_back(c);
     std::vector<osc::u8> bytes = r.serialize();
     // The command again, and with a table: where they differ is the table's
@@ -371,16 +372,32 @@ TEST_CASE("A version 10 replay's commands load without a Script table", "[script
     const auto form = std::mismatch(marked.begin(), marked.end(), paced.begin());
     const size_t form_move_at =
         bytes.size() - plain.size() + static_cast<size_t>(form.first - marked.begin());
-    bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(at),
-                bytes.begin() + static_cast<std::ptrdiff_t>(at) + 4);
-    bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(form_move_at));
+    // Before version 18 an id took four bytes: a key under 2^32 is those and four zeros
+    c.command.target_id = EntityId(1);
+    c.unit_ids = {EntityId(8)};
+    std::vector<osc::u8> keyed;
+    osc::sim::ByteWriter wk(keyed);
+    osc::sim::write_command(wk, c);
+    const auto target = std::mismatch(paced.begin(), paced.end(), keyed.begin());
+    const size_t target_at =
+        bytes.size() - plain.size() + static_cast<size_t>(target.first - paced.begin());
+    const auto unit = std::mismatch(paced.rbegin(), paced.rend(), keyed.rbegin());
+    const size_t unit_at = bytes.size() - 1 - static_cast<size_t>(unit.first - paced.rbegin());
+    const auto erase = [&](size_t from, size_t n) {
+        bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(from),
+                    bytes.begin() + static_cast<std::ptrdiff_t>(from + n));
+    };
+    erase(unit_at + 4, 4);
+    erase(at, 4);
+    erase(form_move_at, 1);
+    erase(target_at + 4, 4);
     const osc::u32 v10 = 10;
     std::memcpy(bytes.data() + 4, &v10, 4); // after "OSCR"
     osc::sim::Replay back;
     REQUIRE(osc::sim::Replay::deserialize(bytes, back));
     REQUIRE(back.commands.size() == 1);
     CHECK(back.commands[0].command.type == CommandType::Move);
-    CHECK(back.commands[0].unit_ids == std::vector<osc::u32>{7});
+    CHECK(back.commands[0].unit_ids == std::vector<EntityId>{EntityId::of(6, 1)});
     CHECK(back.commands[0].command.script_args.empty());
 }
 

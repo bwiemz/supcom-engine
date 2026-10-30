@@ -160,7 +160,7 @@ void test_notify_upgrade(TestContext& ctx) {
     }
 
     {
-        const auto id = osc::sim::EntityRegistry::from_moho_id(
+        const auto id = ctx.sim.entity_registry().live_id(
             static_cast<u32>(static_cast<i32>(global_number("__up_t2_id"))));
         auto* e = ctx.sim.entity_registry().find(id);
         int tanks = 0, upgrades = 0;

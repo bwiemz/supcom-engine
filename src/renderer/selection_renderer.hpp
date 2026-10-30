@@ -63,9 +63,9 @@ public:
     /// drag box `drag` (its four corners on the ground). `L` is the UI state,
     /// whose blueprints give the boxes.
     void update(const sim::FrameView& view, const Camera& camera, u32 viewport_h,
-                const std::unordered_set<u32>* selected, u32 hovered, i32 player_army,
-                const std::optional<std::array<sim::Vector3, 4>>& drag, TextureCache& tex_cache,
-                MeshCache& mesh_cache, lua_State* L, u32 fi);
+                const std::unordered_set<sim::EntityId>* selected, sim::EntityId hovered,
+                i32 player_army, const std::optional<std::array<sim::Vector3, 4>>& drag,
+                TextureCache& tex_cache, MeshCache& mesh_cache, lua_State* L, u32 fi);
 
     void render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj, u32 fi) const;
 
@@ -75,7 +75,7 @@ public:
 
     /// A unit's brackets drawn this frame (tests read them)
     struct Bracket {
-        u32 unit = 0;
+        sim::EntityId unit{};
         std::string texture;
         SelectionBox box;
         f32 corner = 0; ///< half a tile's side, world units

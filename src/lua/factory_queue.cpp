@@ -32,14 +32,20 @@ void FactoryQueueDisplay::peek(lua_State* L, sim::Unit* factory) {
 }
 
 void FactoryQueueDisplay::report_change(lua_State* L, sim::SimState& sim) {
-    if (current_factory_id_ == 0 || !L) {
+    if (!current_factory_id_ || !L) {
         return;
     }
-    std::vector<sim::BuildQueueEntry> queue;
-    if (auto* e = sim.entity_registry().find(current_factory_id_);
-        e && e->is_unit() && !e->destroyed()) {
-        queue = static_cast<sim::Unit*>(e)->factory_queue();
+    auto* e = sim.entity_registry().find(current_factory_id_);
+    if (!e || !e->is_unit() || e->destroyed()) {
+        if (shown_.empty()) {
+            return;
+        }
+        shown_.clear();
+        lua_pushnil(L);
+        core::call_ui_callback(L, core::kGameMainModule, "OnQueueChanged", 1);
+        return;
     }
+    std::vector<sim::BuildQueueEntry> queue = static_cast<sim::Unit*>(e)->factory_queue();
     const bool same = queue.size() == shown_.size() &&
                       std::equal(queue.begin(), queue.end(), shown_.begin(),
                                  [](const sim::BuildQueueEntry& a, const sim::BuildQueueEntry& b) {

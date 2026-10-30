@@ -152,7 +152,7 @@ void test_mesh_capacity(TestContext& ctx) {
         shots.redraw();
         const u64 far = drawn_now(r).instances;
         const Spot at{spot->x, spot->z + 70};
-        const u32 tank = spawn_unit(ctx, "__osc_mc_tank", "uel0201", "ARMY_1", at);
+        const sim::EntityId tank = spawn_unit(ctx, "__osc_mc_tank", "uel0201", "ARMY_1", at);
         shots.recapture();
         shots.redraw();
         const u32 born = ctx.sim.tick_count();

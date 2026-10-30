@@ -80,12 +80,12 @@ void test_unit_intel(TestContext& ctx) {
     const Spot radar_at{sx + 20, sz + 40};
     const Spot ally_at{sx - 20, sz + 60};
     const Spot shared_at{sx - 10, sz + 60};
-    const u32 near_id = spawn("__osc_intel_near", "uel0105", "ARMY_2", near_at);
-    const u32 far_id = spawn("__osc_intel_far", "uel0105", "ARMY_2", far_at);
-    const u32 pgen_id = spawn("__osc_intel_pgen", "ueb1101", "ARMY_2", pgen_at);
+    const sim::EntityId near_id = spawn("__osc_intel_near", "uel0105", "ARMY_2", near_at);
+    const sim::EntityId far_id = spawn("__osc_intel_far", "uel0105", "ARMY_2", far_at);
+    const sim::EntityId pgen_id = spawn("__osc_intel_pgen", "ueb1101", "ARMY_2", pgen_at);
     (void)spawn("__osc_intel_radar", "ueb1101", "ARMY_1", radar_at);
-    const u32 ally_id = spawn("__osc_intel_ally", "uel0105", "ARMY_3", ally_at);
-    const u32 shared_id = spawn("__osc_intel_shared", "uel0105", "ARMY_2", shared_at);
+    const sim::EntityId ally_id = spawn("__osc_intel_ally", "uel0105", "ARMY_3", ally_at);
+    const sim::EntityId shared_id = spawn("__osc_intel_shared", "uel0105", "ARMY_2", shared_at);
     lua("SetAlliance('ARMY_1', 'ARMY_3', 'Ally')\n"
         "local s = __osc_intel_radar\n"
         "s:DisableIntel('Vision') s:DisableIntel('Omni')\n"
@@ -141,18 +141,18 @@ void test_unit_intel(TestContext& ctx) {
         seen.capture(ctx.sim);
         return drawn(r);
     };
-    const auto sight = [&](u32 id) {
+    const auto sight = [&](sim::EntityId id) {
         const sim::EntityRecord* e = seen.cur().find(id);
         return e ? r.recon().sight(*e) : renderer::Sight::Hidden;
     };
     const auto project = [&](const sim::Vector3& p) { return screen_of(r, p); };
-    const auto on_screen = [&](u32 id) -> std::optional<std::array<f32, 2>> {
+    const auto on_screen = [&](sim::EntityId id) -> std::optional<std::array<f32, 2>> {
         const sim::EntityRecord* e = seen.cur().find(id);
         if (!e) return std::nullopt;
         return project(e->position);
     };
     // The icon drawn over unit `id` (centred on it), or null.
-    const auto icon_of = [&](const Frame& frame, u32 id) -> const Quad* {
+    const auto icon_of = [&](const Frame& frame, sim::EntityId id) -> const Quad* {
         const auto at = on_screen(id);
         if (!at) return nullptr;
         for (const Quad& q : frame.icons)
@@ -164,7 +164,7 @@ void test_unit_intel(TestContext& ctx) {
     };
     // Whether unit `id` has a lifebar: Moho's black backdrop, wider than
     // high, centred across it and hanging just below it.
-    const auto has_bar = [&](const Frame& frame, u32 id) {
+    const auto has_bar = [&](const Frame& frame, sim::EntityId id) {
         const auto at = on_screen(id);
         if (!at) return false;
         for (const Quad& q : frame.overlay)
@@ -173,7 +173,7 @@ void test_unit_intel(TestContext& ctx) {
                 return true;
         return false;
     };
-    const auto minimap_of = [&](const Frame& frame, u32 id) -> const Quad* {
+    const auto minimap_of = [&](const Frame& frame, sim::EntityId id) -> const Quad* {
         const sim::EntityRecord* e = seen.cur().find(id);
         if (!e) {
             return nullptr;
@@ -411,11 +411,12 @@ void test_effect_intel(TestContext& ctx) {
     const Spot shield_at{sx, sz + 60};
     const Spot own_at{sx - 30, sz};
     const Spot radar_at{sx + 20, sz - 40};
-    const u32 seen_id = spawn_unit(ctx, "__osc_fx_seen", "uel0105", "ARMY_2", seen_at);
-    const u32 fog_id = spawn_unit(ctx, "__osc_fx_fog", "uel0105", "ARMY_2", fog_at);
+    const sim::EntityId seen_id = spawn_unit(ctx, "__osc_fx_seen", "uel0105", "ARMY_2", seen_at);
+    const sim::EntityId fog_id = spawn_unit(ctx, "__osc_fx_fog", "uel0105", "ARMY_2", fog_at);
     (void)spawn_unit(ctx, "__osc_fx_fog2", "uel0105", "ARMY_2", fog2_at);
-    const u32 shield_id = spawn_unit(ctx, "__osc_fx_shield", "ueb4202", "ARMY_2", shield_at);
-    const u32 own_id = spawn_unit(ctx, "__osc_fx_own", "uel0105", "ARMY_1", own_at);
+    const sim::EntityId shield_id =
+        spawn_unit(ctx, "__osc_fx_shield", "ueb4202", "ARMY_2", shield_at);
+    const sim::EntityId own_id = spawn_unit(ctx, "__osc_fx_own", "uel0105", "ARMY_1", own_at);
     (void)spawn_unit(ctx, "__osc_fx_radar", "ueb1101", "ARMY_1", radar_at);
     run_lua(ctx, "local s = __osc_fx_radar\n"
                  "s:DisableIntel('Vision') s:DisableIntel('Omni')\n"
@@ -460,14 +461,14 @@ void test_effect_intel(TestContext& ctx) {
     };
     // The effect id of the emitter the renderer made for unit `id`'s effect
     // of blueprint `bp`, or 0 (none made, or no such effect).
-    const auto emitter_of = [&](u32 id, const std::string& bp) -> u32 {
+    const auto emitter_of = [&](sim::EntityId id, const std::string& bp) -> u32 {
         for (const sim::EffectRecord& fx : seen.cur().effects) {
             if (fx.entity_id != id || fx.blueprint_path != bp) continue;
             if (r.particle_system().draws_effect(fx.id)) return fx.id;
         }
         return 0;
     };
-    const auto has_effect = [&](u32 id, const std::string& bp) {
+    const auto has_effect = [&](sim::EntityId id, const std::string& bp) {
         return std::any_of(seen.cur().effects.begin(), seen.cur().effects.end(),
                            [&](const sim::EffectRecord& fx) {
                                return fx.entity_id == id && fx.blueprint_path == bp;
@@ -484,7 +485,7 @@ void test_effect_intel(TestContext& ctx) {
                   : size_t{0};
     };
     // The overlay's dot for an effect on unit `id` (4 across, where it is).
-    const auto dot_on = [&](const Frame& f, u32 id) {
+    const auto dot_on = [&](const Frame& f, sim::EntityId id) {
         const sim::EntityRecord* e = seen.cur().find(id);
         const auto at = e ? screen_of(r, e->position) : std::nullopt;
         return at && quad_at(f.overlay, (*at)[0], (*at)[1], 4.0f, 4.0f) != nullptr;
@@ -637,28 +638,31 @@ void test_effect_intel(TestContext& ctx) {
     renderer::InputHandler input;
     input.set_player_army(0);
     input.set_recon(&r.recon());
-    const auto click = [&](bool order_mode) -> u32 {
+    const auto click = [&](bool order_mode) -> sim::EntityId {
         input.set_frame_view(sim::FrameView(&seen.prev(), &seen.cur(), 1.0f));
         input.set_selected({own_id});
         if (order_mode) {
             const auto issued = input.click_in_command_mode(
                 ctx.sim, renderer::CommandMode{"order", "RULEUCC_Capture"}, fog_at.x, fog_at.z,
                 false);
-            return issued ? issued->target_id : 0;
+            return issued ? issued->target_id : sim::EntityId();
         }
-        for (const auto& c : input.right_click_at(ctx.sim, fog_at.x, fog_at.z, false))
-            if (c.target_id != 0) return c.target_id;
-        return 0;
+        for (const auto& c : input.right_click_at(ctx.sim, fog_at.x, fog_at.z, false)) {
+            if (c.target_id) {
+                return c.target_id;
+            }
+        }
+        return sim::EntityId();
     };
     f = next();
-    const u32 fog_right = click(false);
-    const u32 fog_order = click(true);
+    const sim::EntityId fog_right = click(false);
+    const sim::EntityId fog_order = click(true);
     run_lua(ctx, "__osc_fx_radar:EnableIntel('Radar')\n");
     f = next(static_cast<int>(ctx.sim.army_count()));
-    const u32 blip_right = click(false);
-    const u32 blip_order = click(true);
+    const sim::EntityId blip_right = click(false);
+    const sim::EntityId blip_order = click(true);
     // (In the fog a right-click may still land on a rock, to reclaim.)
-    t.check(fog_right != fog_id && fog_order == 0 && blip_right == fog_id && blip_order == fog_id,
+    t.check(fog_right != fog_id && !fog_order && blip_right == fog_id && blip_order == fog_id,
             fmt::format("Test 8: clicks pick the engineer on radar (right-click {}, order {}), "
                         "not in the fog ({}, {})",
                         blip_right, blip_order, fog_right, fog_order));

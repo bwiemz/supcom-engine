@@ -250,7 +250,7 @@ void Camera::target_box(const std::array<f32, 3>& min, const std::array<f32, 3>&
     }
 }
 
-void Camera::target_entities(std::vector<u32> ids, bool track, f32 zoom, f32 seconds) {
+void Camera::target_entities(std::vector<sim::EntityId> ids, bool track, f32 zoom, f32 seconds) {
     target_time_left_ = 0.0f;
     target_time_armed_ = false;
     target_ids_ = std::move(ids);
@@ -270,8 +270,8 @@ void Camera::target_entities(std::vector<u32> ids, bool track, f32 zoom, f32 sec
     setup_hermite();
 }
 
-void Camera::target_nose_cam(std::vector<u32> ids, f32 pitch_adjust, f32 zoom, f32 seconds,
-                             f32 transition) {
+void Camera::target_nose_cam(std::vector<sim::EntityId> ids, f32 pitch_adjust, f32 zoom,
+                             f32 seconds, f32 transition) {
     stop_tracking();
     target_time_left_ = 0.0f;
     target_time_armed_ = false;
@@ -304,7 +304,7 @@ void Camera::target_nothing() {
     target_time_left_ = 0.0f;
 }
 
-void Camera::camera_follow(u32 source, u32 target, f32 seconds) {
+void Camera::camera_follow(sim::EntityId source, sim::EntityId target, f32 seconds) {
     CameraEntityPose pose;
     if (!target_pose(pose) || target_ids_[active_target_] != source || !entity_lookup_ ||
         !entity_lookup_(target, pose)) {

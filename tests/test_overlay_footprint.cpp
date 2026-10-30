@@ -14,6 +14,7 @@
 
 using osc::f32;
 using osc::renderer::convex_rows;
+using osc::sim::EntityId;
 
 TEST_CASE("A footprint on screen is filled row by row, within its edges", "[overlay]") {
     const auto rect = convex_rows({10, 30, 30, 10}, {0, 0, 8, 8}, 2.0f);
@@ -42,9 +43,10 @@ TEST_CASE("Placing a structure outlines its pad and the standing pads, lit where
           "[overlay]") {
     using osc::renderer::BuildGhost;
     using osc::renderer::StructurePad;
-    const std::vector<StructurePad> pads = {{{26.5f, 36.5f, 34.5f, 44.5f}, 30.5f, 4.0f, 40.5f, 1},
-                                            {{60.0f, 60.0f, 68.0f, 68.0f}, 64.0f, 2.0f, 64.0f, 2}};
-    const auto any = [](osc::u32, const std::string&) { return true; };
+    const std::vector<StructurePad> pads = {
+        {{26.5f, 36.5f, 34.5f, 44.5f}, 30.5f, 4.0f, 40.5f, EntityId::of(1, 1)},
+        {{60.0f, 60.0f, 68.0f, 68.0f}, 64.0f, 2.0f, 64.0f, EntityId::of(2, 1)}};
+    const auto any = [](EntityId, const std::string&) { return true; };
     BuildGhost ghost;
     ghost.blueprint_id = "ueb0101";
     ghost.y = 5.0f;
@@ -94,19 +96,20 @@ TEST_CASE("A placed structure is lit by the first structure beside it that gives
     // preview once lit is passed over (cmp of its colour, 0x00854DA0)
     using osc::renderer::BuildGhost;
     using osc::renderer::StructurePad;
-    const std::vector<StructurePad> pads = {{{26.5f, 36.5f, 34.5f, 44.5f}, 30.5f, 4.0f, 40.5f, 1},
-                                            {{36.5f, 36.5f, 44.5f, 44.5f}, 40.5f, 4.0f, 40.5f, 2}};
+    const std::vector<StructurePad> pads = {
+        {{26.5f, 36.5f, 34.5f, 44.5f}, 30.5f, 4.0f, 40.5f, EntityId::of(1, 1)},
+        {{36.5f, 36.5f, 44.5f, 44.5f}, 40.5f, 4.0f, 40.5f, EntityId::of(2, 1)}};
     BuildGhost ghost;
     ghost.blueprint_id = "ueb1101";
     ghost.pad_x0 = 34.5f;
     ghost.pad_z0 = 39.5f;
     ghost.pad_x1 = 36.5f;
     ghost.pad_z1 = 41.5f;
-    std::vector<std::pair<osc::u32, std::string>> asked;
+    std::vector<std::pair<EntityId, std::string>> asked;
     bool from_first = true;
-    const auto bonus = [&](osc::u32 unit, const std::string& bp) {
+    const auto bonus = [&](EntityId unit, const std::string& bp) {
         asked.emplace_back(unit, bp);
-        return unit != 1 || from_first;
+        return unit != EntityId::of(1, 1) || from_first;
     };
     // Both beside it: the first lights it, the second finds it lit
     auto out = osc::renderer::build_outlines(pads, ghost, bonus);
@@ -114,7 +117,7 @@ TEST_CASE("A placed structure is lit by the first structure beside it that gives
     CHECK(out[0].color == osc::renderer::kOutlineLit);
     CHECK(out[1].color == osc::renderer::kOutlineLit);
     CHECK(out[2].color == osc::renderer::kOutlineDim);
-    CHECK(asked == std::vector<std::pair<osc::u32, std::string>>{{1, "ueb1101"}});
+    CHECK(asked == std::vector<std::pair<EntityId, std::string>>{{EntityId::of(1, 1), "ueb1101"}});
     // The first gives no bonus: the second lights it
     asked.clear();
     from_first = false;
@@ -132,7 +135,7 @@ TEST_CASE("A placed structure is lit by the first structure beside it that gives
 TEST_CASE("Placing a structure outlines the focus army's live structures", "[overlay]") {
     osc::sim::WorldSnapshot world;
     osc::sim::EntityRecord factory;
-    factory.id = 1;
+    factory.id = EntityId::of(1, 1);
     factory.army = 0;
     factory.is_unit = true;
     factory.is_structure = true;
@@ -142,24 +145,24 @@ TEST_CASE("Placing a structure outlines the focus army's live structures", "[ove
     factory.skirt_offset_x = factory.skirt_offset_z = -1.5f;
     world.entities.push_back(factory);
     osc::sim::EntityRecord tank;
-    tank.id = 2;
+    tank.id = EntityId::of(2, 1);
     tank.army = 0;
     tank.is_unit = true;
     tank.position = {10, 0, 10};
     world.entities.push_back(tank);
     osc::sim::EntityRecord theirs = factory;
-    theirs.id = 3;
+    theirs.id = EntityId::of(3, 1);
     theirs.army = 1;
     world.entities.push_back(theirs);
     osc::sim::EntityRecord dying = factory;
-    dying.id = 4;
+    dying.id = EntityId::of(4, 1);
     dying.is_dying = true;
     world.entities.push_back(dying);
 
     const osc::sim::FrameView view(&world, &world, 1.0f);
     const auto pads = osc::renderer::structure_pads(view, 0);
     REQUIRE(pads.size() == 1);
-    CHECK(pads[0].id == 1);
+    CHECK(pads[0].id == EntityId::of(1, 1));
     CHECK(pads[0].site.x0 == Catch::Approx(26.5f));
     CHECK(pads[0].site.x1 == Catch::Approx(34.5f));
     CHECK(pads[0].site.z0 == Catch::Approx(36.5f));
@@ -182,7 +185,7 @@ TEST_CASE("A ghost touches the pads beside it edge on, its span inside", "[overl
 TEST_CASE("A silo's stored missiles draw nothing over it", "[overlay]") {
     osc::sim::WorldSnapshot world;
     osc::sim::EntityRecord silo;
-    silo.id = 1;
+    silo.id = EntityId::of(1, 1);
     silo.is_unit = true;
     silo.is_structure = true;
     silo.army = 0;
@@ -218,7 +221,7 @@ TEST_CASE("A unit's bars aren't drawn while its view spins or is free", "[overla
     // while its camera neither spins nor is free (cam_Free)
     osc::sim::WorldSnapshot world;
     osc::sim::EntityRecord tank;
-    tank.id = 1;
+    tank.id = EntityId::of(1, 1);
     tank.is_unit = true;
     tank.army = 0;
     tank.health = 50.0f;

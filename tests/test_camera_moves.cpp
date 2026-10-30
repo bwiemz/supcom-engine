@@ -43,6 +43,10 @@ f32 eased(f32 t) {
     return t * t * (3.0f - 2.0f * t);
 }
 
+sim::EntityId ent(u32 moho) {
+    return sim::EntityId::of(moho, 1);
+}
+
 } // namespace
 
 TEST_CASE("A timed TargetManual eases there and signals (M217g)", "[camera][moves]") {
@@ -222,66 +226,66 @@ TEST_CASE("TargetBox frames a box's centre at its wider side (M217g)", "[camera]
 TEST_CASE("A tracked entity is followed, and let go when gone (M217g)", "[camera][moves]") {
     const map::Heightmap ground = flat();
     Camera cam = camera_over(ground);
-    std::map<u32, CameraEntityPose> world;
-    world[7].pos = {90.0f, kGround, 90.0f};
-    world[8].pos = {150.0f, kGround, 150.0f};
-    cam.set_entity_lookup([&](u32 id, CameraEntityPose& out) {
+    std::map<sim::EntityId, CameraEntityPose> world;
+    world[ent(7)].pos = {90.0f, kGround, 90.0f};
+    world[ent(8)].pos = {150.0f, kGround, 150.0f};
+    cam.set_entity_lookup([&](sim::EntityId id, CameraEntityPose& out) {
         const auto it = world.find(id);
         if (it == world.end()) return false;
         out = it->second;
         return true;
     });
-    cam.target_entities({7, 8}, true, 50.0f, 0.0f);
+    cam.target_entities({ent(7), ent(8)}, true, 50.0f, 0.0f);
     CHECK(cam.target_type() == CameraTarget::Entity);
-    CHECK(cam.target_entity() == 7); // GetTargetEntity (UI_TrackUnit asks it)
+    CHECK(cam.target_entity() == ent(7)); // GetTargetEntity (UI_TrackUnit asks it)
     CHECK_THAT(cam.requested_zoom(), WithinAbs(50.0, 1e-5));
     cam.frame(1.0 / 60.0);
     CHECK_THAT(cam.target_x(), WithinAbs(90.0, 1e-3));
-    world[7].pos = {100.0f, kGround, 95.0f};
+    world[ent(7)].pos = {100.0f, kGround, 95.0f};
     cam.frame(1.0 / 60.0);
     CHECK_THAT(cam.target_x(), WithinAbs(100.0, 1e-3));
     CHECK_THAT(cam.target_z(), WithinAbs(95.0, 1e-3));
     // Gone: a place; next frame, the next in the list
-    world.erase(7);
+    world.erase(ent(7));
     cam.frame(1.0 / 60.0);
     CHECK(cam.target_type() == CameraTarget::Location);
     cam.frame(1.0 / 60.0);
     CHECK(cam.target_type() == CameraTarget::Entity);
     cam.frame(1.0 / 60.0);
     CHECK_THAT(cam.target_x(), WithinAbs(150.0, 1e-3));
-    CHECK(cam.target_entity() == 8);
+    CHECK(cam.target_entity() == ent(8));
     // With the next gone too, on to the one after it, not past it
-    world[7].pos = {90.0f, kGround, 90.0f};
-    world[9].pos = {170.0f, kGround, 60.0f};
-    world[10].pos = {60.0f, kGround, 170.0f};
-    cam.target_entities({7, 12, 9, 10}, true, 50.0f, 0.0f); // 12: never there
-    world.erase(7);
+    world[ent(7)].pos = {90.0f, kGround, 90.0f};
+    world[ent(9)].pos = {170.0f, kGround, 60.0f};
+    world[ent(10)].pos = {60.0f, kGround, 170.0f};
+    cam.target_entities({ent(7), ent(12), ent(9), ent(10)}, true, 50.0f, 0.0f); // 12: never there
+    world.erase(ent(7));
     for (int i = 0; i < 3; ++i) cam.frame(1.0 / 60.0);
     CHECK(cam.target_type() == CameraTarget::Entity);
     CHECK_THAT(cam.target_x(), WithinAbs(170.0, 1e-3));
     // Untracked, it goes there once
     Camera once = camera_over(ground);
-    once.set_entity_lookup([&](u32 id, CameraEntityPose& out) {
+    once.set_entity_lookup([&](sim::EntityId id, CameraEntityPose& out) {
         const auto it = world.find(id);
         if (it == world.end()) return false;
         out = it->second;
         return true;
     });
-    once.target_entities({8}, false, 50.0f, 0.0f);
+    once.target_entities({ent(8)}, false, 50.0f, 0.0f);
     CHECK(once.target_type() == CameraTarget::Location);
     CHECK_THAT(once.target_x(), WithinAbs(150.0, 1e-3));
-    CHECK(once.target_entity() == 0); // followed by none
+    CHECK_FALSE(once.target_entity()); // followed by none
     cam.target_nothing();
-    CHECK(cam.target_entity() == 0);
+    CHECK_FALSE(cam.target_entity());
 }
 
 TEST_CASE("The camera tells its tracking as it starts and stops following", "[camera][moves]") {
     const map::Heightmap ground = flat();
     Camera cam = camera_over(ground);
-    std::map<u32, CameraEntityPose> world;
-    world[7].pos = {90.0f, kGround, 90.0f};
-    world[8].pos = {150.0f, kGround, 150.0f};
-    cam.set_entity_lookup([&](u32 id, CameraEntityPose& out) {
+    std::map<sim::EntityId, CameraEntityPose> world;
+    world[ent(7)].pos = {90.0f, kGround, 90.0f};
+    world[ent(8)].pos = {150.0f, kGround, 150.0f};
+    cam.set_entity_lookup([&](sim::EntityId id, CameraEntityPose& out) {
         const auto it = world.find(id);
         if (it == world.end()) {
             return false;
@@ -292,11 +296,11 @@ TEST_CASE("The camera tells its tracking as it starts and stops following", "[ca
     std::vector<bool> told;
     cam.set_tracking_listener([&](bool tracking) { told.push_back(tracking); });
 
-    cam.target_entities({7}, false, 50.0f, 0.0f);
+    cam.target_entities({ent(7)}, false, 50.0f, 0.0f);
     cam.target_nothing();
     CHECK(told.empty());
 
-    cam.target_entities({7}, true, 50.0f, 0.0f);
+    cam.target_entities({ent(7)}, true, 50.0f, 0.0f);
     CHECK(told == std::vector<bool>{true});
     cam.target_nothing();
     CHECK(told == std::vector<bool>{true, false});
@@ -304,24 +308,24 @@ TEST_CASE("The camera tells its tracking as it starts and stops following", "[ca
     CHECK(told == std::vector<bool>{true, false});
 
     told.clear();
-    cam.target_entities({7}, true, 50.0f, 0.0f);
+    cam.target_entities({ent(7)}, true, 50.0f, 0.0f);
     cam.target_box({0.0f, 0.0f, 0.0f}, {10.0f, 0.0f, 10.0f}, 0.0f);
-    cam.target_entities({7}, true, 50.0f, 0.0f);
+    cam.target_entities({ent(7)}, true, 50.0f, 0.0f);
     cam.target_manual(10.0f, kGround, 10.0f, 0.0f, 1.0f, 60.0f);
-    cam.target_entities({7}, true, 50.0f, 0.0f);
-    cam.target_entities({7}, false, 50.0f, 0.0f);
+    cam.target_entities({ent(7)}, true, 50.0f, 0.0f);
+    cam.target_entities({ent(7)}, false, 50.0f, 0.0f);
     CHECK(told == std::vector<bool>{true, false, true, false, true, false});
 
     told.clear();
-    cam.target_entities({7}, true, 50.0f, 0.0f);
-    world.erase(7);
+    cam.target_entities({ent(7)}, true, 50.0f, 0.0f);
+    world.erase(ent(7));
     cam.frame(1.0 / 60.0);
     CHECK(told == std::vector<bool>{true, false});
 
     told.clear();
-    world[7].pos = {90.0f, kGround, 90.0f};
-    cam.target_entities({7, 8}, true, 50.0f, 0.0f);
-    world.erase(7);
+    world[ent(7)].pos = {90.0f, kGround, 90.0f};
+    cam.target_entities({ent(7), ent(8)}, true, 50.0f, 0.0f);
+    world.erase(ent(7));
     cam.frame(1.0 / 60.0);
     cam.frame(1.0 / 60.0);
     CHECK(told == std::vector<bool>{true, true});
@@ -334,12 +338,14 @@ TEST_CASE("The nose camera looks along its entity (M217g)", "[camera][moves]") {
     plane.pos = {120.0f, 40.0f, 110.0f};
     const f32 yaw = 0.7f; // about y
     plane.orient = {0.0f, std::sin(yaw * 0.5f), 0.0f, std::cos(yaw * 0.5f)};
-    cam.set_entity_lookup([&](u32 id, CameraEntityPose& out) {
-        if (id != 3) return false;
+    cam.set_entity_lookup([&](sim::EntityId id, CameraEntityPose& out) {
+        if (id != ent(3)) {
+            return false;
+        }
         out = plane;
         return true;
     });
-    cam.target_nose_cam({3}, 0.3f, 25.0f, 0.0f, 0.0f);
+    cam.target_nose_cam({ent(3)}, 0.3f, 25.0f, 0.0f, 0.0f);
     CHECK(cam.target_type() == CameraTarget::NoseCam);
     CHECK_THAT(cam.heading(), WithinAbs(yaw, 1e-4));
     CHECK_THAT(cam.pitch(), WithinAbs(0.3, 1e-3)); // its level pitch is 0, plus 0.3
@@ -375,11 +381,11 @@ TEST_CASE("RevertRotation makes the target a place, unless it follows one (M217g
     // Following an entity, it keeps following
     CameraEntityPose pose;
     pose.pos = {120.0f, kGround, 120.0f};
-    cam.set_entity_lookup([&](u32, CameraEntityPose& out) {
+    cam.set_entity_lookup([&](sim::EntityId, CameraEntityPose& out) {
         out = pose;
         return true;
     });
-    cam.target_entities({3}, true, 60.0f, 0.0f);
+    cam.target_entities({ent(3)}, true, 60.0f, 0.0f);
     cam.spin(10.0f, 0.0f);
     REQUIRE(cam.rotated());
     cam.revert_rotation();
@@ -391,33 +397,33 @@ TEST_CASE("A camera following a launcher goes on to its shot, and back after the
     // Moho's CameraImpl::CameraFollow, then UpdateTargets' countdown
     const map::Heightmap ground = flat();
     Camera cam = camera_over(ground);
-    std::map<u32, CameraEntityPose> world;
-    world[7].pos = {90.0f, kGround, 90.0f};
-    world[8].pos = {150.0f, kGround, 150.0f};
-    world[20].pos = {100.0f, kGround, 100.0f};
-    cam.set_entity_lookup([&](u32 id, CameraEntityPose& out) {
+    std::map<sim::EntityId, CameraEntityPose> world;
+    world[ent(7)].pos = {90.0f, kGround, 90.0f};
+    world[ent(8)].pos = {150.0f, kGround, 150.0f};
+    world[ent(20)].pos = {100.0f, kGround, 100.0f};
+    cam.set_entity_lookup([&](sim::EntityId id, CameraEntityPose& out) {
         const auto it = world.find(id);
         if (it == world.end()) return false;
         out = it->second;
         return true;
     });
-    cam.target_entities({7}, true, 50.0f, 0.0f);
-    cam.camera_follow(8, 20, 2.0f);
-    CHECK(cam.target_entity() == 7);
+    cam.target_entities({ent(7)}, true, 50.0f, 0.0f);
+    cam.camera_follow(ent(8), ent(20), 2.0f);
+    CHECK(cam.target_entity() == ent(7));
 
-    cam.camera_follow(7, 20, 2.0f);
-    CHECK(cam.target_entity() == 20);
-    world[20].pos = {120.0f, kGround, 110.0f};
+    cam.camera_follow(ent(7), ent(20), 2.0f);
+    CHECK(cam.target_entity() == ent(20));
+    world[ent(20)].pos = {120.0f, kGround, 110.0f};
     cam.frame(0.5);
     CHECK_THAT(cam.target_x(), WithinAbs(120.0, 1e-3));
 
-    world.erase(20);
+    world.erase(ent(20));
     cam.frame(0.5);
     CHECK(cam.target_type() == CameraTarget::Location);
     cam.frame(1.0);
     CHECK(cam.target_type() == CameraTarget::Location);
     cam.frame(1.0);
-    CHECK(cam.target_entity() == 7);
+    CHECK(cam.target_entity() == ent(7));
     cam.frame(0.5);
     CHECK_THAT(cam.target_x(), WithinAbs(90.0, 1e-3));
 }

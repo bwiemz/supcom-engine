@@ -45,7 +45,7 @@ public:
     /// Weapons (unit id, weapon index) that have taken it as their target,
     /// for its DesiredShooterCap. A weapon that has since let go, or whose
     /// unit is gone, still appears until a count prunes it.
-    std::vector<std::pair<u32, i32>> shooters;
+    std::vector<std::pair<EntityId, i32>> shooters;
 
     /// Moho's gravity, in world units per second squared.
     static constexpr f32 GRAVITY = 4.9f;
@@ -53,7 +53,7 @@ public:
     static constexpr f32 DEFAULT_LIFETIME = 15.0f;
 
     Vector3 velocity;
-    u32 target_entity_id = 0;
+    EntityId target_entity_id{};
     /// Which of its target unit's target points it homes on (its weapon's
     /// aim spot; -1: the unit's centre).
     i32 target_point = -1;
@@ -61,13 +61,13 @@ public:
     /// target_position is somewhere it was sent (a weapon's aim, a ground
     /// target, where its target was): a tracking shot flies there.
     bool has_target_position = false;
-    u32 launcher_id = 0;
+    EntityId launcher_id{};
     /// ReTargetOnMiss: the launcher's weapon that hears where it lands, and
     /// the target unit it was fired at (Moho binds its impact broadcaster to
     /// the weapon's acquire task when the weapon has a target entity); -1 for
     /// none.
     i32 impact_listener_weapon = -1;
-    u32 impact_listener_target = 0;
+    EntityId impact_listener_target{};
     f32 damage_amount = 0;
     f32 damage_radius = 0;
     std::string damage_type = "Normal";
@@ -119,7 +119,7 @@ public:
     bool impacted = false;
     /// Moho's mImpactInterpolation (negative: none), mCollidedEntity and mImpactType.
     f32 impact_interpolation = -1.0f;
-    u32 impact_entity_id = 0;
+    EntityId impact_entity_id{};
     std::string impact_kind;
     bool impact_waiting() const { return impact_interpolation >= 0.0f; }
     Vector3 launch_position;

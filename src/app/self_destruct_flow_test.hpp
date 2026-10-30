@@ -10,6 +10,7 @@
 // reach the sim's checksum.
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 #include <string>
 
@@ -24,9 +25,9 @@ namespace osc::app {
 
 /// A player's Ctrl-K on `army`'s commander (each faction's ACU, *l0001):
 /// selected, then retail's ConfirmUnitDestruction, a SimCallback. The
-/// commander's id, or 0 with `why` set.
-u32 self_destruct_commander(lua::LuaState& ui, const sim::SimState& sim, i32 army,
-                            std::string& why);
+/// commander's id, or none with `why` set.
+sim::EntityId self_destruct_commander(lua::LuaState& ui, const sim::SimState& sim, i32 army,
+                                      std::string& why);
 
 class SelfDestructFlowTest {
 public:
@@ -46,7 +47,7 @@ private:
     void fail(const std::string& why);
 
     u32 frames_ = 0;
-    u32 acu_ = 0;
+    sim::EntityId acu_{};
     u32 end_tick_ = 0;
     bool done_ = false;
 };

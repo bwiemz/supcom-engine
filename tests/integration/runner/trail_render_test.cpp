@@ -171,15 +171,17 @@ void test_trail_render(TestContext& ctx) {
 
     // ARMY_1's engineers, west of the spot; ARMY_2's far east of them.
     const Spot a0{sx - 25, sz + 50};
-    const u32 a = spawn_unit(ctx, "__osc_tt_a", "uel0105", "ARMY_1", a0, kLift);
-    const u32 c = spawn_unit(ctx, "__osc_tt_c", "uel0105", "ARMY_1", {sx - 25, sz + 30}, kLift);
-    const u32 d = spawn_unit(ctx, "__osc_tt_d", "uel0105", "ARMY_1", {sx - 25, sz + 15}, kLift);
+    const sim::EntityId a = spawn_unit(ctx, "__osc_tt_a", "uel0105", "ARMY_1", a0, kLift);
+    const sim::EntityId c =
+        spawn_unit(ctx, "__osc_tt_c", "uel0105", "ARMY_1", {sx - 25, sz + 30}, kLift);
+    const sim::EntityId d =
+        spawn_unit(ctx, "__osc_tt_d", "uel0105", "ARMY_1", {sx - 25, sz + 15}, kLift);
     const Spot l0{sx - 10, sz + 35};
     (void)spawn_unit(ctx, "__osc_tt_l", "uel0105", "ARMY_1", l0, kLift);
     const Spot u0{sx - 10, sz + 20};
-    const u32 u = spawn_unit(ctx, "__osc_tt_u", "uel0105", "ARMY_1", u0, kLift);
+    const sim::EntityId u = spawn_unit(ctx, "__osc_tt_u", "uel0105", "ARMY_1", u0, kLift);
     const Spot e0{sx - 10, sz + 5};
-    const u32 e = spawn_unit(ctx, "__osc_tt_e", "uel0105", "ARMY_1", e0, kLift);
+    const sim::EntityId e = spawn_unit(ctx, "__osc_tt_e", "uel0105", "ARMY_1", e0, kLift);
     const Spot g0{sx - 25, sz - 10};
     const Spot h0{sx - 25, sz - 22};
     const Spot k0{sx - 25, sz - 34};
@@ -187,7 +189,7 @@ void test_trail_render(TestContext& ctx) {
     (void)spawn_unit(ctx, "__osc_tt_h", "uel0105", "ARMY_1", h0, kLift);
     (void)spawn_unit(ctx, "__osc_tt_k", "uel0105", "ARMY_1", k0, kLift);
     const Spot f0{sx + 40, sz + 45};
-    const u32 f = spawn_unit(ctx, "__osc_tt_f", "uel0105", "ARMY_2", f0, kLift);
+    const sim::EntityId f = spawn_unit(ctx, "__osc_tt_f", "uel0105", "ARMY_2", f0, kLift);
 
     OffscreenShots shots(ctx);
     if (!shots.ok()) {
@@ -208,7 +210,7 @@ void test_trail_render(TestContext& ctx) {
         shots.redraw();
         seen.capture(ctx.sim);
     };
-    const auto pos = [&](u32 id) {
+    const auto pos = [&](sim::EntityId id) {
         const sim::EntityRecord* rec = seen.cur().find(id);
         return rec ? rec->position : sim::Vector3{};
     };

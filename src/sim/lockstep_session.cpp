@@ -100,8 +100,8 @@ u32 LockstepSession::drop_timeout() const {
     return drop_timeout_rounds_ == 0 ? 0 : scaled_rounds(drop_timeout_rounds_, speed_);
 }
 
-void LockstepSession::submit_local(const std::vector<u32>& unit_ids,
-                                   const UnitCommand& cmd, bool clear_existing) {
+void LockstepSession::submit_local(const std::vector<EntityId>& unit_ids, const UnitCommand& cmd,
+                                   bool clear_existing) {
     ScheduledCommand sc;
     sc.exec_beat = next_frame_;
     sc.source = local_source_;

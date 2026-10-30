@@ -166,11 +166,11 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         }
     }
     if (!listening_ && sim->tick_count() >= 1) listen_for_chat(ui);
-    if (!host_ && self_destruct_at_ > 0 && self_destructed_ == 0 && !self_destruct_failed_ &&
+    if (!host_ && self_destruct_at_ > 0 && !self_destructed_ && !self_destruct_failed_ &&
         sim->tick_count() >= self_destruct_at_) {
         std::string why;
         self_destructed_ = self_destruct_commander(ui, *sim, lua::mp_net_state().local_army(), why);
-        self_destruct_failed_ = self_destructed_ == 0;
+        self_destruct_failed_ = !self_destructed_;
         if (self_destruct_failed_) fail(why);
         else
             spdlog::info("[lan-game] the joiner's commander {} self-destructs at tick {}",
@@ -233,7 +233,7 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         // dropped)
         if (sim->tick_count() < kEndTick)
             fail(fmt::format("stalled at tick {}, short of {}", sim->tick_count(), kEndTick));
-        if (self_destructed_ != 0) {
+        if (self_destructed_) {
             const auto* acu = sim->entity_registry().find(self_destructed_);
             if (acu && !acu->destroyed() && !static_cast<const sim::Unit*>(acu)->is_dying())
                 fail("the joiner's commander never died");
@@ -553,7 +553,7 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
     // allows observers (SessionIsObservingAllowed): the lobby's game does. Its
     // focus is its own army's until the UI's sync has the result, then none;
     // the end's check asks for none
-    const bool observing = !host_ && self_destructed_ != 0;
+    const bool observing = !host_ && self_destructed_;
     lua_pushstring(L, "__osc_lan_observing");
     lua_pushboolean(L, observing ? 1 : 0);
     lua_rawset(L, LUA_GLOBALSINDEX);
@@ -618,9 +618,9 @@ void LanGameTest::finish(const sim::SimState* sim) const {
                      "tick {}, as army {}{}",
                      host_ ? "host" : "joiner", sim ? sim->tick_count() : 0,
                      lua::mp_net_state().local_army() + 1,
-                     quit_at_ > 0            ? ", the joiner dropped when it left"
-                     : self_destructed_ != 0 ? ", its commander self-destructed"
-                                             : "");
+                     quit_at_ > 0       ? ", the joiner dropped when it left"
+                     : self_destructed_ ? ", its commander self-destructed"
+                                        : "");
     }
 }
 

@@ -70,7 +70,7 @@ bool cube_at(const std::vector<Cube>& cubes, f32 x, f32 z) {
 void test_meshless(TestContext& ctx) {
     spdlog::info("=== MESHLESS TEST: entities without a mesh ===");
     Tally t;
-    const u32 acu_id = army_acu_id(ctx.sim, 0);
+    const sim::EntityId acu_id = army_acu_id(ctx.sim, 0);
     auto* acu = ctx.sim.entity_registry().find(acu_id);
     if (!acu) {
         t.check(false, "ARMY_1's ACU");

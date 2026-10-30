@@ -217,7 +217,7 @@ Prop* spawn_prop(lua_State* L, SimState& sim, const std::string& bp_id, const Ve
     made->set_position(position);
     made->set_orientation(orientation);
     made->set_fraction_complete(1.0f);
-    const u32 id = sim.entity_registry().register_entity(std::move(made));
+    const EntityId id = sim.entity_registry().register_entity(std::move(made));
     auto* prop = static_cast<Prop*>(sim.entity_registry().find(id));
     if (!prop) {
         if (push) lua_pushnil(L);
@@ -230,11 +230,11 @@ Prop* spawn_prop(lua_State* L, SimState& sim, const std::string& bp_id, const Ve
 void create_map_prop_objects(lua_State* L, SimState& sim) {
     if (!L) return;
     // Collect first: OnCreate may create or destroy entities.
-    std::vector<u32> ids;
+    std::vector<EntityId> ids;
     sim.entity_registry().for_each([&](const Entity& e) {
         if (e.is_prop() && !e.destroyed() && e.lua_table_ref() < 0) ids.push_back(e.entity_id());
     });
-    for (const u32 id : ids) {
+    for (const EntityId id : ids) {
         Entity* e = sim.entity_registry().find(id);
         if (e && e->is_prop() && !e->destroyed() && e->lua_table_ref() < 0)
             create_prop_object(L, sim, static_cast<Prop&>(*e), false);

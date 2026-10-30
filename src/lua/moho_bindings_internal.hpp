@@ -5,6 +5,7 @@
 // libraries: not an API.
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 #include "sim/lua_sim.hpp"
 
 #include <string>
@@ -66,19 +67,20 @@ void set_lazyvar_value(lua_State* L, int self_idx, const char* name, f32 value);
 /// A table {x, y, z} (or {x, z}) at `idx`: its x and z.
 bool read_xz(lua_State* L, int idx, f32& x, f32& z);
 /// A player's order for these units, through the command path.
-void issue_player_order(lua_State* L, const std::vector<u32>& ids, const sim::UnitCommand& cmd,
-                        bool clear);
+void issue_player_order(lua_State* L, const std::vector<sim::EntityId>& ids,
+                        const sim::UnitCommand& cmd, bool clear);
 /// A targetless order by its UI name (RULEUCC_Stop, ...), told to OnCommandIssued if `tell`;
 /// false for one the engine can't give.
-bool issue_targetless_order(lua_State* L, const std::vector<u32>& ids, const std::string& name,
-                            int data, bool clear, bool tell = true,
+bool issue_targetless_order(lua_State* L, const std::vector<sim::EntityId>& ids,
+                            const std::string& name, int data, bool clear, bool tell = true,
                             const std::string& blueprint = {});
 /// The command name the UI gives an order (e.g. "Stop" for RULEUCC_Stop).
 std::string ui_command_name(const char* name);
 /// report_command_issued for a UI script's order with no target, its Lua data
 /// at `data` (0: none) the LuaParams.
-void report_script_order(lua_State* L, const std::string& type, const std::vector<u32>& ids,
-                         bool clear, int data, const std::string& blueprint = {});
+void report_script_order(lua_State* L, const std::string& type,
+                         const std::vector<sim::EntityId>& ids, bool clear, int data,
+                         const std::string& blueprint = {});
 
 // ── Shared by the binding files (M191 step 2: moho_bindings.cpp split by
 // class into lua/bindings/) ──
@@ -104,7 +106,7 @@ void push_vector2(lua_State* L, f32 x, f32 y);
 int push_direction(lua_State* L, const sim::Vector3& v);
 /// A UI unit object for unit `id` of `army` (a handle by id; UserUnit's
 /// methods). push_unit_for_ui makes one from a live entity.
-void push_user_unit(lua_State* L, u32 id, i32 army);
+void push_user_unit(lua_State* L, sim::EntityId id, i32 army);
 /// The world as the UI sees it: the sim's current tick, captured the first
 /// time the UI asks after each tick (lua/bindings/ui/user_unit.cpp).
 const sim::WorldSnapshot* ui_world(lua_State* L);

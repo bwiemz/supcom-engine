@@ -96,13 +96,13 @@ public:
     /// With Moho pathing, also what its steering does about it (Moho's
     /// ECollisionType): 2 step aside, 4 brake, 5 brake for the other.
     struct Collision {
-        u32 other = 0;
+        EntityId other{};
         i32 tick = 0;
         Vector3 at{};
         u8 type = 0;
     };
     const Collision& collision() const { return collision_; }
-    bool has_collision() const { return collision_.other != 0; }
+    bool has_collision() const { return static_cast<bool>(collision_.other); }
     void set_collision(const Collision& c) { collision_ = c; }
     void clear_collision() { collision_ = {}; }
     /// The tick its next check is due (0: now). A new path is checked at
@@ -158,13 +158,13 @@ public:
     }
     /// Stop for unit `for_id` crossing or coming head-on (Moho's mode 4
     /// path): brake at twice its brake, then wait `ticks` once still.
-    void hold(int ticks, u32 for_id);
+    void hold(int ticks, EntityId for_id);
     bool holding() const {
         return hold_ticks_ > 0 || (has_spline_ && spline_.type() == path::PathType::Brake);
     }
     /// The unit it is stopped for (while holding).
-    u32 held_for() const { return holding() ? held_for_ : 0; }
-    void set_held_for(u32 id) { held_for_ = id; }
+    EntityId held_for() const { return holding() ? held_for_ : EntityId(); }
+    void set_held_for(EntityId id) { held_for_ = id; }
 
     /// After a path request fails outright (nothing reachable is closer to
     /// the goal), identical requests -- same goal, unit still where it was --
@@ -227,7 +227,7 @@ private:
     bool sidestep_ = false;     ///< a sidestep point is on the path
     size_t sidestep_index_ = 0; ///< its index; passed, the sidestep is done
     int hold_ticks_ = 0;        ///< stopping, then this many ticks still
-    u32 held_for_ = 0;          ///< the unit it stops for
+    EntityId held_for_{};       ///< the unit it stops for
 
     /// Moho's spline states (faf-re CAiPathSpline::Generate's PPS_7, PPS_4, PPS_5,
     /// PPS_6 and PPS_3): backing up, for a unit that doesn't rotate on the spot,

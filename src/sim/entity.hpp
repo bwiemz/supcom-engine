@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 #include "core/interned_string.hpp"
 #include "core/dmath.hpp"
+#include "sim/entity_id.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -143,7 +144,7 @@ struct CellLink {
 
 /// Attachment child record.
 struct ChildAttachment {
-    u32 entity_id = 0;
+    EntityId entity_id{};
     i32 bone = -1; // which bone of parent the child is attached to
 };
 
@@ -188,8 +189,8 @@ public:
     Entity() = default;
     virtual ~Entity() = default;
 
-    u32 entity_id() const { return entity_id_; }
-    void set_entity_id(u32 id) { entity_id_ = id; }
+    EntityId entity_id() const { return entity_id_; }
+    void set_entity_id(EntityId id) { entity_id_ = id; }
 
     i32 army() const { return army_; }
     void set_army(i32 a) { army_ = a; }
@@ -377,11 +378,11 @@ public:
     void wake();
 
     // Attachment — parent tracking
-    u32 parent_entity_id() const { return parent_entity_id_; }
+    EntityId parent_entity_id() const { return parent_entity_id_; }
     i32 parent_bone() const { return parent_bone_; }
     i32 attached_bone() const { return attached_bone_; }
     /// Moho's AttachTo, which wakes a parked entity.
-    void set_parent(u32 pid, i32 pbone, i32 abone = -1) {
+    void set_parent(EntityId pid, i32 pbone, i32 abone = -1) {
         parent_entity_id_ = pid; parent_bone_ = pbone; attached_bone_ = abone;
         followed_parent_snap_ = kNotFollowed; // attaching is a jump
         wake();
@@ -390,14 +391,18 @@ public:
     /// entity jumps with its parent (see SimState::follow_parent).
     u32 followed_parent_snap() const { return followed_parent_snap_; }
     void set_followed_parent_snap(u32 s) { followed_parent_snap_ = s; }
-    void clear_parent() { parent_entity_id_ = 0; parent_bone_ = -1; attached_bone_ = -1; }
+    void clear_parent() {
+        parent_entity_id_ = EntityId();
+        parent_bone_ = -1;
+        attached_bone_ = -1;
+    }
     const Vector3& parent_offset() const { return parent_offset_; }
     void set_parent_offset(const Vector3& off) { parent_offset_ = off; }
 
     // Attachment — children tracking
     const std::vector<ChildAttachment>& children() const { return children_; }
-    void add_child(u32 eid, i32 bone) { children_.push_back({eid, bone}); }
-    void remove_child(u32 eid) {
+    void add_child(EntityId eid, i32 bone) { children_.push_back({eid, bone}); }
+    void remove_child(EntityId eid) {
         children_.erase(std::remove_if(children_.begin(), children_.end(),
             [eid](const ChildAttachment& c) { return c.entity_id == eid; }),
             children_.end());
@@ -433,8 +438,8 @@ public:
     void set_beam_enabled(bool b) { beam_enabled_ = b; }
     const Vector3& beam_endpoint() const { return beam_endpoint_; }
     void set_beam_endpoint(const Vector3& p) { beam_endpoint_ = p; }
-    u32 beam_launcher_id() const { return beam_launcher_id_; }
-    void set_beam_launcher_id(u32 id) { beam_launcher_id_ = id; }
+    EntityId beam_launcher_id() const { return beam_launcher_id_; }
+    void set_beam_launcher_id(EntityId id) { beam_launcher_id_ = id; }
     int beam_fx_ref() const { return beam_fx_ref_; }
     void set_beam_fx_ref(int r) { beam_fx_ref_ = r; }
     /// Where a collision beam fires from and how often it checks (M206c):
@@ -466,7 +471,7 @@ public:
     const Scroll& scroll_end() const { return scroll_end_; }
 
 private:
-    u32 entity_id_ = 0;
+    EntityId entity_id_{};
     i32 army_ = -1;
     Vector3 position_;
     Quaternion orientation_;
@@ -510,7 +515,7 @@ private:
     u32 mesh_changes_ = 0;
     bool unselectable_ = false;
     bool is_wreckage_ = false;
-    u32 parent_entity_id_ = 0;
+    EntityId parent_entity_id_{};
     i32 parent_bone_ = -1;
     i32 attached_bone_ = -1;
     Vector3 parent_offset_;
@@ -526,7 +531,7 @@ private:
     bool is_collision_beam_ = false;
     bool beam_enabled_ = false;
     Vector3 beam_endpoint_;
-    u32 beam_launcher_id_ = 0;
+    EntityId beam_launcher_id_{};
     int beam_fx_ref_ = -2; // LUA_NOREF — stored IEffect Lua table ref
     BeamSetup beam_setup_;
     std::optional<TextureScroller> scroller_;

@@ -34,16 +34,6 @@ template <typename E> E enum8(StateReader& r) {
     return static_cast<E>(r.u8v());
 }
 
-void save_ids(StateWriter& w, const std::vector<u32>& ids) {
-    w.size(ids.size());
-    for (u32 id : ids) w.u32v(id);
-}
-std::vector<u32> load_ids(StateReader& r) {
-    std::vector<u32> ids(r.size(4));
-    for (u32& id : ids) id = r.u32v();
-    return ids;
-}
-
 template <typename Set> void save_strings(StateWriter& w, const Set& set) {
     std::vector<std::string> sorted(set.begin(), set.end());
     std::sort(sorted.begin(), sorted.end());
@@ -166,7 +156,7 @@ enum class ManipKind : u8 {
 
 void StateIO::save(StateWriter& w, const Entity& e) {
     w.tag("ENTY");
-    w.u32v(e.entity_id_);
+    w.id(e.entity_id_);
     w.i32v(e.army_);
     w.vec3(e.position_);
     w.quat(e.orientation_);
@@ -217,13 +207,13 @@ void StateIO::save(StateWriter& w, const Entity& e) {
 
     w.b(e.unselectable_);
     w.b(e.is_wreckage_);
-    w.u32v(e.parent_entity_id_);
+    w.id(e.parent_entity_id_);
     w.i32v(e.parent_bone_);
     w.i32v(e.attached_bone_);
     w.vec3(e.parent_offset_);
     w.size(e.children_.size());
     for (const ChildAttachment& c : e.children_) {
-        w.u32v(c.entity_id);
+        w.id(c.entity_id);
         w.i32v(c.bone);
     }
     // grid_cell_x_, grid_cell_z_, prop_cell_, registry_: the registry's, set as it takes the entity
@@ -232,7 +222,7 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     w.b(e.is_collision_beam_);
     w.b(e.beam_enabled_);
     w.vec3(e.beam_endpoint_);
-    w.u32v(e.beam_launcher_id_);
+    w.id(e.beam_launcher_id_);
     w.i32v(e.beam_fx_ref_);
     w.i32v(e.beam_setup_.weapon);
     w.i32v(e.beam_setup_.muzzle_bone);
@@ -269,7 +259,7 @@ void StateIO::save(StateWriter& w, const Entity& e) {
 
 void StateIO::load(StateReader& r, Entity& e) {
     r.tag("ENTY");
-    e.entity_id_ = r.u32v();
+    e.entity_id_ = r.id();
     e.army_ = r.i32v();
     e.position_ = r.vec3();
     e.orientation_ = r.quat();
@@ -319,13 +309,13 @@ void StateIO::load(StateReader& r, Entity& e) {
 
     e.unselectable_ = r.b();
     e.is_wreckage_ = r.b();
-    e.parent_entity_id_ = r.u32v();
+    e.parent_entity_id_ = r.id();
     e.parent_bone_ = r.i32v();
     e.attached_bone_ = r.i32v();
     e.parent_offset_ = r.vec3();
-    e.children_.resize(r.size(8));
+    e.children_.resize(r.size(12));
     for (ChildAttachment& c : e.children_) {
-        c.entity_id = r.u32v();
+        c.entity_id = r.id();
         c.bone = r.i32v();
     }
     e.script_destroy_notified_ = r.b();
@@ -333,7 +323,7 @@ void StateIO::load(StateReader& r, Entity& e) {
     e.is_collision_beam_ = r.b();
     e.beam_enabled_ = r.b();
     e.beam_endpoint_ = r.vec3();
-    e.beam_launcher_id_ = r.u32v();
+    e.beam_launcher_id_ = r.id();
     e.beam_fx_ref_ = r.i32v();
     e.beam_setup_.weapon = r.i32v();
     e.beam_setup_.muzzle_bone = r.i32v();
@@ -373,7 +363,7 @@ void StateIO::load(StateReader& r, Entity& e) {
 void StateIO::save(StateWriter& w, const UnitCommand& c) {
     enum8(w, c.type);
     w.vec3(c.target_pos);
-    w.u32v(c.target_id);
+    w.id(c.target_id);
     w.str(c.blueprint_id);
     w.u32v(c.command_id);
     w.str(c.formation);
@@ -382,7 +372,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.b(c.form_move);
     w.f32v(c.speed_cap);
     w.b(c.formed);
-    save_ids(w, c.unload_ids);
+    w.ids(c.unload_ids);
     w.str(c.script_args);
     w.u32v(c.task_serial);
     w.b(c.factory);
@@ -395,31 +385,31 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.f32v(c.site_skirt_z);
     w.b(c.site_cleared);
     w.b(c.prepared);
-    w.u32v(c.rebuild_wreck_id);
+    w.id(c.rebuild_wreck_id);
     w.f32v(c.rebuild_bonus);
-    w.u32v(c.clearing_prop_id);
+    w.id(c.clearing_prop_id);
     w.b(c.clearing_approached);
     w.b(c.in_band);
-    w.u32v(c.beacon_id);
-    w.u32v(c.assigned_id);
+    w.id(c.beacon_id);
+    w.id(c.assigned_id);
     w.i32v(c.rolloff_wait);
     w.i32v(c.task_wait);
     w.i32v(c.sacrifice_wait);
     w.i32v(c.count);
     w.i32v(c.max_count);
-    save_ids(w, c.launch_queue);
+    w.ids(c.launch_queue);
     w.i32v(c.launch_wait);
     enum8(w, c.dock_phase);
     w.i32v(c.dock_wait);
     w.b(c.from_patrol);
     w.i32v(c.patrol_scan);
-    save_ids(w, c.patrol_claimed);
+    w.ids(c.patrol_claimed);
     w.vec3(c.patrol_from);
     w.b(c.begun);
     w.b(c.from_guard);
     w.b(c.guard_returning);
     w.b(c.leash_armed);
-    w.u32v(c.leash_anchor_id);
+    w.id(c.leash_anchor_id);
     w.vec3(c.leash_anchor_pos);
     w.b(c.form_attack);
     w.b(c.has_slot);
@@ -430,7 +420,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
 void StateIO::load(StateReader& r, UnitCommand& c) {
     c.type = enum8<CommandType>(r);
     c.target_pos = r.vec3();
-    c.target_id = r.u32v();
+    c.target_id = r.id();
     c.blueprint_id = r.str();
     c.command_id = r.u32v();
     c.formation = r.str();
@@ -439,7 +429,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.form_move = r.b();
     c.speed_cap = r.f32v();
     c.formed = r.b();
-    c.unload_ids = load_ids(r);
+    c.unload_ids = r.ids();
     c.script_args = r.str();
     c.task_serial = r.u32v();
     c.factory = r.b();
@@ -452,31 +442,31 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.site_skirt_z = r.f32v();
     c.site_cleared = r.b();
     c.prepared = r.b();
-    c.rebuild_wreck_id = r.u32v();
+    c.rebuild_wreck_id = r.id();
     c.rebuild_bonus = r.f32v();
-    c.clearing_prop_id = r.u32v();
+    c.clearing_prop_id = r.id();
     c.clearing_approached = r.b();
     c.in_band = r.b();
-    c.beacon_id = r.u32v();
-    c.assigned_id = r.u32v();
+    c.beacon_id = r.id();
+    c.assigned_id = r.id();
     c.rolloff_wait = r.i32v();
     c.task_wait = r.i32v();
     c.sacrifice_wait = r.i32v();
     c.count = r.i32v();
     c.max_count = r.i32v();
-    c.launch_queue = load_ids(r);
+    c.launch_queue = r.ids();
     c.launch_wait = r.i32v();
     c.dock_phase = enum8<DockPhase>(r);
     c.dock_wait = r.i32v();
     c.from_patrol = r.b();
     c.patrol_scan = r.i32v();
-    c.patrol_claimed = load_ids(r);
+    c.patrol_claimed = r.ids();
     c.patrol_from = r.vec3();
     c.begun = r.b();
     c.from_guard = r.b();
     c.guard_returning = r.b();
     c.leash_armed = r.b();
-    c.leash_anchor_id = r.u32v();
+    c.leash_anchor_id = r.id();
     c.leash_anchor_pos = r.vec3();
     c.form_attack = r.b();
     c.has_slot = r.b();
@@ -499,14 +489,14 @@ void StateIO::save(StateWriter& w, const Navigator& n) {
     w.u64v(n.waypoint_index_);
     w.f32v(n.best_dist_);
     w.i32v(n.stalled_);
-    w.u32v(n.collision_.other);
+    w.id(n.collision_.other);
     w.i32v(n.collision_.tick);
     w.vec3(n.collision_.at);
     w.i32v(n.next_check_);
     w.b(n.sidestep_);
     w.u64v(n.sidestep_index_);
     w.i32v(n.hold_ticks_);
-    w.u32v(n.held_for_);
+    w.id(n.held_for_);
     enum8(w, n.gear_);
     w.b(n.backup_);
     w.vec3(n.gear_target_);
@@ -551,14 +541,14 @@ void StateIO::load(StateReader& r, Navigator& n, SimState& sim, i32 army) {
     n.waypoint_index_ = static_cast<size_t>(r.u64v());
     n.best_dist_ = r.f32v();
     n.stalled_ = r.i32v();
-    n.collision_.other = r.u32v();
+    n.collision_.other = r.id();
     n.collision_.tick = r.i32v();
     n.collision_.at = r.vec3();
     n.next_check_ = r.i32v();
     n.sidestep_ = r.b();
     n.sidestep_index_ = static_cast<size_t>(r.u64v());
     n.hold_ticks_ = r.i32v();
-    n.held_for_ = r.u32v();
+    n.held_for_ = r.id();
     n.gear_ = enum8<Navigator::Gear>(r);
     n.backup_ = r.b();
     n.gear_target_ = r.vec3();
@@ -681,10 +671,10 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.i32v(wp.lua_table_ref);
     w.b(wp.script_class);
     w.i32v(wp.weapon_index);
-    w.u32v(wp.owner_entity_id);
-    w.u32v(wp.target_entity_id);
+    w.id(wp.owner_entity_id);
+    w.id(wp.target_entity_id);
     w.i32v(wp.aim_spot);
-    w.u32v(wp.aim_spot_target);
+    w.id(wp.aim_spot_target);
     w.b(wp.has_ground_target);
     w.vec3(wp.ground_target);
     w.b(wp.ground_from_order);
@@ -698,7 +688,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.i32v(wp.retarget_cooldown);
     w.size(wp.blacklist.size());
     for (const auto& [id, changes] : wp.blacklist) {
-        w.u32v(id);
+        w.id(id);
         w.i32v(changes);
     }
     w.b(wp.target_held);
@@ -778,10 +768,10 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.lua_table_ref = r.i32v();
     wp.script_class = r.b();
     wp.weapon_index = r.i32v();
-    wp.owner_entity_id = r.u32v();
-    wp.target_entity_id = r.u32v();
+    wp.owner_entity_id = r.id();
+    wp.target_entity_id = r.id();
     wp.aim_spot = r.i32v();
-    wp.aim_spot_target = r.u32v();
+    wp.aim_spot_target = r.id();
     wp.has_ground_target = r.b();
     wp.ground_target = r.vec3();
     wp.ground_from_order = r.b();
@@ -794,9 +784,9 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.target_check_clock = r.u32v();
     wp.retarget_misses = r.i32v();
     wp.retarget_cooldown = r.i32v();
-    wp.blacklist.resize(r.size(8));
+    wp.blacklist.resize(r.size(12));
     for (auto& [id, changes] : wp.blacklist) {
-        id = r.u32v();
+        id = r.id();
         changes = r.i32v();
     }
     wp.target_held = r.b();
@@ -958,7 +948,7 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
     }
     case ManipKind::BoneEntity: {
         const auto& x = static_cast<const BoneEntityManipulator&>(m); // sim_: the loading sim
-        w.u32v(x.target_id_);
+        w.id(x.target_id_);
         w.i32v(x.target_bone_);
         break;
     }
@@ -1117,7 +1107,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         break;
     }
     case ManipKind::BoneEntity: {
-        const u32 target = r.u32v();
+        const EntityId target = r.id();
         const i32 target_bone = r.i32v();
         m = std::make_unique<BoneEntityManipulator>(&sim, target, target_bone);
         break;
@@ -1238,23 +1228,23 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     for (const auto& wp : u.weapons_) save(w, *wp);
     w.size(u.rally_orders_.size());
     for (const UnitCommand& c : u.rally_orders_) save(w, c);
-    w.u32v(u.build_target_id_);
+    w.id(u.build_target_id_);
     w.f64v(u.build_time_);
     w.f64v(u.build_cost_mass_);
     w.f64v(u.build_cost_energy_);
     w.f32v(u.work_progress_);
     w.f32v(u.build_progress_seen_);
-    w.u32v(u.reclaim_target_id_);
+    w.id(u.reclaim_target_id_);
     w.f32v(u.reclaim_rate_);
     w.i32v(u.reclaim_wait_);
     w.b(u.builder_on_target_);
     w.b(u.arm_awaited_);
     // reclaim_held_: set by the tick's orders and taken by its bank, false between ticks
-    w.u32v(u.repair_target_id_);
+    w.id(u.repair_target_id_);
     w.f64v(u.repair_build_time_);
     w.f64v(u.repair_cost_mass_);
     w.f64v(u.repair_cost_energy_);
-    w.u32v(u.capture_target_id_);
+    w.id(u.capture_target_id_);
     w.f64v(u.capture_time_);
     w.f64v(u.capture_energy_cost_);
     w.b(u.capturable_);
@@ -1290,7 +1280,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.pushed_);
     w.b(u.in_state_transition_);
     w.b(u.surface_collision_);
-    w.u32v(u.shield_entity_id_);
+    w.id(u.shield_entity_id_);
     w.b(u.busy_);
     w.i32v(u.stun_ticks_);
     w.b(u.block_command_queue_);
@@ -1351,18 +1341,18 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     for (const auto& m : u.manipulators_) save(w, *m);
     save_poses(w, u.pose_);
     // pose_order_, pose_locals_: update_pose's scratch
-    save_ids(w, u.cargo_ids_);
+    w.ids(u.cargo_ids_);
     w.i32v(u.storage_slots_);
-    save_ids(w, u.stored_ids_);
+    w.ids(u.stored_ids_);
     w.u32v(u.launch_index_);
-    save_ids(w, u.storage_reserved_);
+    w.ids(u.storage_reserved_);
     w.u32v(u.next_generic_);
     w.i32v(u.generic_overflow_);
     enum8(w, u.retrieve_phase_);
-    save_ids(w, u.retrieve_ids_);
+    w.ids(u.retrieve_ids_);
     w.i32v(u.retrieve_wait_);
     const Unit::CarrierLanding& l = u.landing_;
-    w.u32v(l.carrier);
+    w.id(l.carrier);
     enum8(w, l.phase);
     w.vec3(l.place.point);
     w.f32v(l.place.heading);
@@ -1372,7 +1362,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.i32v(l.wait);
     w.b(l.glided);
     w.b(l.deck_set);
-    w.u32v(u.transport_id_);
+    w.id(u.transport_id_);
     w.f32v(u.speed_mult_);
     w.i32v(u.transport_class_);
     w.i32v(u.transport_capacity_);
@@ -1390,7 +1380,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
         const auto& slots = u.transport_slots_->slots_;
         w.size(slots.size());
         for (const TransportSlots::Slot& s : slots) {
-            w.u32v(s.unit_id);
+            w.id(s.unit_id);
             w.i32v(s.bone);
             w.i32v(s.unit_bone);
             save_i32s(w, s.bones);
@@ -1414,12 +1404,12 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(sb.energy);
     w.f64v(sb.mass);
     w.i32v(u.silo_blocks_);
-    w.u32v(u.silo_assist_id_); // (silo_assist_renewed_ isn't: a tick's update sets it afresh)
+    w.id(u.silo_assist_id_); // (silo_assist_renewed_ isn't: a tick's update sets it afresh)
     w.b(u.teleporting_);
     w.u32v(u.teleport_snap_);
     w.b(u.overcharge_armed_);
     enum8(w, u.pickup_phase_);
-    save_ids(w, u.pickup_ids_);
+    w.ids(u.pickup_ids_);
     w.vec3(u.pickup_center_);
     w.quat(u.pickup_facing_);
     w.i32v(u.pickup_ticks_);
@@ -1441,9 +1431,11 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     enum8(w, u.ferry_phase_);
     w.i32v(u.ferry_index_);
     w.b(u.ferry_leg_set_);
-    w.u32v(u.ferry_for_);
+    w.id(u.ferry_for_);
     w.size(u.adjacent_unit_ids_.size());
-    for (u32 id : u.adjacent_unit_ids_) w.u32v(id);
+    for (const EntityId id : u.adjacent_unit_ids_) {
+        w.id(id);
+    }
     w.f32v(u.skirt_size_x_);
     w.f32v(u.skirt_size_z_);
     w.f32v(u.skirt_offset_x_);
@@ -1523,7 +1515,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.vec3(u.tumble_torque_);
     w.vec3(u.velocity_);
     // motion_step_: taken by the tick's commit, zero between ticks
-    w.u32v(u.creator_id_);
+    w.id(u.creator_id_);
     w.b(u.lifts_off_);
     w.u32v(u.warp_aborted_command_);
     w.b(u.auto_overcharge_);
@@ -1534,10 +1526,10 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.auto_mode_);
     w.b(u.repeat_queue_);
     w.b(u.auto_surface_mode_);
-    w.u32v(u.focus_entity_id_);
+    w.id(u.focus_entity_id_);
     w.b(u.can_take_damage_);
     w.b(u.can_be_killed_);
-    w.u32v(u.last_attacker_id_);
+    w.id(u.last_attacker_id_);
     save_strings(w, u.command_caps_);
     save_strings(w, u.original_command_caps_);
     save(w, u.build_restriction_);
@@ -1661,22 +1653,22 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     }
     u.rally_orders_.resize(r.size(8));
     for (UnitCommand& c : u.rally_orders_) load(r, c);
-    u.build_target_id_ = r.u32v();
+    u.build_target_id_ = r.id();
     u.build_time_ = r.f64v();
     u.build_cost_mass_ = r.f64v();
     u.build_cost_energy_ = r.f64v();
     u.work_progress_ = r.f32v();
     u.build_progress_seen_ = r.f32v();
-    u.reclaim_target_id_ = r.u32v();
+    u.reclaim_target_id_ = r.id();
     u.reclaim_rate_ = r.f32v();
     u.reclaim_wait_ = r.i32v();
     u.builder_on_target_ = r.b();
     u.arm_awaited_ = r.b();
-    u.repair_target_id_ = r.u32v();
+    u.repair_target_id_ = r.id();
     u.repair_build_time_ = r.f64v();
     u.repair_cost_mass_ = r.f64v();
     u.repair_cost_energy_ = r.f64v();
-    u.capture_target_id_ = r.u32v();
+    u.capture_target_id_ = r.id();
     u.capture_time_ = r.f64v();
     u.capture_energy_cost_ = r.f64v();
     u.capturable_ = r.b();
@@ -1712,7 +1704,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.pushed_ = r.b();
     u.in_state_transition_ = r.b();
     u.surface_collision_ = r.b();
-    u.shield_entity_id_ = r.u32v();
+    u.shield_entity_id_ = r.id();
     u.busy_ = r.b();
     u.stun_ticks_ = r.i32v();
     u.block_command_queue_ = r.b();
@@ -1770,18 +1762,18 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
         if (m) u.manipulators_.push_back(std::move(m));
     }
     u.pose_ = load_poses(r);
-    u.cargo_ids_ = load_ids(r);
+    u.cargo_ids_ = r.ids();
     u.storage_slots_ = r.i32v();
-    u.stored_ids_ = load_ids(r);
+    u.stored_ids_ = r.ids();
     u.launch_index_ = r.u32v();
-    u.storage_reserved_ = load_ids(r);
+    u.storage_reserved_ = r.ids();
     u.next_generic_ = r.u32v();
     u.generic_overflow_ = r.i32v();
     u.retrieve_phase_ = enum8<Unit::RetrievePhase>(r);
-    u.retrieve_ids_ = load_ids(r);
+    u.retrieve_ids_ = r.ids();
     u.retrieve_wait_ = r.i32v();
     Unit::CarrierLanding& l = u.landing_;
-    l.carrier = r.u32v();
+    l.carrier = r.id();
     l.phase = enum8<Unit::LandPhase>(r);
     l.place.point = r.vec3();
     l.place.heading = r.f32v();
@@ -1791,7 +1783,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     l.wait = r.i32v();
     l.glided = r.b();
     l.deck_set = r.b();
-    u.transport_id_ = r.u32v();
+    u.transport_id_ = r.id();
     u.speed_mult_ = r.f32v();
     u.transport_class_ = r.i32v();
     u.transport_capacity_ = r.i32v();
@@ -1815,9 +1807,9 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
         }
         u.transport_slots_ = std::make_unique<TransportSlots>(*u.bone_data(), u.transport_layout_);
         auto& slots = u.transport_slots_->slots_;
-        slots.resize(r.size(16));
+        slots.resize(r.size(20));
         for (TransportSlots::Slot& s : slots) {
-            s.unit_id = r.u32v();
+            s.unit_id = r.id();
             s.bone = r.i32v();
             s.unit_bone = r.i32v();
             s.bones = load_i32s(r);
@@ -1841,12 +1833,12 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     sb.energy = r.f64v();
     sb.mass = r.f64v();
     u.silo_blocks_ = r.i32v();
-    u.silo_assist_id_ = r.u32v();
+    u.silo_assist_id_ = r.id();
     u.teleporting_ = r.b();
     u.teleport_snap_ = r.u32v();
     u.overcharge_armed_ = r.b();
     u.pickup_phase_ = enum8<Unit::PickupPhase>(r);
-    u.pickup_ids_ = load_ids(r);
+    u.pickup_ids_ = r.ids();
     u.pickup_center_ = r.vec3();
     u.pickup_facing_ = r.quat();
     u.pickup_ticks_ = r.i32v();
@@ -1867,10 +1859,12 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.ferry_phase_ = enum8<Unit::FerryPhase>(r);
     u.ferry_index_ = r.i32v();
     u.ferry_leg_set_ = r.b();
-    u.ferry_for_ = r.u32v();
+    u.ferry_for_ = r.id();
     u.adjacent_unit_ids_.clear();
-    const size_t adjacent = r.size(4);
-    for (size_t i = 0; i < adjacent; ++i) u.adjacent_unit_ids_.insert(r.u32v());
+    const size_t adjacent = r.size(8);
+    for (size_t i = 0; i < adjacent; ++i) {
+        u.adjacent_unit_ids_.insert(r.id());
+    }
     u.skirt_size_x_ = r.f32v();
     u.skirt_size_z_ = r.f32v();
     u.skirt_offset_x_ = r.f32v();
@@ -1949,7 +1943,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.motion_state_ = enum8<Unit::MotionState>(r);
     u.tumble_torque_ = r.vec3();
     u.velocity_ = r.vec3();
-    u.creator_id_ = r.u32v();
+    u.creator_id_ = r.id();
     u.lifts_off_ = r.b();
     u.warp_aborted_command_ = r.u32v();
     u.auto_overcharge_ = r.b();
@@ -1960,10 +1954,10 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.auto_mode_ = r.b();
     u.repeat_queue_ = r.b();
     u.auto_surface_mode_ = r.b();
-    u.focus_entity_id_ = r.u32v();
+    u.focus_entity_id_ = r.id();
     u.can_take_damage_ = r.b();
     u.can_be_killed_ = r.b();
-    u.last_attacker_id_ = r.u32v();
+    u.last_attacker_id_ = r.id();
     u.command_caps_ = load_strings<std::unordered_set<std::string>>(r);
     u.original_command_caps_ = load_strings<std::unordered_set<std::string>>(r);
     load(r, u.build_restriction_);
@@ -1989,17 +1983,17 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.tag("PROJ");
     w.size(p.shooters.size());
     for (const auto& [unit, weapon] : p.shooters) {
-        w.u32v(unit);
+        w.id(unit);
         w.i32v(weapon);
     }
     w.vec3(p.velocity);
-    w.u32v(p.target_entity_id);
+    w.id(p.target_entity_id);
     w.i32v(p.target_point);
     w.vec3(p.target_position);
     w.b(p.has_target_position);
-    w.u32v(p.launcher_id);
+    w.id(p.launcher_id);
     w.i32v(p.impact_listener_weapon);
-    w.u32v(p.impact_listener_target);
+    w.id(p.impact_listener_target);
     w.i32v(p.bounce_limit);
     w.i32v(p.ground_hits);
     w.f32v(p.bounce_damping);
@@ -2035,7 +2029,7 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.b(p.stay_underwater);
     w.b(p.impacted);
     w.f32v(p.impact_interpolation);
-    w.u32v(p.impact_entity_id);
+    w.id(p.impact_entity_id);
     w.str(p.impact_kind);
     w.b(p.in_water);
     // info_: the sim's blueprint info, by blueprint (load_sim_state); launch_position,
@@ -2045,19 +2039,19 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
 void StateIO::load(StateReader& r, Projectile& p) {
     load(r, static_cast<Entity&>(p));
     r.tag("PROJ");
-    p.shooters.resize(r.size(8));
+    p.shooters.resize(r.size(12));
     for (auto& [unit, weapon] : p.shooters) {
-        unit = r.u32v();
+        unit = r.id();
         weapon = r.i32v();
     }
     p.velocity = r.vec3();
-    p.target_entity_id = r.u32v();
+    p.target_entity_id = r.id();
     p.target_point = r.i32v();
     p.target_position = r.vec3();
     p.has_target_position = r.b();
-    p.launcher_id = r.u32v();
+    p.launcher_id = r.id();
     p.impact_listener_weapon = r.i32v();
-    p.impact_listener_target = r.u32v();
+    p.impact_listener_target = r.id();
     p.bounce_limit = r.i32v();
     p.ground_hits = r.i32v();
     p.bounce_damping = r.f32v();
@@ -2093,7 +2087,7 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.stay_underwater = r.b();
     p.impacted = r.b();
     p.impact_interpolation = r.f32v();
-    p.impact_entity_id = r.u32v();
+    p.impact_entity_id = r.id();
     p.impact_kind = r.str();
     p.in_water = r.b();
 }
@@ -2139,7 +2133,7 @@ void StateIO::load(StateReader& r, Prop& p) {
 void StateIO::save(StateWriter& w, const Shield& s) {
     save(w, static_cast<const Entity&>(s));
     w.tag("SHLD");
-    w.u32v(s.owner_id);
+    w.id(s.owner_id);
     w.b(s.is_on);
     w.f32v(s.size);
     w.str(s.shield_type);
@@ -2148,7 +2142,7 @@ void StateIO::save(StateWriter& w, const Shield& s) {
 void StateIO::load(StateReader& r, Shield& s) {
     load(r, static_cast<Entity&>(s));
     r.tag("SHLD");
-    s.owner_id = r.u32v();
+    s.owner_id = r.id();
     s.is_on = r.b();
     s.size = r.f32v();
     s.shield_type = r.str();

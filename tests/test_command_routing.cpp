@@ -30,7 +30,7 @@ struct LuaGuard {
     ~LuaGuard() { lua_close(L); }
 };
 
-osc::u32 spawn_unit(SimState& sim) {
+osc::sim::EntityId spawn_unit(SimState& sim) {
     auto u = std::make_unique<Unit>();
     u->set_army(0);
     u->set_max_speed(6.0f); // so a Move lasts past the tick it starts in
@@ -44,7 +44,7 @@ UnitCommand move_to(osc::f32 x, osc::f32 z) {
     return c;
 }
 
-Unit* unit_of(SimState& sim, osc::u32 id) {
+Unit* unit_of(SimState& sim, osc::sim::EntityId id) {
     return static_cast<Unit*>(sim.entity_registry().find(id));
 }
 
@@ -90,12 +90,12 @@ TEST_CASE("route_command sends local human orders to the sink in multiplayer",
     SimState sim(g.L, nullptr);
     auto id = spawn_unit(sim);
 
-    std::vector<osc::u32> captured_ids;
+    std::vector<osc::sim::EntityId> captured_ids;
     UnitCommand captured_cmd;
     bool captured_clear = false;
     int sink_calls = 0;
     sim.set_local_command_sink(
-        [&](const std::vector<osc::u32>& ids, const UnitCommand& cmd, bool clear) {
+        [&](const std::vector<osc::sim::EntityId>& ids, const UnitCommand& cmd, bool clear) {
             captured_ids = ids;
             captured_cmd = cmd;
             captured_clear = clear;
@@ -110,7 +110,7 @@ TEST_CASE("route_command sends local human orders to the sink in multiplayer",
     sim.route_command({id}, move_to(250.0f, 0.0f), true);
 
     CHECK(sink_calls == 1);
-    CHECK(captured_ids == std::vector<osc::u32>{id});
+    CHECK(captured_ids == std::vector<osc::sim::EntityId>{id});
     CHECK(captured_cmd.type == CommandType::Move);
     CHECK(captured_clear == true);
     CHECK(unit_of(sim, id)->command_queue().empty()); // not applied locally
@@ -124,9 +124,7 @@ TEST_CASE("route_command keeps AI/sim orders direct even in multiplayer",
 
     int sink_calls = 0;
     sim.set_local_command_sink(
-        [&](const std::vector<osc::u32>&, const UnitCommand&, bool) {
-            ++sink_calls;
-        });
+        [&](const std::vector<osc::sim::EntityId>&, const UnitCommand&, bool) { ++sink_calls; });
     REQUIRE(sim.multiplayer());
 
     // Human input NOT active → this is a deterministic AI/sim order. It must
@@ -196,7 +194,7 @@ TEST_CASE("route_command Stop goes to the sink for a networked human", "[routing
     CommandType captured_type = CommandType::Move;
     int sink_calls = 0;
     sim.set_local_command_sink(
-        [&](const std::vector<osc::u32>&, const UnitCommand& cmd, bool) {
+        [&](const std::vector<osc::sim::EntityId>&, const UnitCommand& cmd, bool) {
             captured_type = cmd.type;
             ++sink_calls;
         });
@@ -219,7 +217,7 @@ TEST_CASE("clear_local_command_sink returns to single-player behavior",
     auto id = spawn_unit(sim);
 
     sim.set_local_command_sink(
-        [&](const std::vector<osc::u32>&, const UnitCommand&, bool) {});
+        [&](const std::vector<osc::sim::EntityId>&, const UnitCommand&, bool) {});
     sim.set_human_input_active(true);
     REQUIRE(sim.multiplayer());
 
@@ -246,26 +244,28 @@ TEST_CASE("A Guard order leaves out the units Moho's issue does", "[routing][gua
         if (guards) u->add_command_cap("RULEUCC_Guard");
         return sim.entity_registry().register_entity(std::move(u));
     };
-    const auto guard = [](osc::u32 target) {
+    const auto guard = [](osc::sim::EntityId target) {
         UnitCommand c;
         c.type = CommandType::Guard;
         c.target_id = target;
         return c;
     };
-    const auto guarding = [&](osc::u32 id) { return unit_of(sim, id)->guarded_unit_id(); };
+    const auto guarding = [&](osc::sim::EntityId id) {
+        return unit_of(sim, id)->guarded_unit_id();
+    };
 
-    const osc::u32 factory = make("FACTORY", false);
-    const osc::u32 other_factory = make("FACTORY", false);
-    const osc::u32 engineer = make("ENGINEER", true);
-    const osc::u32 tank = make("LAND", true);
+    const osc::sim::EntityId factory = make("FACTORY", false);
+    const osc::sim::EntityId other_factory = make("FACTORY", false);
+    const osc::sim::EntityId engineer = make("ENGINEER", true);
+    const osc::sim::EntityId tank = make("LAND", true);
 
     // Itself: not taken, and so nothing to report.
     CHECK(sim.route_command({factory}, guard(factory), false) == 0);
-    CHECK(guarding(factory) == 0);
+    CHECK_FALSE(guarding(factory));
     // Of a list naming its target, the others go; the target stays out.
     CHECK(sim.route_command({factory, other_factory}, guard(factory), false) != 0);
     CHECK(guarding(other_factory) == factory);
-    CHECK(guarding(factory) == 0);
+    CHECK_FALSE(guarding(factory));
     // A unit guarding it: the factory it assists can't turn to guard it.
     CHECK(sim.route_command({factory}, guard(other_factory), false) == 0);
     // A factory only guards a factory; an engineer guards either.
@@ -273,14 +273,14 @@ TEST_CASE("A Guard order leaves out the units Moho's issue does", "[routing][gua
     CHECK(sim.route_command({engineer}, guard(factory), false) != 0);
     CHECK(guarding(engineer) == factory);
     // Without RULEUCC_Guard, nothing.
-    const osc::u32 wall = make("STRUCTURE", false, /*guards=*/false);
+    const osc::sim::EntityId wall = make("STRUCTURE", false, /*guards=*/false);
     CHECK(sim.route_command({wall}, guard(tank), false) == 0);
     // A place (no target unit): only a mobile unit goes.
-    CHECK(sim.route_command({tank}, guard(0), false) != 0);
-    CHECK(sim.route_command({other_factory}, guard(0), true) == 0);
+    CHECK(sim.route_command({tank}, guard({}), false) != 0);
+    CHECK(sim.route_command({other_factory}, guard({}), true) == 0);
     // In a carrier's hold, nothing.
-    const osc::u32 carrier = make("CARRIER", true);
-    const osc::u32 plane = make("AIR", true);
+    const osc::sim::EntityId carrier = make("CARRIER", true);
+    const osc::sim::EntityId plane = make("AIR", true);
     unit_of(sim, plane)->set_transport_id(carrier);
     CHECK(sim.route_command({plane}, guard(tank), false) == 0);
 }
@@ -308,19 +308,19 @@ TEST_CASE("A reclaim, capture, repair or build goes only to a unit of its catego
         return c;
     };
 
-    const osc::u32 pod = make({"POD"});
+    const osc::sim::EntityId pod = make({"POD"});
     CHECK(sim.route_command({pod}, order(CommandType::Capture), false) == 0);
     CHECK(sim.route_command({pod}, order(CommandType::Reclaim), false) == 0);
     CHECK(sim.route_command({pod}, order(CommandType::Repair), false) == 0);
     CHECK(sim.route_command({pod}, order(CommandType::BuildMobile), false) != 0);
 
-    const osc::u32 tank = make({"LAND"});
+    const osc::sim::EntityId tank = make({"LAND"});
     CHECK(sim.route_command({tank}, order(CommandType::BuildMobile), false) == 0);
     CHECK(sim.route_command({tank}, order(CommandType::BuildFactory), false) == 0);
-    const osc::u32 fatboy = make({"NEEDMOBILEBUILD"});
+    const osc::sim::EntityId fatboy = make({"NEEDMOBILEBUILD"});
     CHECK(sim.route_command({fatboy}, order(CommandType::BuildFactory), false) != 0);
 
-    const osc::u32 drone = make({"POD", "RECLAIM", "CAPTURE", "REPAIR"});
+    const osc::sim::EntityId drone = make({"POD", "RECLAIM", "CAPTURE", "REPAIR"});
     CHECK(sim.route_command({drone}, order(CommandType::Capture), false) != 0);
     unit_of(sim, drone)->set_transport_id(tank);
     CHECK(sim.route_command({drone}, order(CommandType::Capture), false) == 0);

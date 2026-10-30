@@ -667,8 +667,15 @@ void App::Window::finish_world_ui_after_post_load() {
 void App::Window::run_beats() {
     // CWldSession::DoBeat: each of the sim's beats reaches the user side with its own Sync.
     if (sim_state && sim_lua_state) {
+        const auto refresh = [this] {
+            if (!world_ui_after_post_load) {
+                refresh_selection(ui_lua_state.raw(), input_handler, *sim_state, prev_selection,
+                                  prev_selection_upgrades);
+            }
+        };
         while (world_interp.sync.pending()) {
-            world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw(), world_interp.sync);
+            world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw(), world_interp.sync,
+                       refresh);
         }
     }
 }

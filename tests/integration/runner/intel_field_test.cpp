@@ -53,7 +53,7 @@ void test_intel_fields(TestContext& ctx) {
     Tally t;
     const auto lua = [&](const std::string& code) { run_lua(ctx, code); };
     // ARMY_1's recon of a unit now
-    const auto recon = [&](u32 id) -> u8 {
+    const auto recon = [&](sim::EntityId id) -> u8 {
         const sim::Entity* e = ctx.sim.entity_registry().find(id);
         return e ? ctx.sim.recon_of(*e, 0) : 0;
     };
@@ -72,9 +72,9 @@ void test_intel_fields(TestContext& ctx) {
     const f32 sz = spot->z;
     tick_for(ctx, 1);
     lua("GetArmyBrain('ARMY_2'):GiveResource('ENERGY', 4000)\n");
-    const u32 generator = spawn_unit(ctx, "__osc_if_gen", "ueb4203", "ARMY_2", {sx, sz});
-    const u32 near = spawn_unit(ctx, "__osc_if_near", "uel0105", "ARMY_2", {sx + 10, sz});
-    const u32 far = spawn_unit(ctx, "__osc_if_far", "uel0105", "ARMY_2", {sx + 50, sz});
+    const sim::EntityId generator = spawn_unit(ctx, "__osc_if_gen", "ueb4203", "ARMY_2", {sx, sz});
+    const sim::EntityId near = spawn_unit(ctx, "__osc_if_near", "uel0105", "ARMY_2", {sx + 10, sz});
+    const sim::EntityId far = spawn_unit(ctx, "__osc_if_far", "uel0105", "ARMY_2", {sx + 50, sz});
     (void)spawn_unit(ctx, "__osc_if_radar", "ueb3101", "ARMY_1", {sx, sz + 60});
     lua("__osc_if_near:SetImmobile(true) __osc_if_far:SetImmobile(true)\n");
     tick_for(ctx, 5);
@@ -126,17 +126,17 @@ void test_intel_fields(TestContext& ctx) {
     lua_State* L = ctx.L;
     lua_pushstring(L, "__osc_if_ids");
     lua_rawget(L, LUA_GLOBALSINDEX);
-    u32 sub = 0;
-    u32 frigate = 0;
+    sim::EntityId sub{};
+    sim::EntityId frigate{};
     if (lua_istable(L, -1)) {
         lua_rawgeti(L, -1, 1);
-        sub = osc::sim::to_entity_id(L, -1);
+        sub = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_rawgeti(L, -2, 2);
-        frigate = osc::sim::to_entity_id(L, -1);
+        frigate = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 2);
     }
     lua_pop(L, 1);
-    const auto layer_of = [&](u32 id) -> std::string {
+    const auto layer_of = [&](sim::EntityId id) -> std::string {
         const sim::Entity* e = ctx.sim.entity_registry().find(id);
         return e && e->is_unit() ? static_cast<const sim::Unit*>(e)->layer() : "gone";
     };

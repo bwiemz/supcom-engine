@@ -77,7 +77,7 @@ TEST_CASE("A projectile bounces off the ground as often as its limit, then impac
     shot->bounce_limit = 2;
     shot->bounce_damping = 0.5f;
     auto* p = static_cast<Projectile*>(reg.find(reg.register_entity(std::move(shot))));
-    const osc::u32 id = p->entity_id();
+    const osc::sim::EntityId id = p->entity_id();
 
     std::vector<osc::sim::Vector3> left_with; // the velocity each bounce left with
     for (osc::u32 tick = 1; tick < 200; ++tick) {
@@ -134,7 +134,7 @@ TEST_CASE("A projectile bounces off the seabed too, and its hit there is a Terra
     shot->ballistic_accel = -Projectile::GRAVITY;
     shot->bounce_limit = 2;
     auto* p = static_cast<Projectile*>(reg.find(reg.register_entity(std::move(shot))));
-    const osc::u32 id = p->entity_id();
+    const osc::sim::EntityId id = p->entity_id();
     int bounces = 0;
     std::string kind;
     for (osc::u32 tick = 1; tick < 200; ++tick) {

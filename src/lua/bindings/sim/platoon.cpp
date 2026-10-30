@@ -94,7 +94,7 @@ static int platoon_GetPlatoonUnits(lua_State* L) {
 
     int result = lua_gettop(L);
     int idx = 1;
-    for (u32 id : platoon->unit_ids()) {
+    for (sim::EntityId id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (e && !e->destroyed() && e->lua_table_ref() >= 0) {
             lua_pushnumber(L, idx++);
@@ -137,7 +137,7 @@ static int platoon_count_matching(lua_State* L, bool around) {
     }
     int count = 0;
     const CategoryMatcher category(L, 2);
-    for (u32 id : platoon->unit_ids()) {
+    for (sim::EntityId id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<sim::Unit*>(e);
@@ -162,7 +162,7 @@ static int platoon_GetSquadPosition(lua_State* L) {
     sim::Vector3 sum{0, 0, 0};
     int n = 0;
     if (platoon && sim) {
-        for (u32 id : platoon->unit_ids()) {
+        for (sim::EntityId id : platoon->unit_ids()) {
             auto* e = sim->entity_registry().find(id);
             if (!e || e->destroyed()) continue;
             if (!squad.empty() && !platoon->in_squad(id, squad)) continue;
@@ -192,7 +192,7 @@ static int platoon_CanAttackTarget(lua_State* L) {
             lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "";
         const u8 target_bit =
             sim::layer_to_bit(static_cast<sim::Unit*>(target)->layer());
-        for (u32 id : platoon->unit_ids()) {
+        for (sim::EntityId id : platoon->unit_ids()) {
             if (!squad.empty() && !platoon->in_squad(id, squad)) continue;
             auto* e = sim->entity_registry().find(id);
             if (!e || e->destroyed() || !e->is_unit()) continue;
@@ -229,7 +229,7 @@ static int platoon_GetSquadUnits(lua_State* L) {
     std::string squad = lua_isstring(L, 2) ? lua_tostring(L, 2) : "";
     int result = lua_gettop(L);
     int idx = 1;
-    for (u32 id : platoon->unit_ids()) {
+    for (sim::EntityId id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
         if (!squad.empty() && !platoon->in_squad(id, squad)) continue;
@@ -248,7 +248,7 @@ static int platoon_GetPlatoonPosition(lua_State* L) {
     auto pos = platoon->get_position(sim->entity_registry());
     // Check if platoon has any units (position will be 0,0,0 if empty)
     bool has_units = false;
-    for (u32 id : platoon->unit_ids()) {
+    for (sim::EntityId id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (e && !e->destroyed()) { has_units = true; break; }
     }
@@ -294,9 +294,9 @@ static int platoon_DisbandOnIdle(lua_State* L) {
 
 /// The platoon's units an order goes to, as Moho's CPlatoon orders pick
 /// them (faf-re CPlatoon::MoveToLocation, AttackTarget, Stop).
-static std::vector<u32> order_units(lua_State* L, const sim::SimState& sim,
-                                    const sim::Platoon& platoon, int squad_arg, int first, int last,
-                                    bool whole_in_formation) {
+static std::vector<sim::EntityId> order_units(lua_State* L, const sim::SimState& sim,
+                                              const sim::Platoon& platoon, int squad_arg, int first,
+                                              int last, bool whole_in_formation) {
     int only = -1;
     if (lua_gettop(L) >= squad_arg) {
         const char* name = lua_tostring(L, squad_arg);
@@ -310,8 +310,8 @@ static std::vector<u32> order_units(lua_State* L, const sim::SimState& sim,
         }
     }
     const bool whole = whole_in_formation && !platoon.formation_override().empty();
-    std::vector<u32> ids;
-    for (u32 id : platoon.unit_ids()) {
+    std::vector<sim::EntityId> ids;
+    for (sim::EntityId id : platoon.unit_ids()) {
         const auto* e = sim.entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit()) {
             continue;
@@ -330,10 +330,10 @@ static int platoon_Stop(lua_State* L) {
     auto* sim = get_sim(L);
     if (!platoon || !sim) return 0;
 
-    const std::vector<u32> ids = order_units(L, *sim, *platoon, 2, 0, 5, false);
+    const std::vector<sim::EntityId> ids = order_units(L, *sim, *platoon, 2, 0, 5, false);
     sim::SimContext ctx = sim->sim_context();
     ctx.L = L;
-    for (u32 id : ids) {
+    for (sim::EntityId id : ids) {
         auto* e = sim->entity_registry().find(id);
         if (e && !e->destroyed() && e->is_unit()) {
             static_cast<sim::Unit*>(e)->clear_commands(ctx);
@@ -381,14 +381,14 @@ static int platoon_order_to(lua_State* L, sim::CommandType type, int squad_arg) 
     cmd.command_id = cmd_id;
 
     // One order per formation, in order of first appearance.
-    std::vector<std::pair<std::string, std::vector<u32>>> groups;
-    for (u32 id : order_units(L, *sim, *platoon, squad_arg, 1, 5, true)) {
+    std::vector<std::pair<std::string, std::vector<sim::EntityId>>> groups;
+    for (sim::EntityId id : order_units(L, *sim, *platoon, squad_arg, 1, 5, true)) {
         std::string formation = platoon->unit_formation(id);
         if (no_formation(formation)) formation.clear();
         auto it = std::find_if(groups.begin(), groups.end(),
                                [&](const auto& g) { return g.first == formation; });
         if (it == groups.end()) {
-            groups.emplace_back(formation, std::vector<u32>{});
+            groups.emplace_back(formation, std::vector<sim::EntityId>{});
             it = groups.end() - 1;
         }
         it->second.push_back(id);
@@ -434,7 +434,7 @@ static int platoon_Patrol(lua_State* L) {
     cmd.target_pos = pos;
     cmd.command_id = cmd_id;
 
-    for (u32 id : order_units(L, *sim, *platoon, 3, 1, 5, true)) {
+    for (sim::EntityId id : order_units(L, *sim, *platoon, 3, 1, 5, true)) {
         static_cast<sim::Unit*>(sim->entity_registry().find(id))->push_command(cmd, false);
     }
     lua_pushnumber(L, cmd_id);
@@ -458,7 +458,7 @@ static int platoon_AttackTarget(lua_State* L) {
     cmd.command_id = cmd_id;
     sim->pick_target_point(cmd);
 
-    for (u32 id : order_units(L, *sim, *platoon, 3, 1, 2, true)) {
+    for (sim::EntityId id : order_units(L, *sim, *platoon, 3, 1, 2, true)) {
         static_cast<sim::Unit*>(sim->entity_registry().find(id))->push_command(cmd, false);
     }
     lua_pushnumber(L, cmd_id);
@@ -480,7 +480,7 @@ static int platoon_GuardTarget(lua_State* L) {
     cmd.command_id = cmd_id;
 
     bool queued = false;
-    for (u32 id : order_units(L, *sim, *platoon, 3, 1, 2, true)) {
+    for (sim::EntityId id : order_units(L, *sim, *platoon, 3, 1, 2, true)) {
         auto* u = static_cast<sim::Unit*>(sim->entity_registry().find(id));
         if (!sim->takes_command(*u, cmd)) continue;
         u->push_command(cmd, false);
@@ -560,7 +560,7 @@ static int platoon_Destroy(lua_State* L) {
 
     // Clear PlatoonHandle on all member units (same as DisbandPlatoon)
     if (sim) {
-        for (u32 id : platoon->unit_ids()) {
+        for (sim::EntityId id : platoon->unit_ids()) {
             auto* e = sim->entity_registry().find(id);
             if (e && !e->destroyed() && e->lua_table_ref() >= 0) {
                 lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
@@ -714,7 +714,7 @@ static int platoon_FindPrioritizedUnit(lua_State* L) {
     f32 best_dist = 1e30f;
     sim::Entity* best = nullptr;
 
-    for (u32 eid : ids) {
+    for (sim::EntityId eid : ids) {
         auto* entity = sim->entity_registry().find(eid);
         if (!entity || !entity->is_unit() || entity->destroyed()) continue;
         auto* unit = static_cast<sim::Unit*>(entity);
@@ -754,7 +754,7 @@ static int platoon_IsCommandsActive(lua_State* L) {
         return 1;
     }
 
-    for (u32 id : platoon->unit_ids()) {
+    for (sim::EntityId id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<sim::Unit*>(e);
@@ -775,11 +775,11 @@ static int platoon_IsCommandsActive(lua_State* L) {
 /// squad, that `keep` accepts. Moho's platoon transport orders take these:
 /// the Unassigned squad is left out.
 template <typename Keep>
-static std::vector<u32> squad_units_for_order(const sim::SimState& sim, const sim::Platoon& platoon,
-                                              Keep keep) {
-    std::vector<u32> ids;
+static std::vector<sim::EntityId> squad_units_for_order(const sim::SimState& sim,
+                                                        const sim::Platoon& platoon, Keep keep) {
+    std::vector<sim::EntityId> ids;
     for (int squad = 1; squad <= 5; ++squad) {
-        for (u32 id : platoon.unit_ids()) {
+        for (sim::EntityId id : platoon.unit_ids()) {
             if (sim::Platoon::squad_class(platoon.get_unit_squad(id)) != squad) continue;
             const auto* e = sim.entity_registry().find(id);
             if (!e || e->destroyed() || !e->is_unit()) continue;
@@ -872,7 +872,7 @@ static int platoon_CalculatePlatoonThreat(lua_State* L) {
                     : std::nullopt;
 
     f32 total = 0;
-    for (u32 id : platoon->unit_ids()) {
+    for (sim::EntityId id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<sim::Unit*>(e);
@@ -917,7 +917,7 @@ static int platoon_CalculatePlatoonThreatAroundPosition(lua_State* L) {
     f32 radius_sq = radius * radius;
 
     f32 total = 0;
-    for (u32 id : platoon->unit_ids()) {
+    for (sim::EntityId id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<sim::Unit*>(e);
@@ -1039,7 +1039,7 @@ static int platoon_CanFormPlatoon(lua_State* L) {
 
         // Count matching units in pool
         int matched = 0;
-        for (u32 id : platoon->unit_ids()) {
+        for (sim::EntityId id : platoon->unit_ids()) {
             const sim::Unit* unit = filter.take(sim->entity_registry().find(id));
             if (!unit) continue;
 
@@ -1115,7 +1115,7 @@ static int platoon_FormPlatoon(lua_State* L) {
     auto pool_ids = pool->unit_ids();
 
     // Track which IDs we've transferred (to remove from pool after)
-    std::vector<u32> transferred;
+    std::vector<sim::EntityId> transferred;
 
     // Iterate template sub-tables starting at index 3
     for (int i = 3; ; i++) {
@@ -1162,12 +1162,12 @@ static int platoon_FormPlatoon(lua_State* L) {
 
         // Find matching units and transfer
         int taken = 0;
-        for (u32 id : pool_ids) {
+        for (sim::EntityId id : pool_ids) {
             if (taken >= max_count) break;
 
             // Skip if already transferred in a previous sub-table
             bool already = false;
-            for (u32 t : transferred) {
+            for (sim::EntityId t : transferred) {
                 if (t == id) { already = true; break; }
             }
             if (already) continue;
@@ -1193,7 +1193,7 @@ static int platoon_FormPlatoon(lua_State* L) {
     }
 
     // Remove transferred units from pool
-    for (u32 id : transferred) {
+    for (sim::EntityId id : transferred) {
         pool->remove_unit(id);
     }
 

@@ -164,7 +164,7 @@ Entity* Unit::best_enemy(const std::vector<Entity*>& candidates, f32 range, SimC
             continue;
         }
         const bool air = enemy.is_air_unit();
-        if ((enemy.parent_entity_id() != 0 && (air || enemy.is_being_built())) ||
+        if ((enemy.parent_entity_id() && (air || enemy.is_being_built())) ||
             (air && enemy.is_being_built()) || (!air && off_map(*sim, enemy.position(), 0))) {
             continue;
         }
@@ -234,7 +234,7 @@ Entity* Unit::find_patrol_work(const UnitCommand& cmd, SimContext& ctx) {
     f32 best_dist2 = 0;
     box.for_each(ctx.registry, !reclaims, [&](Entity& entity) {
         Entity* e = &entity;
-        const u32 id = e->entity_id();
+        const EntityId id = e->entity_id();
         if (!box.contains(e->position())) {
             return;
         }

@@ -31,9 +31,9 @@ extern "C" {
 
 using osc::f32;
 using osc::i32;
-using osc::u32;
 using osc::sim::BoneData;
 using osc::sim::BoneInfo;
+using osc::sim::EntityId;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::Vector3;
@@ -80,7 +80,7 @@ void two_armies(SimState& sim) {
     sim.set_victory_condition("sandbox");
 }
 
-u32 add_unit(SimState& sim, int army, const Vector3& at, const BoneData* bones) {
+EntityId add_unit(SimState& sim, int army, const Vector3& at, const BoneData* bones) {
     auto u = std::make_unique<Unit>();
     u->set_army(army);
     u->set_position(at);
@@ -89,7 +89,7 @@ u32 add_unit(SimState& sim, int army, const Vector3& at, const BoneData* bones) 
     return sim.entity_registry().register_entity(std::move(u));
 }
 
-Unit& unit(SimState& sim, u32 id) {
+Unit& unit(SimState& sim, EntityId id) {
     return static_cast<Unit&>(*sim.entity_registry().find(id));
 }
 
@@ -188,8 +188,8 @@ TEST_CASE("A weapon aims at the point it picked on its target, and its shot home
     SimState sim(g.L, nullptr);
     two_armies(sim);
     const BoneData bones = walker_bones(3.0f, 8.0f);
-    const u32 shooter = add_unit(sim, 0, {0, 0, 0}, nullptr);
-    const u32 target = add_unit(sim, 1, {0, 0, 30}, &bones);
+    const EntityId shooter = add_unit(sim, 0, {0, 0, 0}, nullptr);
+    const EntityId target = add_unit(sim, 1, {0, 0, 30}, &bones);
     Weapon w;
     w.max_range = 40.0f;
     w.damage = 10.0f;
@@ -199,7 +199,7 @@ TEST_CASE("A weapon aims at the point it picked on its target, and its shot home
     // Each time the target changes it picks again; until then, the centre.
     std::set<i32> seen;
     for (int i = 0; i < 32; ++i) {
-        w.set_target_entity(0);
+        w.set_target_entity(EntityId());
         w.pick_aim_spot(sim.entity_registry(), &sim);
         w.set_target_entity(target);
         CHECK(w.current_aim_spot() == -1);
@@ -224,7 +224,7 @@ TEST_CASE("A weapon aims at the point it picked on its target, and its shot home
     CHECK(same(shot->target_position, point));
 
     // A unit with no target bones: its centre, and no draw.
-    const u32 plain = add_unit(sim, 1, {5, 0, 30}, nullptr);
+    const EntityId plain = add_unit(sim, 1, {5, 0, 30}, nullptr);
     w.set_target_entity(plain);
     w.pick_aim_spot(sim.entity_registry(), &sim);
     CHECK(w.current_aim_spot() == -1);
@@ -240,16 +240,16 @@ TEST_CASE("A unit on the seabed is in reach above the water only where a target 
     const BoneData wader = walker_bones(3.0f, 8.0f); // its head out of the water at 5
     const BoneData under = walker_bones(1.0f, 2.0f); // all of it under
     const BoneData tall = walker_bones(6.0f, 8.0f);  // nothing under but its feet
-    const u32 shooter = add_unit(sim, 0, {10, 5, 10}, nullptr);
+    const EntityId shooter = add_unit(sim, 0, {10, 5, 10}, nullptr);
     const auto on_bed = [&](const BoneData* bones) {
-        const u32 id = add_unit(sim, 1, {20, 0, 20}, bones);
+        const EntityId id = add_unit(sim, 1, {20, 0, 20}, bones);
         unit(sim, id).set_layer("Seabed");
         return id;
     };
-    const u32 wading = on_bed(&wader);
-    const u32 sunk = on_bed(&under);
-    const u32 towering = on_bed(&tall);
-    const u32 boneless = on_bed(nullptr);
+    const EntityId wading = on_bed(&wader);
+    const EntityId sunk = on_bed(&under);
+    const EntityId towering = on_bed(&tall);
+    const EntityId boneless = on_bed(nullptr);
     const Unit& owner = unit(sim, shooter);
 
     Weapon gun; // AboveWaterTargetsOnly: a tank's cannon
@@ -268,12 +268,12 @@ TEST_CASE("A unit on the seabed is in reach above the water only where a target 
 
     // The gun aims at the head, the torpedo at the hip, every time.
     for (int i = 0; i < 8; ++i) {
-        gun.set_target_entity(0);
+        gun.set_target_entity(EntityId());
         gun.pick_aim_spot(sim.entity_registry(), &sim);
         gun.set_target_entity(wading);
         gun.pick_aim_spot(sim.entity_registry(), &sim);
         CHECK(gun.current_aim_spot() == 1);
-        torpedo.set_target_entity(0);
+        torpedo.set_target_entity(EntityId());
         torpedo.pick_aim_spot(sim.entity_registry(), &sim);
         torpedo.set_target_entity(wading);
         torpedo.pick_aim_spot(sim.entity_registry(), &sim);
@@ -290,7 +290,7 @@ TEST_CASE("TransferTarget gives the second weapon the first's target; SetTargetE
     osc::lua::register_moho_bindings(lua, sim);
     two_armies(sim);
     const BoneData bones = walker_bones(3.0f, 8.0f);
-    const u32 target = add_unit(sim, 1, {0, 0, 30}, &bones);
+    const EntityId target = add_unit(sim, 1, {0, 0, 30}, &bones);
     Weapon from;
     Weapon to;
     lua_State* L = lua.raw();
@@ -320,7 +320,7 @@ TEST_CASE("TransferTarget gives the second weapon the first's target; SetTargetE
     // A ground target goes across as a ground target.
     from.set_target_ground({4, 0, 4});
     REQUIRE(lua.do_string("moho.weapon_methods.TransferTarget(from, to)").ok());
-    CHECK(to.target_entity_id == 0);
+    CHECK_FALSE(to.target_entity_id);
     CHECK(to.has_ground_target);
     CHECK(same(to.ground_target, {4, 0, 4}));
 }
@@ -331,7 +331,7 @@ TEST_CASE("SetTargetEntity takes only a target on the weapon's layers", "[target
     osc::lua::register_sim_bindings(lua, sim);
     osc::lua::register_moho_bindings(lua, sim);
     two_armies(sim);
-    const u32 target = add_unit(sim, 1, {0, 0, 10}, nullptr);
+    const EntityId target = add_unit(sim, 1, {0, 0, 10}, nullptr);
     Weapon gun;
     lua_State* L = lua.raw();
     const auto handle = [&](const char* name, void* object) {
@@ -346,10 +346,10 @@ TEST_CASE("SetTargetEntity takes only a target on the weapon's layers", "[target
 
     gun.fire_target_layer_caps = osc::sim::parse_layer_caps("Sub");
     REQUIRE(lua.do_string("moho.weapon_methods.SetTargetEntity(gun, target)").ok());
-    CHECK(gun.target_entity_id == 0);
+    CHECK_FALSE(gun.target_entity_id);
     gun.fire_target_layer_caps = osc::sim::parse_layer_caps("None");
     REQUIRE(lua.do_string("moho.weapon_methods.SetTargetEntity(gun, target)").ok());
-    CHECK(gun.target_entity_id == 0);
+    CHECK_FALSE(gun.target_entity_id);
     gun.fire_target_layer_caps = osc::sim::parse_layer_caps("Land");
     REQUIRE(lua.do_string("moho.weapon_methods.SetTargetEntity(gun, target)").ok());
     CHECK(gun.target_entity_id == target);

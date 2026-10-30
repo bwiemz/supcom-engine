@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 #include <vector>
 
@@ -62,7 +63,7 @@ void load_key_mappings(lua_State* L, ui::KeyMapRegistry& key_map);
 
 /// Push an array of UI-side unit objects for the given entity ids (dead or
 /// unknown ids are skipped), in the given order.
-void push_units_for_ui(lua_State* L, const std::vector<osc::u32>& ids);
+void push_units_for_ui(lua_State* L, const std::vector<sim::EntityId>& ids);
 
 /// The ticks the renderer captures (a drawn game): the UI's unit objects
 /// read the newest of them when it is the sim's current tick, rather than

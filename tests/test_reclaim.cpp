@@ -17,6 +17,7 @@ extern "C" {
 #include <string>
 
 using osc::sim::CommandType;
+using osc::sim::EntityId;
 using osc::sim::Prop;
 using osc::sim::SimState;
 using osc::sim::Unit;
@@ -117,7 +118,7 @@ struct ReclaimSim {
     }
 };
 
-UnitCommand order(CommandType type, osc::u32 target_id) {
+UnitCommand order(CommandType type, EntityId target_id) {
     UnitCommand c;
     c.type = type;
     c.target_id = target_id;
@@ -129,7 +130,7 @@ UnitCommand order(CommandType type, osc::u32 target_id) {
 TEST_CASE("A reclaimed unit wears down for nothing, then its wreck is reclaimed", "[reclaim]") {
     ReclaimSim w;
     Unit* eng = w.engineer(10.0f);
-    const osc::u32 target_id = w.target->entity_id();
+    const EntityId target_id = w.target->entity_id();
     eng->push_command(order(CommandType::Reclaim, target_id), true);
     for (const osc::f32 health : {80.0f, 60.0f, 40.0f, 20.0f}) {
         w.sim.tick();
@@ -155,7 +156,7 @@ TEST_CASE("A guard helps wear a reclaimed unit down and leaves the finish to the
     ReclaimSim w;
     Unit* eng = w.engineer(10.0f);
     Unit* helper = w.engineer(12.0f);
-    const osc::u32 target_id = w.target->entity_id();
+    const EntityId target_id = w.target->entity_id();
     eng->push_command(order(CommandType::Reclaim, target_id), true);
     helper->push_command(order(CommandType::Guard, eng->entity_id()), true);
     const int ticks = tick_until(

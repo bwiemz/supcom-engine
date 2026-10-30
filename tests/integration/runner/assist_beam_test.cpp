@@ -40,12 +40,12 @@ void test_assist_beam(TestContext& ctx) {
     const auto global_number = [&](const char* name) {
         lua_pushstring(ctx.L, name);
         lua_rawget(ctx.L, LUA_GLOBALSINDEX);
-        const u32 n = osc::sim::to_entity_id(ctx.L, -1);
+        const sim::EntityId n = osc::sim::to_entity_id(ctx.L, -1, ctx.sim.entity_registry());
         lua_pop(ctx.L, 1);
         return n;
     };
     // The beams the next frame draws from or to the commander.
-    const auto drawn_beams = [&](u32 commander) {
+    const auto drawn_beams = [&](sim::EntityId commander) {
         sim::WorldSnapshot snap;
         sim::capture_world(ctx.sim, snap);
         int n = 0;
@@ -100,8 +100,8 @@ void test_assist_beam(TestContext& ctx) {
         IssueGuard({__osc_ab_moved.acu}, __osc_ab_moved.fac)
         IssueGuard({__osc_ab_done.acu}, __osc_ab_done.fac)
     )");
-    const u32 moved = global_number("__osc_ab_moved_id");
-    const u32 done = global_number("__osc_ab_done_id");
+    const sim::EntityId moved = global_number("__osc_ab_moved_id");
+    const sim::EntityId done = global_number("__osc_ab_done_id");
     if (!tick_until(ctx, "both begin to help", kWaitTicks,
                     "__osc_ab_heard(__osc_ab_moved) == 'OnStartBuild' and "
                     "__osc_ab_heard(__osc_ab_done) == 'OnStartBuild'")) {

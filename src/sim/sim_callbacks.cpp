@@ -62,7 +62,7 @@ const f64* number_in(const SimCallbackEntry& cb, const char* key, f64 lo, f64 hi
 
 /// The live units a callback names, in its order.
 template <typename Fn> void for_each_unit(SimState& sim, const SimCallbackEntry& cb, Fn fn) {
-    for (u32 eid : cb.unit_ids) {
+    for (const EntityId eid : cb.unit_ids) {
         auto* e = sim.entity_registry().find(eid);
         if (!e || !e->is_unit() || e->destroyed()) continue;
         fn(*static_cast<Unit*>(e));
@@ -236,7 +236,7 @@ void forget_target(UnitCommand& c) {
     c.approached = false;
     c.site_cleared = false;
     c.prepared = false; // Moho's build task rewinds to TASKSTATE_Preparing
-    c.clearing_prop_id = 0;
+    c.clearing_prop_id = EntityId();
     c.clearing_approached = false;
     c.engaged = false;
     c.in_band = false;
@@ -368,7 +368,7 @@ void decrease_command_count(SimState& sim, lua_State* L, const SimCallbackEntry&
     if (!command || !count) return;
     const auto id = static_cast<u32>(*command);
     const auto fewer = static_cast<i32>(*count);
-    std::vector<u32> holders;
+    std::vector<EntityId> holders;
     sim.entity_registry().for_each_unit([&](Entity& e) {
         auto& u = static_cast<Unit&>(e);
         if (!u.destroyed() && !u.commands_with_id(id).empty()) holders.push_back(u.entity_id());
@@ -378,7 +378,7 @@ void decrease_command_count(SimState& sim, lua_State* L, const SimCallbackEntry&
     if (!first || !sim.okay_to_mess_with(first->army())) return;
     SimContext ctx = sim.sim_context();
     ctx.L = L;
-    for (const u32 holder : holders) {
+    for (const EntityId holder : holders) {
         auto* e = sim.entity_registry().find(holder);
         if (!e || !e->is_unit() || e->destroyed()) continue;
         auto& u = *static_cast<Unit*>(e);
@@ -504,15 +504,15 @@ void SimState::retarget_command(const SimCallbackEntry& cb,
     }
     const UnitCommand& order = *orders.front().command;
     for (const auto& o : orders) {
-        if (o.command->type == CommandType::BuildMobile && o.unit->build_target_id() != 0 &&
-            o.front) {
+        if (o.command->type == CommandType::BuildMobile && o.unit->build_target_id() && o.front) {
             return;
         }
     }
-    if (order.target_id != 0) {
-        const auto* target = number_in(cb, "Target", 1, 4294967295.0);
+    if (order.target_id) {
+        const auto* target = number_in(cb, "Target", 1, 9007199254740991.0);
         const Entity* old = entity_registry_.find(order.target_id);
-        const Entity* to = target ? entity_registry_.find(static_cast<u32>(*target)) : nullptr;
+        const Entity* to =
+            target ? entity_registry_.find(EntityId(static_cast<u64>(*target))) : nullptr;
         if (!old || old->destroyed() || !to || to->destroyed() || to->army() != old->army() ||
             to->is_unit() != old->is_unit()) {
             return;
@@ -606,12 +606,12 @@ void debug_command(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
 /// Unit::Warp places it, its height and layer those of the place.
 void warp_entity(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     if (!sim.cheats_enabled()) return;
-    const auto* id = number_in(cb, "Entity", 0, 4294967295.0);
+    const auto* id = number_in(cb, "Entity", 1, 9007199254740991.0);
     const auto* x = number_in(cb, "X", -1e6, 1e6);
     const auto* y = number_in(cb, "Y", -1e6, 1e6);
     const auto* z = number_in(cb, "Z", -1e6, 1e6);
     if (!id || !x || !y || !z) return;
-    Entity* e = sim.entity_registry().find(static_cast<u32>(*id));
+    Entity* e = sim.entity_registry().find(EntityId(static_cast<u64>(*id)));
     if (!e || e->destroyed() || !e->is_unit()) return;
     static_cast<Unit*>(e)->warp(
         sim.terrain(), {static_cast<f32>(*x), static_cast<f32>(*y), static_cast<f32>(*z)}, L);

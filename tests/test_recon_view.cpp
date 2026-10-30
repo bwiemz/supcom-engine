@@ -17,6 +17,10 @@ namespace {
 /// Army 0's senses in these tests.
 enum class VisFlag : u8 { None = 0, Vision = 1, Radar = 2, Sonar = 4, Omni = 8 };
 
+sim::EntityId eid(u32 moho) {
+    return sim::EntityId::of(moho, 1);
+}
+
 /// A 256 x 256 world of three armies (0 the player's), whose snapshot the
 /// tests edit between ticks.
 struct World {
@@ -44,7 +48,7 @@ struct World {
 
     sim::EntityRecord& add(u32 id, i32 army, f32 x, f32 z) {
         sim::EntityRecord e;
-        e.id = id;
+        e.id = eid(id);
         e.army = army;
         e.position = {x, 0, z};
         snap.entities.push_back(e);
@@ -57,8 +61,11 @@ struct World {
         return e;
     }
     sim::EntityRecord* find(u32 id) {
-        for (auto& e : snap.entities)
-            if (e.id == id) return &e;
+        for (auto& e : snap.entities) {
+            if (e.id == eid(id)) {
+                return &e;
+            }
+        }
         return nullptr;
     }
 
@@ -167,7 +174,7 @@ TEST_CASE("ReconView: an enemy mobile unit shows in sight, as a blip when detect
     w.sense(100, 100, VisFlag::Radar);
     w.tick(recon);
     CHECK(recon.sight(tank) == Sight::Blip);
-    CHECK(recon.frozen_pose(1) == nullptr);
+    CHECK(recon.frozen_pose(eid(1)) == nullptr);
 
     // In sight: itself.
     w.sense(100, 100, VisFlag::Vision);
@@ -222,8 +229,8 @@ TEST_CASE("ReconView: an enemy structure, once seen, is remembered as it was",
     w.sense(100, 100, VisFlag::Vision);
     w.tick(recon);
     CHECK(recon.sight(pd) == Sight::Seen);
-    CHECK(recon.frozen_pose(1) == nullptr); // live while in sight
-    CHECK(recon.frozen_fraction(1, 0.7f) == 0.7f);
+    CHECK(recon.frozen_pose(eid(1)) == nullptr); // live while in sight
+    CHECK(recon.frozen_fraction(eid(1), 0.7f) == 0.7f);
 
     // Out of sight, it turns and builds on; the player's army sees it as it
     // was, with or without a sense on it.
@@ -232,9 +239,9 @@ TEST_CASE("ReconView: an enemy structure, once seen, is remembered as it was",
     w.sense(100, 100, VisFlag::Radar);
     w.tick(recon);
     CHECK(recon.sight(pd) == Sight::Remembered);
-    REQUIRE(recon.frozen_pose(1) != nullptr);
-    CHECK((*recon.frozen_pose(1))[0][12] == 1.0f);
-    CHECK(recon.frozen_fraction(1, pd.fraction_complete) == 0.5f);
+    REQUIRE(recon.frozen_pose(eid(1)) != nullptr);
+    CHECK((*recon.frozen_pose(eid(1)))[0][12] == 1.0f);
+    CHECK(recon.frozen_fraction(eid(1), pd.fraction_complete) == 0.5f);
 
     w.sense(100, 100, VisFlag::None);
     w.tick(recon);
@@ -244,7 +251,7 @@ TEST_CASE("ReconView: an enemy structure, once seen, is remembered as it was",
     w.sense(100, 100, VisFlag::Vision);
     w.tick(recon);
     CHECK(recon.sight(pd) == Sight::Seen);
-    CHECK(recon.frozen_pose(1) == nullptr);
+    CHECK(recon.frozen_pose(eid(1)) == nullptr);
 }
 
 TEST_CASE("ReconView: a unit is judged by the sim's recon of it, not the cells",
@@ -352,12 +359,12 @@ TEST_CASE("ReconView: a structure gone unseen is maybe dead, until its spot is s
     w.tick(recon);
     REQUIRE(recon.ghosts().size() == 1);
     const sim::EntityRecord& ghost = recon.ghosts().front();
-    CHECK(ghost.id == 7);
+    CHECK(ghost.id == eid(7));
     CHECK(ghost.blueprint_id == "ueb2101");
-    CHECK(recon.maybe_dead(7));
-    CHECK_FALSE(recon.maybe_dead(8));
+    CHECK(recon.maybe_dead(eid(7)));
+    CHECK_FALSE(recon.maybe_dead(eid(8)));
     CHECK(recon.sight(ghost) == Sight::Remembered);
-    CHECK(recon.frozen_pose(7) != nullptr);
+    CHECK(recon.frozen_pose(eid(7)) != nullptr);
 
     // Radar there isn't sight: still maybe dead.
     w.sense(100, 100, VisFlag::Radar);
@@ -368,7 +375,7 @@ TEST_CASE("ReconView: a structure gone unseen is maybe dead, until its spot is s
     w.sense(100, 100, VisFlag::Vision);
     w.tick(recon);
     CHECK(recon.ghosts().empty());
-    CHECK_FALSE(recon.maybe_dead(7));
+    CHECK_FALSE(recon.maybe_dead(eid(7)));
 
     // A new focus forgets them too.
     w.unit(9, 1, 100, 100, false);
@@ -396,19 +403,19 @@ TEST_CASE("ReconView: a FlushIntelInRect forgets what it took from the player's 
     w.tick(recon);
     w.sense(0, 0, VisFlag::None);
     w.tick(recon);
-    std::erase_if(w.snap.entities, [](const sim::EntityRecord& e) { return e.id == 3; });
+    std::erase_if(w.snap.entities, [](const sim::EntityRecord& e) { return e.id == eid(3); });
     w.tick(recon);
     REQUIRE(recon.ghosts().size() == 1);
     CHECK(recon.sight(*w.find(1)) == Sight::Remembered);
 
-    const sim::IntelFlushRecord flush{90, 90, 210, 210, {{1, 1u << 0}, {2, 1u << 1}}};
+    const sim::IntelFlushRecord flush{90, 90, 210, 210, {{eid(1), 1u << 0}, {eid(2), 1u << 1}}};
     w.tick(recon, {&flush, 1});
     CHECK(recon.sight(*w.find(1)) == Sight::Hidden);
-    CHECK(recon.frozen_pose(1) == nullptr);
+    CHECK(recon.frozen_pose(eid(1)) == nullptr);
     CHECK(recon.sight(*w.find(2)) == Sight::Remembered);
     CHECK(recon.sight(*w.find(4)) == Sight::Remembered);
     CHECK(recon.ghosts().empty());
-    CHECK_FALSE(recon.maybe_dead(3));
+    CHECK_FALSE(recon.maybe_dead(eid(3)));
 
     // Seen again, it is remembered again.
     w.sense(100, 100, VisFlag::Vision);
@@ -422,13 +429,13 @@ TEST_CASE("ReconView: a jammer's fakes its army senses show as blips", "[rendere
     World w;
     sim::EntityRecord& frigate = w.unit(7, 1, 100, 100, true);
     frigate.blueprint_id = osc::InternedString("ues0103");
-    w.snap.fake_blips = {{7, 0, 2, {110, 0, 95}}, {7, 1, 0, {90, 0, 90}}};
+    w.snap.fake_blips = {{eid(7), 0, 2, {110, 0, 95}}, {eid(7), 1, 0, {90, 0, 90}}};
     ReconView recon;
     recon.set_focus_army(0);
     w.tick(recon);
     REQUIRE(recon.fakes().size() == 1); // army 0's alone
     const sim::EntityRecord& fake = recon.fakes().front();
-    CHECK((fake.id & ReconView::kFakeBlip) != 0);
+    CHECK(sim::is_fake_blip(fake.id));
     CHECK(fake.blueprint_id == "ues0103"); // its jammer's, for the blip's class
     CHECK(fake.position.x == 110.0f);
     CHECK(recon.sight(fake) == Sight::Blip);

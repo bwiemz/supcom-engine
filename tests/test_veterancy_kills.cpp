@@ -169,7 +169,7 @@ TEST_CASE("GetRolloverInfo tells only a blip's army, and a seen one's blueprint 
     lua_pushlightuserdata(L, &input);
     lua_rawset(L, LUA_REGISTRYINDEX);
     REQUIRE(w.check("enemy = CreateUnit('tank', 2, 0, 0, 0) enemy:SetStat('KILLS', 4)"));
-    const osc::u32 id = w.unit("enemy")->entity_id();
+    const osc::sim::EntityId id = w.unit("enemy")->entity_id();
 
     osc::sim::WorldSnapshot snap;
     snap.armies.resize(2);

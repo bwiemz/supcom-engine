@@ -1890,7 +1890,7 @@ static int brain_DisbandPlatoon(lua_State* L) {
     // Units return to the pool.
     if (auto* owner = check_brain(L); owner && sim) {
         if (auto* pool = owner->find_platoon_by_name("ArmyPool"); pool && pool != platoon) {
-            for (u32 id : platoon->unit_ids()) {
+            for (sim::EntityId id : platoon->unit_ids()) {
                 auto* e = sim->entity_registry().find(id);
                 if (e && !e->destroyed() && !pool->has_unit(id)) pool->add_unit(id);
             }
@@ -1899,7 +1899,7 @@ static int brain_DisbandPlatoon(lua_State* L) {
 
     // Clear PlatoonHandle on all units
     if (sim) {
-        for (u32 id : platoon->unit_ids()) {
+        for (sim::EntityId id : platoon->unit_ids()) {
             auto* e = sim->entity_registry().find(id);
             if (e && !e->destroyed() && e->lua_table_ref() >= 0) {
                 lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
@@ -2446,7 +2446,7 @@ static int brain_PickBestAttackVector(lua_State* L) {
     // The squad: its live units, and where they stand on average.
     std::vector<const sim::Unit*> members;
     sim::Vector3 centre{0, 0, 0};
-    for (u32 id : platoon->unit_ids()) {
+    for (sim::EntityId id : platoon->unit_ids()) {
         const auto* e = sim->entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         if (sim::Platoon::squad_class(platoon->get_unit_squad(id)) != squad_class) continue;

@@ -54,20 +54,22 @@ struct LuaGuard {
     ~LuaGuard() { lua_close(L); }
 };
 
-osc::u32 spawn_at(SimState& sim, Vector3 pos) {
+osc::sim::EntityId spawn_at(SimState& sim, Vector3 pos) {
     auto unit = std::make_unique<Unit>();
     unit->set_army(0);
     unit->set_position(pos);
     return sim.entity_registry().register_entity(std::move(unit));
 }
 
-Entity& entity(SimState& sim, osc::u32 id) {
+Entity& entity(SimState& sim, osc::sim::EntityId id) {
     auto* e = sim.entity_registry().find(id);
     REQUIRE(e != nullptr);
     return *e;
 }
 
-Unit& unit(SimState& sim, osc::u32 id) { return static_cast<Unit&>(entity(sim, id)); }
+Unit& unit(SimState& sim, osc::sim::EntityId id) {
+    return static_cast<Unit&>(entity(sim, id));
+}
 
 void end_tick(SimState& sim, WorldHistory& history) {
     sim.entity_registry().advance_coords();
@@ -246,9 +248,9 @@ TEST_CASE("capture_world records live entities in id order with their bone poses
           "[interp][snapshot]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
-    const osc::u32 a = spawn_at(sim, {1, 2, 3});
-    const osc::u32 b = spawn_at(sim, {4, 5, 6});
-    const osc::u32 gone = spawn_at(sim, {7, 8, 9});
+    const osc::sim::EntityId a = spawn_at(sim, {1, 2, 3});
+    const osc::sim::EntityId b = spawn_at(sim, {4, 5, 6});
+    const osc::sim::EntityId gone = spawn_at(sim, {7, 8, 9});
     entity(sim, gone).mark_destroyed();
     unit(sim, b).animated_bone_matrices().assign(3, filled(2.0f));
 
@@ -301,7 +303,7 @@ TEST_CASE("A capture staged on the sim thread shows only once published (OE-134)
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
-    const osc::u32 id = spawn_at(sim, {1, 0, 1});
+    const osc::sim::EntityId id = spawn_at(sim, {1, 0, 1});
     sim.set_beat_observer([&](const SimState& s) { history.capture(s); });
     sim.tick(); // tick 1, published at once
     sim.tick(); // tick 2
@@ -337,7 +339,7 @@ struct TwoTicks {
     LuaGuard g;
     SimState sim{g.L, nullptr};
     WorldHistory history;
-    osc::u32 id = 0;
+    osc::sim::EntityId id{};
 
     TwoTicks(Vector3 from, Vector3 to) {
         id = spawn_at(sim, from);
@@ -383,7 +385,7 @@ TEST_CASE("FrameView turns orientation along the shorter arc", "[interp][view]")
 
 TEST_CASE("FrameView draws a new entity where it is, not where it wasn't", "[interp][view]") {
     TwoTicks w({0, 0, 0}, {10, 0, 0});
-    const osc::u32 fresh = spawn_at(w.sim, {50, 0, 50});
+    const osc::sim::EntityId fresh = spawn_at(w.sim, {50, 0, 50});
     end_tick(w.sim, w.history); // prev: no `fresh`; cur: `fresh` at 50,50
 
     const FrameView view(&w.history.prev(), &w.history.cur(), 0.25f);
@@ -398,7 +400,7 @@ TEST_CASE("FrameView draws a projectile's first step from where it was made", "[
     auto made = std::make_unique<osc::sim::Projectile>();
     made->set_position({100, 30, 100});
     made->velocity = {35, 0, 0};
-    const osc::u32 id = sim.entity_registry().register_entity(std::move(made));
+    const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(made));
     sim.tick();
     end_tick(sim, history);
 
@@ -416,7 +418,7 @@ TEST_CASE("FrameView draws a projectile reaching its impact point at the share o
     SimState sim(g.L, nullptr);
     WorldHistory history;
     sim.set_beat_observer([&](const SimState& s) { history.capture(s); });
-    const osc::u32 target = spawn_at(sim, {110, 10, 100});
+    const osc::sim::EntityId target = spawn_at(sim, {110, 10, 100});
     osc::sim::CollisionShape box;
     box.type = osc::sim::CollisionShapeType::BOX;
     box.cy = 1;
@@ -427,7 +429,7 @@ TEST_CASE("FrameView draws a projectile reaching its impact point at the share o
     auto made = std::make_unique<osc::sim::Projectile>();
     made->set_position({100, 11, 100});
     made->velocity = {35, 0, 0};
-    const osc::u32 id = sim.entity_registry().register_entity(std::move(made));
+    const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(made));
     for (int t = 0; t < 3; ++t) {
         sim.tick();
     }
@@ -447,7 +449,7 @@ TEST_CASE("FrameView jumps a teleported entity instead of sliding it", "[interp]
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
-    const osc::u32 id = spawn_at(sim, {0, 0, 0});
+    const osc::sim::EntityId id = spawn_at(sim, {0, 0, 0});
     end_tick(sim, history);
     entity(sim, id).set_position({500, 0, 500});
     entity(sim, id).note_snap(); // Warp / SetPosition(pos, true)
@@ -462,15 +464,15 @@ TEST_CASE("FrameView pairs records through the history's index as a search would
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
-    const osc::u32 moving = spawn_at(sim, {0, 0, 0});
-    const osc::u32 dying = spawn_at(sim, {5, 0, 5});
-    const osc::u32 warped = spawn_at(sim, {9, 0, 9});
+    const osc::sim::EntityId moving = spawn_at(sim, {0, 0, 0});
+    const osc::sim::EntityId dying = spawn_at(sim, {5, 0, 5});
+    const osc::sim::EntityId warped = spawn_at(sim, {9, 0, 9});
     end_tick(sim, history);
     entity(sim, moving).set_position({10, 0, 0});
     entity(sim, dying).mark_destroyed();
     entity(sim, warped).set_position({500, 0, 500});
     entity(sim, warped).note_snap();
-    const osc::u32 fresh = spawn_at(sim, {50, 0, 50});
+    const osc::sim::EntityId fresh = spawn_at(sim, {50, 0, 50});
     end_tick(sim, history);
     REQUIRE(history.cur().previous_serial == history.prev().serial);
 
@@ -480,7 +482,7 @@ TEST_CASE("FrameView pairs records through the history's index as a search would
     cur.previous.clear();
     const FrameView indexed(&history.prev(), &history.cur(), 0.5f);
     const FrameView searched(&prev, &cur, 0.5f);
-    for (const osc::u32 id : {moving, warped, fresh}) {
+    for (const osc::sim::EntityId id : {moving, warped, fresh}) {
         const auto* a = indexed.find(id);
         const auto* b = searched.find(id);
         REQUIRE(a != nullptr);
@@ -497,24 +499,24 @@ TEST_CASE("A capture's record reused for another entity keeps nothing of the las
           "[interp][snapshot]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
-    const osc::u32 builder = spawn_at(sim, {1, 0, 1});
+    const osc::sim::EntityId builder = spawn_at(sim, {1, 0, 1});
     Unit& u = unit(sim, builder);
     u.set_unit_id("uel0105");
     u.set_blueprint_id("uel0105");
     u.set_custom_name("Bob");
     u.set_vet_level(3);
-    u.set_build_target_id(77);
+    u.set_build_target_id(osc::sim::EntityId::of(77, 1));
     u.animated_bone_matrices().assign(2, filled(1.0f));
     auto rock = std::make_unique<Entity>();
     rock->set_position({9, 0, 9});
     rock->set_blueprint_id("/env/common/props/rocks/rock01_prop.bp");
-    const osc::u32 prop = sim.entity_registry().register_entity(std::move(rock));
+    const osc::sim::EntityId prop = sim.entity_registry().register_entity(std::move(rock));
 
     WorldSnapshot snap;
     osc::sim::capture_world(sim, snap);
     REQUIRE(snap.entities.size() == 2);
     CHECK(snap.entities[0].custom_name == "Bob");
-    CHECK(snap.entities[0].build_target_id == 77);
+    CHECK(snap.entities[0].build_target_id == osc::sim::EntityId::of(77, 1));
 
     // The builder goes: the rock takes its record, which must hold no unit's
     entity(sim, builder).mark_destroyed();
@@ -527,7 +529,7 @@ TEST_CASE("A capture's record reused for another entity keeps nothing of the las
     CHECK(r.unit_id.empty());
     CHECK(r.custom_name.empty());
     CHECK(r.vet_level == 0);
-    CHECK(r.build_target_id == 0);
+    CHECK_FALSE(r.build_target_id);
     CHECK(r.bone_count == 0);
     CHECK(r.position.x == 9.0f);
 }
@@ -539,11 +541,11 @@ TEST_CASE("A prop's record reused for another prop keeps no pose of the last one
     auto wreck = std::make_unique<osc::sim::Prop>();
     wreck->set_blueprint_id("/env/wrecks/uel0101_wreck.bp");
     wreck->pose.assign(2, filled(3.0f)); // the pose its unit died in
-    const osc::u32 posed = sim.entity_registry().register_entity(std::move(wreck));
+    const osc::sim::EntityId posed = sim.entity_registry().register_entity(std::move(wreck));
     auto tree = std::make_unique<osc::sim::Prop>();
     tree->set_blueprint_id("/env/evergreen/props/trees/pine06_prop.bp");
     tree->set_position({4, 0, 4});
-    const osc::u32 plain = sim.entity_registry().register_entity(std::move(tree));
+    const osc::sim::EntityId plain = sim.entity_registry().register_entity(std::move(tree));
 
     WorldSnapshot snap;
     osc::sim::capture_world(sim, snap);
@@ -589,8 +591,8 @@ TEST_CASE("FrameView jumps an attachment with its teleported parent", "[interp][
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
-    const osc::u32 parent = spawn_at(sim, {0, 0, 0});
-    const osc::u32 child = spawn_at(sim, {0, 0, 0});
+    const osc::sim::EntityId parent = spawn_at(sim, {0, 0, 0});
+    const osc::sim::EntityId child = spawn_at(sim, {0, 0, 0});
     entity(sim, child).set_parent(parent, -1, -1);
     end_tick(sim, history);
 
@@ -607,9 +609,9 @@ TEST_CASE("A chain of attachments jumps with its teleported root", "[interp][vie
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
-    const osc::u32 root = spawn_at(sim, {0, 0, 0});
-    const osc::u32 mid = spawn_at(sim, {0, 0, 0});
-    const osc::u32 leaf = spawn_at(sim, {0, 0, 0});
+    const osc::sim::EntityId root = spawn_at(sim, {0, 0, 0});
+    const osc::sim::EntityId mid = spawn_at(sim, {0, 0, 0});
+    const osc::sim::EntityId leaf = spawn_at(sim, {0, 0, 0});
     entity(sim, mid).set_parent(root, -1, -1);
     entity(sim, leaf).set_parent(mid, -1, -1);
     sim.tick();
@@ -629,8 +631,8 @@ TEST_CASE("Attaching an entity jumps it onto its parent", "[interp][view]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
-    const osc::u32 parent = spawn_at(sim, {100, 0, 100});
-    const osc::u32 child = spawn_at(sim, {0, 0, 0});
+    const osc::sim::EntityId parent = spawn_at(sim, {100, 0, 100});
+    const osc::sim::EntityId child = spawn_at(sim, {0, 0, 0});
     end_tick(sim, history);
 
     entity(sim, child).set_parent(parent, -1, -1); // AttachTo / AttachBoneTo
@@ -652,7 +654,7 @@ TEST_CASE("FrameView interpolates collision-beam endpoints", "[interp][view]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
-    const osc::u32 id = spawn_at(sim, {0, 0, 0});
+    const osc::sim::EntityId id = spawn_at(sim, {0, 0, 0});
     entity(sim, id).set_beam_endpoint({0, 0, 0});
     end_tick(sim, history);
     entity(sim, id).set_beam_endpoint({0, 0, 20});
@@ -666,7 +668,7 @@ TEST_CASE("FrameView blends bone poses between ticks", "[interp][view]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
-    const osc::u32 id = spawn_at(sim, {0, 0, 0});
+    const osc::sim::EntityId id = spawn_at(sim, {0, 0, 0});
     unit(sim, id).animated_bone_matrices().assign(2, filled(0.0f));
     end_tick(sim, history);
     unit(sim, id).animated_bone_matrices().assign(2, filled(4.0f));
@@ -690,7 +692,7 @@ TEST_CASE("FrameView blends bone poses between ticks", "[interp][view]") {
 TEST_CASE("FrameView without history reads the live sim", "[interp][view]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
-    const osc::u32 id = spawn_at(sim, {3, 4, 5});
+    const osc::sim::EntityId id = spawn_at(sim, {3, 4, 5});
     const FrameView live;
     CHECK(live.position(entity(sim, id)).z == 5.0f);
 
@@ -698,7 +700,7 @@ TEST_CASE("FrameView without history reads the live sim", "[interp][view]") {
     WorldHistory history;
     end_tick(sim, history);
     end_tick(sim, history);
-    const osc::u32 late = spawn_at(sim, {9, 9, 9});
+    const osc::sim::EntityId late = spawn_at(sim, {9, 9, 9});
     const FrameView view(&history.prev(), &history.cur(), 0.5f);
     CHECK(view.position(entity(sim, late)).x == 9.0f);
     std::vector<std::array<osc::f32, 16>> out;
@@ -713,7 +715,7 @@ TEST_CASE("Warp and an immediate SetPosition teleport; a plain SetPosition moves
     SimState sim(lua.raw(), nullptr);
     osc::lua::register_sim_bindings(lua, sim);
     osc::lua::register_moho_bindings(lua, sim);
-    const osc::u32 id = spawn_at(sim, {0, 0, 0});
+    const osc::sim::EntityId id = spawn_at(sim, {0, 0, 0});
     Entity& e = entity(sim, id);
 
     lua_State* L = lua.raw();
@@ -753,8 +755,8 @@ TEST_CASE("capture_world records what the renderer draws a unit with", "[interp]
     sim.add_army("ARMY_1", "ARMY_1").set_color(10, 20, 30);
     sim.add_army("ARMY_2", "ARMY_2");
 
-    const osc::u32 target = spawn_at(sim, {5, 0, 5});
-    const osc::u32 id = spawn_at(sim, {1, 0, 1});
+    const osc::sim::EntityId target = spawn_at(sim, {5, 0, 5});
+    const osc::sim::EntityId id = spawn_at(sim, {1, 0, 1});
     Unit& u = unit(sim, id);
     u.set_unit_id("uel0105");
     u.set_custom_name("Bob");
@@ -860,12 +862,12 @@ TEST_CASE("capture_world records shields, live effects and the economy", "[inter
     brain.economy().mass.stored = 123;
     brain.economy().energy.max_storage = 5000;
 
-    const osc::u32 owner = spawn_at(sim, {0, 0, 0});
+    const osc::sim::EntityId owner = spawn_at(sim, {0, 0, 0});
     auto shield = std::make_unique<osc::sim::Shield>();
     shield->owner_id = owner;
     shield->is_on = true;
     shield->size = 18;
-    const osc::u32 shield_id = sim.entity_registry().register_entity(std::move(shield));
+    const osc::sim::EntityId shield_id = sim.entity_registry().register_entity(std::move(shield));
 
     auto* beam = sim.effect_registry().create();
     beam->set_type(osc::sim::EffectType::ATTACHED_BEAM);
@@ -932,7 +934,7 @@ TEST_CASE("A capture shared over the worker pool is the one a walk in id order m
     // Enough units for many chunks, each with orders and a weapon (lists the
     // records point into), between props with poses
     for (int i = 0; i < 3000; ++i) {
-        const osc::u32 id =
+        const osc::sim::EntityId id =
             spawn_at(sim, {static_cast<float>(i % 200), 0, static_cast<float>(i) / 200.0f});
         auto& u = unit(sim, id);
         for (int c = 0; c < i % 4; ++c) {
@@ -985,7 +987,7 @@ TEST_CASE("A job of several ticks is captured once, with every tick's events",
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
-    const osc::u32 id = spawn_at(sim, {1, 0, 1});
+    const osc::sim::EntityId id = spawn_at(sim, {1, 0, 1});
     sim.set_beat_observer([&](const SimState& s) { history.capture(s); });
     sim.tick(); // tick 1
 
@@ -1018,7 +1020,7 @@ TEST_CASE("A light reaches the renderer where its entity was and with its partic
     SimState sim(lua.raw(), nullptr);
     osc::lua::register_sim_bindings(lua, sim);
     osc::lua::register_moho_bindings(lua, sim);
-    const osc::u32 id = spawn_at(sim, {4, 5, 6});
+    const osc::sim::EntityId id = spawn_at(sim, {4, 5, 6});
 
     lua_State* L = lua.raw();
     lua_newtable(L);
@@ -1055,7 +1057,7 @@ TEST_CASE("An order given and not yet run is in its unit's orders before its tic
           "[interp][snapshot]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
-    const osc::u32 id = spawn_at(sim, {10, 0, 10});
+    const osc::sim::EntityId id = spawn_at(sim, {10, 0, 10});
     osc::sim::UnitCommand move;
     move.type = osc::sim::CommandType::Move;
     move.target_pos = {20, 0, 10};
@@ -1095,7 +1097,7 @@ TEST_CASE("An order moved or removed and not yet run is so in its unit's orders 
           "[interp][snapshot]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
-    const osc::u32 id = spawn_at(sim, {10, 0, 10});
+    const osc::sim::EntityId id = spawn_at(sim, {10, 0, 10});
     osc::sim::UnitCommand move;
     move.type = osc::sim::CommandType::Move;
     move.target_pos = {20, 0, 10};
@@ -1139,7 +1141,7 @@ TEST_CASE("A patrol's break-off isn't in its unit's orders before or after a new
           "[interp][snapshot]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
-    const osc::u32 id = spawn_at(sim, {10, 0, 10});
+    const osc::sim::EntityId id = spawn_at(sim, {10, 0, 10});
     osc::sim::UnitCommand patrol;
     patrol.type = osc::sim::CommandType::Patrol;
     patrol.target_pos = {20, 0, 10};
@@ -1176,7 +1178,7 @@ TEST_CASE("A patrol's break-off isn't in its unit's orders before or after a new
 TEST_CASE("A player's order not yet run has its id, and is taken off by it", "[interp][snapshot]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
-    const osc::u32 id = spawn_at(sim, {10, 0, 10});
+    const osc::sim::EntityId id = spawn_at(sim, {10, 0, 10});
     osc::sim::UnitCommand move;
     move.type = osc::sim::CommandType::Move;
     move.target_pos = {20, 0, 10};

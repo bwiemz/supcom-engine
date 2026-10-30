@@ -30,6 +30,7 @@ extern "C" {
 #include <vector>
 
 using osc::sim::BrainState;
+using osc::sim::EntityId;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::VictoryMode;
@@ -39,15 +40,14 @@ namespace {
 
 // Spawn a bare unit belonging to `army` carrying the given categories.
 // Returns the registry entity id so the caller can later destroy it.
-osc::u32 spawn(SimState& sim, int army,
-               std::initializer_list<const char*> categories) {
+EntityId spawn(SimState& sim, int army, std::initializer_list<const char*> categories) {
     auto unit = std::make_unique<Unit>();
     unit->set_army(army);
     for (const char* c : categories) unit->add_category(c);
     return sim.entity_registry().register_entity(std::move(unit));
 }
 
-void destroy(SimState& sim, osc::u32 id) {
+void destroy(SimState& sim, EntityId id) {
     auto* e = sim.entity_registry().find(id);
     REQUIRE(e != nullptr);
     e->mark_destroyed();
@@ -100,7 +100,7 @@ TEST_CASE("Assassination: army is defeated when its ACU dies even with units lef
     sim.add_army("ARMY_2", "ARMY_2");
 
     spawn(sim, 0, {"COMMAND"});
-    osc::u32 enemy_acu = spawn(sim, 1, {"COMMAND"});
+    EntityId enemy_acu = spawn(sim, 1, {"COMMAND"});
     spawn(sim, 1, {"MOBILE", "LAND"}); // a tank — should NOT save army 1
 
     tick_n(sim, kPastGrace);
@@ -127,8 +127,8 @@ TEST_CASE("Annihilation: losing the ACU does not defeat you while units remain",
     sim.add_army("ARMY_2", "ARMY_2");
 
     spawn(sim, 0, {"COMMAND"});
-    osc::u32 enemy_acu = spawn(sim, 1, {"COMMAND"});
-    osc::u32 enemy_tank = spawn(sim, 1, {"MOBILE", "LAND"});
+    EntityId enemy_acu = spawn(sim, 1, {"COMMAND"});
+    EntityId enemy_tank = spawn(sim, 1, {"MOBILE", "LAND"});
 
     tick_n(sim, kPastGrace);
     destroy(sim, enemy_acu);
@@ -157,7 +157,7 @@ TEST_CASE("Supremacy: a structure keeps you alive, a lone wall does not",
         sim.add_army("ARMY_2", "ARMY_2");
 
         spawn(sim, 0, {"COMMAND", "ENGINEER"}); // ACU counts (it is an ENGINEER)
-        osc::u32 factory = spawn(sim, 1, {"STRUCTURE", "FACTORY"}); // no ACU, but a factory
+        EntityId factory = spawn(sim, 1, {"STRUCTURE", "FACTORY"}); // no ACU, but a factory
 
         tick_n(sim, kPastGrace);
         // Domination cares about structures/units, not the commander.
@@ -205,7 +205,7 @@ TEST_CASE("Supremacy: a structure keeps you alive, a lone wall does not",
         sim.add_army("ARMY_2", "ARMY_2");
 
         spawn(sim, 0, {"COMMAND", "ENGINEER"});
-        osc::u32 engineer = spawn(sim, 1, {"MOBILE", "ENGINEER"}); // engineer counts for domination
+        EntityId engineer = spawn(sim, 1, {"MOBILE", "ENGINEER"}); // engineer counts for domination
 
         tick_n(sim, kPastGrace + 2);
         CHECK(sim.get_army(1)->state() == BrainState::InProgress);
@@ -240,7 +240,7 @@ TEST_CASE("Sandbox: no army is ever eliminated", "[victory][sandbox]") {
     sim.add_army("ARMY_2", "ARMY_2");
 
     spawn(sim, 0, {"COMMAND"});
-    osc::u32 enemy_acu = spawn(sim, 1, {"COMMAND"});
+    EntityId enemy_acu = spawn(sim, 1, {"COMMAND"});
 
     tick_n(sim, kPastGrace);
     destroy(sim, enemy_acu); // army 1 now has zero units
@@ -264,7 +264,7 @@ TEST_CASE("Teams: allied victory when the last enemy team is eliminated",
 
     spawn(sim, 0, {"COMMAND"});
     spawn(sim, 1, {"COMMAND"});
-    osc::u32 enemy_acu = spawn(sim, 2, {"COMMAND"});
+    EntityId enemy_acu = spawn(sim, 2, {"COMMAND"});
 
     tick_n(sim, kPastGrace);
     CHECK(sim.surviving_team_count() == 2);
@@ -289,7 +289,7 @@ TEST_CASE("Teams: you lose but the game continues while an ally fights on",
     sim.add_army("ARMY_3", "ARMY_3"); // enemy, team B
     sim.set_alliance(0, 1, osc::sim::Alliance::Ally);
 
-    osc::u32 player_acu = spawn(sim, 0, {"COMMAND"});
+    EntityId player_acu = spawn(sim, 0, {"COMMAND"});
     spawn(sim, 1, {"COMMAND"});
     spawn(sim, 2, {"COMMAND"});
 
@@ -310,8 +310,8 @@ TEST_CASE("Draw: simultaneous mutual elimination", "[victory][draw]") {
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2");
 
-    osc::u32 acu0 = spawn(sim, 0, {"COMMAND"});
-    osc::u32 acu1 = spawn(sim, 1, {"COMMAND"});
+    EntityId acu0 = spawn(sim, 0, {"COMMAND"});
+    EntityId acu1 = spawn(sim, 1, {"COMMAND"});
 
     tick_n(sim, kPastGrace);
     destroy(sim, acu0);
@@ -332,7 +332,7 @@ TEST_CASE("Grace: an army that never spawned keeps the game open",
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2"); // never gets any units
 
-    osc::u32 acu = spawn(sim, 0, {"COMMAND"});
+    EntityId acu = spawn(sim, 0, {"COMMAND"});
 
     tick_n(sim, kPastGrace + 10);
 
@@ -356,7 +356,7 @@ TEST_CASE("Grace: an ACU killed during the grace window is honored after it",
     sim.add_army("ARMY_2", "ARMY_2");
 
     spawn(sim, 0, {"COMMAND"});
-    osc::u32 enemy_acu = spawn(sim, 1, {"COMMAND"});
+    EntityId enemy_acu = spawn(sim, 1, {"COMMAND"});
 
     tick_n(sim, 5); // still inside the grace window
     destroy(sim, enemy_acu);
@@ -386,8 +386,8 @@ TEST_CASE("ShareUntilDeath destroys a defeated army's remaining units",
     sim.add_army("ARMY_2", "ARMY_2");
 
     spawn(sim, 0, {"COMMAND"});
-    osc::u32 enemy_acu = spawn(sim, 1, {"COMMAND"});
-    osc::u32 enemy_tank = spawn(sim, 1, {"MOBILE", "LAND"});
+    EntityId enemy_acu = spawn(sim, 1, {"COMMAND"});
+    EntityId enemy_tank = spawn(sim, 1, {"MOBILE", "LAND"});
 
     tick_n(sim, kPastGrace);
     destroy(sim, enemy_acu);
@@ -410,8 +410,8 @@ TEST_CASE("FullShare transfers a defeated army's units to a surviving ally",
     sim.add_army("ARMY_3", "ARMY_3"); // enemy, team B
     sim.set_alliance(0, 1, osc::sim::Alliance::Ally);
 
-    osc::u32 player_acu = spawn(sim, 0, {"COMMAND"});
-    osc::u32 player_tank = spawn(sim, 0, {"MOBILE", "LAND"});
+    EntityId player_acu = spawn(sim, 0, {"COMMAND"});
+    EntityId player_tank = spawn(sim, 0, {"MOBILE", "LAND"});
     spawn(sim, 1, {"COMMAND"});
     spawn(sim, 2, {"COMMAND"});
 
@@ -438,8 +438,8 @@ TEST_CASE("CivilianDeserter hands a defeated army's units to a civilian army",
     sim.add_army("CIVILIAN", "CIVILIAN"); // civilian recipient (not a participant)
 
     spawn(sim, 0, {"COMMAND"});
-    osc::u32 enemy_acu = spawn(sim, 1, {"COMMAND"});
-    osc::u32 enemy_tank = spawn(sim, 1, {"MOBILE", "LAND"});
+    EntityId enemy_acu = spawn(sim, 1, {"COMMAND"});
+    EntityId enemy_tank = spawn(sim, 1, {"MOBILE", "LAND"});
 
     tick_n(sim, kPastGrace);
     destroy(sim, enemy_acu);
@@ -463,9 +463,9 @@ TEST_CASE("PartialShare transfers structures/engineers to an ally, kills the res
     sim.add_army("ARMY_3", "ARMY_3"); // enemy
     sim.set_alliance(0, 1, osc::sim::Alliance::Ally);
 
-    osc::u32 acu = spawn(sim, 0, {"COMMAND"});
-    osc::u32 factory = spawn(sim, 0, {"STRUCTURE", "FACTORY"});
-    osc::u32 tank = spawn(sim, 0, {"MOBILE", "LAND"});
+    EntityId acu = spawn(sim, 0, {"COMMAND"});
+    EntityId factory = spawn(sim, 0, {"STRUCTURE", "FACTORY"});
+    EntityId tank = spawn(sim, 0, {"MOBILE", "LAND"});
     spawn(sim, 1, {"COMMAND"});
     spawn(sim, 2, {"COMMAND"});
 
@@ -490,8 +490,8 @@ TEST_CASE("Defectors hand a defeated army's units to a surviving enemy",
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2"); // enemy of army 0
 
-    osc::u32 acu = spawn(sim, 0, {"COMMAND"});
-    osc::u32 tank = spawn(sim, 0, {"MOBILE", "LAND"});
+    EntityId acu = spawn(sim, 0, {"COMMAND"});
+    EntityId tank = spawn(sim, 0, {"MOBILE", "LAND"});
     spawn(sim, 1, {"COMMAND"});
 
     tick_n(sim, kPastGrace);
@@ -562,7 +562,7 @@ TEST_CASE("A peer dropping mid-match is defeated", "[victory][drop]") {
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2");
     spawn(sim, 0, {"COMMAND"});
-    osc::u32 dropped_acu = spawn(sim, 1, {"COMMAND"});
+    EntityId dropped_acu = spawn(sim, 1, {"COMMAND"});
     tick_n(sim, kPastGrace);
 
     sim.defeat_army(1);
@@ -581,8 +581,8 @@ TEST_CASE("A peer dropping after the engine decided the match changes nothing",
     sim.set_victory_condition("demoralization");
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2");
-    osc::u32 winner_acu = spawn(sim, 0, {"COMMAND"});
-    osc::u32 loser_acu = spawn(sim, 1, {"COMMAND"});
+    EntityId winner_acu = spawn(sim, 0, {"COMMAND"});
+    EntityId loser_acu = spawn(sim, 1, {"COMMAND"});
     tick_n(sim, kPastGrace);
     destroy(sim, loser_acu);
     tick_n(sim, 2);
@@ -606,7 +606,7 @@ TEST_CASE("A peer dropping after the victory script ended the game changes nothi
     sim.set_script_victory(true);
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2");
-    osc::u32 winner_acu = spawn(sim, 0, {"COMMAND"});
+    EntityId winner_acu = spawn(sim, 0, {"COMMAND"});
     tick_n(sim, kPastGrace);
     sim.get_army(1)->set_state(BrainState::Defeat); // SetArmyOutOfGame
     sim.set_game_ended(true);                        // EndGame
@@ -658,8 +658,8 @@ TEST_CASE("The player's result is the focus army's; IsGameOver is the session's"
     sim.add_army("ARMY_4", "ARMY_4");
     osc::lua::set_focus_army(lua.raw(), nullptr, 1);
 
-    const osc::u32 ai_acu = spawn(sim, 0, {"COMMAND"});
-    const osc::u32 player_acu = spawn(sim, 1, {"COMMAND"});
+    const EntityId ai_acu = spawn(sim, 0, {"COMMAND"});
+    const EntityId player_acu = spawn(sim, 1, {"COMMAND"});
     spawn(sim, 2, {"COMMAND"});
     spawn(sim, 3, {"COMMAND"});
     const auto game_over = [&] {

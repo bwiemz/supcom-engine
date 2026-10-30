@@ -82,24 +82,23 @@ public:
 
     /// A remembered structure's bone pose when last seen; null for any other
     /// entity, or one with no pose.
-    const std::vector<sim::BoneMatrix>* frozen_pose(u32 id) const;
+    const std::vector<sim::BoneMatrix>* frozen_pose(sim::EntityId id) const;
 
     /// A remembered structure's fraction complete when last seen; `live`
     /// for any other entity.
-    f32 frozen_fraction(u32 id, f32 live) const;
+    f32 frozen_fraction(sim::EntityId id, f32 live) const;
 
     /// Remembered structures gone from the world while out of the player's
     /// sight: Moho's MaybeDead, drawn as last seen until it sees the spot
     /// (their records as last seen, in id order; M215d).
     const std::vector<sim::EntityRecord>& ghosts() const { return ghosts_; }
     /// Whether `id` is one of them (its icon is drawn darkened).
-    bool maybe_dead(u32 id) const;
+    bool maybe_dead(sim::EntityId id) const;
 
     /// The jammers' fake blips the player's army senses and doesn't know
     /// fake (M215e): each its jammer's record at the fake's place, under an
-    /// id of its own (kFakeBlip set), seen as a blip.
+    /// id of its own (sim::is_fake_blip), seen as a blip.
     const std::vector<sim::EntityRecord>& fakes() const { return fakes_; }
-    static constexpr u32 kFakeBlip = sim::kFakeBlipBit;
 
     /// Whether it sees everything (an observer, or no grid).
     bool sees_everything() const { return everything_; }
@@ -141,7 +140,7 @@ private:
     bool everything_ = true;
     u64 update_count_ = 0;
     u32 unidentified_color_ = 0xFF808080u;
-    std::unordered_map<u32, Memory> memory_;
+    std::unordered_map<sim::EntityId, Memory> memory_;
     std::vector<sim::EntityRecord> ghosts_;
     std::vector<sim::EntityRecord> fakes_;
 };

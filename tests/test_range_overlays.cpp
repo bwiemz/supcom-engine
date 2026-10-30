@@ -333,7 +333,7 @@ TEST_CASE("A selected sensor lights the same intel's ring on the army's others i
     bp.categories = {"STRUCTURE", "INTELLIGENCE"};
     const auto sensor = [&](osc::u32 id, f32 x, f32 radar, f32 sonar, f32 omni) {
         RangeUnit u = at(bp, {}, x, 0);
-        u.id = id;
+        u.id = osc::sim::EntityId::of(id, 1);
         u.radar = radar;
         u.sonar = sonar;
         u.omni = omni;

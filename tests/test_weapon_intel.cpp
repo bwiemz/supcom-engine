@@ -84,7 +84,7 @@ struct Scene {
 TEST_CASE("With the fog on, a weapon doesn't pick what its army can't sense", "[weapon][intel]") {
     Scene s("explored", "RULEUMT_Land");
     s.ticks(35);
-    CHECK(s.weapon->target_entity_id == 0);
+    CHECK_FALSE(s.weapon->target_entity_id);
     s.sim.add_temp_vision(0, 74.0f, 64.0f, 5.0f, 10.0f);
     tick_until([&] { s.ticks(1); }, "the weapon picks the enemy once it is seen", 70,
                [&] { return s.weapon->target_entity_id == s.enemy->entity_id(); });
@@ -104,7 +104,7 @@ TEST_CASE("A unit gone from sight is dropped; a structure once seen is kept", "[
         s.ticks(5);
         REQUIRE(s.weapon->target_entity_id == s.enemy->entity_id());
         tick_until([&] { s.ticks(1); }, "the weapon drops the unit gone from sight", 60,
-                   [&] { return s.weapon->target_entity_id == 0; });
+                   [&] { return !s.weapon->target_entity_id; });
     }
     SECTION("a structure") {
         Scene s("explored", "RULEUMT_None");
@@ -132,12 +132,14 @@ TEST_CASE("Weapon checks follow the army's published recon at every recon phase"
         s.weapon->target_check_period = 3;
         s.ticks(8 + phase);
         s.sim.add_temp_vision(0, 74.0f, 64.0f, 5.0f, 0.9f);
-        osc::u32 expected = 0;
+        osc::sim::EntityId expected{};
         for (int tick = 0; tick < 24; ++tick) {
             CAPTURE(tick);
             const auto* recon = s.sim.entity_recon(s.enemy->entity_id());
             const bool known = recon && (*recon)[0].any();
-            if (s.weapon->target_check_clock == 0) expected = known ? s.enemy->entity_id() : 0;
+            if (s.weapon->target_check_clock == 0) {
+                expected = known ? s.enemy->entity_id() : osc::sim::EntityId();
+            }
             s.ticks(1);
             CHECK(s.weapon->target_entity_id == expected);
         }
@@ -156,6 +158,6 @@ TEST_CASE("A held target leaving range waits for the weapon's next target check"
         s.ticks(2);
         CHECK(s.weapon->target_entity_id == s.enemy->entity_id());
         s.ticks(1);
-        CHECK(s.weapon->target_entity_id == 0);
+        CHECK_FALSE(s.weapon->target_entity_id);
     }
 }

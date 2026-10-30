@@ -43,7 +43,7 @@ void test_rebuilder_guard(TestContext& ctx) {
     const f32 sx = spot->x;
     const f32 sz = spot->z;
     auto& registry = ctx.sim.entity_registry();
-    const auto unit = [&](u32 id) {
+    const auto unit = [&](sim::EntityId id) {
         sim::Entity* e = registry.find(id);
         return e && e->is_unit() && !e->destroyed() ? static_cast<sim::Unit*>(e) : nullptr;
     };
@@ -54,9 +54,11 @@ void test_rebuilder_guard(TestContext& ctx) {
     };
 
     spawn_unit(ctx, "__osc_rb_pgen", "ueb1101", "ARMY_1", {sx, sz});
-    const u32 scu_id = spawn_unit(ctx, "__osc_rb_scu", "uel0301", "ARMY_1", {sx, sz + 12});
+    const sim::EntityId scu_id =
+        spawn_unit(ctx, "__osc_rb_scu", "uel0301", "ARMY_1", {sx, sz + 12});
     spawn_unit(ctx, "__osc_rb_pgen2", "ueb1101", "ARMY_1", {sx - 20, sz});
-    const u32 eng_id = spawn_unit(ctx, "__osc_rb_eng", "uel0105", "ARMY_1", {sx - 20, sz + 8});
+    const sim::EntityId eng_id =
+        spawn_unit(ctx, "__osc_rb_eng", "uel0105", "ARMY_1", {sx - 20, sz + 8});
     spawn_unit(ctx, "__osc_rb_factory", "ueb0101", "ARMY_1", {sx + 30, sz});
     spawn_unit(ctx, "__osc_rb_scu2", "uel0301", "ARMY_1", {sx + 30, sz + 18});
     spawn_unit(ctx, "__osc_rb_eng2", "uel0105", "ARMY_1", {sx + 36, sz + 18});
@@ -87,7 +89,7 @@ void test_rebuilder_guard(TestContext& ctx) {
     run_lua(ctx, "__osc_rb_pgen:Kill() __osc_rb_pgen2:Kill()");
     for (int i = 0; i < 30; ++i) ctx.sim.tick();
 
-    const auto guards = [&](u32 id) {
+    const auto guards = [&](sim::EntityId id) {
         const sim::Unit* u = unit(id);
         return u && !u->command_queue().empty() &&
                u->command_queue().front().type == sim::CommandType::Guard;

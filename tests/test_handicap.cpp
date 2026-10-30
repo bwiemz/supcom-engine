@@ -28,7 +28,7 @@ struct LuaGuard {
 };
 
 // A producer contributing fixed mass/energy income.
-osc::u32 spawn_producer(SimState& sim, int army, double m, double e) {
+osc::sim::EntityId spawn_producer(SimState& sim, int army, double m, double e) {
     auto u = std::make_unique<Unit>();
     u->set_army(army);
     u->economy().production_active = true;

@@ -34,9 +34,10 @@ void project(const OrientedBox& b, const Vector3& axis, f32& lo, f32& hi) {
 
 /// The transport its head order waits for, or 0 (Moho's
 /// UNITSTATE_WaitingForTransport, and its focus).
-u32 awaited_transport(const Unit& u) {
+EntityId awaited_transport(const Unit& u) {
     const auto& q = u.command_queue();
-    return !q.empty() && q.front().type == CommandType::TransportLoad ? q.front().target_id : 0;
+    return !q.empty() && q.front().type == CommandType::TransportLoad ? q.front().target_id
+                                                                      : EntityId();
 }
 
 bool ignores_structures(const Unit& u) {
@@ -60,7 +61,7 @@ bool any_unit_touching(const SimState& sim, const Vector3& lo, const Vector3& hi
     });
 }
 
-const Unit* find_unit(const SimState& sim, u32 id) {
+const Unit* find_unit(const SimState& sim, EntityId id) {
     const Entity* e = sim.entity_registry().find(id);
     return e && e->is_unit() && !e->destroyed() ? static_cast<const Unit*>(e) : nullptr;
 }
@@ -114,19 +115,23 @@ bool is_source_unit(i32 mode, const Unit& owner, const Unit& c) {
     if (owner.has_category("NAVAL") && !c.has_category("NAVAL")) return true;
     if (c.has_category("AIR") && (c.layer() == "Air" || c.transport_capacity() > 0)) return true;
     if (ignores_structures(owner) && c.footprint().flags == 0) return true;
-    const u32 awaited = awaited_transport(owner);
-    if (awaited != 0 && awaited == awaited_transport(c)) return true;
+    const EntityId awaited = awaited_transport(owner);
+    if (awaited && awaited == awaited_transport(c)) {
+        return true;
+    }
     if (owner.has_unit_state("Upgrading") && c.creator_id() == owner.entity_id()) return true;
     if (mode == 2) return false;
     if (c.has_category("AIR") && c.army() == owner.army()) return true;
-    if (awaited == 0 && awaited_transport(c) != 0) return false;
+    if (!awaited && awaited_transport(c)) {
+        return false;
+    }
     // The owner minds what it doesn't outrank. FAF's exe calls
     // owner->IsHigherPriorityThan(candidate) here (0x0062F00E: ecx the owner,
     // eax the candidate); faf-re's text has them the other way round.
     return outranks(owner, c);
 }
 
-bool UnitBlockers::unit_blocked(u32 unit_id, path::Cell cell, i32 mode) const {
+bool UnitBlockers::unit_blocked(EntityId unit_id, path::Cell cell, i32 mode) const {
     const Unit* unit = find_unit(sim_, unit_id);
     if (!unit) return false;
     const blueprints::Footprint& fp = unit->footprint();
@@ -156,7 +161,7 @@ bool UnitBlockers::unit_blocked(u32 unit_id, path::Cell cell, i32 mode) const {
     });
 }
 
-bool UnitBlockers::unit_blocked_at(u32 unit_id, f32 x, f32 z, i32 mode) const {
+bool UnitBlockers::unit_blocked_at(EntityId unit_id, f32 x, f32 z, i32 mode) const {
     const Unit* unit = find_unit(sim_, unit_id);
     if (!unit) return false;
     // SFootprint::ToCellPos: the corner, rounded half to even.
@@ -166,7 +171,7 @@ bool UnitBlockers::unit_blocked_at(u32 unit_id, f32 x, f32 z, i32 mode) const {
     return unit_blocked(unit_id, cell, mode);
 }
 
-bool UnitBlockers::swept_blocked(u32 unit_id, const path::WorldPoint& from,
+bool UnitBlockers::swept_blocked(EntityId unit_id, const path::WorldPoint& from,
                                  const path::WorldPoint& to, i32 mode) const {
     const Unit* unit = find_unit(sim_, unit_id);
     if (!unit) return false;

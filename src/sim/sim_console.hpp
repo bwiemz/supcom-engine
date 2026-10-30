@@ -38,7 +38,7 @@ struct SimConContext {
     const std::vector<std::string>& args;
     Vector3 at;
     i32 focus_army;
-    const std::vector<u32>& selected;
+    const std::vector<EntityId>& selected;
 };
 
 /// One of Moho's sim commands: its name, whether it runs without cheats on
@@ -70,7 +70,7 @@ std::string unparse_sim_command(const std::vector<std::string>& tokens);
 /// of `text` in turn. An unknown one is reported; one that needs cheats ends
 /// the line when they are off, and is echoed with its source when they are on.
 void execute_debug_command(SimState& sim, lua_State* L, std::string_view text, const Vector3& at,
-                           i32 focus_army, const std::vector<u32>& selected);
+                           i32 focus_army, const std::vector<EntityId>& selected);
 
 /// Lua's base library loaders: dofile and require run a file from this
 /// machine's own disk, the others make code of data. Whether the function at

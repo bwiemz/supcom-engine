@@ -229,7 +229,7 @@ TEST_CASE("A transport's passengers die in its Kill after its SetDead, each let 
         CHECK(w.run("assert(a.by == t and a.type == 'Damage' and a.ratio == 10, a.ratio)"));
     } else {
         CHECK_FALSE(w.unit("a")->is_dying());
-        CHECK(w.unit("a")->transport_id() == 0);
+        CHECK_FALSE(w.unit("a")->transport_id());
     }
 }
 
@@ -252,12 +252,12 @@ TEST_CASE("A transport killed where its passengers cannot stand keeps those its 
         over_water ? "t dead, t killed" : "t dead, t drops a, t drops b, t killed";
     CHECK(w.run(std::string("assert(heard_as_text() == '") + expected + "', heard_as_text())"));
     CHECK(lift.cargo_ids().size() == (over_water ? 2U : 0U));
-    CHECK(w.unit("a")->transport_id() == (over_water ? lift.entity_id() : 0U));
+    CHECK(w.unit("a")->transport_id() == (over_water ? lift.entity_id() : osc::sim::EntityId()));
     CHECK(w.unit("a")->has_unit_state("Attached") == over_water);
     REQUIRE(w.run("t:Destroy()"));
     w.sim.run_deletion_queue();
     CHECK(w.run("assert(heard_as_text() == '" + std::string(expected) + "', heard_as_text())"));
-    CHECK(w.unit("a")->transport_id() == 0U);
+    CHECK_FALSE(w.unit("a")->transport_id());
     CHECK_FALSE(w.unit("a")->has_unit_state("Attached"));
     CHECK(w.unit("a")->position().y < 15.0f);
 }
@@ -279,7 +279,7 @@ TEST_CASE("A script's DetachFrom lets a carried unit go without the transport's 
     const char* expected = killed ? "a dead, t: attached a killed, a killed" : "";
     CHECK(w.run(std::string("assert(heard_as_text() == '") + expected + "', heard_as_text())"));
     CHECK(lift.cargo_ids().size() == 1U);
-    CHECK(w.unit("a")->transport_id() == 0U);
+    CHECK_FALSE(w.unit("a")->transport_id());
     CHECK_FALSE(w.unit("a")->has_unit_state("Attached"));
     CHECK(w.unit("b")->transport_id() == lift.entity_id());
 }
@@ -302,5 +302,5 @@ TEST_CASE("A unit killed in its carrier's storage leaves it unheard, but stays i
     CHECK(w.run(std::string("assert(heard_as_text() == '") + expected + "', heard_as_text())"));
     CHECK(w.run("assert(a.ratio == 10, a.ratio)"));
     CHECK(carrier.is_stored_unit(stored.entity_id()) == aircraft);
-    CHECK(stored.transport_id() == (aircraft ? carrier.entity_id() : 0U));
+    CHECK(stored.transport_id() == (aircraft ? carrier.entity_id() : osc::sim::EntityId()));
 }

@@ -91,7 +91,7 @@ public:
         sim::Vector3 pos{};
         bool underwater = false;
         u32 beat = 0;
-        u32 entity_id = 0;
+        sim::EntityId entity_id{};
     };
     /// Moho's UpdateSoundRequests for a one-shot: dropped while world
     /// sounds are off, beyond its LodCutoff (against CameraDistance), out of
@@ -108,7 +108,7 @@ public:
         sim::Vector3 pos{};
         bool underwater = false;
         bool in_view = false; ///< in the world camera's frustum
-        u32 entity_id = 0;
+        sim::EntityId entity_id{};
     };
     /// Moho's entity loops, once a frame: a playing loop no longer wanted
     /// stops (its release); one filtered out stops too (at once when beyond
@@ -253,7 +253,7 @@ private:
     Filter filter(std::string_view lod_cutoff, const sim::Vector3& pos, bool underwater,
                   const Hearing& hears) const;
     f32 camera_distance() const;
-    void warn_nowhere(std::string_view bank, std::string_view cue, u32 entity_id,
+    void warn_nowhere(std::string_view bank, std::string_view cue, sim::EntityId entity_id,
                       const sim::Vector3& pos);
     /// Fade out over `seconds` (0: end now).
     void fade_out(CueInstance& inst, f64 seconds);
@@ -307,7 +307,7 @@ private:
     std::vector<std::pair<u64, const EntityLoop*>> wanted_by_key_;
     u32 dedupe_beat_ = 0xFFFFFFFF;
     std::vector<std::pair<std::string, std::string>> dedupe_; ///< this beat's one-shots
-    std::unordered_set<u32> nowhere_warned_;
+    std::unordered_set<sim::EntityId> nowhere_warned_;
 
     struct VariationState {
         u32 last = 0xFFFFFFFF;

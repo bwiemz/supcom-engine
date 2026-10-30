@@ -127,7 +127,8 @@ struct ConWorld {
     }
 
     /// The sim console's line, from the focus army `focus` with `selected`.
-    void exec(const std::string& line, int focus = 0, const std::vector<osc::u32>& selected = {}) {
+    void exec(const std::string& line, int focus = 0,
+              const std::vector<osc::sim::EntityId>& selected = {}) {
         osc::sim::execute_debug_command(sim, sim_lua.raw(), line, {}, focus, selected);
     }
 

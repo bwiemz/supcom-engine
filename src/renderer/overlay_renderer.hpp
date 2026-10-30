@@ -53,7 +53,7 @@ std::vector<std::array<f32, 4>> convex_rows(const std::array<f32, 4>& xs,
 struct StructurePad {
     sim::StructureSite site;
     f32 x = 0, y = 0, z = 0; ///< where it stands
-    u32 id = 0;
+    sim::EntityId id{};
 };
 
 /// The pads of `army`'s live structures, standing or under way: those
@@ -63,7 +63,7 @@ std::vector<StructurePad> structure_pads(const sim::FrameView& view, i32 army);
 
 /// Whether structure `unit` gives a structure of `blueprint` placed beside
 /// it an adjacency bonus (gamemain.OnDetectAdjacencyBonus)
-using AdjacencyBonus = std::function<bool(u32 unit, const std::string& blueprint)>;
+using AdjacencyBonus = std::function<bool(sim::EntityId unit, const std::string& blueprint)>;
 
 /// A pad outlined while a structure is placed: on the ground at `y`, in a
 /// packed ARGB colour
@@ -100,9 +100,10 @@ public:
     /// from `events`, which this takes.
     /// game_result: 0=in progress, 1=victory, 2=defeat, 3=draw.
     void update(const sim::FrameView& view, sim::WorldEvents& events, const Camera& camera,
-                const std::array<f32, 16>& vp_matrix, const std::unordered_set<u32>* selected_ids,
-                TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, i32 game_result = 0,
-                f32 dt = 0.0f, const Frustum* frustum = nullptr);
+                const std::array<f32, 16>& vp_matrix,
+                const std::unordered_set<sim::EntityId>* selected_ids, TextureCache& tex_cache,
+                u32 viewport_w, u32 viewport_h, i32 game_result = 0, f32 dt = 0.0f,
+                const Frustum* frustum = nullptr);
 
     struct Drawn {
         u32 quads = 0;
@@ -142,7 +143,7 @@ public:
     /// player's army sees (null: everything seen; M215a).
     void set_recon(const ReconView* recon) { recon_ = recon; }
     /// The unit under the cursor: another army's shows its lifebars then.
-    void set_hovered(u32 id) { hovered_ = id; }
+    void set_hovered(sim::EntityId id) { hovered_ = id; }
 
     /// FA's beams: a beam they draw needs no placeholder here (M214a).
     void set_beams(const BeamRenderer* beams) { beams_ = beams; }
@@ -159,7 +160,7 @@ private:
     bool unit_bars_ = true;
     bool select_boxes_ = true;
     const ReconView* recon_ = nullptr;
-    u32 hovered_ = 0;
+    sim::EntityId hovered_{};
     const BeamRenderer* beams_ = nullptr;
     const TrailRenderer* trails_ = nullptr;
     const ParticleSystem* particles_ = nullptr;
@@ -177,12 +178,12 @@ private:
     /// Each unit in view: its lifebars, veterancy chevrons and cargo dots.
     void add_unit_overlays(const sim::FrameView& view, const sim::WorldSnapshot& snap,
                            const Camera& camera, const std::array<f32, 16>& vp_matrix,
-                           const std::unordered_set<u32>* selected_ids, const Frustum* frustum,
-                           f32 sw, f32 sh, f32 cam_dist);
+                           const std::unordered_set<sim::EntityId>* selected_ids,
+                           const Frustum* frustum, f32 sw, f32 sh, f32 cam_dist);
     /// The selected units' intel range rings (radar, sonar, omni, vision).
     void add_intel_rings(const sim::FrameView& view, const sim::WorldSnapshot& snap,
                          const std::array<f32, 16>& vp_matrix,
-                         const std::unordered_set<u32>* selected_ids, f32 sw, f32 sh);
+                         const std::unordered_set<sim::EntityId>* selected_ids, f32 sw, f32 sh);
     /// Collision beams not drawn as FA's (BeamRenderer), as lines, within 600
     /// of the eye.
     void add_beams(const sim::FrameView& view, const std::array<f32, 16>& vp_matrix, f32 sw, f32 sh,

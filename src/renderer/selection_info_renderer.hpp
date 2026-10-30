@@ -4,6 +4,7 @@
 #include "renderer/ui_renderer.hpp" // UIInstance
 #include "renderer/strategic_icon_renderer.hpp" // StrategicIconType, classify_unit
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 #include <string>
 #include <unordered_set>
@@ -27,10 +28,8 @@ class SelectionInfoRenderer {
 public:
     void init(VkDevice device, VmaAllocator allocator);
 
-    void update(const sim::FrameView& view,
-                const std::unordered_set<u32>* selected_ids,
-                FontCache& font_cache, TextureCache& tex_cache,
-                VkDescriptorSet icon_atlas_ds,
+    void update(const sim::FrameView& view, const std::unordered_set<sim::EntityId>* selected_ids,
+                FontCache& font_cache, TextureCache& tex_cache, VkDescriptorSet icon_atlas_ds,
                 u32 viewport_w, u32 viewport_h);
 
     void render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w, u32 viewport_h,
@@ -73,7 +72,8 @@ private:
                            FontCache& font_cache, TextureCache& tex_cache,
                            VkDescriptorSet icon_atlas_ds, f32 px, f32 py, f32 pw, f32 panel_h);
 
-    void build_multi_unit(const sim::FrameView& view, const std::unordered_set<u32>& selected_ids,
+    void build_multi_unit(const sim::FrameView& view,
+                          const std::unordered_set<sim::EntityId>& selected_ids,
                           FontCache& font_cache, TextureCache& tex_cache,
                           VkDescriptorSet icon_atlas_ds, f32 px, f32 py, f32 pw, f32 panel_h);
 

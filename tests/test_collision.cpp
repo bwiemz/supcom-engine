@@ -42,6 +42,7 @@ using osc::f32;
 using osc::u32;
 using osc::sim::CollisionShape;
 using osc::sim::CollisionShapeType;
+using osc::sim::EntityId;
 using osc::sim::EntityRegistry;
 using osc::sim::Projectile;
 using osc::sim::Quaternion;
@@ -68,7 +69,8 @@ CollisionShape sphere(f32 r) {
     return s;
 }
 
-u32 add_unit(EntityRegistry& reg, const Vector3& at, const CollisionShape& shape, int army = 0) {
+EntityId add_unit(EntityRegistry& reg, const Vector3& at, const CollisionShape& shape,
+                  int army = 0) {
     auto u = std::make_unique<Unit>();
     u->set_position(at);
     u->set_army(army);
@@ -77,7 +79,7 @@ u32 add_unit(EntityRegistry& reg, const Vector3& at, const CollisionShape& shape
 }
 
 Projectile* add_shot(EntityRegistry& reg, const Vector3& at, const Vector3& velocity,
-                     u32 launcher = 0) {
+                     EntityId launcher = {}) {
     auto p = std::make_unique<Projectile>();
     p->set_position(at);
     p->velocity = velocity;
@@ -194,27 +196,27 @@ TEST_CASE("a shape's world box: a sphere's radius, a box as it is turned", "[col
 TEST_CASE("the collider query finds shapes near a path, large ones from afar", "[collision]") {
     EntityRegistry reg;
     reg.init_spatial_grid(512, 512);
-    const u32 near = add_unit(reg, {100, 0, 102}, box(1, 1, 1));
+    const EntityId near = add_unit(reg, {100, 0, 102}, box(1, 1, 1));
     add_unit(reg, {100, 0, 150}, box(1, 1, 1));               // far off the path
     add_unit(reg, {101, 0, 100}, CollisionShape{});           // no shape
-    const u32 big = add_unit(reg, {100, 0, 130}, sphere(30)); // a shield's reach
-    std::vector<u32> out;
+    const EntityId big = add_unit(reg, {100, 0, 130}, sphere(30)); // a shield's reach
+    std::vector<EntityId> out;
     reg.collect_colliders(95, 100, 105, 100, out);
-    CHECK(out == std::vector<u32>{near, big});
+    CHECK(out == std::vector<EntityId>{near, big});
 
     // A shape set later is tracked; 'None' drops it.
     reg.find(big)->set_collision_shape(CollisionShape{});
     reg.collect_colliders(95, 100, 105, 100, out);
-    CHECK(out == std::vector<u32>{near});
+    CHECK(out == std::vector<EntityId>{near});
     reg.find(big)->revert_collision_shape();
     reg.collect_colliders(95, 100, 105, 100, out);
-    CHECK(out == std::vector<u32>{near, big});
+    CHECK(out == std::vector<EntityId>{near, big});
 }
 
 TEST_CASE("a shot stops at the first thing in its way", "[collision]") {
     EntityRegistry reg;
     reg.init_spatial_grid(512, 512);
-    const u32 shooter = add_unit(reg, {100, 0, 100}, box(1, 1, 1, 1));
+    const EntityId shooter = add_unit(reg, {100, 0, 100}, box(1, 1, 1, 1));
     add_unit(reg, {100, 0, 106}, box(1, 1, 1, 1));
     add_unit(reg, {100, 0, 104}, box(1, 1, 1, 1)); // nearer, though registered later
     // From inside its launcher, which it passes, at 60 u/s: both boxes lie
@@ -234,7 +236,7 @@ TEST_CASE("a shot stops at a dying unit as at a living one", "[collision]") {
         CAPTURE(dying);
         EntityRegistry reg;
         reg.init_spatial_grid(512, 512);
-        const u32 in_way = add_unit(reg, {100, 0, 104}, box(1, 1, 1, 1));
+        const EntityId in_way = add_unit(reg, {100, 0, 104}, box(1, 1, 1, 1));
         if (dying) {
             static_cast<Unit*>(reg.find(in_way))->begin_dying();
         }
@@ -253,8 +255,8 @@ TEST_CASE("a beam stops at a dying unit as at a living one", "[collision]") {
         osc::sim::SimState sim{state.raw(), nullptr};
         EntityRegistry& reg = sim.entity_registry();
         reg.init_spatial_grid(512, 512);
-        const u32 shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
-        const u32 in_way = add_unit(reg, {100, 0, 105}, box(1, 1, 1, 1));
+        const EntityId shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
+        const EntityId in_way = add_unit(reg, {100, 0, 105}, box(1, 1, 1, 1));
         if (dying) {
             static_cast<Unit*>(reg.find(in_way))->begin_dying();
         }
@@ -262,7 +264,7 @@ TEST_CASE("a beam stops at a dying unit as at a living one", "[collision]") {
         beam->set_collision_beam(true);
         beam->set_beam_launcher_id(shooter);
         beam->beam_setup().length = 20;
-        const u32 beam_id = reg.register_entity(std::move(beam));
+        const EntityId beam_id = reg.register_entity(std::move(beam));
         osc::sim::check_collision_beam(sim, nullptr, beam_id, false);
         CHECK(reg.find(beam_id)->beam_endpoint().z == Approx(104.0f));
     }
@@ -279,7 +281,7 @@ TEST_CASE("a beam passes what has no OnCollisionCheckWeapon or fails it", "[coll
         REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
         return luaL_ref(L, LUA_REGISTRYINDEX);
     };
-    const u32 shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
+    const EntityId shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
     auto gun = std::make_unique<osc::sim::Weapon>();
     gun->lua_table_ref = script("return {}");
     static_cast<Unit*>(reg.find(shooter))->add_weapon(std::move(gun));
@@ -289,10 +291,10 @@ TEST_CASE("a beam passes what has no OnCollisionCheckWeapon or fails it", "[coll
     tree->set_default_collision_shape(box(1, 2, 1));
     tree->set_lua_table_ref(script("return {}"));
     reg.register_entity(std::move(tree));
-    const u32 broken = add_unit(reg, {100, 0, 107}, box(0.5f, 2, 0.5f));
+    const EntityId broken = add_unit(reg, {100, 0, 107}, box(0.5f, 2, 0.5f));
     reg.find(broken)->set_lua_table_ref(
         script("return {OnCollisionCheckWeapon = function() error('broken') end}"));
-    const u32 tank = add_unit(reg, {100, 0, 110}, box(1, 2, 1));
+    const EntityId tank = add_unit(reg, {100, 0, 110}, box(1, 2, 1));
     reg.find(tank)->set_lua_table_ref(
         script("return {OnCollisionCheckWeapon = function() return true end}"));
     auto beam = std::make_unique<osc::sim::Entity>();
@@ -300,7 +302,7 @@ TEST_CASE("a beam passes what has no OnCollisionCheckWeapon or fails it", "[coll
     beam->set_beam_launcher_id(shooter);
     beam->beam_setup().weapon = 0;
     beam->beam_setup().length = 20;
-    const u32 beam_id = reg.register_entity(std::move(beam));
+    const EntityId beam_id = reg.register_entity(std::move(beam));
     osc::sim::check_collision_beam(sim, L, beam_id, false);
     CHECK(reg.find(beam_id)->beam_endpoint().z == Approx(109.0f));
 }
@@ -340,7 +342,7 @@ TEST_CASE("a shot leaves along its muzzle unless its weapon fires along its solu
     // Moho's CreateProjectile: the launch is the muzzle bone's facing as the
     // aim controller posed it; UseFiringSolutionInsteadOfAimBone uses the aim.
     EntityRegistry reg;
-    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const EntityId owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
     auto& owner = static_cast<Unit&>(*reg.find(owner_id));
     osc::sim::Weapon w;
     w.muzzle_velocity = 30;
@@ -371,7 +373,7 @@ TEST_CASE("firing randomness turns a shot by a normal heading and pitch, in degr
     // Moho's CreateProjectile: heading and pitch each N(0, FiringRandomness)
     // degrees; FAF's circle of r x distance / 12 is what it looks like.
     EntityRegistry reg;
-    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const EntityId owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
     auto& owner = static_cast<Unit&>(*reg.find(owner_id));
     osc::sim::Weapon w;
     w.muzzle_velocity = 30;
@@ -402,7 +404,7 @@ TEST_CASE("a shot's speed is MuzzleVelocity, randomised and slowed close in", "[
     // Moho's GetMuzzleVelocity: plus N(0, MuzzleVelocityRandom), then times
     // sqrt(distance / MuzzleVelocityReduceDistance) within that distance.
     EntityRegistry reg;
-    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const EntityId owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
     auto& owner = static_cast<Unit&>(*reg.find(owner_id));
     osc::sim::Weapon w;
     w.muzzle_velocity = 30;
@@ -446,7 +448,7 @@ TEST_CASE("a shot falls at Moho's gravity unless its blueprint says UseGravity =
                           " ['/bolt'] = {Physics = {UseGravity = false}}}")
                 .ok());
     EntityRegistry reg;
-    const u32 owner_id = add_unit(reg, {0, 20, 0}, box(1, 1, 1));
+    const EntityId owner_id = add_unit(reg, {0, 20, 0}, box(1, 1, 1));
     auto& owner = static_cast<Unit&>(*reg.find(owner_id));
     osc::sim::Weapon bomb;
     bomb.need_compute_bomb_drop = true;
@@ -473,9 +475,9 @@ TEST_CASE("a straight weapon lobs its falling shots onto their target", "[collis
     REQUIRE(lua.do_string("__blueprints = {['/shell'] = {Physics = {}}}").ok());
     EntityRegistry reg;
     reg.init_spatial_grid(512, 512);
-    const u32 owner_id = add_unit(reg, {100, 0, 100}, box(1, 1, 1, 1));
+    const EntityId owner_id = add_unit(reg, {100, 0, 100}, box(1, 1, 1, 1));
     auto& owner = static_cast<Unit&>(*reg.find(owner_id));
-    const u32 target_id = add_unit(reg, {100, 0, 130}, box(1, 1, 1, 1));
+    const EntityId target_id = add_unit(reg, {100, 0, 130}, box(1, 1, 1, 1));
     const auto& target = static_cast<const Unit&>(*reg.find(target_id));
     osc::sim::Weapon gun;
     gun.muzzle_velocity = 20;
@@ -593,7 +595,7 @@ TEST_CASE("a shot whose projectile gives no Lifetime lives Moho's 15 seconds", "
                           " spread = {Physics = {LifetimeRange = 2}}}")
                 .ok());
     EntityRegistry reg;
-    const u32 owner_id = add_unit(reg, {0, 20, 0}, box(1, 1, 1));
+    const EntityId owner_id = add_unit(reg, {0, 20, 0}, box(1, 1, 1));
     auto& owner = static_cast<Unit&>(*reg.find(owner_id));
     const auto lifetime = [&](osc::sim::Weapon& w) {
         const Projectile* p = w.launch(owner, {0, 20, 0}, nullptr, reg, lua.raw(), false);
@@ -632,7 +634,7 @@ TEST_CASE("a projectile blueprint's LifeTime is not its Lifetime", "[collision]"
     osc::lua::LuaState lua;
     REQUIRE(lua.do_string("__blueprints = {typo = {Physics = {LifeTime = 30}}}").ok());
     EntityRegistry reg;
-    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const EntityId owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
     auto& owner = static_cast<Unit&>(*reg.find(owner_id));
     osc::sim::Weapon w;
     w.muzzle_velocity = 20;
@@ -645,7 +647,7 @@ TEST_CASE("a projectile blueprint's LifeTime is not its Lifetime", "[collision]"
 
 TEST_CASE("a weapon's lifetime for its shots overrides the default", "[collision]") {
     EntityRegistry reg;
-    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const EntityId owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
     auto& owner = static_cast<Unit&>(*reg.find(owner_id));
     osc::sim::Weapon w;
     w.muzzle_velocity = 20;
@@ -667,7 +669,7 @@ TEST_CASE("a weapon's lifetime for its shots overrides the default", "[collision
 
 TEST_CASE("a leading weapon aims where a missile will be", "[collision]") {
     EntityRegistry reg;
-    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const EntityId owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
     const auto& owner = static_cast<const Unit&>(*reg.find(owner_id));
     Projectile* missile = add_shot(reg, {40, 0, 0}, {0, 0, 10});
     osc::sim::Weapon w;
@@ -681,7 +683,7 @@ TEST_CASE("a leading weapon aims where a missile will be", "[collision]") {
 
 TEST_CASE("a leading weapon aims at its target when no shot can meet it", "[collision]") {
     EntityRegistry reg;
-    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const EntityId owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
     const auto& owner = static_cast<const Unit&>(*reg.find(owner_id));
     Projectile* missile = add_shot(reg, {40, 0, 0}, {-10, 0, 0});
     osc::sim::Weapon w;
@@ -694,7 +696,7 @@ TEST_CASE("a leading weapon aims at its target when no shot can meet it", "[coll
 
 TEST_CASE("a weapon with no muzzle velocity, as a beam's, leads by nothing", "[collision]") {
     EntityRegistry reg;
-    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const EntityId owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
     const auto& owner = static_cast<const Unit&>(*reg.find(owner_id));
     Projectile* missile = add_shot(reg, {40, 0, 0}, {0, 0, 10});
     const osc::sim::Weapon w;
@@ -703,7 +705,7 @@ TEST_CASE("a weapon with no muzzle velocity, as a beam's, leads by nothing", "[c
 
 TEST_CASE("a weapon firing tracking shots leads at their top speed", "[collision]") {
     EntityRegistry reg;
-    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const EntityId owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
     const auto& owner = static_cast<const Unit&>(*reg.find(owner_id));
     Projectile* missile = add_shot(reg, {40, 0, 0}, {0, 0, 10});
     osc::sim::Weapon w;
@@ -715,9 +717,9 @@ TEST_CASE("a weapon firing tracking shots leads at their top speed", "[collision
 
 TEST_CASE("a weapon firing falling shots leads by its muzzle's level speed", "[collision]") {
     EntityRegistry reg;
-    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const EntityId owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
     const auto& owner = static_cast<const Unit&>(*reg.find(owner_id));
-    const u32 target_id = add_unit(reg, {50, 0, 0}, box(1, 1, 1));
+    const EntityId target_id = add_unit(reg, {50, 0, 0}, box(1, 1, 1));
     auto& target = static_cast<Unit&>(*reg.find(target_id));
     target.set_velocity({0, 0, 2});
     osc::sim::Weapon w;
@@ -852,7 +854,7 @@ TEST_CASE("a shot an entity turned away is asked again the next tick, as Moho as
     lua_State* L = state.raw();
     EntityRegistry reg;
     reg.init_spatial_grid(512, 512);
-    const u32 wall = add_unit(reg, {100, 0, 110}, box(5, 1, 5, 1)); // z 105..115
+    const EntityId wall = add_unit(reg, {100, 0, 110}, box(5, 1, 5, 1)); // z 105..115
     run_lua(L, "asked = 0");
     reg.find(wall)->set_lua_table_ref(
         script_of(L, "{ OnCollisionCheck = function() asked = asked + 1 return asked > 1 end }"));
@@ -876,7 +878,7 @@ TEST_CASE("a shot passes an entity whose script has no OnCollisionCheck, as Moho
     lua_State* L = state.raw();
     EntityRegistry reg;
     reg.init_spatial_grid(512, 512);
-    const u32 bare = add_unit(reg, {100, 0, 102}, box(1, 1, 1, 1));
+    const EntityId bare = add_unit(reg, {100, 0, 102}, box(1, 1, 1, 1));
     reg.find(bare)->set_lua_table_ref(script_of(L, "{}"));
     Projectile* shot = add_shot(reg, {100, 1, 100}, {0, 0, 40});
     shot->set_lua_table_ref(script_of(L, "{}"));
@@ -928,7 +930,7 @@ TEST_CASE("SetCollision turns a projectile's surface and entity collision on or 
         const osc::map::Terrain terrain(
             osc::map::Heightmap(64, 64, 1.0f / 128.0f, std::vector<osc::u16>(65 * 65, 0)), 10.0f,
             true);
-        const u32 box_id = add_unit(reg, {20, 11, 20}, box(1, 1, 1, 1));
+        const auto box_id = add_unit(reg, {20, 11, 20}, box(1, 1, 1, 1));
         Projectile* shot = add_shot(reg, {20, 9, 20}, {0, 40, 0});
         shot->collide_surface = !on;
         shot->collide_entity = !on;
@@ -941,7 +943,7 @@ TEST_CASE("SetCollision turns a projectile's surface and entity collision on or 
         CHECK(std::string(shot->layer()) == (on ? "Air" : "Water"));
         CHECK(global_number(L, "exited") == (on ? 1 : 0));
         CHECK(shot->impact_waiting() == on);
-        CHECK(shot->impact_entity_id == (on ? box_id : 0));
+        CHECK(shot->impact_entity_id == (on ? box_id : osc::sim::EntityId()));
     }
 }
 

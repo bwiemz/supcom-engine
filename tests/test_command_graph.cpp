@@ -134,6 +134,10 @@ TEST_CASE("An order chain bends through its waypoints, as Moho's command graph d
 
 namespace {
 
+osc::sim::EntityId ent(osc::u32 moho) {
+    return osc::sim::EntityId::of(moho, 1);
+}
+
 bool same_point(const osc::sim::Vector3& a, const osc::sim::Vector3& b) {
     return std::abs(a.x - b.x) < 1e-5f && std::abs(a.y - b.y) < 1e-5f &&
            std::abs(a.z - b.z) < 1e-5f;
@@ -163,7 +167,7 @@ TEST_CASE("Two legs of an order line meet across their waypoint's tangent",
     using osc::sim::Vector3;
     osc::sim::WorldSnapshot world;
     osc::sim::EntityRecord e;
-    e.id = 1;
+    e.id = ent(1);
     e.army = 0;
     e.is_unit = true;
     e.command_count = 2;
@@ -242,7 +246,7 @@ TEST_CASE("Shift shows the selected units' orders and the army's build sites",
     osc::sim::WorldSnapshot world;
     const auto add = [&](osc::u32 id, osc::i32 army, bool is_unit) {
         osc::sim::EntityRecord e;
-        e.id = id;
+        e.id = ent(id);
         e.army = army;
         e.is_unit = is_unit;
         world.entities.push_back(e);
@@ -252,12 +256,13 @@ TEST_CASE("Shift shows the selected units' orders and the army's build sites",
     add(3, 1, true);  // another army's, selected
     add(4, 1, true);  // another army's
     add(5, 0, false); // a prop
-    const std::unordered_set<osc::u32> selected{1, 3};
-    std::vector<std::pair<osc::u32, bool>> got;
+    const std::unordered_set<osc::sim::EntityId> selected{ent(1), ent(3)};
+    std::vector<std::pair<osc::sim::EntityId, bool>> got;
     for (const auto& [e, chosen] : osc::renderer::command_graph_units(world, &selected, 0)) {
         got.emplace_back(e->id, chosen);
     }
-    CHECK(got == std::vector<std::pair<osc::u32, bool>>{{1, true}, {2, false}, {3, true}});
+    CHECK(got == std::vector<std::pair<osc::sim::EntityId, bool>>{
+                     {ent(1), true}, {ent(2), false}, {ent(3), true}});
 }
 
 TEST_CASE("Shift draws every unit of the army's orders, a selected one's in its selected colours",
@@ -265,7 +270,7 @@ TEST_CASE("Shift draws every unit of the army's orders, a selected one's in its 
     osc::sim::WorldSnapshot world;
     for (osc::u32 id : {1u, 2u}) {
         osc::sim::EntityRecord e;
-        e.id = id;
+        e.id = ent(id);
         e.army = 0;
         e.is_unit = true;
         e.position = {static_cast<osc::f32>(id) * 10.0f, 0, 0};
@@ -283,7 +288,7 @@ TEST_CASE("Shift draws every unit of the army's orders, a selected one's in its 
     style.waypoint_color = {1, 1, 1, 0.27f};
     style.waypoint_selected_color = {1, 1, 1, 1};
     style.waypoint_scale = 0.5f;
-    const std::unordered_set<osc::u32> selected{1};
+    const std::unordered_set<osc::sim::EntityId> selected{ent(1)};
     const auto paths =
         osc::renderer::command_graph_paths(osc::sim::FrameView(&world, &world, 1.0f), &selected, 0,
                                            [&](osc::sim::CommandType) { return &style; });
@@ -314,7 +319,7 @@ TEST_CASE("Units given one order share its waypoint, at the mean of their target
     };
     const auto add = [&](osc::u32 id, const std::vector<osc::sim::CommandRecord>& orders) {
         osc::sim::EntityRecord e;
-        e.id = id;
+        e.id = ent(id);
         e.army = 0;
         e.is_unit = true;
         e.position = {static_cast<osc::f32>(id) * 10.0f, 0, 0};
@@ -329,23 +334,23 @@ TEST_CASE("Units given one order share its waypoint, at the mean of their target
     add(4, {order(CommandType::Move, 0, 20)});
     add(5, {order(CommandType::Move, 0, 20)});
     osc::renderer::CommandGraphStyle style;
-    const std::unordered_set<osc::u32> selected{2};
+    const std::unordered_set<osc::sim::EntityId> selected{ent(2)};
     const auto nodes = osc::renderer::command_graph_nodes(
         osc::renderer::command_graph_paths(osc::sim::FrameView(&world, &world, 1.0f), &selected, 0,
                                            [&](CommandType) { return &style; }));
     REQUIRE(nodes.size() == 5);
     CHECK(nodes[0].order.command_id == 7);
-    CHECK(nodes[0].units == std::vector<osc::u32>{1, 2});
+    CHECK(nodes[0].units == std::vector<osc::sim::EntityId>{ent(1), ent(2)});
     CHECK(nodes[0].position.x == Catch::Approx(50.0f));
     CHECK(nodes[0].unit_scale == Catch::Approx(1.0f));
     CHECK(nodes[0].chosen);
     CHECK(nodes[1].order.command_id == 9);
     CHECK(nodes[1].position.x == Catch::Approx(85.0f));
     CHECK(nodes[1].unit_scale == Catch::Approx(1.0f));
-    CHECK(nodes[2].units == std::vector<osc::u32>{3});
+    CHECK(nodes[2].units == std::vector<osc::sim::EntityId>{ent(3)});
     CHECK_FALSE(nodes[2].chosen);
-    CHECK(nodes[3].units == std::vector<osc::u32>{4});
-    CHECK(nodes[4].units == std::vector<osc::u32>{5});
+    CHECK(nodes[3].units == std::vector<osc::sim::EntityId>{ent(4)});
+    CHECK(nodes[4].units == std::vector<osc::sim::EntityId>{ent(5)});
 }
 
 TEST_CASE("Units given one order together draw one line to it, from their mean",
@@ -361,7 +366,7 @@ TEST_CASE("Units given one order together draw one line to it, from their mean",
     };
     const auto add = [&](osc::u32 id, const std::vector<osc::sim::CommandRecord>& orders) {
         osc::sim::EntityRecord e;
-        e.id = id;
+        e.id = ent(id);
         e.army = 0;
         e.is_unit = true;
         e.position = {static_cast<osc::f32>(id) * 10.0f, 0, 0};
@@ -400,7 +405,7 @@ TEST_CASE("A patrol's path runs back to its first patrol point", "[renderer][com
     const auto path_of = [](const std::vector<std::pair<CommandType, osc::f32>>& orders) {
         osc::sim::WorldSnapshot world;
         osc::sim::EntityRecord e;
-        e.id = 1;
+        e.id = ent(1);
         e.army = 0;
         e.is_unit = true;
         e.command_count = static_cast<osc::u32>(orders.size());
@@ -439,7 +444,7 @@ void add_queued_unit(osc::sim::WorldSnapshot& world, osc::u32 id, osc::sim::Vect
                      const std::vector<osc::sim::CommandRecord>& orders,
                      const std::vector<osc::sim::CommandRecord>& rally) {
     osc::sim::EntityRecord e;
-    e.id = id;
+    e.id = ent(id);
     e.army = 0;
     e.is_unit = true;
     e.is_mobile = mobile;
@@ -454,7 +459,7 @@ void add_queued_unit(osc::sim::WorldSnapshot& world, osc::u32 id, osc::sim::Vect
 }
 
 osc::sim::CommandRecord queued_order(osc::sim::CommandType type, osc::u32 id, osc::sim::Vector3 to,
-                                     osc::u32 target = 0) {
+                                     osc::sim::EntityId target = {}) {
     osc::sim::CommandRecord c;
     c.type = type;
     c.command_id = id;
@@ -473,7 +478,7 @@ TEST_CASE("A stationary factory's rally orders are their own order chain from th
     // chain, each from the factory and closing on its own anchor
     // (AddCommandQueueToCommandGraph).
     osc::sim::WorldSnapshot world;
-    add_queued_unit(world, 1, {0, 0, 0}, false, {queued_order(CommandType::Guard, 11, {}, 2)},
+    add_queued_unit(world, 1, {0, 0, 0}, false, {queued_order(CommandType::Guard, 11, {}, ent(2))},
                     {queued_order(CommandType::Move, 21, {0, 0, 30}),
                      queued_order(CommandType::Patrol, 22, {20, 0, 30}),
                      queued_order(CommandType::Patrol, 23, {20, 0, 50})});
@@ -483,7 +488,7 @@ TEST_CASE("A stationary factory's rally orders are their own order chain from th
         osc::sim::FrameView(&world, &world, 1.0f), nullptr, 0, [&](CommandType) { return &style; });
     std::vector<const osc::renderer::CommandGraphPath*> factory;
     for (const auto& path : paths) {
-        if (path.unit->id == 1) {
+        if (path.unit->id == ent(1)) {
             factory.push_back(&path);
         }
     }
@@ -551,10 +556,10 @@ TEST_CASE("A structure ordered and not started is a planned site", "[renderer][c
         return c;
     };
     osc::sim::EntityRecord builder;
-    builder.id = 1;
+    builder.id = ent(1);
     builder.army = 0;
     builder.is_unit = true;
-    builder.build_target_id = 7;
+    builder.build_target_id = ent(7);
     builder.command_offset = 0;
     builder.command_count = 3;
     world.commands = {build("ueb1101", 10), build("ueb1101", 12), build("ueb0101", 20)};
@@ -566,7 +571,7 @@ TEST_CASE("A structure ordered and not started is a planned site", "[renderer][c
     CHECK(sites[0].position.x == Catch::Approx(12.0f));
     CHECK(sites[1].blueprint == "ueb0101");
 
-    world.entities[0].build_target_id = 0;
+    world.entities[0].build_target_id = {};
     CHECK(osc::renderer::planned_build_sites(world, nullptr, 0).size() == 3);
 }
 
@@ -582,14 +587,14 @@ TEST_CASE("A structure ordered and not yet run is planned in place of the one un
     ordered.blueprint_id = "ueb0101";
     ordered.pending = true;
     osc::sim::EntityRecord builder;
-    builder.id = 1;
+    builder.id = ent(1);
     builder.army = 0;
     builder.is_unit = true;
-    builder.build_target_id = 7;
+    builder.build_target_id = ent(7);
     builder.command_count = 1;
     world.commands = {building};
     world.pending_commands = {ordered};
-    world.pending_queues = {{1, 0, 1}};
+    world.pending_queues = {{ent(1), 0, 1}};
     world.entities.push_back(builder);
 
     const auto sites = osc::renderer::planned_build_sites(world, nullptr, 0);
@@ -605,14 +610,14 @@ TEST_CASE("A structure standing on its site is started for every builder ordered
     order.target_pos = {20, 0, 20};
     order.blueprint_id = "ueb0101";
     osc::sim::EntityRecord factory;
-    factory.id = 5;
+    factory.id = ent(5);
     factory.army = 0;
     factory.is_unit = true;
     factory.is_being_built = true;
     factory.blueprint_id = osc::InternedString("ueb0101");
     factory.position = {20, 0, 20};
     osc::sim::EntityRecord walking;
-    walking.id = 2;
+    walking.id = ent(2);
     walking.army = 0;
     walking.is_unit = true;
     walking.command_offset = 0;
@@ -630,7 +635,7 @@ TEST_CASE("The snapshot names an order by the sim's id, one for the units given 
     lua_State* L = lua_open();
     {
         osc::sim::SimState sim(L, nullptr);
-        std::vector<osc::u32> ids;
+        std::vector<osc::sim::EntityId> ids;
         for (int i = 0; i < 2; ++i) {
             auto u = std::make_unique<osc::sim::Unit>();
             u->set_army(0);
@@ -702,7 +707,7 @@ TEST_CASE("The order under the cursor, and a hovered unit's, are drawn highlight
     osc::sim::WorldSnapshot world;
     for (osc::u32 id : {1u, 2u}) {
         osc::sim::EntityRecord e;
-        e.id = id;
+        e.id = ent(id);
         e.army = 0;
         e.is_unit = true;
         e.command_offset = static_cast<osc::u32>(world.commands.size());
@@ -720,14 +725,14 @@ TEST_CASE("The order under the cursor, and a hovered unit's, are drawn highlight
     const auto paths =
         osc::renderer::command_graph_paths(osc::sim::FrameView(&world, &world, 1.0f), nullptr, 0,
                                            [&](osc::sim::CommandType) { return &style; });
-    auto nodes = osc::renderer::command_graph_nodes(paths, 12, 0);
+    auto nodes = osc::renderer::command_graph_nodes(paths, 12, {});
     REQUIRE(nodes.size() == 2);
     CHECK_FALSE(nodes[0].highlighted);
     CHECK(nodes[0].color == style.waypoint_color);
     CHECK(nodes[1].highlighted);
     CHECK(nodes[1].color == style.waypoint_highlight_color);
     CHECK(nodes[1].scale == 2.0f);
-    nodes = osc::renderer::command_graph_nodes(paths, 0, 1);
+    nodes = osc::renderer::command_graph_nodes(paths, 0, ent(1));
     CHECK(nodes[0].highlighted);
     CHECK_FALSE(nodes[1].highlighted);
 }

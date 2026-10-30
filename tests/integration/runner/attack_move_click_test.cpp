@@ -126,7 +126,7 @@ void AttackMoveClickProbe::on_frame(app::Engine& e, app::Frame& frame) {
         }
         Click& click = clicks_.back();
         click.moved = true;
-        for (const u32 id : units_) {
+        for (const sim::EntityId id : units_) {
             const auto* u = static_cast<const sim::Unit*>(sim.entity_registry().find(id));
             const auto& queue = u->command_queue();
             const bool moving = !queue.empty() &&

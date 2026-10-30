@@ -101,8 +101,8 @@ std::array<f32, 4> build_pad(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x, 
 /// The units whose orders the command graph shows, each with whether it is
 /// selected: the selected ones, and the army's others
 std::vector<std::pair<const sim::EntityRecord*, bool>>
-command_graph_units(const sim::WorldSnapshot& world, const std::unordered_set<u32>* selected,
-                    i32 player_army);
+command_graph_units(const sim::WorldSnapshot& world,
+                    const std::unordered_set<sim::EntityId>* selected, i32 player_army);
 
 struct PlannedSite {
     std::string blueprint;
@@ -115,7 +115,7 @@ bool build_started(const sim::WorldSnapshot& world, const sim::EntityRecord& bui
                    const sim::CommandRecord& order);
 
 std::vector<PlannedSite> planned_build_sites(const sim::WorldSnapshot& world,
-                                             const std::unordered_set<u32>* selected,
+                                             const std::unordered_set<sim::EntityId>* selected,
                                              i32 player_army);
 
 /// One of a unit's queues as the graph draws it, its own orders or a
@@ -142,7 +142,7 @@ struct CommandGraphPath {
 /// ground attack is not its last runs back to it, as Moho's
 /// AddCommandQueueToCommandGraph links the loop.
 std::vector<CommandGraphPath>
-command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* selected,
+command_graph_paths(const sim::FrameView& view, const std::unordered_set<sim::EntityId>* selected,
                     i32 player_army,
                     const std::function<const CommandGraphStyle*(sim::CommandType)>& style_of);
 
@@ -153,7 +153,7 @@ struct CommandGraphNode {
     const CommandGraphStyle* style = nullptr;
     sim::Vector3 position;
     f32 unit_scale = 1.0f;
-    std::vector<u32> units;
+    std::vector<sim::EntityId> units;
     bool chosen = false;
     bool highlighted = false;
     std::array<f32, 4> color{};
@@ -185,10 +185,11 @@ struct CommandGraph {
 /// order, then node to node (AddCommandQueueToCommandGraph), in the colours
 /// of the order they lead to.
 CommandGraph command_graph(const std::vector<CommandGraphPath>& paths, u32 highlight = 0,
-                           u32 hovered_unit = 0);
+                           sim::EntityId hovered_unit = {});
 
 std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraphPath>& paths,
-                                                  u32 highlight = 0, u32 hovered_unit = 0);
+                                                  u32 highlight = 0,
+                                                  sim::EntityId hovered_unit = {});
 
 /// The paths with order `command_id`'s targets moved so its node is at `at`
 void preview_paths(std::vector<CommandGraphPath>& paths, u32 command_id, const sim::Vector3& at);
@@ -223,14 +224,15 @@ public:
     /// once); `time` in seconds scrolls an animated line. `shown`: Shift is
     /// held; the strips draw only then, the planned sites are kept either way.
     void update(const sim::FrameView& view, const Camera& camera,
-                const std::unordered_set<u32>* selected, i32 player_army, TextureCache& tex_cache,
-                lua_State* L, f32 time, u32 viewport_h, bool shown, u32 fi);
+                const std::unordered_set<sim::EntityId>* selected, i32 player_army,
+                TextureCache& tex_cache, lua_State* L, f32 time, u32 viewport_h, bool shown,
+                u32 fi);
 
     void render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj, u32 fi) const;
 
     void destroy(VkDevice device, VmaAllocator allocator);
 
-    void set_highlight(u32 command_id, u32 hovered_unit) {
+    void set_highlight(u32 command_id, sim::EntityId hovered_unit) {
         highlight_ = command_id;
         hovered_unit_ = hovered_unit;
     }
@@ -281,7 +283,7 @@ private:
     CommandCurveParams curve_;
     bool styles_read_ = false;
     u32 highlight_ = 0;
-    u32 hovered_unit_ = 0;
+    sim::EntityId hovered_unit_{};
     u32 preview_ = 0;
     sim::Vector3 preview_at_;
     bool preview_valid_ = true;

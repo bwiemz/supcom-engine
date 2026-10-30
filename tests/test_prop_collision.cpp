@@ -97,7 +97,6 @@ TEST_CASE("Two boxes meet along their least overlap, the normal toward the shape
 TEST_CASE("A moving unit's box calls a prop's OnCollision on the ticks its id matches mod 5",
           "[collision][lua]") {
     Scene scene(1, 1);
-    // Moho's id, the engine's less one (EntityRegistry::moho_id).
     const u32 id = osc::sim::EntityRegistry::moho_id(scene.unit->entity_id());
     CHECK(scene.calls_after(id + 1, 4) == 0);
     CHECK(scene.calls_after(id + 5, 1) == 1);
@@ -132,7 +131,7 @@ TEST_CASE("The prop grid finds a prop where it stands, after it moves, until it 
     shape.sz = 0.5f;
     p->set_default_collision_shape(shape);
     Prop* prop = p.get();
-    const u32 id = registry.register_entity(std::move(p));
+    const EntityId id = registry.register_entity(std::move(p));
     std::vector<Entity*> near;
 
     registry.props_touching(10.6f, 10, 11, 10.2f, near);

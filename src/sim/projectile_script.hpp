@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 struct lua_State;
 
@@ -17,6 +18,6 @@ class Projectile;
 /// object on the stack when `push`. `source`: what made it, its launcher
 /// when 0.
 void create_projectile_object(lua_State* L, Projectile& proj, bool in_water, bool push,
-                              u32 source = 0);
+                              EntityId source = {});
 
 } // namespace osc::sim

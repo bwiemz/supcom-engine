@@ -133,15 +133,16 @@ void test_shield_render(TestContext& ctx) {
     const Spot cybran_at{spot->x + 40, spot->z};
     const Spot aeon_at{spot->x, spot->z + 50};
     const Spot seraphim_at{spot->x + 40, spot->z + 50};
-    const u32 uef = spawn_unit(ctx, "__osc_sh_uef", "ueb4202", "ARMY_1", uef_at);
-    const u32 cybran = spawn_unit(ctx, "__osc_sh_cybran", "urb4202", "ARMY_1", cybran_at);
-    const u32 aeon = spawn_unit(ctx, "__osc_sh_aeon", "uab4202", "ARMY_1", aeon_at);
-    const u32 seraphim = spawn_unit(ctx, "__osc_sh_seraphim", "xsb4202", "ARMY_1", seraphim_at);
+    const sim::EntityId uef = spawn_unit(ctx, "__osc_sh_uef", "ueb4202", "ARMY_1", uef_at);
+    const sim::EntityId cybran = spawn_unit(ctx, "__osc_sh_cybran", "urb4202", "ARMY_1", cybran_at);
+    const sim::EntityId aeon = spawn_unit(ctx, "__osc_sh_aeon", "uab4202", "ARMY_1", aeon_at);
+    const sim::EntityId seraphim =
+        spawn_unit(ctx, "__osc_sh_seraphim", "xsb4202", "ARMY_1", seraphim_at);
     // Power to spare: a shield short of energy goes down (shield.lua's OnState).
     run_lua(ctx, "ForkThread(function()\n"
                  "  while true do ArmyBrains[1]:GiveResource('ENERGY', 5000) WaitTicks(1) end\n"
                  "end)\n");
-    const auto shield_up = [&](u32 generator) {
+    const auto shield_up = [&](sim::EntityId generator) {
         bool up = false;
         ctx.sim.entity_registry().for_each([&](sim::Entity& e) {
             if (e.is_shield() && !e.destroyed()) {
@@ -360,7 +361,8 @@ void test_shield_render(TestContext& ctx) {
     // down, its own mesh again.
     {
         const Spot obsidian_at{spot->x + 20, spot->z + 25};
-        const u32 obsidian = spawn_unit(ctx, "__osc_sh_obsidian", "ual0202", "ARMY_1", obsidian_at);
+        const sim::EntityId obsidian =
+            spawn_unit(ctx, "__osc_sh_obsidian", "ual0202", "ARMY_1", obsidian_at);
         tick_until(ctx, "Test 5: the Obsidian's shield is up: it wears its shield mesh", 40, [&] {
             const sim::Entity* e = registry.find(obsidian);
             return e && e->mesh_override().find("personalshield") != std::string::npos;
@@ -415,7 +417,7 @@ void test_shield_render(TestContext& ctx) {
         // SeraphimPersonalShield mesh, the unit as Seraphim, then its shell
         // from the secondary texture
         const Spot scu_at{spot->x + 20, spot->z + 40};
-        const u32 scu = spawn_unit(ctx, "__osc_sh_scu", "xsl0301", "ARMY_1", scu_at);
+        const sim::EntityId scu = spawn_unit(ctx, "__osc_sh_scu", "xsl0301", "ARMY_1", scu_at);
         tick(2);
         const ImageRGBA8 bare = shots.shoot_frame(*terrain, scu_at.x, scu_at.z, 6.0f);
         const u32 bare_seraphim = r.mesh_draws(MeshTechnique::Seraphim);
