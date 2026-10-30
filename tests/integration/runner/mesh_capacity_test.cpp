@@ -45,7 +45,8 @@ FrameLoad drawn_now(const renderer::Renderer& r) {
 }
 
 // Rocks, 96 by 96 a unit apart, and UEF T3 air factories (32 bones each),
-// 16 by 10: within one view at the tests' pitch, short of strategic zoom.
+// 16 by 10: within one view at the tests' pitch, short of strategic zoom,
+// and of the rocks' last LOD cutoff (400).
 constexpr int kPropSide = 96;
 constexpr int kFactoryColumns = 16;
 constexpr int kFactoryRows = 10;
@@ -82,7 +83,7 @@ void test_mesh_capacity(TestContext& ctx) {
                              "for i = 0, {} - 1 do for j = 0, {} - 1 do\n"
                              "  local x, z = cx - {} / 2 + i, cz - {} / 2 + j\n"
                              "  CreateProp({{x, GetTerrainHeight(x, z), z}},\n"
-                             "             '/env/evergreen/props/rocks/rock01_prop.bp')\n"
+                             "             '/env/evergreen/props/rocks/searock01_prop.bp')\n"
                              "end end\n"
                              "for i = 0, {} - 1 do for j = 0, {} - 1 do\n"
                              "  local x, z = cx - 88 + i * 11, cz - 55 + j * 11\n"
