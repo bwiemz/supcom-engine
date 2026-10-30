@@ -71,6 +71,7 @@ void check_all(TestContext& ctx, Tally& t, const char* what,
 void test_issue_checks(TestContext& ctx) {
     spdlog::info("=== ISSUE CHECKS TEST: the orders a unit takes ===");
     Tally t;
+    const bool faf = lua_string(ctx.lua_state, "rawget(_G, 'MergeArmyPair') ~= nil") == "true";
     if (!run(ctx, "setup", R"(
         local brain = GetArmyBrain('ARMY_1')
         brain:GiveResource('MASS', 100000)
@@ -274,6 +275,72 @@ void test_issue_checks(TestContext& ctx) {
                   {"__ic_try(__ic_ae, function() IssueSacrifice({__ic_ae}, __ic_enemy) end)", "0"},
                   {"__ic_try(__ic_ae, function() IssueSacrifice({__ic_ae}, __ic_ae) end)", "0"},
               });
+
+    spdlog::info("issue-checks-test: the scripts' Unit.OnTransportReject: {}",
+                 lua_string(ctx.lua_state, "import('/lua/sim/Unit.lua').Unit.OnTransportReject"));
+    if (!run(ctx, "transports", R"(
+        __ic_u6 = __ic_make('uel0201', 50, -10)
+        for i = 1, 510 do
+            IssueMove({__ic_u6}, {__ic_p[1] + 50 + math.mod(i, 10), 0, __ic_p[3] - 10 - math.mod(i, 7)})
+        end
+        __ic_cap = __ic_n(__ic_u6)
+        IssueClearCommands({__ic_u6})
+        __ic_trF = __ic_make('uea0107', 60, 20)
+        __ic_trG = __ic_make('uea0107', 64, 24)
+        __ic_tk = __ic_make('uel0201', 68, 20)
+        IssueFerry({__ic_trF}, {__ic_p[1] + 30, 0, __ic_p[3] - 30})
+        __ic_trS = __ic_make('uea0107', 70, -20)
+        __ic_big = __ic_make('uel0303', 74, -20)
+        __ic_pad = __ic_make('ueb5202', 60, -40)
+        __ic_fighter = __ic_make('uea0102', 70, -40)
+        __ic_rejects = 0
+        __ic_pad.OnTransportReject = function(self)
+            __ic_rejects = __ic_rejects + 1
+        end
+        __ic_k1 = __ic_make('uel0201', -30, 10)
+        __ic_k2 = __ic_make('uel0201', -34, 10)
+        __ic_k2:SetCanBeKilled(false)
+        IssueKillSelf({__ic_k1})
+        IssueKillSelf({__ic_k2})
+        IssueKillSelf({__ic_of:GetFocusUnit()})
+    )")) {
+        return;
+    }
+    tick_until(ctx, "issue-checks-test: the ferry route sets its beacon", 60,
+               "GetArmyBrain('ARMY_1'):GetListOfUnits(categories.FERRYBEACON, false)[1] ~= nil");
+    if (!run(ctx, "the beacon",
+             "__ic_beacon = GetArmyBrain('ARMY_1'):GetListOfUnits(categories.FERRYBEACON, "
+             "false)[1]")) {
+        return;
+    }
+    check_all(
+        ctx, t, "a transport's orders",
+        {
+            {"__ic_cap", "501"},
+            {"__ic_try(__ic_trG, function() IssueFerry({__ic_trG}, __ic_pt) end)", "1"},
+            {"__ic_try(__ic_tk, function() IssueFerry({__ic_tk}, __ic_pt) end)", "0"},
+            {"(function() local k = __ic_n(__ic_trF) IssueGuard({__ic_trF}, __ic_beacon) "
+             "return __ic_n(__ic_trF) - k end)()",
+             "0"},
+            {"__ic_try(__ic_trG, function() IssueGuard({__ic_trG}, __ic_beacon) end)", "1"},
+            {"__ic_try(__ic_tk, function() IssueTransportLoad({__ic_tk}, __ic_beacon) end)", "1"},
+            {"__ic_try(__ic_trG, function() IssueTransportLoad({__ic_trG}, __ic_beacon) end)", "0"},
+            {"__ic_try(__ic_big, function() IssueTransportLoad({__ic_big}, __ic_trS) end)", "1"},
+            {"__ic_try(__ic_acu, function() IssueTransportLoad({__ic_acu}, __ic_trS) end) .. ' ' "
+             ".. tostring(EntityCategoryContains(categories.CANTRANSPORTCOMMANDER, __ic_trS))",
+             faf ? "0 false" : "1 true"},
+            {"__ic_try(__ic_tk, function() IssueTransportLoad({__ic_tk}, __ic_pad) end) .. ' ' .. "
+             "__ic_rejects",
+             "0 1"},
+            {"__ic_try(__ic_fighter, function() IssueTransportLoad({__ic_fighter}, __ic_pad) end) "
+             ".. ' ' .. __ic_rejects",
+             "1 1"},
+            {"__ic_try(__ic_tk, function() IssueTransportUnload({__ic_tk}, __ic_pt) end)", "0"},
+            {"__ic_try(__ic_trS, function() IssueTransportUnload({__ic_trS}, __ic_pt) end)", "1"},
+            {"__ic_k1:IsDead() == true", "true"},
+            {"__ic_k2:IsDead() == true", "false"},
+            {"__ic_of:GetFocusUnit():IsDead() == true", "false"},
+        });
     spdlog::info("issue-checks-test: {} passed, {} failed", t.pass, t.fail);
 }
 

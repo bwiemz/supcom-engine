@@ -290,3 +290,123 @@ TEST_CASE("A capture, repair or sacrifice goes only to a target Moho's issue let
         CHECK(w.takes(u, c.type, id) == c.taken);
     }
 }
+
+TEST_CASE("A move with no target, a teleport or overcharge without the order, a ferry or unload "
+          "by a unit that carries nothing, are refused",
+          "[routing][transport]") {
+    struct Case {
+        const char* what;
+        CommandType type;
+        const char* kind;
+        bool taken;
+    };
+    const Case cases[] = {
+        {"a move with a target", CommandType::Move, "tank", true},
+        {"a move with none", CommandType::Move, "tank no target", false},
+        {"a patrol with none", CommandType::Patrol, "tank no target", false},
+        {"a teleport with the order", CommandType::Teleport, "teleporter", true},
+        {"a teleport without", CommandType::Teleport, "tank", false},
+        {"an overcharge with the order", CommandType::Overcharge, "commander", true},
+        {"an overcharge without", CommandType::Overcharge, "tank", false},
+        {"a ferry by a transport", CommandType::Ferry, "transport", true},
+        {"a ferry by a tank", CommandType::Ferry, "tank", false},
+        {"a ferry by a carried transport", CommandType::Ferry, "carried transport", false},
+        {"an unload by a transport", CommandType::TransportUnload, "transport", true},
+        {"an unload by a tank", CommandType::TransportUnload, "tank", false},
+        {"an unload by a carried tank", CommandType::TransportUnload, "carried tank", true},
+        {"an unload by a transport on the seabed", CommandType::TransportUnload,
+         "transport on the seabed", false},
+    };
+    for (const Case& c : cases) {
+        IssueWorld w;
+        const std::string kind = c.kind;
+        Unit& u = kind.find("transport") != std::string::npos ? w.make(0, {"TRANSPORTATION"})
+                                                              : w.make(0, {}, "RULEUMT_Land");
+        if (kind.find("transport") != std::string::npos) {
+            u.add_command_cap("RULEUCC_Transport");
+        }
+        if (kind == "teleporter") {
+            u.add_command_cap("RULEUCC_Teleport");
+        }
+        if (kind == "commander") {
+            u.add_command_cap("RULEUCC_Overcharge");
+        }
+        if (kind.rfind("carried", 0) == 0) {
+            u.set_transport_id(w.make(0, {"TRANSPORTATION"}).entity_id());
+        }
+        if (kind == "transport on the seabed") {
+            u.set_layer("Seabed");
+        }
+        UnitCommand order;
+        order.type = c.type;
+        if (kind.find("no target") == std::string::npos) {
+            order.target_pos = {30.0f, 0.0f, 30.0f};
+        }
+        INFO(c.what);
+        CHECK(w.sim.takes_command(u, order) == c.taken);
+    }
+}
+
+TEST_CASE("A unit takes no guard of, nor load at, the ferry beacon it is ferrying to",
+          "[routing][transport]") {
+    IssueWorld w;
+    Unit& ferry = w.make(0, {"TRANSPORTATION"});
+    Unit& other = w.make(0, {"TRANSPORTATION"});
+    Unit& beacon = w.make(0, {"FERRYBEACON"}, "RULEUMT_None");
+    UnitCommand route;
+    route.type = CommandType::Ferry;
+    route.target_pos = {30.0f, 0.0f, 30.0f};
+    route.beacon_id = beacon.entity_id();
+    ferry.push_command(route, true);
+    UnitCommand guard;
+    guard.type = CommandType::Guard;
+    guard.target_id = beacon.entity_id();
+    CHECK_FALSE(w.sim.takes_command(ferry, guard));
+    CHECK(w.sim.takes_command(other, guard));
+    UnitCommand load;
+    load.type = CommandType::TransportLoad;
+    load.target_id = beacon.entity_id();
+    Unit& tank = w.make(0, {}, "RULEUMT_Land");
+    tank.add_command_cap("RULEUCC_CallTransport");
+    tank.push_command(route, true);
+    CHECK_FALSE(w.sim.takes_command(tank, load));
+    tank.push_command(guard, true);
+    CHECK(w.sim.takes_command(tank, load));
+}
+
+TEST_CASE("A transport that can't carry the unit rejects its load", "[routing][transport]") {
+    IssueWorld w;
+    Unit& pad = w.make(0, {"AIRSTAGINGPLATFORM"}, "RULEUMT_None");
+    pad.add_command_cap("RULEUCC_Transport");
+    Unit& tank = w.make(0, {}, "RULEUMT_Land");
+    Unit& plane = w.make(0, {"AIR"});
+    for (Unit* u : {&tank, &plane}) {
+        u->add_command_cap("RULEUCC_CallTransport");
+    }
+    UnitCommand load;
+    load.type = CommandType::TransportLoad;
+    load.target_id = pad.entity_id();
+    bool rejected = false;
+    CHECK_FALSE(w.sim.takes_command(tank, load, false, nullptr, &rejected));
+    CHECK(rejected);
+    rejected = false;
+    CHECK(w.sim.takes_command(plane, load, false, nullptr, &rejected));
+    CHECK_FALSE(rejected);
+}
+
+TEST_CASE("Past 500 orders a unit takes no more queued, but a cleared one", "[routing]") {
+    IssueWorld w;
+    Unit& u = w.make(0, {}, "RULEUMT_Land");
+    for (int i = 0; i < 510; ++i) {
+        UnitCommand move;
+        move.type = CommandType::Move;
+        move.target_pos = {10.0f + static_cast<osc::f32>(i % 10), 0.0f, 20.0f};
+        w.sim.route_command({u.entity_id()}, move, false);
+    }
+    CHECK(u.command_queue().size() == 501);
+    UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {40.0f, 0.0f, 40.0f};
+    w.sim.route_command({u.entity_id()}, move, true);
+    CHECK(u.command_queue().size() == 1);
+}

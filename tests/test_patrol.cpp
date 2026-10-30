@@ -1545,6 +1545,10 @@ TEST_CASE("Each Issue order goes only to units with its command", "[lua]") {
                 for (const char* category : {"REPAIR", "CAPTURE", "RECLAIM"}) {
                     u->add_category(category);
                 }
+                if (std::string(row.issue).find("IssueFerry") != std::string::npos) {
+                    u->add_category("TRANSPORTATION");
+                    u->add_command_cap("RULEUCC_Transport");
+                }
             }
             lua_State* L = lua.raw();
             const auto global = [&](const char* name, osc::sim::Entity* e) {
@@ -1669,6 +1673,10 @@ TEST_CASE("Only Move, Attack, the form moves, Dive and a rally point return thei
             with->add_command_cap(row.cap);
             for (const char* category : {"ENGINEER", "REPAIR", "CAPTURE", "RECLAIM"}) {
                 with->add_category(category);
+            }
+            if (std::string(row.issue).rfind("IssueFerry", 0) == 0) {
+                with->add_category("TRANSPORTATION");
+                with->add_command_cap("RULEUCC_Transport");
             }
             Unit* factory = still(sim, 0, 30.0f, 10.0f);
             Unit* other = still(sim, 0, 40.0f, 10.0f);

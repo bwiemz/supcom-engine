@@ -1196,8 +1196,7 @@ u32 SimState::route_command(const std::vector<EntityId>& unit_ids, const UnitCom
         if (cmd.type == CommandType::Stop && clear_existing) {
             stop_unit(*unit);
         } else if (!apply_silo_build(*unit, cmd) &&
-                   !(clear_existing && repeats_only_order(*unit, issued, unit_ids)) &&
-                   takes_command(*unit, issued, clear_existing)) {
+                   issue_takes(*unit, issued, clear_existing, unit_ids)) {
             if (clear_existing) {
                 SimContext ctx = sim_context();
                 unit->clear_commands(ctx);
@@ -1214,35 +1213,51 @@ u32 SimState::route_command(const std::vector<EntityId>& unit_ids, const UnitCom
 
 namespace {
 
-bool boards(const EntityRegistry& registry, const Unit& unit, EntityId target_id) {
+EntityId ferry_beacon_of(const Unit& unit) {
+    return unit.command_queue().empty() ? EntityId{} : unit.command_queue().front().beacon_id;
+}
+
+enum class Boarding : u8 { Takes, Refuses, Rejects };
+
+Boarding boarding(const EntityRegistry& registry, const Unit& unit, EntityId target_id) {
     const Entity* e = target_id ? registry.find(target_id) : nullptr;
     if (!e || !e->is_unit()) {
-        return true;
+        return Boarding::Takes;
     }
     const auto& target = static_cast<const Unit&>(*e);
     if ((&target != &unit && !unit.has_command_cap("RULEUCC_CallTransport")) ||
         target.layer() == "Seabed") {
-        return false;
+        return Boarding::Refuses;
     }
     if (target.has_category("FERRYBEACON") ||
         (target.has_category("FACTORY") && !target.has_category("AIRSTAGINGPLATFORM") &&
          !target.has_category("TELEPORTATION"))) {
-        return unit.is_mobile() && !unit.has_category("TRANSPORTATION");
+        if (target.has_category("FERRYBEACON") && ferry_beacon_of(unit) == target.entity_id()) {
+            return Boarding::Refuses;
+        }
+        return unit.is_mobile() && !unit.has_category("TRANSPORTATION") ? Boarding::Takes
+                                                                        : Boarding::Refuses;
     }
     if (target.destroyed() || target.is_dying() || target.is_being_built() ||
         (!target.has_command_cap("RULEUCC_Transport") &&
          !target.has_category("PODSTAGINGPLATFORM"))) {
-        return false;
+        return Boarding::Refuses;
     }
     if (&target == &unit) {
-        return true;
+        return Boarding::Takes;
     }
     if (!unit.is_mobile() || unit.has_category("AIR") != target.is_staging_platform() ||
         (unit.has_category("COMMAND") && !target.has_category("CANTRANSPORTCOMMANDER"))) {
-        return false;
+        return Boarding::Rejects;
     }
     const TransportSlots* slots = const_cast<Unit&>(target).transport_slots();
-    return !slots || slots->can_carry_class(unit.transport_class());
+    return !slots || slots->can_carry_class(unit.transport_class()) ? Boarding::Takes
+                                                                    : Boarding::Rejects;
+}
+
+bool has_transport_ai(const Unit& unit) {
+    return unit.has_command_cap("RULEUCC_Transport") || unit.has_category("PODSTAGINGPLATFORM") ||
+           unit.is_staging_platform();
 }
 
 } // namespace
@@ -1423,6 +1438,24 @@ bool SimState::repeats_only_order(const Unit& unit, const UnitCommand& order,
     return holders == ordered;
 }
 
+bool SimState::issue_takes(Unit& unit, const UnitCommand& order, bool clear_existing,
+                           const std::vector<EntityId>& unit_ids) {
+    if (clear_existing && repeats_only_order(unit, order, unit_ids)) {
+        return false;
+    }
+    const auto& queue = unit.command_queue();
+    bool rejected = false;
+    if (!takes_command(unit, order, clear_existing, queue.empty() ? nullptr : &queue.back(),
+                       &rejected)) {
+        Entity* transport = rejected ? entity_registry_.find(order.target_id) : nullptr;
+        if (transport && transport->is_unit()) {
+            static_cast<Unit*>(transport)->call_lua_method(L_, "OnTransportReject");
+        }
+        return false;
+    }
+    return clear_existing || queue.size() <= 500;
+}
+
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
                              bool clear_existing) const {
     const auto& queue = unit.command_queue();
@@ -1430,7 +1463,7 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
 }
 
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool clear_existing,
-                             const UnitCommand* last) const {
+                             const UnitCommand* last, bool* rejected) const {
     if (unit.is_being_built() && !unit.takes_orders_unfinished()) {
         return false;
     }
@@ -1445,10 +1478,24 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     const bool may_leave = !carrier || pod || carrier->has_category("CARRIER");
     if (command.type == CommandType::Move || command.type == CommandType::Patrol ||
         command.type == CommandType::AggressiveMove) {
-        return may_leave && unit.motion_type() != "RULEUMT_None";
+        return may_leave && unit.motion_type() != "RULEUMT_None" && has_target(command) &&
+               !std::isnan(command.target_pos.x) && !std::isnan(command.target_pos.y) &&
+               !std::isnan(command.target_pos.z);
     }
     if (command.type == CommandType::Dive) {
         return unit.motion_type() == "RULEUMT_SurfacingSub";
+    }
+    if (command.type == CommandType::Teleport) {
+        return unit.has_command_cap("RULEUCC_Teleport");
+    }
+    if (command.type == CommandType::Overcharge) {
+        return unit.has_command_cap("RULEUCC_Overcharge");
+    }
+    if (command.type == CommandType::Ferry) {
+        return !carrier && unit.has_category("TRANSPORTATION") && has_transport_ai(unit);
+    }
+    if (command.type == CommandType::TransportUnload) {
+        return unit.layer() != "Seabed" && (carrier || has_transport_ai(unit));
     }
     if (command.type == CommandType::BuildMobile || command.type == CommandType::BuildFactory) {
         return unit.has_category("FACTORY") || unit.has_category("ENGINEER") ||
@@ -1511,7 +1558,14 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     }
     if (command.type == CommandType::TransportLoad || command.type == CommandType::Dock ||
         command.type == CommandType::WaitForFerry) {
-        return !unit.transport_id() && boards(entity_registry_, unit, command.target_id);
+        if (unit.transport_id()) {
+            return false;
+        }
+        const Boarding boards = boarding(entity_registry_, unit, command.target_id);
+        if (rejected) {
+            *rejected = boards == Boarding::Rejects;
+        }
+        return boards == Boarding::Takes;
     }
     if (command.type != CommandType::Guard) return true;
     if (!may_leave || !unit.has_command_cap("RULEUCC_Guard")) {
@@ -1525,6 +1579,9 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     // unit guarding itself, which a campaign's base manager asks for, left
     // one walking forever.
     if (target == &unit) return false;
+    if (target->has_category("FERRYBEACON") && ferry_beacon_of(unit) == target->entity_id()) {
+        return false;
+    }
     if (unit.has_category("FACTORY") && !target->has_category("FACTORY")) return false;
     return target->guarded_unit_id() != unit.entity_id();
 }
@@ -2064,8 +2121,7 @@ void SimState::dispatch_due_commands() {
             }
             // Each selected unit independently replaces (fresh order) or
             // appends (queued/shift) — matching the Issue* bindings.
-            if ((sc.clear_existing && repeats_only_order(*unit, base, sc.unit_ids)) ||
-                !takes_command(*unit, base, sc.clear_existing)) {
+            if (!issue_takes(*unit, base, sc.clear_existing, sc.unit_ids)) {
                 continue;
             }
             if (sc.clear_existing) {
@@ -3829,6 +3885,10 @@ void SimState::defeat_army(i32 army) {
     b->set_state(BrainState::Defeat);
     dispose_defeated_army(army);
     spdlog::info("Army {} ({}) defeated (player drop)", army, b->name());
+}
+
+bool SimState::takes_kill_self(Unit& unit) {
+    return !unit.is_being_built() && script_says(L_, unit, "CheckCanBeKilled");
 }
 
 void SimState::kill_unit(Unit& unit, const char* damage_type) {

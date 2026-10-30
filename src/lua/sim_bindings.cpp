@@ -5569,7 +5569,10 @@ static int l_IssueKillSelf(lua_State* L) {
     if (!sim) return 0;
     for (const sim::EntityId id : ids) {
         auto* e = sim->entity_registry().find(id);
-        if (e && !e->destroyed() && e->is_unit()) sim->kill_unit(static_cast<sim::Unit&>(*e));
+        if (e && !e->destroyed() && e->is_unit() &&
+            sim->takes_kill_self(static_cast<sim::Unit&>(*e))) {
+            sim->kill_unit(static_cast<sim::Unit&>(*e));
+        }
     }
     return 0;
 }
