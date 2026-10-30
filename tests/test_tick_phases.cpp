@@ -75,7 +75,8 @@ struct Phases {
         for (const char* bp : {
                  "{BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
-                 " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Land'}}",
+                 " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Land', "
+                 "MaxSpeed = 1}}",
                  "{BlueprintId = 'fac', CategoriesHash = {STRUCTURE = true, FACTORY = true},"
                  " Economy = {BuildRate = 20, BuildTime = 100, BuildCostMass = 10,"
                  " BuildCostEnergy = 10, BuildableCategory = {'MOBILE TECH1'}},"
@@ -85,7 +86,8 @@ struct Phases {
                  " Defense = {MaxHealth = 10}}",
                  "{BlueprintId = 'ship', Categories = {'NAVAL', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
-                 " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Water'}}",
+                 " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Water', "
+                 "MaxSpeed = 1}}",
                  "{BlueprintId = 'gen', CategoriesHash = {MOBILE = true, TECH1 = true},"
                  " Economy = {BuildTime = 10, BuildCostMass = 1, BuildCostEnergy = 1,"
                  " ProductionPerSecondEnergy = 5}, Defense = {MaxHealth = 10}}",

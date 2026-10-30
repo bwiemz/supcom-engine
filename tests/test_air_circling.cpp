@@ -95,7 +95,7 @@ struct World {
             s += id;
             s += "', Categories = {'AIR', 'MOBILE'}, Defense = {MaxHealth = 100},"
                  " SizeX = 2, SizeZ = 2, Footprint = {SizeX = 2, SizeZ = 2},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}, Air = {";
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}, Air = {";
             s += air;
             s += "}}";
             return s;

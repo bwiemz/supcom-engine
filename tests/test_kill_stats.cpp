@@ -49,11 +49,12 @@ struct DeathWorld {
         for (const char* bp : {
                  "{BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, Economy = {BuildCostMass = 50},"
-                 " Physics = {MotionType = 'RULEUMT_Land'}}",
+                 " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 1}}",
                  "{BlueprintId = 'pgen', Categories = {'STRUCTURE'}, Defense = {MaxHealth = 100},"
                  " Economy = {BuildCostMass = 50}, Physics = {MotionType = 'RULEUMT_None'}}",
                  "{BlueprintId = 'lift', Categories = {'AIR', 'MOBILE'},"
-                 " Defense = {MaxHealth = 100}, Physics = {MotionType = 'RULEUMT_Air'}}",
+                 " Defense = {MaxHealth = 100}, Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = "
+                 "10}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));

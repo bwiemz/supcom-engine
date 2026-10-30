@@ -107,7 +107,7 @@ TEST_CASE("FlattenMapRect sets a land unit about the rect on the new ground", "[
     REQUIRE(w.state
                 .do_string("return {BlueprintId = 'tank', Categories = {'LAND'},"
                            " Defense = {MaxHealth = 100}, Footprint = {SizeX = 1, SizeZ = 1},"
-                           " Physics = {MotionType = 'RULEUMT_Land'}}")
+                           " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 1}}")
                 .ok());
     w.store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
     lua_pop(L, 1);

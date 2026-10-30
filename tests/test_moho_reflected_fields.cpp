@@ -15,11 +15,13 @@
 #include "renderer/range_overlays.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
 
 extern "C" {
 #include <lua.h>
 }
 
+#include <cmath>
 #include <set>
 #include <string>
 #include <utility>
@@ -202,27 +204,136 @@ TEST_CASE("A projectile blueprint's omitted spreads read as Moho's",
     )"));
 }
 
-TEST_CASE("The fields left unfilled stay as the .bp gives them, and aren't also filled",
+TEST_CASE("Each reflected field is filled once, from the constructor that sets it",
           "[blueprints][moho-reflection]") {
-    BlueprintWorld w;
-    CHECK(w.check("bare = {BlueprintId = 'bare'} RegisterUnitBlueprint(bare)"));
     std::set<std::string> filled;
     for (const auto& f : osc::blueprints::unit_reflected_fields()) {
         CHECK(f.address != 0);
         CHECK(filled.insert(path(f.section, f.name)).second);
-    }
-    for (const auto& f : osc::blueprints::unit_unfilled_fields()) {
-        const std::string name = path(f.section, f.name);
-        INFO(name);
-        CHECK(f.reason[0] != '\0');
-        CHECK(filled.count(name) == 0);
-        CHECK(w.check("assert(bare." + name + " == nil)"));
     }
     std::set<std::string> weapon;
     for (const auto& f : osc::blueprints::weapon_reflected_fields()) {
         CHECK(f.address != 0);
         CHECK(weapon.insert(f.name).second);
     }
+}
+
+TEST_CASE("A unit's size, shapes, scan radii, turn radius and elevation read as Moho's defaults",
+          "[blueprints][moho-reflection]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local bare = {BlueprintId = 'bare', Physics = {MaxSpeed = 3, MotionType = 'RULEUMT_Land'}}
+        RegisterUnitBlueprint(bare)
+        assert(bare.CollisionShape == 'Box', 'CollisionShape')
+        assert(bare.SizeX == 1 and bare.SizeY == 1 and bare.SizeZ == 1, 'size')
+        assert(math.abs(bare.LifeBarHeight - 0.1) < 1e-6, 'LifeBarHeight')
+        assert(bare.SelectionSizeX == 1 and bare.SelectionSizeZ == 1, 'selection size')
+        assert(bare.Display.MeshBlueprint == '', 'MeshBlueprint')
+        local p = bare.Physics
+        assert(p.TurnRadius == 5 and p.Elevation == 0, 'TurnRadius, Elevation')
+        assert(p.BackUpDistance == 3, 'BackUpDistance is three lengths')
+        assert(bare.AI.GuardScanRadius == 25 and bare.AI.StagingPlatformScanRadius == 300,
+               'scan radii')
+        local own = {BlueprintId = 'own', SizeX = 2, SizeZ = 4, CollisionShape = 'Sphere',
+                     Physics = {MaxSpeed = 3, TurnRadius = 0, Elevation = 2, BackUpDistance = 0},
+                     AI = {GuardScanRadius = 40}}
+        RegisterUnitBlueprint(own)
+        assert(own.SizeX == 2 and own.SizeY == 1 and own.CollisionShape == 'Sphere', 'own entity')
+        assert(own.Physics.TurnRadius == 0 and own.Physics.Elevation == 2, 'own physics')
+        assert(own.Physics.BackUpDistance == 0, 'own BackUpDistance')
+        assert(own.AI.GuardScanRadius == 40 and own.AI.StagingPlatformScanRadius == 300, 'own AI')
+    )"));
+}
+
+TEST_CASE("ComputeDerivedQuantities: no top speed, no motion type; an unset BackUpDistance is "
+          "three lengths",
+          "[blueprints][moho-reflection]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local still = {BlueprintId = 'still', Physics = {MotionType = 'RULEUMT_Land'}}
+        RegisterUnitBlueprint(still)
+        assert(still.Physics.MotionType == 'RULEUMT_None', still.Physics.MotionType)
+        -- As retail's Brick: the misspelt BackupDistance isn't Moho's field
+        local brick = {BlueprintId = 'brick', SizeZ = 0.9,
+                       Physics = {MaxSpeed = 2, MotionType = 'RULEUMT_Land', BackupDistance = 5}}
+        RegisterUnitBlueprint(brick)
+        assert(math.abs(brick.Physics.BackUpDistance - 2.7) < 1e-5, 'BackUpDistance')
+        assert(brick.Physics.BackupDistance == 5, 'the .bp\'s own key kept')
+        assert(brick.Physics.MotionType == 'RULEUMT_Land', 'a moving unit keeps its motion type')
+    )"));
+}
+
+TEST_CASE("A unit's mesh id reads completed against its Source", "[blueprints][moho-reflection]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local bp = {BlueprintId = 'ual0304', Source = '/units/ual0304/ual0304_unit.bp',
+                    Display = {MeshBlueprint = 'Foo/Bar_mesh'}}
+        RegisterUnitBlueprint(bp)
+        assert(bp.Display.MeshBlueprint == '/units/ual0304/foo/bar_mesh', bp.Display.MeshBlueprint)
+        local given = {BlueprintId = 'uel0201', Source = '/units/uel0201/uel0201_unit.bp',
+                       Display = {MeshBlueprint = '/units/UEL0201/../uel0201/uel0201_mesh'}}
+        RegisterUnitBlueprint(given)
+        assert(given.Display.MeshBlueprint == '/units/uel0201/uel0201_mesh',
+               given.Display.MeshBlueprint)
+    )"));
+}
+
+TEST_CASE("The engine reads a registered unit's size, scan radii, turn radius and elevation as "
+          "Moho's",
+          "[blueprints][moho-reflection]") {
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store{state.raw()};
+    osc::sim::SimState sim{state.raw(), &store};
+    state.set_blueprint_store(&store);
+    osc::lua::register_blueprint_store_bindings(state);
+    osc::lua::register_moho_bindings(state, sim);
+    osc::lua::register_sim_bindings(state, sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    REQUIRE(state
+                .do_string(R"(
+        RegisterUnitBlueprint({BlueprintId = 'tank', Defense = {MaxHealth = 100},
+            Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 3, TurnRate = 90}})
+        RegisterUnitBlueprint({BlueprintId = 'brick', Defense = {MaxHealth = 100}, SizeZ = 0.9,
+            Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 2, MaxSpeedReverse = 2.5,
+                       BackupDistance = 5}})
+        RegisterUnitBlueprint({BlueprintId = 'drone', Defense = {MaxHealth = 100},
+            Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10}})
+        RegisterUnitBlueprint({BlueprintId = 'czar', Defense = {MaxHealth = 100},
+            Categories = {'OVERLAYMISC'}, AI = {GuardScanRadius = 125},
+            Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 20}})
+    )")
+                .ok());
+    store.expose_to_lua(state.raw());
+    lua_State* L = state.raw();
+    const auto make = [&](const char* id, float x) {
+        REQUIRE(state
+                    .do_string(std::string("CreateUnit('") + id + "', 1, " + std::to_string(x) +
+                               ", 0, 10)")
+                    .ok());
+        osc::sim::Unit* found = nullptr;
+        sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+            if (e.position().x == x) {
+                found = static_cast<osc::sim::Unit*>(&e);
+            }
+        });
+        REQUIRE(found);
+        return found;
+    };
+    const osc::sim::Unit* tank = make("tank", 10);
+    CHECK(tank->drive().turn_radius == 5.0f);
+    CHECK(std::abs(tank->life_bar().height - 0.1f) < 1e-6f);
+    CHECK(std::abs(make("brick", 20)->drive().backup_distance - 2.7f) < 1e-5f);
+    CHECK(make("drone", 30)->elevation_target() == 0.0f);
+
+    REQUIRE(osc::blueprints::push_blueprint(L, "czar"));
+    const osc::renderer::RangeBlueprint czar = osc::renderer::read_range_blueprint(L, -1);
+    lua_pop(L, 1);
+    osc::renderer::RangeUnit unit;
+    unit.blueprint = &czar;
+    const auto ring =
+        osc::renderer::extract_range(osc::renderer::RangeExtractor::Miscellaneous, unit);
+    REQUIRE(ring);
+    CHECK(ring->outer == 300.0f);
 }
 
 TEST_CASE("Both Lua states read a registered blueprint's reflected fields",

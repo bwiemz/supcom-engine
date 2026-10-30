@@ -70,45 +70,45 @@ struct World {
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = "
                  "5},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}}",
                  "{BlueprintId = 'giant', Categories = {'AIR', 'MOBILE', 'EXPERIMENTAL'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = "
                  "5},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}}",
                  "{BlueprintId = 'drone', Categories = {'AIR', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 0},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}}",
                  "{BlueprintId = 'ferry', Categories = {'AIR', 'MOBILE', 'TRANSPORTATION'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = 5,"
                  " TransportHoverHeight = 3},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}}",
                  "{BlueprintId = 'pod', Categories = {'AIR', 'MOBILE', 'CANLANDONWATER'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = "
                  "5},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}}",
                  "{BlueprintId = 'fighter', Categories = {'AIR', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, Winged = true, MaxAirspeed = 15, KMove = 1,"
                  " KMoveDamping = 1, StartTurnDistance = 5, TurnSpeed = 1.5, AutoLandTime = 1},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 18}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 15, Elevation = 18}}",
                  "{BlueprintId = 'flier', Categories = {'AIR', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, Winged = true, MaxAirspeed = 15, KMove = 1,"
                  " KMoveDamping = 1, StartTurnDistance = 5, TurnSpeed = 1.5, AutoLandTime = 0},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 18}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 15, Elevation = 18}}",
                  "{BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
-                 " Physics = {MotionType = 'RULEUMT_Land'}}",
+                 " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 1}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
