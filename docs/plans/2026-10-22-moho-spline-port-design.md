@@ -122,6 +122,10 @@ serial sits below them.
   tick a script checked against `GetEntityId` was one off Moho's.
 - **Walks:** entities are walked in the order they were made. The world snapshot sorts them by id
   before it fills its records, for its binary search.
-- **shortcut:** Moho reuses a released serial, the least first. EN's serials only grow: its orders,
-  weapons and steering keep bare ids where Moho keeps weak pointers, and a reused id would retarget
-  them. This stays until those carry a generation.
+- **shortcut:** Moho reuses a released serial. `IdPool` holds it for 99 beats, in a ring of 100 slots
+  that `EntityDB::Purge` advances each beat, then hands out the least free serial before its next. EN's
+  serials only grow: its orders, weapons and steering keep bare ids where Moho keeps weak pointers, and
+  a reused id would retarget them. This stays until those carry a generation.
+- **Past 2^20 serials** the serial spills into the source bits (`bits | serial`), in Moho as in EN: the
+  id lands in another army's pool, or back at the start of its own. Moho's id map then finds the new
+  entity under a live one's id. EN skips an id a live entity holds, so a new entity never replaces one.
