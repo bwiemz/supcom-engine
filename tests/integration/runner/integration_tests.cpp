@@ -19936,8 +19936,8 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if not upgrade then error('no ueb1202 among ' .. table.getn(shown) .. ' items') end
         SelectUnits({__osc_test_acu})
     )");
-    const std::string reselect_mex = fmt::format("SelectUnits({{GetUnitById({})}})",
-                                                 osc::sim::EntityRegistry::moho_id(mex_id));
+    const std::string reselect_mex =
+        fmt::format("SelectUnits({{GetUnitById({})}})", osc::sim::EntityRegistry::moho_id(mex_id));
     lua_ok("Test 10g5 setup: the extractor selected", reselect_mex.c_str());
     play(2);
     sim_lua("IssueUpgrade({__osc_ui_mex}, 'ueb1202')");
