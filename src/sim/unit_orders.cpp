@@ -497,10 +497,9 @@ OrderStep Unit::order_stop(lua_State* L) {
 }
 
 OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
-    // Its move aborted by a Warp as it ran: Moho's move task hears it as a
-    // failure and the order ends, the unit coasting to a stop
-    if (warp_aborted_command_ != 0 && cmd.command_id == warp_aborted_command_) {
-        warp_aborted_command_ = 0;
+    // Moho's move task hears AINAVEVENT_Aborted as a failure: the order ends.
+    if (aborted_command_ != 0 && cmd.command_id == aborted_command_) {
+        aborted_command_ = 0;
         command_queue_.pop_front();
         if (is_air_unit() &&
             (command_queue_.empty() || instant_order(command_queue_.front().type))) {
@@ -1229,11 +1228,7 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, SimContext& ctx) {
         const Vector3& now = position();
         const Vector3& before = last_position();
         if (now.x != before.x || now.y != before.y || now.z != before.z) {
-            if (is_air_unit()) {
-                stop_air();
-            } else {
-                abort_move();
-            }
+            abort_move();
         }
         // Moho's dispatch removes an attack-move whose patrol task is done.
         if (cmd.type == CommandType::AggressiveMove) {

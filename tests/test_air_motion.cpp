@@ -784,3 +784,15 @@ TEST_CASE("A loaded transport's patrol leg ends within its air speed over its lo
     CHECK(away[1] <= std::ceil(10.0f / load) + 1.5f);
     CHECK(away[0] > away[1] + 2.0f);
 }
+
+TEST_CASE("An aircraft's aborted move makes for its stop point at once", "[air_motion]") {
+    World w;
+    Unit& a = w.make("gunship", 30.0f, 128.0f);
+    World::move(a, 200.0f, 128.0f);
+    for (int t = 0; t < 30; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(a.navigator().busy());
+    a.abort_move();
+    CHECK(a.navigator().air_hold() != nullptr);
+}

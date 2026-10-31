@@ -772,3 +772,23 @@ TEST_CASE("With Moho pathing a moving tank whose orders are cleared brakes along
     }
     CHECK(tank->position().x - cleared > 1.2f);
 }
+
+TEST_CASE("A move whose navigator aborts ends as Moho's move task hears AINAVEVENT_Aborted",
+          "[pathing]") {
+    const bool moho = GENERATE(false, true);
+    INFO("moho " << moho);
+    World w(moho);
+    Unit* tank = w.make("tank", 20.5f, 30.5f);
+    osc::sim::UnitCommand go;
+    go.type = osc::sim::CommandType::Move;
+    go.target_pos = {60.5f, 10.0f, 30.5f};
+    go.command_id = 1;
+    tank->push_command(go, true);
+    for (int t = 0; t < 30; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE_FALSE(tank->command_queue().empty());
+    tank->abort_move();
+    w.sim.tick();
+    CHECK(tank->command_queue().empty());
+}

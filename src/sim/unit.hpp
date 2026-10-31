@@ -620,7 +620,7 @@ public:
     /// old unit's orders, a patrol's points in their order).
     void append_command(const UnitCommand& cmd) { command_queue_.push_back(cmd); }
     void clear_commands(const char* source = "?");
-    /// Moho's IAiNavigator::AbortMove: on the ground, its steering brakes along its spline.
+    /// Moho's IAiNavigator::AbortMove (CAiNavigatorImpl, CAiNavigatorAir).
     void abort_move();
     /// Moho's CUnitCommandQueue::NeedsUIRefresh: a head order of these types
     /// taken off the queue sets the unit's UI refresh flag.
@@ -2229,9 +2229,8 @@ private:
     // Misc flags
     EntityId creator_id_{};
     bool lifts_off_ = false;
-    /// The order running as a Warp aborted its move (its command id, 0:
-    /// none): a Move order so tagged ends (warp()).
-    u32 warp_aborted_command_ = 0;
+    /// The order running as its move was aborted (its command id, 0: none).
+    u32 aborted_command_ = 0;
     bool auto_overcharge_ = false;
     bool overcharge_paused_ = false;
     bool cloaked_ = false;

@@ -560,8 +560,11 @@ void Unit::stop_air() {
 }
 
 void Unit::abort_move() {
+    aborted_command_ = !command_queue_.empty() && command_queue_.front().begun
+                           ? command_queue_.front().command_id
+                           : 0;
     if (is_air_unit()) {
-        navigator_.abort_move();
+        stop_air();
         return;
     }
     navigator_.abort_move(true);
@@ -2975,12 +2978,8 @@ void Unit::warp(const map::Terrain* terrain, const Vector3& at, lua_State* L) {
     ground_speed_ = 0;
     reset_lift_ground();
     // CUnitMotion::Warp's target is where it now is, and the navigator's
-    // move is aborted: AINAVEVENT_Aborted reaches the task listening, the
-    // order running now (a Move's task takes it as a failure)
+    // move is aborted
     abort_move();
-    warp_aborted_command_ = !command_queue_.empty() && command_queue_.front().begun
-                                ? command_queue_.front().command_id
-                                : 0;
     // Unit::Warp then looks at the terrain type where it now is
     update_terrain_type(terrain, p, L);
 }
