@@ -59,7 +59,10 @@ def parse_engine(path: str) -> dict[str, dict[str, str]]:
     return units
 
 
-ROW = re.compile(r'\b(?:num|flag|text|list|min_max)\(\s*"([\w.]*)",\s*"(\w+)"')
+ROW = re.compile(
+    r'\b(?:real|int32|uint32|uint8|flag|text|res_id|enumeration|strings|floats|min_max|structs)'
+    r'\(\s*"([\w.]*)",\s*"(\w+)"'
+)
 
 
 def table_of(source: str, name: str) -> str:

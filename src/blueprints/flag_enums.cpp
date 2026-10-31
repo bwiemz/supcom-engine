@@ -48,6 +48,44 @@ constexpr EnumEntry kToggleCaps[] = {
     {"RULEUTC_CloakToggle", 0x100},
 };
 
+constexpr EnumEntry kMotionTypes[] = {
+    {"RULEUMT_None", 0},       {"RULEUMT_Land", 1},  {"RULEUMT_Air", 2},
+    {"RULEUMT_Water", 3},      {"RULEUMT_Biped", 4}, {"RULEUMT_SurfacingSub", 5},
+    {"RULEUMT_Amphibious", 6}, {"RULEUMT_Hover", 7}, {"RULEUMT_AmphibiousFloating", 8},
+    {"RULEUMT_Special", 9},
+};
+
+constexpr EnumEntry kBuildRestrictions[] = {
+    {"RULEUBR_None", 0},
+    {"RULEUBR_Bridge", 1},
+    {"RULEUBR_OnMassDeposit", 2},
+    {"RULEUBR_OnHydrocarbonDeposit", 3},
+};
+
+constexpr EnumEntry kRangeCategories[] = {
+    {"UWRC_Undefined", 0}, {"UWRC_DirectFire", 1}, {"UWRC_IndirectFire", 2},
+    {"UWRC_AntiAir", 3},   {"UWRC_AntiNavy", 4},   {"UWRC_Countermeasure", 5},
+};
+
+constexpr EnumEntry kBallisticArcs[] = {
+    {"RULEUBA_None", 0},
+    {"RULEUBA_LowArc", 1},
+    {"RULEUBA_HighArc", 2},
+};
+
+constexpr EnumEntry kTargetTypes[] = {
+    {"RULEWTT_Unit", 0},
+    {"RULEWTT_Projectile", 1},
+    {"RULEWTT_Prop", 2},
+};
+
+// faf-re CColPrimitiveBaseTypeInfo.cpp
+constexpr EnumEntry kCollisionShapes[] = {
+    {"COLSHAPE_None", 0},
+    {"COLSHAPE_Box", 1},
+    {"COLSHAPE_Sphere", 2},
+};
+
 constexpr EnumEntry kLayers[] = {
     {"LAYER_None", 0},    {"LAYER_Land", 0x1}, {"LAYER_Seabed", 0x2}, {"LAYER_Sub", 0x4},
     {"LAYER_Water", 0x8}, {"LAYER_Air", 0x10}, {"LAYER_Orbit", 0x20}, {"LAYER_All", 0x7F},
@@ -142,6 +180,12 @@ std::optional<std::string> text_at(lua_State* L, int index) {
 const FlagEnum kCommandCapsEnum{kCommandCaps, ""};
 const FlagEnum kToggleCapsEnum{kToggleCaps, ""};
 const FlagEnum kLayerEnum{kLayers, "LAYER_"};
+const FlagEnum kMotionTypeEnum{kMotionTypes, ""};
+const FlagEnum kBuildRestrictionEnum{kBuildRestrictions, ""};
+const FlagEnum kRangeCategoryEnum{kRangeCategories, ""};
+const FlagEnum kBallisticArcEnum{kBallisticArcs, ""};
+const FlagEnum kTargetTypeEnum{kTargetTypes, ""};
+const FlagEnum kCollisionShapeEnum{kCollisionShapes, "COLSHAPE_"};
 
 std::optional<u32> read_flag_enum(lua_State* L, int index, const FlagEnum& e) {
     if (index < 0 && index > LUA_REGISTRYINDEX) {

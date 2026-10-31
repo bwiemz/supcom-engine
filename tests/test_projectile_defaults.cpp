@@ -39,8 +39,7 @@ TEST_CASE("A projectile's omitted Physics spreads read as Moho's defaults", "[bl
         assert(p.DirectionXRange == 1.5 and p.DirectionZRange == 1.5 and p.DirectionYRange == 0,
                'direction spreads')
         assert(p.TurnRateRange == 4, 'its own spread lost')
-        -- Only the spreads: the engine's flight reads the rest as before.
-        assert(p.Acceleration == nil and p.Lifetime == nil, 'filled more than the spreads')
+        assert(p.Acceleration == 0 and p.Lifetime == 15, 'the rest of its physics')
         -- One with no Physics at all gets them too.
         local bare = {BlueprintId = 'bare'}
         RegisterProjectileBlueprint(bare)

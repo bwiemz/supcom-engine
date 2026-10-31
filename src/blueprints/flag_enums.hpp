@@ -1,7 +1,7 @@
 #pragma once
 
-// A unit blueprint's flag enums as Moho reflects them (gpg::REnumType): read
-// by SCR_LuaBuildObject, written back by SCR_RObjectToLuaMerge as a string.
+// A blueprint's enums as Moho reflects them (gpg::REnumType): read by
+// SCR_LuaBuildObject, written back by SCR_RObjectToLuaMerge as a string.
 
 #include "core/types.hpp"
 
@@ -25,9 +25,15 @@ struct FlagEnum {
     std::string_view prefix; ///< dropped from the names (ELayer's LAYER_)
 };
 
-extern const FlagEnum kCommandCapsEnum; ///< ERuleBPUnitCommandCaps (General.CommandCaps)
-extern const FlagEnum kToggleCapsEnum;  ///< ERuleBPUnitToggleCaps (General.ToggleCaps)
-extern const FlagEnum kLayerEnum;       ///< ELayer (Physics.BuildOnLayerCaps)
+extern const FlagEnum kCommandCapsEnum;      ///< ERuleBPUnitCommandCaps (General.CommandCaps)
+extern const FlagEnum kToggleCapsEnum;       ///< ERuleBPUnitToggleCaps (General.ToggleCaps)
+extern const FlagEnum kLayerEnum;            ///< ELayer (Physics.BuildOnLayerCaps)
+extern const FlagEnum kMotionTypeEnum;       ///< ERuleBPUnitMovementType
+extern const FlagEnum kBuildRestrictionEnum; ///< ERuleBPUnitBuildRestriction
+extern const FlagEnum kRangeCategoryEnum;    ///< UnitWeaponRangeCategory
+extern const FlagEnum kBallisticArcEnum;     ///< ERuleBPUnitWeaponBallisticArc
+extern const FlagEnum kTargetTypeEnum;       ///< ERuleBPUnitWeaponTargetType
+extern const FlagEnum kCollisionShapeEnum;   ///< ECollisionShape
 
 /// The value at `index` as SCR_LuaBuildObject reads it (REnumType::SetLexical);
 /// nothing for nil or what Moho can't read.
