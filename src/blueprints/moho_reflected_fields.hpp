@@ -1,11 +1,11 @@
 #pragma once
 
 // The blueprint fields Moho writes back to a blueprint's Lua table as it
-// registers it (RBlueprint::InitBlueprint, 0x0050DF10): it builds its typed
-// copy from the table (SCR_LuaBuildObject), derives what the class derives
-// (OnInitBlueprint), then merges every reflected field back into the table
-// (SCR_RObjectToLuaMerge, 0x004CF0B0). So a field a .bp leaves out reads, in
-// every script after registration, as the class constructor's default.
+// registers it (RBlueprint::InitBlueprint): it builds its typed copy from the
+// table (SCR_LuaBuildObject), derives what the class derives (OnInitBlueprint),
+// then merges every reflected field back into the table (SCR_RObjectToLuaMerge).
+// So a field a .bp leaves out reads, in every script after registration, as
+// the class constructor's default.
 //
 // The engine writes each reflected field as Moho's typed copy holds it: the
 // constructor's default for one the table leaves out, a present one read as
@@ -49,9 +49,9 @@ struct ReflectedField {
     const char* section; ///< its table's path from the blueprint, dotted; "" is the blueprint
     const char* name;
     ReflectedType type;
-    f32 number;       ///< a number's default, a Bool's 0 or 1, an Enum's value
-    const char* text; ///< a String's or ResId's default
-    u32 address;      ///< the Moho function that sets it (faf-re)
+    f32 number;              ///< a number's default, a Bool's 0 or 1, an Enum's value
+    const char* text;        ///< a String's or ResId's default
+    const char* constructor; ///< the Moho class whose constructor sets it
     const FlagEnum* enumeration = nullptr;
     std::span<const ReflectedField> elements = {};
 };

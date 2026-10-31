@@ -24,60 +24,61 @@ namespace osc::blueprints {
 namespace {
 
 // The faf-re constructors that set each default.
-constexpr u32 kBlueprintCtor = 0x0050DD60; // RBlueprint
-constexpr u32 kEntityCtor = 0x00511C30;    // REntityBlueprint
-constexpr u32 kUnitCtor = 0x0051E480;      // RUnitBlueprint: Display, Intel, Transport, Defense
-constexpr u32 kGeneralCtor = 0x0051EE10;   // RUnitBlueprintGeneral
-constexpr u32 kAirCtor = 0x0051EF00;       // RUnitBlueprintAir
-constexpr u32 kPhysicsCtor = 0x0051F090;   // RUnitBlueprintPhysics
-constexpr u32 kAICtor = 0x0051F7D0;        // RUnitBlueprintAI
-constexpr u32 kEconomyCtor = 0x0051F990;   // RUnitBlueprintEconomy
-constexpr u32 kWeaponCtor = 0x0051F4C0;    // RUnitBlueprintWeapon
-constexpr u32 kProjectileCtor = 0x0051B740;        // RProjectileBlueprint: Display, Economy
-constexpr u32 kProjectilePhysicsCtor = 0x0051B650; // RProjectileBlueprintPhysics
-constexpr u32 kPropCtor = 0x0051D250;              // RPropBlueprint
-constexpr u32 kMeshCtor = 0x005283A0;              // RMeshBlueprint
-constexpr u32 kMeshLodCtor = 0x005183D0;           // RMeshBlueprintLOD
+constexpr const char* kBlueprintCtor = "RBlueprint";
+constexpr const char* kEntityCtor = "REntityBlueprint";
+constexpr const char* kUnitCtor = "RUnitBlueprint"; // Display, Intel, Transport, Defense
+constexpr const char* kGeneralCtor = "RUnitBlueprintGeneral";
+constexpr const char* kAirCtor = "RUnitBlueprintAir";
+constexpr const char* kPhysicsCtor = "RUnitBlueprintPhysics";
+constexpr const char* kAICtor = "RUnitBlueprintAI";
+constexpr const char* kEconomyCtor = "RUnitBlueprintEconomy";
+constexpr const char* kWeaponCtor = "RUnitBlueprintWeapon";
+constexpr const char* kProjectileCtor = "RProjectileBlueprint"; // Display, Economy
+constexpr const char* kProjectilePhysicsCtor = "RProjectileBlueprintPhysics";
+constexpr const char* kPropCtor = "RPropBlueprint";
+constexpr const char* kMeshCtor = "RMeshBlueprint";
+constexpr const char* kMeshLodCtor = "RMeshBlueprintLOD";
 
-constexpr ReflectedField real(const char* section, const char* name, f32 value, u32 address) {
-    return {section, name, ReflectedType::Float, value, nullptr, address};
+constexpr ReflectedField real(const char* section, const char* name, f32 value, const char* ctor) {
+    return {section, name, ReflectedType::Float, value, nullptr, ctor};
 }
-constexpr ReflectedField int32(const char* section, const char* name, f32 value, u32 address) {
-    return {section, name, ReflectedType::Int32, value, nullptr, address};
+constexpr ReflectedField int32(const char* section, const char* name, f32 value, const char* ctor) {
+    return {section, name, ReflectedType::Int32, value, nullptr, ctor};
 }
-constexpr ReflectedField uint32(const char* section, const char* name, f32 value, u32 address) {
-    return {section, name, ReflectedType::UInt32, value, nullptr, address};
+constexpr ReflectedField uint32(const char* section, const char* name, f32 value,
+                                const char* ctor) {
+    return {section, name, ReflectedType::UInt32, value, nullptr, ctor};
 }
-constexpr ReflectedField uint8(const char* section, const char* name, f32 value, u32 address) {
-    return {section, name, ReflectedType::UInt8, value, nullptr, address};
+constexpr ReflectedField uint8(const char* section, const char* name, f32 value, const char* ctor) {
+    return {section, name, ReflectedType::UInt8, value, nullptr, ctor};
 }
-constexpr ReflectedField flag(const char* section, const char* name, bool value, u32 address) {
-    return {section, name, ReflectedType::Bool, value ? 1.0f : 0.0f, nullptr, address};
+constexpr ReflectedField flag(const char* section, const char* name, bool value, const char* ctor) {
+    return {section, name, ReflectedType::Bool, value ? 1.0f : 0.0f, nullptr, ctor};
 }
 constexpr ReflectedField text(const char* section, const char* name, const char* value,
-                              u32 address) {
-    return {section, name, ReflectedType::String, 0, value, address};
+                              const char* ctor) {
+    return {section, name, ReflectedType::String, 0, value, ctor};
 }
 constexpr ReflectedField res_id(const char* section, const char* name, const char* value,
-                                u32 address) {
-    return {section, name, ReflectedType::ResId, 0, value, address};
+                                const char* ctor) {
+    return {section, name, ReflectedType::ResId, 0, value, ctor};
 }
 constexpr ReflectedField enumeration(const char* section, const char* name, const FlagEnum& type,
-                                     u32 value, u32 address) {
-    return {section, name, ReflectedType::Enum, static_cast<f32>(value), nullptr, address, &type};
+                                     u32 value, const char* ctor) {
+    return {section, name, ReflectedType::Enum, static_cast<f32>(value), nullptr, ctor, &type};
 }
-constexpr ReflectedField strings(const char* section, const char* name, u32 address) {
-    return {section, name, ReflectedType::Strings, 0, nullptr, address};
+constexpr ReflectedField strings(const char* section, const char* name, const char* ctor) {
+    return {section, name, ReflectedType::Strings, 0, nullptr, ctor};
 }
-constexpr ReflectedField floats(const char* section, const char* name, u32 address) {
-    return {section, name, ReflectedType::Floats, 0, nullptr, address};
+constexpr ReflectedField floats(const char* section, const char* name, const char* ctor) {
+    return {section, name, ReflectedType::Floats, 0, nullptr, ctor};
 }
-constexpr ReflectedField min_max(const char* section, const char* name, u32 address) {
-    return {section, name, ReflectedType::MinMax, 0, nullptr, address};
+constexpr ReflectedField min_max(const char* section, const char* name, const char* ctor) {
+    return {section, name, ReflectedType::MinMax, 0, nullptr, ctor};
 }
 constexpr ReflectedField structs(const char* section, const char* name,
-                                 std::span<const ReflectedField> elements, u32 address) {
-    return {section, name, ReflectedType::Structs, 0, nullptr, address, nullptr, elements};
+                                 std::span<const ReflectedField> elements, const char* ctor) {
+    return {section, name, ReflectedType::Structs, 0, nullptr, ctor, nullptr, elements};
 }
 
 constexpr ReflectedField kWeaponFields[] = {
@@ -1086,9 +1087,9 @@ void derive_physics(lua_State* L, int bp, const std::vector<NamedFootprint>& cla
     lua_pop(L, 3); // AltFootprint, Footprint, Physics
 }
 
-/// RUnitBlueprint::OnInitBlueprint (0x0051EA40): an aircraft can fly, its
-/// airspeeds default to its top speed and its turn-in distance to three
-/// lengths; an unnamed icon is the blueprint's id.
+/// RUnitBlueprint::OnInitBlueprint: an aircraft can fly, its airspeeds default
+/// to its top speed and its turn-in distance to three lengths; an unnamed icon
+/// is the blueprint's id.
 void derive_unit(lua_State* L, int bp) {
     const int air = push_section(L, bp, "Air");
     const int physics = push_section(L, bp, "Physics");

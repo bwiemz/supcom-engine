@@ -24,10 +24,9 @@ Certainty tags: **[read]** read from faf-re code; **[probe]** measured on retail
 ## 1. Moho's rule
 
 1. **Registration merges the typed copy back** **[read]**:
-   - FR `sim/Sim.cpp` `RegisterUnitBlueprintFromState` (0x00528B90) calls `InitUnitBlueprintFromLua`.
-   - That function, like `RBlueprint::InitBlueprint` (0x0050DF10), runs `SCR_LuaBuildObject` over the
-     table, then the class's `OnInitBlueprint`, then `SCR_RObjectToLuaMerge` (0x004CF0B0) from the copy
-     back into the table.
+   - FR `sim/Sim.cpp` `RegisterUnitBlueprintFromState` calls `InitUnitBlueprintFromLua`.
+   - That function, like `RBlueprint::InitBlueprint`, runs `SCR_LuaBuildObject` over the table, then
+     the class's `OnInitBlueprint`, then `SCR_RObjectToLuaMerge` from the copy back into the table.
    - The merge happens inside the `RegisterUnitBlueprint` call, so scripts see it as soon as that call
      returns.
 2. **The merge writes reflected fields only** **[read]** (FR `lua/CScrLuaObjectFactory.cpp`):
@@ -38,45 +37,35 @@ Certainty tags: **[read]** read from faf-re code; **[probe]** measured on retail
    - Keys the class doesn't reflect stay as the `.bp` gave them. A weapon's rack timings are one
      example: `RUnitBlueprintWeapon` has no rack fields.
 3. **Defaults come from the class constructors** **[read]**:
-
-   | Class | Address |
-   |---|---|
-   | `RBlueprint` | 0x0050DD60 |
-   | `REntityBlueprint` | 0x00511C30 |
-   | `RUnitBlueprint` (Display, Transport, Defense, Intel) | 0x0051E480 |
-   | `RUnitBlueprintGeneral` | 0x0051EE10 |
-   | `RUnitBlueprintAir` | 0x0051EF00 |
-   | `RUnitBlueprintPhysics` | 0x0051F090 |
-   | `RUnitBlueprintWeapon` | 0x0051F4C0 |
-   | `RUnitBlueprintAI` | 0x0051F7D0 |
-   | `RUnitBlueprintEconomy` | 0x0051F990 |
-   | `RProjectileBlueprintPhysics` | 0x0051B650 |
-   | `RProjectileBlueprint` (Display, Economy) | 0x0051B740 |
-   | `RPropBlueprint` | 0x0051D250 |
-   | `RMeshBlueprint` | 0x005283A0 |
-   | `RMeshBlueprintLOD` | 0x005183D0 |
-
+   - `RBlueprint`, `REntityBlueprint`;
+   - `RUnitBlueprint` (Display, Transport, Defense, Intel), `RUnitBlueprintGeneral`,
+     `RUnitBlueprintAir`, `RUnitBlueprintPhysics`, `RUnitBlueprintWeapon`, `RUnitBlueprintAI`,
+     `RUnitBlueprintEconomy`;
+   - `RProjectileBlueprint` (Display, Economy), `RProjectileBlueprintPhysics`;
+   - `RPropBlueprint`;
+   - `RMeshBlueprint`, `RMeshBlueprintLOD`.
 4. **Some fields are derived** **[read]**:
-   - `REntityBlueprint::OnInitBlueprint` (0x00512060):
+   - `REntityBlueprint::OnInitBlueprint`:
      - An unsized footprint axis is the unit's size rounded up, as a byte (a size of 0 gives 0).
      - A zero inertia tensor is a solid box's tensor for its size.
-   - `RUnitBlueprintPhysics::ComputeDerivedQuantities` (0x0051F260):
+   - `RUnitBlueprintPhysics::ComputeDerivedQuantities`:
      - A moving unit's negative `MaxSpeedReverse` becomes its `MaxSpeed`.
      - A zero `AttackElevation` becomes its `Elevation`.
      - A zero `CatchUpAcc` becomes the larger of `MaxAcceleration` and `MaxBrake`.
-   - `RUnitBlueprint::OnInitBlueprint` (0x0051EA40):
+   - `RUnitBlueprint::OnInitBlueprint`:
      - The `RULEUMT_Air` motion type sets `CanFly`.
      - A flyer's zero `MaxAirspeed` becomes `MaxSpeed`, and a zero `MinAirspeed` becomes `MaxAirspeed`.
      - A zero `StartTurnDistance` becomes `SizeZ` x 3.
      - An unnamed `IconName` becomes the blueprint's id.
-5. **Resource ids are normalized** **[read]**: `RResIdType::SetLexical` (0x004A9430, via
+5. **Resource ids are normalized** **[read]**: `RResIdType::SetLexical` (via
    `gpg::STR_NormalizeFilenameLowerSlash`) lowercases ASCII and turns `\` into `/`.
 
 ## 2. What the engine does
 
 - **`blueprints/moho_reflected_fields.{hpp,cpp}`:**
   - Tables of reflected fields: unit, weapon entry, entity, projectile, prop, mesh and mesh LOD.
-    Each row holds the field's section path, type, constructor default and the address that sets it.
+    Each row holds the field's section path, type, constructor default and the class whose
+    constructor sets it.
   - `apply_unit_reflection` writes each field as Moho's typed copy holds it (section 8), then
     applies rule 4's derivations. It lowercases the resource ids:
     - `General.UpgradesTo`, `UpgradesFrom`, `UpgradesFromBase` and `SeedUnit`;

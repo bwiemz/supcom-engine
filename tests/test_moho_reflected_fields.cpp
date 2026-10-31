@@ -1,8 +1,7 @@
 // A unit, projectile, prop or mesh blueprint reads, once registered, as
-// Moho's write-back leaves it (RBlueprint::InitBlueprint, 0x0050DF10): each
-// reflected field as its typed copy holds it, the derived ones derived; a
-// field Moho doesn't reflect stays as the .bp gives it
-// (moho_reflected_fields.hpp).
+// Moho's write-back leaves it (RBlueprint::InitBlueprint): each reflected
+// field as its typed copy holds it, the derived ones derived; a field Moho
+// doesn't reflect stays as the .bp gives it (moho_reflected_fields.hpp).
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -23,6 +22,7 @@ extern "C" {
 
 #include <cmath>
 #include <set>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -384,14 +384,28 @@ TEST_CASE("A reflected list or struct reads as Moho's, whatever the .bp gives in
 
 TEST_CASE("Each reflected field is filled once, from the constructor that sets it",
           "[blueprints][moho-reflection]") {
-    for (const auto fields :
-         {osc::blueprints::unit_reflected_fields(), osc::blueprints::weapon_reflected_fields(),
-          osc::blueprints::entity_reflected_fields(),
-          osc::blueprints::projectile_reflected_fields(), osc::blueprints::prop_reflected_fields(),
-          osc::blueprints::mesh_reflected_fields(), osc::blueprints::mesh_lod_reflected_fields()}) {
+    struct Table {
+        std::span<const osc::blueprints::ReflectedField> fields;
+        std::set<std::string> classes;
+    };
+    const Table tables[] = {
+        {osc::blueprints::unit_reflected_fields(),
+         {"RBlueprint", "REntityBlueprint", "RUnitBlueprint", "RUnitBlueprintGeneral",
+          "RUnitBlueprintAir", "RUnitBlueprintPhysics", "RUnitBlueprintAI",
+          "RUnitBlueprintEconomy"}},
+        {osc::blueprints::weapon_reflected_fields(), {"RUnitBlueprintWeapon"}},
+        {osc::blueprints::entity_reflected_fields(), {"RBlueprint", "REntityBlueprint"}},
+        {osc::blueprints::projectile_reflected_fields(),
+         {"RProjectileBlueprint", "RProjectileBlueprintPhysics"}},
+        {osc::blueprints::prop_reflected_fields(), {"REntityBlueprint", "RPropBlueprint"}},
+        {osc::blueprints::mesh_reflected_fields(), {"RBlueprint", "RMeshBlueprint"}},
+        {osc::blueprints::mesh_lod_reflected_fields(), {"RMeshBlueprintLOD"}},
+    };
+    for (const auto& [fields, classes] : tables) {
         std::set<std::string> names;
         for (const auto& f : fields) {
-            CHECK(f.address != 0);
+            INFO(path(f.section, f.name));
+            CHECK(classes.contains(f.constructor));
             CHECK(names.insert(path(f.section, f.name)).second);
         }
     }
