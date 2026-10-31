@@ -7,6 +7,7 @@
 
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
+#include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -159,5 +160,24 @@ TEST_CASE("A held target leaving range waits for the weapon's next target check"
         CHECK(s.weapon->target_entity_id == s.enemy->entity_id());
         s.ticks(1);
         CHECK_FALSE(s.weapon->target_entity_id);
+    }
+}
+
+TEST_CASE("While No Rush runs, a weapon picks no enemy out of its army's zone",
+          "[weapon][norush]") {
+    struct Case {
+        f32 radius;
+        f32 offset_x;
+        bool picked;
+    };
+    for (const Case& c :
+         {Case{5.0f, 0.0f, false}, Case{15.0f, 0.0f, true}, Case{5.0f, 10.0f, true}}) {
+        Scene s("none", "RULEUMT_None");
+        s.sim.get_army(0)->set_start_position({64.0f, 0.0f, 64.0f});
+        s.sim.get_army(0)->set_no_rush_offset({c.offset_x, 0.0f, 0.0f});
+        s.sim.set_no_rush(300.0f, c.radius);
+        s.ticks(5);
+        INFO("radius " << c.radius << ", offset " << c.offset_x);
+        CHECK((s.weapon->target_entity_id == s.enemy->entity_id()) == c.picked);
     }
 }

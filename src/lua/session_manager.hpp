@@ -43,6 +43,10 @@ sim::GameSetup read_session_config(lua_State* L, int table_idx);
 /// Give an army's brain its slot's faction, colour and handicap. The slot's
 /// PlayerColor is a Lua index into colors.player_colors; a civilian army
 /// takes colors.civilian_army_color instead (Moho's CArmyImpl).
+/// Each army's No Rush zone from the scenario, as Moho's
+/// ApplyNoRushScenarioOptions reads it: ScenarioInfo.norushradius (100 without
+/// one) and norushoffsetX_/norushoffsetY_<army> (both, or none).
+void apply_no_rush_scenario(lua_State* L, sim::SimState& sim);
 void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain,
                            const sim::GameColors& colors);
 

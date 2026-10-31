@@ -255,6 +255,9 @@ public:
     const InfluenceMap* influence_map() const { return influence_map_.get(); }
     void set_influence_map(std::unique_ptr<InfluenceMap> map) { influence_map_ = std::move(map); }
     void set_start_position(const Vector3& pos) { start_position_ = pos; }
+    /// Its No Rush zone's centre off its start (Moho's mNoRushOffset).
+    const Vector3& no_rush_offset() const { return no_rush_offset_; }
+    void set_no_rush_offset(const Vector3& offset) { no_rush_offset_ = offset; }
 
     // --- Current enemy ---
     i32 current_enemy_index() const { return current_enemy_index_; }
@@ -398,6 +401,7 @@ private:
 
     std::unordered_map<i32, Alliance> alliances_;
     Vector3 start_position_;
+    Vector3 no_rush_offset_;
     std::unique_ptr<InfluenceMap> influence_map_;
     i32 current_enemy_index_ = -1; // -1 = no current enemy
     std::vector<AttackVector> attack_vectors_;

@@ -528,6 +528,9 @@ private:
     /// IssueMoveOrderForDrag over a waypoint that starts a patrol: the moves restarted as one, and
     /// the cursor text saying so at the last mouse event; whether it was such a waypoint
     bool patrol_click(sim::SimState& sim);
+    /// Moho's UI ISSUE_SetCommandTarget: what it refuses as a dragged order's new target
+    bool may_move_order_to(const sim::SimState& sim, sim::CommandType type, sim::EntityId target,
+                           const sim::Vector3& at) const;
     OrderDrag order_drop(sim::SimState& sim, const CommandGraphNode& node, f32 wx, f32 wz,
                          bool released, sim::EntityId& target) const;
     static constexpr f32 DRAG_THRESHOLD = 5.0f; // pixels before drag starts

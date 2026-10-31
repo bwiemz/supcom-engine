@@ -17,6 +17,8 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -71,7 +73,6 @@ void apply_game_options_to_sim(const GameOptionsConfig& options,
                                sim::SimState& sim) {
     if (!options.configured) return;
     double no_rush_minutes = 0.0;
-    double no_rush_radius = 0.0;
     for (const auto& [key, value] : options.values) {
         if (key == "Victory" && value.type == GameOptionValue::Type::String) {
             sim.set_victory_condition(value.string_value);
@@ -85,13 +86,10 @@ void apply_game_options_to_sim(const GameOptionsConfig& options,
                                    value.string_value == "true");
         } else if (key == "NoRushOption") {
             no_rush_minutes = option_as_number(value);
-        } else if (key == "NoRushRadius") {
-            no_rush_radius = option_as_number(value);
         }
     }
     if (no_rush_minutes > 0.0) {
-        sim.set_no_rush(static_cast<float>(no_rush_minutes * 60.0),
-                        static_cast<float>(no_rush_radius));
+        sim.set_no_rush(static_cast<float>(no_rush_minutes * 60.0), 0.0f);
     }
 }
 
@@ -113,6 +111,37 @@ void push_game_option(lua_State* L, int table_idx, const std::string& key,
 }
 
 } // anonymous namespace
+
+void apply_no_rush_scenario(lua_State* L, sim::SimState& sim) {
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "ScenarioInfo");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const int info = lua_gettop(L);
+    const auto number = [&](const std::string& key) -> std::optional<f32> {
+        if (!lua_istable(L, info)) {
+            return std::nullopt;
+        }
+        lua_pushstring(L, key.c_str());
+        lua_rawget(L, info);
+        std::optional<f32> value;
+        if (lua_isnumber(L, -1)) {
+            value = static_cast<f32>(lua_tonumber(L, -1));
+        }
+        lua_pop(L, 1);
+        return value;
+    };
+    sim.set_no_rush(sim.no_rush_seconds(), number("norushradius").value_or(100.0f));
+    for (size_t i = 0; i < sim.army_count(); ++i) {
+        sim::ArmyBrain* brain = sim.get_army(static_cast<i32>(i));
+        if (!brain) {
+            continue;
+        }
+        const auto x = number("norushoffsetX_" + brain->name());
+        const auto y = number("norushoffsetY_" + brain->name());
+        brain->set_no_rush_offset(x && y ? sim::Vector3{*x, 0.0f, *y} : sim::Vector3{});
+    }
+    lua_settop(L, top);
+}
 
 void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain,
                            const sim::GameColors& colors) {
@@ -431,6 +460,7 @@ Result<void> SessionManager::start_session(LuaState& state,
             brains_created++;
         }
     }
+    apply_no_rush_scenario(L, sim);
 
     for (size_t i = 0; i < army_limit; i++) {
         const auto* left = slot_config_for_army(static_cast<int>(i));

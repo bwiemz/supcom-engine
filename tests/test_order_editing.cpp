@@ -4,6 +4,7 @@
 #include "map/terrain.hpp"
 #include "renderer/command_graph_renderer.hpp"
 #include "renderer/input_handler.hpp"
+#include "sim/army_brain.hpp"
 #include "sim/formation.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/replay.hpp"
@@ -26,6 +27,7 @@ extern "C" {
 #include <cstring>
 #include <memory>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -443,6 +445,61 @@ TEST_CASE("A waypoint pressed and let go where it was sends nothing", "[order_ed
     CHECK_FALSE(ui.input.begin_order_drag(0));
     ui.input.set_player_army(-1);
     CHECK_FALSE(ui.input.begin_order_drag(a.command_queue().front().command_id));
+}
+
+TEST_CASE("A waypoint dragged out of the No Rush zone is not sent", "[order_edit][input][norush]") {
+    struct Case {
+        const char* what;
+        osc::f32 x;
+        bool no_rush;
+        bool sent;
+    };
+    const Case cases[] = {
+        {"with no No Rush", 50.0f, false, true},
+        {"in the zone", 30.0f, true, true},
+        {"out of it", 50.0f, true, false},
+    };
+    for (const Case& c : cases) {
+        World w;
+        Unit& a = w.walker(10, 10);
+        w.sim->get_army(0)->set_start_position({10.0f, 0.0f, 10.0f});
+        w.order({a.entity_id()}, CommandType::Move, 40, 10);
+        w.ticks(2);
+        if (c.no_rush) {
+            w.sim->set_no_rush(300.0f, 30.0f);
+        }
+        Ui ui(*w.sim);
+        REQUIRE(ui.input.begin_order_drag(a.command_queue().front().command_id));
+        ui.input.drag_order_to(*w.sim, c.x, 10);
+        INFO(c.what);
+        CHECK(ui.input.release_order_drag(*w.sim, c.x, 10).has_value() == c.sent);
+        CHECK(ui.sent.size() == (c.sent ? 1u : 0u));
+    }
+}
+
+TEST_CASE("A dragged load goes only onto a ferry beacon, a transport or an air staging platform",
+          "[order_edit][input][transport]") {
+    for (const auto& [category, sent] :
+         {std::pair{"TRANSPORTATION", true}, std::pair{"FERRYBEACON", true},
+          std::pair{"AIRSTAGINGPLATFORM", true}, std::pair{"LAND", false}}) {
+        World w;
+        Unit& a = w.walker(10, 10);
+        a.set_motion_type("RULEUMT_Land");
+        a.add_command_cap("RULEUCC_CallTransport");
+        Unit& first = w.walker(40, 10);
+        first.add_category("TRANSPORTATION");
+        first.add_command_cap("RULEUCC_Transport");
+        Unit& other = w.walker(40, 50);
+        other.add_category(category);
+        w.order({a.entity_id()}, CommandType::TransportLoad, 40, 10, true, first.entity_id());
+        w.ticks(2);
+        REQUIRE_FALSE(a.command_queue().empty());
+        Ui ui(*w.sim);
+        REQUIRE(ui.input.begin_order_drag(a.command_queue().front().command_id));
+        ui.input.drag_order_to(*w.sim, 40, 50);
+        INFO(category);
+        CHECK(ui.input.release_order_drag(*w.sim, 40, 50).has_value() == sent);
+    }
 }
 
 TEST_CASE("An order on a unit is dropped on the nearest unit of its target's army",
