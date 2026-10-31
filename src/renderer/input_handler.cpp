@@ -642,6 +642,21 @@ OrderDrag InputHandler::order_drop(sim::SimState& sim, const CommandGraphNode& n
     return drop;
 }
 
+bool InputHandler::may_move_order_to(const sim::SimState& sim, sim::CommandType type,
+                                     sim::EntityId target, const sim::Vector3& at) const {
+    const sim::Entity* e = target ? sim.entity_registry().find(target) : nullptr;
+    if (sim.outside_no_rush(player_army_, e ? e->position() : at)) {
+        return false;
+    }
+    if (type != sim::CommandType::TransportLoad && type != sim::CommandType::WaitForFerry) {
+        return true;
+    }
+    return e && e->is_unit() &&
+           (static_cast<const sim::Unit*>(e)->has_category("FERRYBEACON") ||
+            static_cast<const sim::Unit*>(e)->has_category("TRANSPORTATION") ||
+            static_cast<const sim::Unit*>(e)->has_category("AIRSTAGINGPLATFORM"));
+}
+
 bool InputHandler::begin_order_drag(u32 command_id) {
     if (command_id == 0 || player_army_ < 0) {
         return false;
@@ -680,7 +695,7 @@ std::optional<sim::SimCallbackEntry> InputHandler::release_order_drag(sim::SimSt
     }
     sim::EntityId target{};
     OrderDrag drop = order_drop(sim, *node, wx, wz, true, target);
-    if (!drop.valid) {
+    if (!drop.valid || !may_move_order_to(sim, node->order.type, target, drop.at)) {
         return std::nullopt;
     }
     sim::SimCallbackEntry cb;
