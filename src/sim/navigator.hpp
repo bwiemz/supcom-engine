@@ -34,7 +34,9 @@ public:
     /// Set goal with straight-line movement (legacy/fallback).
     void set_goal(const Vector3& pos);
 
-    void abort_move();
+    /// `keep_spline`: a spline it is on stays, for its steering to brake along
+    /// (steer_no_waypoints).
+    void abort_move(bool keep_spline = false);
 
     const Vector3& goal() const { return goal_; }
     /// The waypoint it drives at now, while it has one.
@@ -78,6 +80,7 @@ public:
     void set_speed_through_goal(bool b) { speed_through_goal_ = b; }
 
     void set_sim_state(SimState* sim) { sim_ = sim; }
+    SimState* sim_state() const { return sim_; }
 
     /// Following, or about to follow, a path as Moho's units do (roadmap
     /// item 4c-2c; SimState::moho_pathing).
@@ -201,7 +204,7 @@ private:
     /// and stand the unit on the spline's next node (CUnitMotion::CalcMoveCommon).
     void drive_spline(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain);
     /// Drop the Moho path, if any.
-    void reset_moho();
+    void reset_moho(bool keep_spline = false);
     /// The goal by the grid pathfinder (set_goal's own way, and Moho
     /// pathing's for a unit with no footprint class).
     void set_goal_grid(const Vector3& pos, const map::Pathfinder* pathfinder,

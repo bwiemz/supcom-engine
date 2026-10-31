@@ -741,3 +741,58 @@ TEST_CASE("An aircraft docking at a staging platform is taken aboard on the tick
         "the plane is taken aboard", 400, [&] { return plane.transport_id() == pad.entity_id(); });
     CHECK(aboard == settled + 1);
 }
+
+TEST_CASE("An aircraft's patrol leg ends within its air speed in cells of its point",
+          "[air_motion][patrol]") {
+    World w;
+    Unit& a = w.make("gunship", 30.0f, 128.0f);
+    osc::sim::UnitCommand patrol;
+    patrol.type = osc::sim::CommandType::Patrol;
+    patrol.target_pos = {130.0f, 10.0f, 128.0f};
+    a.push_command(patrol, true);
+    tick_until([&] { w.sim.tick(); }, "the patrol ends", 600,
+               [&] { return a.command_queue().empty(); });
+    const f32 dx = 130.0f - a.position().x;
+    const f32 dz = 128.0f - a.position().z;
+    const f32 away = std::sqrt(dx * dx + dz * dz);
+    CHECK(away > 3.0f);
+    CHECK(away <= 13.0f);
+}
+
+TEST_CASE("A loaded transport's patrol leg ends within its air speed over its load in cells",
+          "[air_motion][patrol]") {
+    f32 away[2] = {0.0f, 0.0f};
+    f32 load = 1.0f;
+    for (const bool loaded : {false, true}) {
+        World w;
+        Unit& ferry = w.make("ferry", 30.0f, 128.0f);
+        for (int i = 0; loaded && i < 20 && load < 2.0f; ++i) {
+            ferry.add_cargo(w.make("tank", 30.0f + static_cast<f32>(i), 100.0f).entity_id());
+            load = ferry.transport_load_factor(w.sim.entity_registry());
+        }
+        osc::sim::UnitCommand patrol;
+        patrol.type = osc::sim::CommandType::Patrol;
+        patrol.target_pos = {130.0f, 10.0f, 128.0f};
+        ferry.push_command(patrol, true);
+        tick_until([&] { w.sim.tick(); }, "the patrol ends", 900,
+                   [&] { return ferry.command_queue().empty(); });
+        const f32 dx = 130.0f - ferry.position().x;
+        const f32 dz = 128.0f - ferry.position().z;
+        away[loaded ? 1 : 0] = std::sqrt(dx * dx + dz * dz);
+    }
+    REQUIRE(load >= 2.0f);
+    CHECK(away[1] <= std::ceil(10.0f / load) + 1.5f);
+    CHECK(away[0] > away[1] + 2.0f);
+}
+
+TEST_CASE("An aircraft's aborted move makes for its stop point at once", "[air_motion]") {
+    World w;
+    Unit& a = w.make("gunship", 30.0f, 128.0f);
+    World::move(a, 200.0f, 128.0f);
+    for (int t = 0; t < 30; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(a.navigator().busy());
+    a.abort_move();
+    CHECK(a.navigator().air_hold() != nullptr);
+}

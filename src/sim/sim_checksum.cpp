@@ -464,6 +464,11 @@ void mix_command(Fnv& orders, const UnitCommand& cmd, bool need_unpack) {
         orders.mix(0x5053434eu); // "PSCN"
         orders.mix(static_cast<u64>(static_cast<u32>(cmd.patrol_scan)));
     }
+    if (cmd.patrol_runs != 0 || cmd.patrol_moving) {
+        orders.mix(0x5052554eu); // "PRUN"
+        orders.mix(static_cast<u64>(static_cast<u32>(cmd.patrol_runs)) |
+                   (cmd.patrol_moving ? 1ull << 32 : 0u));
+    }
     // An attack's facing clock (its SetFacing every 9 ticks), only while
     // it runs.
     if (cmd.facing_clock != 0) {

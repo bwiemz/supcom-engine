@@ -620,6 +620,8 @@ public:
     /// old unit's orders, a patrol's points in their order).
     void append_command(const UnitCommand& cmd) { command_queue_.push_back(cmd); }
     void clear_commands(const char* source = "?");
+    /// Moho's IAiNavigator::AbortMove (CAiNavigatorImpl, CAiNavigatorAir).
+    void abort_move();
     /// Moho's CUnitCommandQueue::NeedsUIRefresh: a head order of these types
     /// taken off the queue sets the unit's UI refresh flag.
     void note_queue_head();
@@ -1632,12 +1634,12 @@ private:
     /// ends before it got there (its target gone, taken or whole): Moho's
     /// task ends its move with it, so the unit isn't left Moving.
     void end_approach(const UnitCommand& cmd) {
-        if (cmd.approached) navigator_.abort_move();
+        if (cmd.approached) abort_move();
     }
     /// An order ending before its tick's move (its target gone) lets go of
     /// the move it was making, if any: the head order's is the only one.
     void release_navigator() {
-        if (navigator_.busy()) navigator_.abort_move();
+        if (navigator_.busy()) abort_move();
     }
 
     bool attached() const;
@@ -1705,8 +1707,9 @@ private:
     /// A build its army's unit cap stopped: the order `command_id` (if
     /// still at the head -- the brain's scripts ran) waits kTaskRetryTicks.
     OrderStep hold_for_unit_cap(u32 command_id);
-    /// Go to the point, then queue it again at the back.
+    /// A leg of Moho's CUnitPatrolTask; done, the order goes to the back, or ends.
     OrderStep order_patrol(UnitCommand& cmd, SimContext& ctx);
+    bool patrol_leg_reached(const UnitCommand& cmd, const EntityRegistry& registry) const;
     /// An enemy a patrol on leg `cmd` breaks off to attack (Moho's
     /// CUnitPatrolTask::FindTarget), or null.
     Entity* find_patrol_target(const UnitCommand& cmd, SimContext& ctx);
@@ -2226,9 +2229,8 @@ private:
     // Misc flags
     EntityId creator_id_{};
     bool lifts_off_ = false;
-    /// The order running as a Warp aborted its move (its command id, 0:
-    /// none): a Move order so tagged ends (warp()).
-    u32 warp_aborted_command_ = 0;
+    /// The order running as its move was aborted (its command id, 0: none).
+    u32 aborted_command_ = 0;
     bool auto_overcharge_ = false;
     bool overcharge_paused_ = false;
     bool cloaked_ = false;

@@ -405,6 +405,8 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.i32v(c.patrol_scan);
     w.ids(c.patrol_claimed);
     w.vec3(c.patrol_from);
+    w.i32v(c.patrol_runs);
+    w.b(c.patrol_moving);
     w.b(c.begun);
     w.b(c.from_guard);
     w.b(c.guard_returning);
@@ -462,6 +464,8 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.patrol_scan = r.i32v();
     c.patrol_claimed = r.ids();
     c.patrol_from = r.vec3();
+    c.patrol_runs = r.i32v();
+    c.patrol_moving = r.b();
     c.begun = r.b();
     c.from_guard = r.b();
     c.guard_returning = r.b();
@@ -1517,7 +1521,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     // motion_step_: taken by the tick's commit, zero between ticks
     w.id(u.creator_id_);
     w.b(u.lifts_off_);
-    w.u32v(u.warp_aborted_command_);
+    w.u32v(u.aborted_command_);
     w.b(u.auto_overcharge_);
     w.b(u.overcharge_paused_);
     w.b(u.cloaked_);
@@ -1945,7 +1949,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.velocity_ = r.vec3();
     u.creator_id_ = r.id();
     u.lifts_off_ = r.b();
-    u.warp_aborted_command_ = r.u32v();
+    u.aborted_command_ = r.u32v();
     u.auto_overcharge_ = r.b();
     u.overcharge_paused_ = r.b();
     u.cloaked_ = r.b();
