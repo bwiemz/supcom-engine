@@ -334,9 +334,16 @@ static int entity_GetHealth(lua_State* L) {
     return 1;
 }
 
-// faf-re Entity::AdjustHealth; Lua's SetHealth goes through it too.
-static void adjust_health(sim::Entity& e, f32 delta) {
+// faf-re Entity::AdjustHealth (0x00679860); Lua's SetHealth goes through it
+// too. The NoDamage sim variable refuses a loss, and a dead unit takes no
+// healing.
+static void adjust_health(lua_State* L, sim::Entity& e, f32 delta) {
     if (delta == 0.0f) {
+        return;
+    }
+    const auto* sim = get_sim(L);
+    const bool dead = e.is_unit() && static_cast<const sim::Unit&>(e).is_dying();
+    if ((sim && sim->con_vars().no_damage && delta < 0.0f) || (dead && delta > 0.0f)) {
         return;
     }
     e.set_health(std::min(e.health() + delta, e.max_health()));
@@ -347,7 +354,7 @@ static int entity_SetHealth(lua_State* L) {
     if (!e) return 0;
     // SetHealth(self, instigator, health)
     f32 h = static_cast<f32>(lua_tonumber(L, 3));
-    adjust_health(*e, h - e->health());
+    adjust_health(L, *e, h - e->health());
     return 0;
 }
 
@@ -370,13 +377,16 @@ static int entity_AdjustHealth(lua_State* L) {
     if (!e) return 0;
     // AdjustHealth(self, instigator, delta)
     f32 delta = static_cast<f32>(lua_tonumber(L, 3));
-    adjust_health(*e, delta);
+    adjust_health(L, *e, delta);
     return 0;
 }
 
 static int entity_GetEntityId(lua_State* L) {
     auto* e = check_entity(L);
-    sim::push_entity_id(L, e ? e->entity_id() : 0);
+    if (!e) {
+        return luaL_error(L, "Game object has been destroyed");
+    }
+    sim::push_entity_id(L, e->entity_id());
     return 1;
 }
 
@@ -418,19 +428,19 @@ int entity_Destroy(lua_State* L) {
 // Moho's cfunc_EntityKillL (faf-re Entity.cpp): after the kill, a unit
 // instigator's KILLS stat counts an enemy not BENIGN or being built.
 // Retail's veterancy (Unit.lua CheckVeteranLevel) reads it.
-static u32 kill_credit_for(lua_State* L, const sim::Unit* victim) {
+static sim::EntityId kill_credit_for(lua_State* L, const sim::Unit* victim) {
     const auto* instigator = check_entity(L, 2);
     static const sim::CategoryName kBenign{"BENIGN"};
     if (!instigator || !instigator->is_unit() || instigator->army() == victim->army() ||
         victim->is_being_built() || victim->has_category(kBenign)) {
-        return 0;
+        return sim::EntityId();
     }
     return instigator->entity_id();
 }
 
-static void credit_kill(lua_State* L, u32 instigator_id) {
+static void credit_kill(lua_State* L, sim::EntityId instigator_id) {
     auto* sim = get_sim(L);
-    auto* e = (instigator_id != 0 && sim) ? sim->entity_registry().find(instigator_id) : nullptr;
+    auto* e = (instigator_id && sim) ? sim->entity_registry().find(instigator_id) : nullptr;
     if (e && e->is_unit()) {
         auto* u = static_cast<sim::Unit*>(e);
         u->set_stat("KILLS", u->get_stat("KILLS", 0) + 1);
@@ -440,8 +450,8 @@ static void credit_kill(lua_State* L, u32 instigator_id) {
 namespace {
 
 /// target:method(arg) on an entity's script, an error logged (Moho's RunScriptEntity).
-void call_with_entity(lua_State* L, sim::EntityRegistry& registry, u32 target_id,
-                      const char* method, u32 arg_id) {
+void call_with_entity(lua_State* L, sim::EntityRegistry& registry, sim::EntityId target_id,
+                      const char* method, sim::EntityId arg_id) {
     const sim::Entity* target = registry.find(target_id);
     if (!target || target->lua_table_ref() < 0) return;
     const int top = lua_gettop(L);
@@ -465,11 +475,13 @@ void call_with_entity(lua_State* L, sim::EntityRegistry& registry, u32 target_id
 }
 
 /// What `e` holds: what is attached to it, then the cargo it carries.
-std::vector<u32> held_by(const sim::Entity& e) {
-    std::vector<u32> ids;
+std::vector<sim::EntityId> held_by(const sim::Entity& e) {
+    std::vector<sim::EntityId> ids;
     for (const auto& c : e.children()) ids.push_back(c.entity_id);
     if (e.is_unit()) {
-        for (const u32 id : static_cast<const sim::Unit&>(e).cargo_ids()) ids.push_back(id);
+        for (const sim::EntityId id : static_cast<const sim::Unit&>(e).cargo_ids()) {
+            ids.push_back(id);
+        }
     }
     return ids;
 }
@@ -478,16 +490,20 @@ std::vector<u32> held_by(const sim::Entity& e) {
 /// OnAttachedKilled(it), then each thing attached to it OnParentKilled(it), the list read again
 /// at each step (a script may detach one). A transport still holding a unit counts as what it is
 /// attached to, and a transport's cargo as attached to it.
-void notify_kill(lua_State* L, sim::EntityRegistry& registry, u32 id) {
+void notify_kill(lua_State* L, sim::EntityRegistry& registry, sim::EntityId id) {
     const sim::Entity* e = registry.find(id);
     if (!e) return;
-    u32 parent = e->parent_entity_id();
-    if (parent == 0 && e->is_unit()) parent = static_cast<const sim::Unit*>(e)->transport_id();
-    if (parent != 0) call_with_entity(L, registry, parent, "OnAttachedKilled", id);
+    sim::EntityId parent = e->parent_entity_id();
+    if (!parent && e->is_unit()) {
+        parent = static_cast<const sim::Unit*>(e)->transport_id();
+    }
+    if (parent) {
+        call_with_entity(L, registry, parent, "OnAttachedKilled", id);
+    }
     for (size_t i = 0;; ++i) {
         e = registry.find(id);
         if (!e) return;
-        const std::vector<u32> held = held_by(*e);
+        const std::vector<sim::EntityId> held = held_by(*e);
         if (i >= held.size()) return;
         call_with_entity(L, registry, held[i], "OnParentKilled", id);
     }
@@ -523,14 +539,15 @@ int entity_Kill(lua_State* L) {
         lua_pushnumber(L, 0);
         lua_replace(L, 4);
     }
-    const u32 credit = e->is_unit() ? kill_credit_for(L, static_cast<sim::Unit*>(e)) : 0;
+    const sim::EntityId credit =
+        e->is_unit() ? kill_credit_for(L, static_cast<sim::Unit*>(e)) : sim::EntityId();
     const sim::Entity* by = check_entity(L, 2);
     const i32 killer_army = by ? by->army() : -1;
     auto* sim = get_sim(L);
     auto* unit = e->is_unit() ? static_cast<sim::Unit*>(e) : nullptr;
     // Moho's Unit::Kill (faf-re unit/core/Unit.cpp:16072).
     if (unit) {
-        sim::Entity* carrier = sim && unit->transport_id() != 0
+        sim::Entity* carrier = sim && unit->transport_id()
                                    ? sim->entity_registry().find(unit->transport_id())
                                    : nullptr;
         if (carrier && carrier->is_unit()) {
@@ -621,7 +638,7 @@ static int entity_SetFractionComplete(lua_State* L) {
     return 0;
 }
 
-static u32 launcher_of(const sim::Entity& e) {
+static sim::EntityId launcher_of(const sim::Entity& e) {
     if (e.is_projectile()) {
         return static_cast<const sim::Projectile&>(e).launcher_id;
     }
@@ -737,7 +754,7 @@ static int entity_CreateProjectile(lua_State* L) {
     apply_script_projectile_physics(L, *proj);
     aim_projectile(*proj, direction, speed);
 
-    u32 proj_id = sim->entity_registry().register_entity(std::move(proj));
+    sim::EntityId proj_id = sim->entity_registry().register_entity(std::move(proj));
     auto* proj_ptr = static_cast<sim::Projectile*>(
         sim->entity_registry().find(proj_id));
 
@@ -783,7 +800,7 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
         direction = sim::quat_rotate(bone_world_rot, {0, 0, 1});
     proj->velocity = {direction.x * speed, direction.y * speed, direction.z * speed};
 
-    u32 proj_id = sim->entity_registry().register_entity(std::move(proj));
+    sim::EntityId proj_id = sim->entity_registry().register_entity(std::move(proj));
     auto* proj_ptr = static_cast<sim::Projectile*>(
         sim->entity_registry().find(proj_id));
 
@@ -1092,7 +1109,7 @@ static int entity_DetachFrom(lua_State* L) {
         self->clear_parent();
         set_attached(*self, false);
         released(*self, L);
-    } else if (self->is_unit() && static_cast<sim::Unit*>(self)->transport_id() != 0) {
+    } else if (self->is_unit() && static_cast<sim::Unit*>(self)->transport_id()) {
         // Cargo is attached to its transport (Moho's Entity::DetachFrom): it lets go, as retail's
         // transports' OnAttachedKilled has one let go of a unit killed where it couldn't stand.
         auto* sim = get_sim(L);
@@ -1382,7 +1399,7 @@ static int falldown_Whack(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
     lua_pushstring(L, "_c_prop_id");
     lua_rawget(L, 1);
-    const auto id = static_cast<u32>(lua_tonumber(L, -1));
+    const sim::EntityId id = sim::to_entity_key(L, -1);
     lua_pop(L, 1);
     auto* sim = get_sim(L);
     sim::Entity* e = sim ? sim->entity_registry().find(id) : nullptr;
@@ -1414,7 +1431,7 @@ static int prop_FallDown(lua_State* L) {
     }
     lua_newtable(L);
     lua_pushstring(L, "_c_prop_id");
-    lua_pushnumber(L, e ? static_cast<lua_Number>(e->entity_id()) : 0);
+    sim::push_entity_key(L, e ? e->entity_id() : sim::EntityId());
     lua_rawset(L, -3);
     lua_pushstring(L, "__osc_falldown_mt");
     lua_rawget(L, LUA_REGISTRYINDEX);

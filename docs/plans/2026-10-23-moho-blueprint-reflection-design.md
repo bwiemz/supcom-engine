@@ -121,13 +121,25 @@ default changes nothing they compute. Two cases needed a closer look:
 Each is listed, with its reason, in `unit_unfilled_fields()`. A unit test checks that each stays nil
 on a bare blueprint and is not also in the filled table.
 
+*Done (2026-10-30): all of them are filled now, and `unit_unfilled_fields()` is gone. `CollisionShape`
+reads `"Box"`; `BackUpDistance` is derived as `ComputeDerivedQuantities` derives it, and the drive
+reader no longer reads the two retail blueprints' `BackupDistance` spelling, which Moho doesn't
+reflect (the Brick backs up within 2.7, not 5); a unit's mesh id is completed against `Source`. What
+reads differently [probe `bp-typed`]: the Czar's Miscellaneous ring is 300 (`StagingPlatformScanRadius`
+before `GuardScanRadius`, `MiscellaneousExtractor`), the 15 retail units without a selection size get
+1, and on FAF's data 37 `spawn_dummy_*` aircraft fly at 0 and its Cybran build bots' life bars are
+0.1 high. Every retail and FAF ground and naval unit gives its `TurnRadius`, every aircraft and hover
+its `Elevation`; units without a size are only in unit tests, which now give the sizes they need.*
+
 - **`General.CommandCaps`, `General.ToggleCaps`, `Physics.BuildOnLayerCaps`** (flag enums), and
   **`CollisionShape`**:
   - Moho writes back the registered name, or a number for several flags combined.
   - The engine's readers parse the `.bp`'s tables (`read_command_caps`, aibrain's `BuildOnLayerCaps`,
     `range_overlays`'s `ToggleCaps`, `build_placement`). This is stage 4b (section 6).
+  - *Done (2026-10-29) for the three flag enums (section 6); `CollisionShape` stays unfilled.*
 - **`Footprint.OccupancyCaps`, `Footprint.Flags`, `AltFootprint`:** derived from the motion type's
-  footprint class; nothing reads them.
+  footprint class; nothing reads them. *Done (2026-10-29) for `OccupancyCaps` and `Flags`, and
+  (2026-10-30) for `AltFootprint` (section 5).*
 - **`Display.MeshBlueprint`:** Moho completes it from `Source`; the mesh cache resolves an absent one
   itself.
 - **`SizeX`, `SizeY`, `SizeZ`** (Moho's 1):
@@ -164,8 +176,23 @@ These parts of the write-back aren't ported:
     least that class (`2026-10-20-moho-blueprint-defaults-design.md` rules 1 and 2).
   - The engine fills an absent footprint from the unit's size and an absent skirt from that footprint,
     as before. It doesn't clamp present skirts (`read_shape` does).
+  - *Done (2026-10-29): `derive_physics` resolves the footprint as `ComputeDerivedQuantities` does,
+    from the classes `footprints.lua` specs before the blueprints load. A mobile unit with a ground
+    motion type takes its class whole; every unit gets its `OccupancyCaps` (the motion type's, or a
+    structure's `BuildOnLayerCaps`) and `Flags`. Every skirt is then at least the footprint and never
+    offset outward. Retail's `Unit:GetFootPrintSize` (`sim/Unit.lua`) reads the table's footprint
+    (Seraphim build effects, `BlockFormation`), and under FAF formations size a group by
+    `max(Footprint.SizeX, SizeZ)` (`categorizeUnits.lua`): a Striker is 1, not 2, and a Valiant
+    destroyer 4, not 8.*
+  - *Done (2026-10-30): `AltFootprint` too. Its unsized axes are the unit's size rounded up, as the
+    footprint's (`REntityBlueprint::OnInitBlueprint`). A mobile unit with an `AltMotionType` gives it
+    that motion type's caps and, with a ground footprint, the class nearest its own size, else the
+    main footprint; one without takes the main footprint whole. A structure's stays as it is. The sim
+    resolves a unit's alt footprint from it too (`resolve_unit_footprints`' `own_alt`).*
 - **`MotionType` for a unit that doesn't move.** Moho sets it to `RULEUMT_None` when `MaxSpeed` is 0.
   That is a sim-visible change to present values.
+  - *Done (2026-10-30): `derive_physics` does. No retail or FAF unit has a motion type without a
+    top speed.*
 
 ## 6. Stage 4b: enums as their names
 
@@ -180,6 +207,15 @@ have to read typed values instead of the `.bp`'s tables:
 FAF also copies `CommandCaps` into `CommandCapsHash` before registration. That work is a change of its
 own.
 
+*Done (2026-10-29):* `blueprints/flag_enums` reads a flag enum as `SCR_LuaBuildObject` does: a table's
+keys whose values are true, or a string of names and numbers joined by `|` (`REnumType::SetLexical`;
+a number or a boolean as its string). It writes the value back as `REnumType::GetLexical` does: the
+name of the one entry that equals it, else the number (retail probe: `"575"`, `"Land"`, `"3"`, `"0"`).
+Registration writes all three so; a value Moho can't read keeps the constructor's (`0`, `0`, `Land`).
+The three readers take either form, and `build_placement` gets its layers from aibrain's.
+FAF's unit view takes the abilities a unit's `CommandCaps` and `BuildOnLayerCaps` give from those
+numbers (`unitviewDetail.lua`, `DecimalToBinary`); with the `.bp`'s table it found none.
+
 ## 7. Tests
 
 - **`tests/test_moho_reflected_fields.cpp`:**
@@ -189,7 +225,15 @@ own.
   - rack timings and `MovementEffects` left nil;
   - the unfilled fields nil and disjoint from the filled ones;
   - projectile spreads;
-  - both Lua states.
+  - both Lua states;
+  - the flag enums written back from tables, strings, numbers and booleans, one flag by its name;
+  - a mobile unit's footprint class, a structure's caps and the skirts;
+  - the engine's readers on a registered blueprint: its orders and toggles, its placement layers,
+    the range overlay's toggles.
+- **`--bp-reflect-test`** (`data.bp-reflect-test` on retail, `data.bp-reflect_faf` on
+  FAF): on retail's data both Lua states read the retail probe's values; on FAF's, its unit view's
+  abilities agree with each `.bp`'s `CommandCapsHash`, and `CategorizeUnits` sizes tanks, a Fatboy
+  and destroyers by class.
 - **`tests/test_blueprint_defaults.cpp`** passes unchanged.
 - **`--unitview-sweep-test`** (`data.unitview-sweep-test` on retail, `data.unitview-sweep_faf` on FAF):
   - It selects the commander with `fixtures/armament_detail.prefs`, so the armament detail is on.

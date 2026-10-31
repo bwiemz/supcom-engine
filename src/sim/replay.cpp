@@ -57,7 +57,7 @@ bool Replay::deserialize(const std::vector<u8>& bytes, Replay& out) {
                          /*with_factory=*/out.version >= 7, /*with_value=*/out.version >= 8,
                          /*with_script=*/out.version >= 11,
                          /*with_lua_args=*/out.version >= 13,
-                         /*with_form_move=*/out.version >= 15))
+                         /*with_form_move=*/out.version >= 15, /*with_keys=*/out.version >= 18))
             out.commands.push_back(std::move(c));
     }
     if (!r.ok()) {

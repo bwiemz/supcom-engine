@@ -309,15 +309,15 @@ void capture_unit(const Unit& u, EntityRecord& r, SideLists& out) {
 
 } // namespace
 
-const EntityRecord* WorldSnapshot::find(u32 id) const {
+const EntityRecord* WorldSnapshot::find(EntityId id) const {
     auto it = std::lower_bound(entities.begin(), entities.end(), id,
-                               [](const EntityRecord& e, u32 v) { return e.id < v; });
+                               [](const EntityRecord& e, EntityId v) { return e.id < v; });
     return it != entities.end() && it->id == id ? &*it : nullptr;
 }
 
 std::span<const CommandRecord> WorldSnapshot::orders_of(const EntityRecord& e) const {
     const auto it = std::lower_bound(pending_queues.begin(), pending_queues.end(), e.id,
-                                     [](const PendingQueue& q, u32 v) { return q.id < v; });
+                                     [](const PendingQueue& q, EntityId v) { return q.id < v; });
     if (it == pending_queues.end() || it->id != e.id) {
         return commands_of(e);
     }
@@ -775,7 +775,7 @@ void WorldHistory::clear() {
     staged_events_.clear();
 }
 
-FrameView::Pair FrameView::lookup(u32 id) const {
+FrameView::Pair FrameView::lookup(EntityId id) const {
     if (!cur_) return {};
     const EntityRecord* to = cur_->find(id);
     if (!to) return {};
@@ -859,7 +859,7 @@ Vector3 FrameView::beam_end(const Entity& e) const {
     return beam_end(*p.to);
 }
 
-bool FrameView::bones(u32 id, std::vector<BoneMatrix>& out) const {
+bool FrameView::bones(EntityId id, std::vector<BoneMatrix>& out) const {
     const Pair p = lookup(id);
     if (!p.to || p.to->bone_count == 0) return false;
     const auto to = cur_->bones_of(*p.to);

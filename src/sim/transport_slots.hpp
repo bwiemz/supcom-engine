@@ -31,7 +31,7 @@ public:
     /// A unit's slot: the transport bone it hangs from, its own bone it
     /// hangs by (-1: its centre), and the bones it holds.
     struct Slot {
-        u32 unit_id = 0;
+        EntityId unit_id{};
         i32 bone = -1;
         i32 unit_bone = -1;
         std::vector<i32> bones;
@@ -52,13 +52,13 @@ public:
 
     /// Reserve a free slot for the unit: the bone it hangs from, or nothing
     /// when none is free. A unit already holding one keeps it.
-    std::optional<i32> assign(u32 unit_id, i32 transport_class, i32 unit_bone);
+    std::optional<i32> assign(EntityId unit_id, i32 transport_class, i32 unit_bone);
 
     /// The unit's slot, or null.
-    const Slot* slot_of(u32 unit_id) const;
+    const Slot* slot_of(EntityId unit_id) const;
 
     /// Give the unit's slot up.
-    void release(u32 unit_id);
+    void release(EntityId unit_id);
 
     /// Every slot held, in the order they were assigned.
     const std::vector<Slot>& slots() const { return slots_; }

@@ -5,10 +5,14 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include "app/support.hpp"
 #include "blueprints/blueprint_store.hpp"
+#include "core/ui_registry_keys.hpp"
+#include "lua/factory_queue.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
+#include "lua/sim_sync.hpp"
 #include "lua/user_bindings.hpp"
 #include "map/heightmap.hpp"
 #include "renderer/camera.hpp"
@@ -34,6 +38,7 @@ extern "C" {
 #include <unordered_set>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -45,7 +50,7 @@ struct UiWorld {
     osc::lua::LuaState ui;
     osc::blueprints::BlueprintStore store{ui.raw()};
     osc::sim::SimCallbackQueue queue;
-    osc::u32 id = 0;
+    osc::sim::EntityId id{};
 
     UiWorld() {
         auto unit = std::make_unique<osc::sim::Unit>();
@@ -95,7 +100,7 @@ TEST_CASE("A UI script's SetCustomName reaches the sim as a command", "[userunit
     CHECK(pending[0].func_name == osc::sim::kProcessInfoCallback);
     CHECK(text_arg(pending[0], "Action") == "CustomName");
     CHECK(text_arg(pending[0], "Value") == "Fred");
-    CHECK(pending[0].unit_ids == std::vector<osc::u32>{w.id});
+    CHECK(pending[0].unit_ids == std::vector<osc::sim::EntityId>{w.id});
 
     // Into the command stream, as the game loop submits it; it names the
     // unit at the tick.
@@ -111,7 +116,7 @@ TEST_CASE("A sim script's SetCustomName names the unit at once", "[userunit]") {
     osc::sim::SimState sim(sim_lua.raw(), nullptr);
     osc::lua::register_moho_bindings(sim_lua, sim);
     auto unit = std::make_unique<osc::sim::Unit>();
-    const osc::u32 id = sim.entity_registry().register_entity(std::move(unit));
+    const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(unit));
     lua_State* L = sim_lua.raw();
     osc::lua::push_units_for_ui(L, {id});
     lua_setglobal(L, "units");
@@ -174,6 +179,23 @@ TEST_CASE("A UI script sees a unit as the last tick left it", "[userunit]") {
     w.sim.tick();
     CHECK(number("return units[1]:IsDead() and 1 or 0") == 1.0);
     CHECK(number("return units[1]:GetHealth()") == 0.0);
+}
+
+TEST_CASE("A gone unit's UI object is dead, and GetEntityId on it raises", "[userunit][ids]") {
+    UiWorld w;
+    osc::lua::register_user_bindings(w.ui);
+    w.sim.tick();
+    REQUIRE(w.ui.do_string("id = units[1]:GetEntityId()").ok());
+    w.sim.entity_registry().destroy(w.unit());
+    w.sim.tick();
+    auto r = w.ui.do_string(R"(
+        local ok, err = pcall(units[1].GetEntityId, units[1])
+        assert(not ok and string.find(err, 'Game object has been destroyed', 1, true),
+               tostring(err))
+        assert(units[1]:IsDead() and IsDestroyed(units[1]))
+    )");
+    INFO((r.ok() ? std::string() : r.error().message));
+    CHECK(r.ok());
 }
 
 TEST_CASE("A UI unit has UserUnit's methods, not the sim's", "[userunit]") {
@@ -476,7 +498,7 @@ TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
     // it guards.
     auto other = std::make_unique<osc::sim::Unit>();
     other->set_army(1);
-    const osc::u32 other_id = w.sim.entity_registry().register_entity(std::move(other));
+    const osc::sim::EntityId other_id = w.sim.entity_registry().register_entity(std::move(other));
     u.set_creator_id(other_id);
     u.set_build_target_id(other_id);
     osc::sim::UnitCommand guard;
@@ -488,7 +510,8 @@ TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
     u.push_command(unload, false);
     // A unit of no army.
     auto neutral = std::make_unique<osc::sim::Unit>();
-    const osc::u32 neutral_id = w.sim.entity_registry().register_entity(std::move(neutral));
+    const osc::sim::EntityId neutral_id =
+        w.sim.entity_registry().register_entity(std::move(neutral));
     lua_State* L = w.ui.raw();
     osc::lua::push_units_for_ui(L, {neutral_id});
     lua_setglobal(L, "neutral");
@@ -551,7 +574,7 @@ TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
     REQUIRE_FALSE(pending.empty());
     CHECK(pending.back().func_name == osc::sim::kProcessInfoCallback);
     CHECK(text_arg(pending.back(), "Action") == "SetRepeatQueue");
-    CHECK(pending.back().unit_ids == std::vector<osc::u32>{w.id});
+    CHECK(pending.back().unit_ids == std::vector<osc::sim::EntityId>{w.id});
 }
 
 TEST_CASE("A UI script can't issue the engine's own callbacks", "[userunit][simcallback]") {
@@ -573,7 +596,7 @@ TEST_CASE("A guard fighting for its guard still guards, as a UI script sees it",
     auto& u = w.unit();
     auto ward = std::make_unique<osc::sim::Unit>();
     ward->set_army(1);
-    const osc::u32 ward_id = w.sim.entity_registry().register_entity(std::move(ward));
+    const osc::sim::EntityId ward_id = w.sim.entity_registry().register_entity(std::move(ward));
     osc::sim::UnitCommand fight;
     fight.type = osc::sim::CommandType::Attack;
     fight.from_guard = true;
@@ -627,10 +650,10 @@ TEST_CASE("A unit aboard can't be selected, unless a POD or a structure", "[sele
     unit.add_category("SELECTABLE");
     unit.set_motion_type("RULEUMT_Land");
     CHECK(osc::renderer::selectable(unit));
-    unit.set_transport_id(7);
+    unit.set_transport_id(osc::sim::EntityId::of(7, 1));
     CHECK_FALSE(osc::renderer::selectable(unit));
-    unit.set_transport_id(0);
-    unit.set_parent(7, 0);
+    unit.set_transport_id(osc::sim::EntityId());
+    unit.set_parent(osc::sim::EntityId::of(7, 1), 0);
     CHECK_FALSE(osc::renderer::selectable(unit));
     unit.add_category("POD");
     CHECK(osc::renderer::selectable(unit));
@@ -638,7 +661,7 @@ TEST_CASE("A unit aboard can't be selected, unless a POD or a structure", "[sele
     osc::sim::Unit structure;
     structure.add_category("SELECTABLE");
     structure.set_motion_type("RULEUMT_None");
-    structure.set_parent(7, 0);
+    structure.set_parent(osc::sim::EntityId::of(7, 1), 0);
     CHECK(osc::renderer::selectable(structure));
 }
 
@@ -679,12 +702,12 @@ TEST_CASE("The cursor's unit is one its view takes in, but a close OOB-tested on
     };
     CHECK(under(5.0f) == w.id);
     CHECK(under(-5.0f) == w.id);
-    CHECK(under(12.0f) == 0);
+    CHECK_FALSE(under(12.0f));
 
     oob_zoom = 200.0f;
     CHECK(under(5.0f) == w.id);
     input.set_camera_zoom(150.0f);
-    CHECK(under(5.0f) == 0);
+    CHECK_FALSE(under(5.0f));
     CHECK(under(0.0f) == w.id);
 }
 
@@ -698,10 +721,10 @@ TEST_CASE("A unit is picked by its mesh's bounds, scaled by the model and its bl
     w.unit().set_bone_data(&model);
     osc::renderer::InputHandler input;
     CHECK(input.unit_under(w.sim, 130.3f, 128.0f) == w.id);
-    CHECK(input.unit_under(w.sim, 130.7f, 128.0f) == 0);
+    CHECK_FALSE(input.unit_under(w.sim, 130.7f, 128.0f));
     model.model_scale = 0.5f;
     CHECK(input.unit_under(w.sim, 129.2f, 128.0f) == w.id);
-    CHECK(input.unit_under(w.sim, 130.3f, 128.0f) == 0);
+    CHECK_FALSE(input.unit_under(w.sim, 130.3f, 128.0f));
 
     model.model_scale = 1.0f;
     model.mesh_bounds = osc::sim::MeshBounds{{8.0f, 0.0f, -0.5f}, {15.0f, 2.0f, 0.5f}};
@@ -733,7 +756,7 @@ TEST_CASE("A unit is picked by its mesh's bounds, scaled by the model and its bl
     };
     CHECK(under_cursor() == w.id);
     scale_x = 0.2f;
-    CHECK(under_cursor() == 0);
+    CHECK_FALSE(under_cursor());
 }
 
 TEST_CASE("A drag box takes a unit whose mesh box it meets, scaled by its blueprint without Shift",
@@ -806,7 +829,7 @@ TEST_CASE("A drag box skips an upgrade's frame without Shift and deselects with 
     other_unit->set_army(0);
     other_unit->set_position({160.0f, 10.0f, 128.0f});
     other_unit->set_bone_data(&model);
-    const osc::u32 other = w.sim.entity_registry().register_entity(std::move(other_unit));
+    const osc::sim::EntityId other = w.sim.entity_registry().register_entity(std::move(other_unit));
     const osc::map::Heightmap ground{256, 256, 1.0f / 128.0f,
                                      std::vector<osc::u16>(257 * 257, 10 * 128)};
     osc::renderer::Camera camera;
@@ -818,7 +841,7 @@ TEST_CASE("A drag box skips an upgrade's frame without Shift and deselects with 
     const auto vp = camera.view_proj(1024.0f / 768.0f);
     osc::renderer::InputHandler input;
     input.set_player_army(0);
-    const auto box = [&](const std::unordered_set<osc::u32>& before, bool shift) {
+    const auto box = [&](const std::unordered_set<osc::sim::EntityId>& before, bool shift) {
         const auto at = osc::renderer::screen_point(vp, {128.0f, 11.0f, 128.0f}, 1024.0f, 768.0f);
         REQUIRE(at);
         input.set_selected(before);
@@ -826,7 +849,7 @@ TEST_CASE("A drag box skips an upgrade's frame without Shift and deselects with 
                             (*at)[1] + 3, shift);
         return input.selected();
     };
-    using Ids = std::unordered_set<osc::u32>;
+    using Ids = std::unordered_set<osc::sim::EntityId>;
 
     w.unit().set_motion_type("RULEUMT_None");
     w.unit().set_unit_state("BeingUpgraded", true);
@@ -856,12 +879,148 @@ TEST_CASE("SelectUnits takes a unit aboard as its transport", "[userunit][select
     transport->set_army(0);
     transport->set_motion_type("RULEUMT_Air");
     transport->add_category("SELECTABLE");
-    const osc::u32 transport_id = w.sim.entity_registry().register_entity(std::move(transport));
+    const osc::sim::EntityId transport_id =
+        w.sim.entity_registry().register_entity(std::move(transport));
     w.unit().set_motion_type("RULEUMT_Land");
     w.unit().set_transport_id(transport_id);
 
     REQUIRE(w.ui.do_string("SelectUnits(units)").ok());
-    CHECK(input.selected() == std::unordered_set<osc::u32>{transport_id});
+    CHECK(input.selected() == std::unordered_set<osc::sim::EntityId>{transport_id});
+}
+
+TEST_CASE("SelectUnits gives back the live units it was handed, but under FAF's exe",
+          "[userunit][selection]") {
+    const bool faf_exe = GENERATE(false, true);
+    UiWorld w;
+    w.sim.set_faf_exe(faf_exe);
+    osc::lua::register_user_bindings(w.ui);
+    osc::renderer::InputHandler input;
+    lua_State* L = w.ui.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    auto unselectable = std::make_unique<osc::sim::Unit>();
+    unselectable->set_army(0);
+    const osc::sim::EntityId unselectable_id =
+        w.sim.entity_registry().register_entity(std::move(unselectable));
+    auto gone = std::make_unique<osc::sim::Unit>();
+    gone->set_army(0);
+    gone->add_category("SELECTABLE");
+    osc::sim::Unit* gone_unit = gone.get();
+    const osc::sim::EntityId gone_id = w.sim.entity_registry().register_entity(std::move(gone));
+    osc::lua::push_units_for_ui(L, {w.id, gone_id, unselectable_id});
+    lua_setglobal(L, "handed");
+    w.sim.entity_registry().destroy(*gone_unit);
+    w.sim.tick();
+
+    REQUIRE(w.ui.do_string("given = SelectUnits(handed)").ok());
+    CHECK(input.selected() == std::unordered_set<osc::sim::EntityId>{w.id});
+    if (faf_exe) {
+        CHECK(w.ui.do_string("assert(given == nil)").ok());
+    } else {
+        CHECK(w.ui.do_string("assert(table.getn(given) == 2)").ok());
+        CHECK(w.ui.do_string("assert(given[1] == handed[1] and given[2] == handed[3])").ok());
+    }
+}
+
+TEST_CASE("A gone factory's queue reaches the UI as nil, once", "[userunit][ids]") {
+    UiWorld w;
+    w.unit().add_category("SHOWQUEUE");
+    osc::sim::UnitCommand build;
+    build.type = osc::sim::CommandType::BuildFactory;
+    build.blueprint_id = "uel0105";
+    build.count = 2;
+    w.unit().push_command(build, false);
+    lua_State* L = w.ui.raw();
+    osc::lua::FactoryQueueDisplay queue;
+    queue.set_current(L, &w.unit());
+    lua_pop(L, 1);
+    REQUIRE(w.ui.do_string(R"(
+        __modules = __modules or {}
+        __modules['/lua/ui/game/gamemain.lua'] = {
+            OnQueueChanged = function(q)
+                table.insert(told, q == nil and 'nil' or table.getn(q))
+            end,
+        }
+        told = {}
+    )")
+                .ok());
+    w.sim.entity_registry().destroy(w.unit());
+    w.sim.tick();
+    queue.report_change(L, w.sim);
+    queue.report_change(L, w.sim);
+    auto r = w.ui.do_string("assert(table.concat(told, ', ') == 'nil', table.concat(told, ', '))");
+    INFO((r.ok() ? std::string() : r.error().message));
+    CHECK(r.ok());
+}
+
+TEST_CASE("A dead unit's object doesn't select the unit that takes its Moho id",
+          "[userunit][selection][ids]") {
+    UiWorld w;
+    osc::lua::register_user_bindings(w.ui);
+    osc::renderer::InputHandler input;
+    lua_State* L = w.ui.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    w.sim.entity_registry().destroy(w.unit());
+    for (int i = 0; i < 100; ++i) {
+        w.sim.tick();
+    }
+    auto next = std::make_unique<osc::sim::Unit>();
+    next->set_army(0);
+    next->add_category("SELECTABLE");
+    const osc::sim::EntityId next_id = w.sim.entity_registry().register_entity(std::move(next));
+    REQUIRE(next_id.moho() == w.id.moho());
+
+    for (const char* select : {"SelectUnits(units)", "AddSelectUnits(units)"}) {
+        INFO(select);
+        REQUIRE(w.ui.do_string(select).ok());
+        CHECK(input.selected().empty());
+    }
+}
+
+TEST_CASE("A gone unit leaves the selection in its beat, before the UI's beat functions",
+          "[userunit][selection][ids]") {
+    UiWorld w;
+    osc::lua::register_user_bindings(w.ui);
+    osc::renderer::InputHandler input;
+    lua_State* L = w.ui.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, osc::core::kWorldUiActiveKey);
+    lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    REQUIRE(w.ui.do_string(R"(
+        __modules = __modules or {}
+        __modules['/lua/ui/game/gamemain.lua'] = {
+            OnSelectionChanged = function(old, new)
+                table.insert(calls, 'selection ' .. table.getn(new))
+            end,
+            OnBeat = function() table.insert(calls, 'beat') end,
+        }
+        calls = {}
+    )")
+                .ok());
+    std::unordered_set<osc::sim::EntityId> prev;
+    std::vector<std::pair<osc::sim::EntityId, osc::u32>> prev_upgrades;
+    const auto refresh = [&] { osc::app::refresh_selection(L, input, w.sim, prev, prev_upgrades); };
+    input.set_selected({w.id});
+    osc::app::dispatch_selection_change(L, prev, prev_upgrades, w.sim, input.selected(),
+                                        input.take_selection_event());
+    w.sim.entity_registry().destroy(w.unit());
+    w.sim.tick();
+    REQUIRE(w.ui.do_string("calls = {}").ok());
+
+    osc::lua::SyncQueue sync;
+    osc::app::world_beat(nullptr, &w.sim, L, sync, refresh);
+    CHECK(input.selected().empty());
+    auto r = w.ui.do_string(R"(
+        assert(table.concat(calls, ', ') == 'selection 0, beat', table.concat(calls, ', '))
+    )");
+    INFO((r.ok() ? std::string() : r.error().message));
+    CHECK(r.ok());
 }
 
 TEST_CASE("A selected unit that boards leaves the selection", "[selection]") {
@@ -871,7 +1030,7 @@ TEST_CASE("A selected unit that boards leaves the selection", "[selection]") {
     input.set_selected({w.id});
     input.prune_selection(w.sim.entity_registry());
     REQUIRE(input.selected().size() == 1);
-    w.unit().set_transport_id(w.id + 1);
+    w.unit().set_transport_id(osc::sim::EntityId::of(7, 1));
     input.prune_selection(w.sim.entity_registry());
     CHECK(input.selected().empty());
 }
@@ -895,7 +1054,7 @@ TEST_CASE("A selected unit's RequestRefreshUI reports the selection again", "[se
     REQUIRE(w.sim_lua.do_string("moho.entity_methods.RequestRefreshUI(unit)").ok());
     input.prune_selection(w.sim.entity_registry());
     CHECK(input.take_selection_event());
-    CHECK(input.selected() == std::unordered_set<osc::u32>{w.id});
+    CHECK(input.selected() == std::unordered_set<osc::sim::EntityId>{w.id});
     input.prune_selection(w.sim.entity_registry());
     CHECK_FALSE(input.take_selection_event());
 }
@@ -908,7 +1067,7 @@ TEST_CASE("A selected unit's caps, restrictions and upgrade report the selection
     osc::lua::register_sim_bindings(w.sim_lua, w.sim);
     auto from = std::make_unique<osc::sim::Unit>();
     from->set_army(0);
-    const osc::u32 from_id = w.sim.entity_registry().register_entity(std::move(from));
+    const osc::sim::EntityId from_id = w.sim.entity_registry().register_entity(std::move(from));
     lua_State* S = w.sim_lua.raw();
     for (const auto& [name, id] : {std::pair{"unit", w.id}, std::pair{"from", from_id}}) {
         lua_newtable(S);
@@ -974,12 +1133,12 @@ TEST_CASE("A selected unit's settings, Stop and its army's build restrictions re
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2");
     lua_State* S = lua.raw();
-    std::array<osc::u32, 2> ids{};
+    std::array<osc::sim::EntityId, 2> ids{};
     for (const auto& [name, army] : {std::pair{"unit", 0}, std::pair{"enemy", 1}}) {
         auto u = std::make_unique<osc::sim::Unit>();
         u->set_army(army);
         u->add_command_cap("RULEUCC_Pause");
-        const osc::u32 id = sim.entity_registry().register_entity(std::move(u));
+        const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(u));
         ids[static_cast<size_t>(army)] = id;
         lua_newtable(S);
         lua_pushstring(S, "_c_object");
@@ -1086,7 +1245,7 @@ TEST_CASE("A repair given and finished in one tick reports the selection again",
     osc::sim::UnitCommand repair;
     repair.type = osc::sim::CommandType::Repair;
     repair.command_id = 1;
-    repair.target_id = 9999;
+    repair.target_id = osc::sim::EntityId::of(9999, 1);
     w.unit().push_command(repair, true);
     input.prune_selection(w.sim.entity_registry());
     REQUIRE(input.take_selection_event());
@@ -1108,7 +1267,7 @@ TEST_CASE("A dying unit leaves the selection and can't be selected or hovered", 
     input.prune_selection(w.sim.entity_registry());
     CHECK(input.selected().empty());
     CHECK_FALSE(osc::renderer::selectable(w.unit()));
-    CHECK(input.unit_under(w.sim, 0.0f, 0.0f) == 0);
+    CHECK_FALSE(input.unit_under(w.sim, 0.0f, 0.0f));
 }
 
 TEST_CASE("A Ctrl click selects every unit of its blueprint the player has", "[selection]") {
@@ -1122,31 +1281,31 @@ TEST_CASE("A Ctrl click selects every unit of its blueprint the player has", "[s
         unit->set_size_xz(1.0f, 1.0f);
         unit->set_size_y(1.0f);
         unit->set_is_being_built(being_built);
-        const osc::u32 id = sim.entity_registry().register_entity(std::move(unit));
+        const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(unit));
         sim.entity_registry().find(id)->set_position({x, 0.0f, 10.0f});
         sim.entity_registry().find(id)->place_now();
         return id;
     };
-    const osc::u32 tank = add("uel0201", 0, 10.0f);
-    const osc::u32 far_tank = add("uel0201", 0, 900.0f);
+    const osc::sim::EntityId tank = add("uel0201", 0, 10.0f);
+    const osc::sim::EntityId far_tank = add("uel0201", 0, 900.0f);
     add("uel0201", 0, 500.0f, true);
     add("uel0201", 1, 20.0f);
-    const osc::u32 engineer = add("uel0105", 0, 30.0f);
+    const osc::sim::EntityId engineer = add("uel0105", 0, 30.0f);
     osc::renderer::InputHandler input;
 
     input.left_click_at(sim, 10.0f, 10.0f, false, true);
-    CHECK(input.selected() == std::unordered_set<osc::u32>{tank, far_tank});
+    CHECK(input.selected() == std::unordered_set<osc::sim::EntityId>{tank, far_tank});
 
     input.set_selected({engineer});
     input.left_click_at(sim, 200.0f, 10.0f, false, true);
-    CHECK(input.selected() == std::unordered_set<osc::u32>{engineer});
+    CHECK(input.selected() == std::unordered_set<osc::sim::EntityId>{engineer});
 
     input.left_click_at(sim, 10.0f, 10.0f, true, true);
-    CHECK(input.selected() == std::unordered_set<osc::u32>{engineer, tank, far_tank});
+    CHECK(input.selected() == std::unordered_set<osc::sim::EntityId>{engineer, tank, far_tank});
 
     input.set_selected({engineer, tank, far_tank});
     input.left_click_at(sim, 10.0f, 10.0f, true, true);
-    CHECK(input.selected() == std::unordered_set<osc::u32>{engineer});
+    CHECK(input.selected() == std::unordered_set<osc::sim::EntityId>{engineer});
 }
 
 TEST_CASE("A double-click on a wall selects its like only on FAF's data", "[selection]") {
@@ -1162,13 +1321,13 @@ TEST_CASE("A double-click on a wall selects its like only on FAF's data", "[sele
         if (wall) unit->add_category("WALL");
         unit->set_size_xz(1.0f, 1.0f);
         unit->set_size_y(1.0f);
-        const osc::u32 id = sim.entity_registry().register_entity(std::move(unit));
+        const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(unit));
         sim.entity_registry().find(id)->set_position({x, 0.0f, 10.0f});
         sim.entity_registry().find(id)->place_now();
         return id;
     };
-    const osc::u32 wall = add("ueb5101", 10.0f, true);
-    const osc::u32 next_wall = add("ueb5101", 12.0f, true);
+    const osc::sim::EntityId wall = add("ueb5101", 10.0f, true);
+    const osc::sim::EntityId next_wall = add("ueb5101", 12.0f, true);
     add("uel0201", 14.0f, false);
     // Everything in view: clip = world / 1000
     std::array<osc::f32, 16> view{};
@@ -1178,11 +1337,11 @@ TEST_CASE("A double-click on a wall selects its like only on FAF's data", "[sele
 
     input.set_selected({wall});
     input.select_similar_in_view(sim, 10.0f, 10.0f, view);
-    CHECK(input.selected() == std::unordered_set<osc::u32>{wall});
+    CHECK(input.selected() == std::unordered_set<osc::sim::EntityId>{wall});
 
     sim.set_faf_exe(true);
     input.select_similar_in_view(sim, 10.0f, 10.0f, view);
-    CHECK(input.selected() == std::unordered_set<osc::u32>{wall, next_wall});
+    CHECK(input.selected() == std::unordered_set<osc::sim::EntityId>{wall, next_wall});
 }
 
 TEST_CASE("UserUnit:CanAttackTarget holds a structure to its weapon's reach", "[userunit]") {
@@ -1194,7 +1353,7 @@ TEST_CASE("UserUnit:CanAttackTarget holds a structure to its weapon's reach", "[
     auto target = std::make_unique<osc::sim::Unit>();
     target->set_army(1);
     target->set_position({30.0f, 0.0f, 0.0f});
-    const osc::u32 target_id = w.sim.entity_registry().register_entity(std::move(target));
+    const osc::sim::EntityId target_id = w.sim.entity_registry().register_entity(std::move(target));
     lua_State* L = w.ui.raw();
     osc::lua::push_units_for_ui(L, {target_id});
     lua_setglobal(L, "far");

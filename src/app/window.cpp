@@ -158,7 +158,7 @@ std::optional<int> App::Window::set_up() {
     input_handler.set_command_mode_hooks(
         {[this] { return current_command_mode; },
          [this](const osc::renderer::IssuedCommand& c) {
-             report_command_issued(ui_lua_state.raw(), c);
+             osc::lua::report_command_issued(ui_lua_state.raw(), c);
          },
          [this] { cancel_command_mode(ui_lua_state.raw()); },
          [this](osc::i32 army, const std::string& bp, osc::f32 x, osc::f32 z, osc::u32 moving) {
@@ -197,7 +197,7 @@ std::optional<int> App::Window::set_up() {
                                                flash);
          },
          [this] { osc::core::call_stop_cursor_text(ui_lua_state.raw()); }});
-    renderer.set_adjacency_bonus([this](osc::u32 unit, const std::string& bp) {
+    renderer.set_adjacency_bonus([this](osc::sim::EntityId unit, const std::string& bp) {
         return detect_adjacency_bonus(ui_lua_state.raw(), unit, bp);
     });
     prev_time = std::chrono::high_resolution_clock::now();
@@ -304,6 +304,13 @@ void App::Window::publish_window_objects() {
     publish("__osc_renderer", &renderer);
     publish("__osc_input_handler", &input_handler);
     publish("__osc_factory_queue", &factory_queue);
+    sim_callback_queue.set_send([this](osc::sim::SimCallbackEntry& callback) {
+        if (!sim_state || !sim_lua_state || loading || sim_state->ticking_elsewhere()) {
+            return false;
+        }
+        sim_state->submit_callback(std::move(callback));
+        return true;
+    });
     publish("__osc_sim_callback_queue", &sim_callback_queue);
     // A --map launch's game interface came before the window: its world
     // views take the camera now

@@ -49,14 +49,15 @@ bool truth_of(lua::LuaState& state, const std::string& expr) {
     return number_of(state, "(" + expr + ") and 1 or 0") != 0;
 }
 
-u32 entity_id_of(lua::LuaState& state, const std::string& expr) {
+sim::EntityId entity_id_of(lua::LuaState& state, const sim::EntityRegistry& registry,
+                           const std::string& expr) {
     auto r = state.do_string("return " + expr);
     if (!r) {
         spdlog::error("command-sources-test Lua: {}", r.error().message);
-        return 0;
+        return {};
     }
     lua_State* L = state.raw();
-    const u32 id = sim::to_entity_id(L, -1);
+    const sim::EntityId id = sim::to_entity_id(L, -1, registry);
     lua_pop(L, 1);
     return id;
 }
@@ -173,27 +174,29 @@ void run_command_sources_test(app::Engine& e) {
 
     // Test 3: player one's order reaches its own units, the AI ally's only under union
     const auto first_unit_of = [&](int brain) {
-        return entity_id_of(sim_lua, fmt::format("ArmyBrains[{}]:GetListOfUnits("
-                                                 "categories.ALLUNITS, false)[1]:GetEntityId()",
-                                                 brain));
+        return entity_id_of(sim_lua, sim.entity_registry(),
+                            fmt::format("ArmyBrains[{}]:GetListOfUnits("
+                                        "categories.ALLUNITS, false)[1]:GetEntityId()",
+                                        brain));
     };
-    const u32 own_unit = first_unit_of(1);
-    const u32 ally_unit = first_unit_of(3);
-    const u32 enemy_unit = first_unit_of(4);
+    const sim::EntityId own_unit = first_unit_of(1);
+    const sim::EntityId ally_unit = first_unit_of(3);
+    const sim::EntityId enemy_unit = first_unit_of(4);
     sim::UnitCommand stop;
     stop.type = sim::CommandType::Stop;
     sim.schedule_command(0, {own_unit, ally_unit, enemy_unit}, stop, true);
     beat(2);
-    std::vector<u32> applied;
+    std::vector<sim::EntityId> applied;
     const auto& recorded = sim.recorded_replay().commands;
     for (auto it = recorded.rbegin(); it != recorded.rend(); ++it)
         if (it->source == 0 && it->command.type == sim::CommandType::Stop) {
             applied = it->unit_ids;
             break;
         }
-    const std::vector<u32> want_applied =
-        faf ? std::vector<u32>{own_unit, ally_unit} : std::vector<u32>{own_unit};
-    t.check(own_unit != 0 && ally_unit != 0 && enemy_unit != 0 && applied == want_applied,
+    const std::vector<sim::EntityId> want_applied =
+        faf ? std::vector<sim::EntityId>{own_unit, ally_unit}
+            : std::vector<sim::EntityId>{own_unit};
+    t.check(own_unit && ally_unit && enemy_unit && applied == want_applied,
             fmt::format("Test 3: player one's Stop to its own {}, the ally's {} and the enemy's "
                         "{} reached {} (want {})",
                         own_unit, ally_unit, enemy_unit, applied, want_applied));

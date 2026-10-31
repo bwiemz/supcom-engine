@@ -58,12 +58,12 @@ struct World {
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Air = {CanFly = true, MaxAirspeed = 10, KLift = 3, KLiftDamping = 2.5,"
                  " LiftFactor = 7},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}}",
                  "{BlueprintId = 'fighter', Categories = {'AIR', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Air = {CanFly = true, Winged = true, MaxAirspeed = 10, KLift = 3,"
                  " KLiftDamping = 2.5, LiftFactor = 7},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));

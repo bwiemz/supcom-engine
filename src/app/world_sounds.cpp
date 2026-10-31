@@ -8,10 +8,16 @@
 
 namespace osc::app {
 
-u64 entity_loop_key(u32 entity_id, std::string_view slot) {
-    u32 hash = 2166136261u; // FNV-1a
-    for (const char c : slot) hash = (hash ^ static_cast<unsigned char>(c)) * 16777619u;
-    return (static_cast<u64>(entity_id) << 32) | hash;
+u64 entity_loop_key(sim::EntityId entity_id, std::string_view slot) {
+    u64 hash = 14695981039346656037u; // FNV-1a
+    const auto mix = [&hash](u8 byte) { hash = (hash ^ byte) * 1099511628211u; };
+    for (u32 shift = 0; shift < 64; shift += 8) {
+        mix(static_cast<u8>(entity_id.key() >> shift));
+    }
+    for (const char c : slot) {
+        mix(static_cast<u8>(c));
+    }
+    return hash;
 }
 
 namespace {
@@ -50,17 +56,19 @@ gather_entity_loops(const sim::SimState& sim,
 }
 
 std::vector<audio::SoundManager::EntityLoop>
-gather_entity_loops(const sim::SimState& sim, const std::vector<u32>& ids,
+gather_entity_loops(const sim::SimState& sim, const std::vector<sim::EntityId>& ids,
                     const std::function<sim::Vector3(const sim::Entity&)>& where,
                     const std::function<bool(const sim::Vector3&, f32 radius)>& in_view) {
     std::vector<audio::SoundManager::EntityLoop> loops;
-    for (const u32 id : ids)
-        if (const sim::Entity* e = sim.entity_registry().find(id); e && wants_loops(*e))
+    for (const sim::EntityId id : ids) {
+        if (const sim::Entity* e = sim.entity_registry().find(id); e && wants_loops(*e)) {
             add_loops(loops, *e, where, in_view);
+        }
+    }
     return loops;
 }
 
-const std::vector<u32>& EntityLoopSources::ids(const sim::SimState& sim) {
+const std::vector<sim::EntityId>& EntityLoopSources::ids(const sim::SimState& sim) {
     if (&sim == sim_ && sim::SimState::sim_generation() == generation_ && sim.tick_count() == tick_)
         return ids_;
     ids_.clear();

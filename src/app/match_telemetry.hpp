@@ -38,6 +38,7 @@
 // when the player marks a moment (MarkPerformanceMoment, with a note).
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 #include <chrono>
 #include <fstream>
@@ -114,7 +115,7 @@ private:
         bool commander = false;
         size_t enhancements = 0;
         f32 health_told = 1.0f; ///< a commander's health, as last told
-        u32 last_attacker = 0;
+        sim::EntityId last_attacker{};
         u32 seen_at = 0; ///< the walk that last found it
     };
 
@@ -136,7 +137,7 @@ private:
     /// without the sim (the destructor's).
     std::vector<std::string> army_results_;
     /// The units the events know, by id, and the count of the walks made.
-    std::unordered_map<u32, Seen> seen_;
+    std::unordered_map<sim::EntityId, Seen> seen_;
     u32 walk_ = 0;
     /// Each army's result as the events last told it.
     std::vector<std::string> results_told_;

@@ -14,8 +14,11 @@ Heightmap::Heightmap(u32 map_width, u32 map_height, f32 scale,
       data_(std::move(raw_data)) {
     assert(map_width >= 1 && map_height >= 1);
     assert(data_.size() == static_cast<size_t>(grid_width_) * grid_height_);
-    if (!data_.empty())
-        max_height_ = static_cast<f32>(*std::max_element(data_.begin(), data_.end())) * scale_;
+    if (!data_.empty()) {
+        const auto [low, high] = std::minmax_element(data_.begin(), data_.end());
+        min_height_ = static_cast<f32>(*low) * scale_;
+        max_height_ = static_cast<f32>(*high) * scale_;
+    }
     const u32 largest = std::max(map_width, map_height);
     u32 count = 0;
     for (u32 v = largest > 1 ? largest - 1 : 0; v != 0; v >>= 1) {
@@ -128,6 +131,7 @@ void Heightmap::set_rect(i32 x0, i32 z0, i32 x1, i32 z1, f32 elevation) {
         for (i32 x = x0; x < x1; ++x) set_point(row + static_cast<size_t>(x), value);
     }
     max_height_ = std::max(max_height_, static_cast<f32>(value) * scale_);
+    min_height_ = std::min(min_height_, static_cast<f32>(value) * scale_);
     update_tiers(x0, z0, x1, z1);
 }
 
@@ -150,6 +154,7 @@ void Heightmap::copy_rect(const Heightmap& from, i32 x0, i32 z0, i32 x1, i32 z1)
         }
     }
     max_height_ = std::max(max_height_, from.max_height_);
+    min_height_ = std::min(min_height_, from.min_height_);
     update_tiers(x0, z0, x1, z1);
 }
 
@@ -159,7 +164,9 @@ void Heightmap::reset() {
     }
     data_ = std::move(original_);
     original_.clear();
-    max_height_ = static_cast<f32>(*std::max_element(data_.begin(), data_.end())) * scale_;
+    const auto [low, high] = std::minmax_element(data_.begin(), data_.end());
+    min_height_ = static_cast<f32>(*low) * scale_;
+    max_height_ = static_cast<f32>(*high) * scale_;
     update_tiers(0, 0, static_cast<i32>(grid_width_), static_cast<i32>(grid_height_));
     recompute_digest();
 }

@@ -1,6 +1,7 @@
 #include "renderer/unit_renderer.hpp"
 #include "renderer/army_colors.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/command_feedback.hpp"
 #include "renderer/playable_rect.hpp"
 #include "renderer/recon_view.hpp"
 #include "renderer/texture_cache.hpp"
@@ -84,13 +85,13 @@ f32 team_color_lookup(const sim::ArmyRecord* army, const sim::GameColors& colors
     return (static_cast<f32>(index) + 0.5f) / static_cast<f32>(count);
 }
 
-u32 MeshBirths::tick(u32 id, u32 mesh_changes, u32 now) {
+u32 MeshBirths::tick(sim::EntityId id, u32 mesh_changes, u32 now) {
     // Below an id passed (a ghost's, after the entities): looked for afresh.
     if (cursor_ > 0 && births_[cursor_ - 1].id >= id)
-        cursor_ =
-            static_cast<size_t>(std::lower_bound(births_.begin(), births_.end(), id,
-                                                 [](const Birth& b, u32 v) { return b.id < v; }) -
-                                births_.begin());
+        cursor_ = static_cast<size_t>(
+            std::lower_bound(births_.begin(), births_.end(), id,
+                             [](const Birth& b, sim::EntityId v) { return b.id < v; }) -
+            births_.begin());
     while (cursor_ < births_.size() && births_[cursor_].id < id) ++cursor_;
     Birth birth{id, mesh_changes, now};
     if (cursor_ < births_.size() && births_[cursor_].id == id &&
@@ -288,7 +289,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
 
     // Per-instance bone info (parallel to mesh_groups entries)
     struct InstanceBones {
-        u32 id = 0;          // 0 = no bones (props, projectiles)
+        sim::EntityId id{};  // none = no bones (props, projectiles)
         u32 bone_count = 0;  // 0 = no skinning
         u64 hidden = 0;      // bones Unit:HideBone hid (bit i, bone i)
         const std::vector<sim::BoneMatrix>* frozen = nullptr; // a remembered structure's pose
@@ -299,7 +300,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         std::vector<MeshInstance> instances;
         std::vector<InstanceBones> bones;
         u32 bones_per_instance = 0; // the most any of its instances has
-        u32 first_entity = 0;
+        sim::EntityId first_entity{};
     };
     // Opaque instances (0), then blended ones (1): a build technique's or a
     // build effect's, which blend by their own alpha with pipelines of their
@@ -307,11 +308,14 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
     // units, which the water reflects (M213b).
     std::unordered_map<const GPUMesh*, GroupData> mesh_groups[2][2];
 
-    // The eye, for each mesh's LOD distance: the same for every entity.
-    f32 eye_x = 0;
-    f32 eye_y = 0;
-    f32 eye_z = 0;
-    if (camera) camera->eye_position(eye_x, eye_y, eye_z);
+    // The eye and view direction, for each mesh's LOD metric.
+    sim::Vector3 eye;
+    sim::Vector3 forward;
+    if (camera) {
+        camera->eye_position(eye.x, eye.y, eye.z);
+        const std::array<f32, 3> d = camera->direction();
+        forward = {d[0], d[1], d[2]};
+    }
     const u32 now = view.cur() ? view.cur()->tick : 0;
     shader_time_ = static_cast<f32>(std::fmod(view.time(), static_cast<f64>(kShaderTimeWrap)));
     // One entity's mesh instance (or cube): the world's, then the player's
@@ -321,17 +325,25 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         // depth fill and its impacts, script entities given one by SetMesh.
         const bool script_mesh = !entity.is_unit && !entity.is_prop && !entity.is_projectile;
         if (script_mesh && entity.mesh_override.empty()) return;
-        // At a fixed metric (Mesh::ComputeLOD), a mesh no LOD of which takes
-        // it shows nothing: first, before anything else is looked up
-        if (lod_metric) {
+        // A mesh no LOD of which takes the metric shows nothing
+        // (Mesh::ComputeLOD).
+        const auto reach = [&] {
             CachedReach& cached = reaches_[entity.id];
-            if (cached.reach < 0.0f || cached.mesh_changes != entity.mesh_changes) {
-                const std::string& id =
-                    entity.mesh_override.empty() ? entity.blueprint_id : entity.mesh_override;
-                cached = {entity.mesh_changes, id.empty() ? 0.0f : mesh_cache.lod_reach(id, L)};
+            if (cached.reach < 0.0f || cached.mesh_changes != entity.mesh_changes ||
+                cached.blueprint_id != entity.blueprint_id) {
+                // The mesh get_lod finds: the override's, else the blueprint's
+                f32 r = entity.mesh_override.empty()
+                            ? 0.0f
+                            : mesh_cache.lod_reach(entity.mesh_override, L);
+                if (r <= 0.0f && !script_mesh && !entity.blueprint_id.empty()) {
+                    r = mesh_cache.lod_reach(entity.blueprint_id, L);
+                }
+                cached = {entity.mesh_changes, r, entity.blueprint_id};
             }
-            if (cached.reach < *lod_metric) return;
-        }
+            return cached.reach;
+        };
+        // At a fixed metric, first, before anything else is looked up
+        if (lod_metric && reach() < *lod_metric) return;
         // Outside the playable rect when the scripts last synced it.
         if (playable_rect_ && playable_rect_->hides(entity.id)) return;
         // What its script hides from the player (SetVizTo...('Never')).
@@ -377,13 +389,13 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         f32 r, g, b, a;
         get_army_color(entity, view, r, g, b, a);
 
-        // Compute camera distance for LOD selection (or the view's metric)
-        f32 cam_dist = lod_metric.value_or(0.0f);
+        // Moho's LOD metric: the view's width at the entity's depth. Past its
+        // mesh's last cutoff nothing draws; a unit without a mesh, its cube.
+        f32 metric = lod_metric.value_or(0.0f);
         if (camera && !lod_metric) {
-            const f32 dx = pos.x - eye_x;
-            const f32 dy = pos.y - eye_y;
-            const f32 dz = pos.z - eye_z;
-            cam_dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+            metric = renderer::lod_metric(pos, eye, forward, camera->fov());
+            const f32 shows_to = reach();
+            if (shows_to > 0.0f && shows_to < metric) return;
         }
 
         // Try mesh lookup (mesh_override from SetMesh takes priority). An
@@ -392,7 +404,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         const GPUMesh* gpu = nullptr;
         f32 mesh_scale = 0.0f;
         if (!entity.mesh_override.empty()) {
-            gpu = mesh_cache.get_lod(entity.mesh_override, cam_dist, L);
+            gpu = mesh_cache.get_lod(entity.mesh_override, metric, L);
             // A shield or script entity has no blueprint: its draw scale
             // alone (M211k)
             if (gpu)
@@ -400,7 +412,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
                     script_mesh ? 1.0f : mesh_cache.blueprint_scale(entity.blueprint_id, L);
         }
         if (!gpu && !script_mesh && !entity.blueprint_id.empty()) {
-            gpu = mesh_cache.get_lod(entity.blueprint_id, cam_dist, L);
+            gpu = mesh_cache.get_lod(entity.blueprint_id, metric, L);
             if (gpu) mesh_scale = gpu->uniform_scale;
         }
 
@@ -474,7 +486,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
                                     remembered ? recon_->frozen_pose(entity.id) : nullptr});
                 gd.bones_per_instance = std::max(gd.bones_per_instance, bc);
             } else {
-                gd.bones.push_back({0, 0});
+                gd.bones.push_back({});
             }
 
             mesh_count++;

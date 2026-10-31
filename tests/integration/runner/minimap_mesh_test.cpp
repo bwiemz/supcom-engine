@@ -186,7 +186,7 @@ void test_minimap_meshes(TestContext& ctx) {
     // Each world entity's mesh and how far it shows, read apart from the
     // renderer (the fog is off: the player sees them all)
     struct Shown {
-        u32 id = 0;
+        sim::EntityId id{};
         std::string bp;
         f32 reach = -1.0f;
         sim::Vector3 at;
@@ -256,9 +256,11 @@ void test_minimap_meshes(TestContext& ctx) {
     }
     // Into the minimap's output, after Stage 1: each commander's pixels
     // change where its mesh draws (the capture at a pixel a unit)
-    std::vector<u32> commanders;
+    std::vector<sim::EntityId> commanders;
     for (i32 army = 0; army < 8; ++army) {
-        if (const u32 id = army_acu_id(ctx.sim, army)) commanders.push_back(id);
+        if (const sim::EntityId id = army_acu_id(ctx.sim, army)) {
+            commanders.push_back(id);
+        }
     }
     const renderer::CartographicRenderer::View big{1024, 1024, 0.0f, 0.0f, map_w, map_h};
     const auto minimap_records = [&] {
@@ -280,7 +282,7 @@ void test_minimap_meshes(TestContext& ctx) {
     const auto without = r.capture_cartographic(*terrain, big, nullptr, false);
     u32 marked = 0;
     if (with && without) {
-        for (const u32 id : commanders) {
+        for (const sim::EntityId id : commanders) {
             const auto* e = ctx.sim.entity_registry().find(id);
             if (!e) continue;
             const auto px = static_cast<i32>(e->position().x / map_w * 1024.0f);

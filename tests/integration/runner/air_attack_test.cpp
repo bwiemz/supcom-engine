@@ -44,11 +44,11 @@ namespace osc::test {
 
 namespace {
 
-u32 global_id(TestContext& ctx, const char* name) {
+sim::EntityId global_id(TestContext& ctx, const char* name) {
     lua_State* L = ctx.lua_state.raw();
     lua_pushstring(L, name);
     lua_rawget(L, LUA_GLOBALSINDEX);
-    const auto id = osc::sim::to_entity_id(L, -1);
+    const auto id = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
     lua_pop(L, 1);
     return id;
 }
@@ -186,8 +186,8 @@ void test_air_attack_run(TestContext& ctx) {
     )");
     record(static_cast<bool>(r), r ? "setup" : "setup: " + r.error().message);
     if (!r) return;
-    const u32 bomber_id = global_id(ctx, "__air_bomber_id");
-    const u32 target_id = global_id(ctx, "__air_target_id");
+    const sim::EntityId bomber_id = global_id(ctx, "__air_bomber_id");
+    const sim::EntityId target_id = global_id(ctx, "__air_target_id");
     auto& registry = ctx.sim.entity_registry();
     const auto* target0 = registry.find(target_id);
     if (!target0) return;
@@ -203,7 +203,7 @@ void test_air_attack_run(TestContext& ctx) {
         sim::Vector3 last;
         bool landed = false;
     };
-    std::map<u32, Bomb> bombs;
+    std::map<sim::EntityId, Bomb> bombs;
     std::vector<u32> salvo_ticks;
     f32 min_speed_engaged = 1e9f;
     f32 farthest_past = 0;
@@ -340,20 +340,20 @@ void test_air_auto_engage(TestContext& ctx) {
     const auto id = [&](const char* name) {
         lua_pushstring(L, name);
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto v = osc::sim::to_entity_id(L, -1);
+        const auto v = osc::sim::to_entity_id(L, -1, ctx.sim.entity_registry());
         lua_pop(L, 1);
         return v;
     };
     auto& registry = ctx.sim.entity_registry();
-    const auto head = [&](u32 unit_id) -> const sim::UnitCommand* {
+    const auto head = [&](sim::EntityId unit_id) -> const sim::UnitCommand* {
         auto* e = registry.find(unit_id);
         if (!e || e->destroyed() || !e->is_unit()) return nullptr;
         const auto& q = static_cast<sim::Unit*>(e)->command_queue();
         return q.empty() ? nullptr : &q.front();
     };
-    const u32 bomber = id("__auto_bomber_id");
-    const u32 tank = id("__auto_tank_id");
-    const auto attacks = [&](const char* name, u32 target) {
+    const sim::EntityId bomber = id("__auto_bomber_id");
+    const sim::EntityId tank = id("__auto_tank_id");
+    const auto attacks = [&](const char* name, sim::EntityId target) {
         const auto* c = head(id(name));
         return c && c->type == sim::CommandType::Attack && c->target_id == target;
     };

@@ -101,7 +101,7 @@ void SimState::occupy_footprint(Unit& unit) {
     pathfinding_grid_->mark_obstacle(fp.x, fp.z, fp.size_x, fp.size_z);
 }
 
-void SimState::occupy_ground(u32 id, GroundOccupant occupant) {
+void SimState::occupy_ground(EntityId id, GroundOccupant occupant) {
     release_ground(id);
     for (const OccupancyRect& r : occupant.rects) {
         occupancy_.fill(occupant.caps, r, true);
@@ -111,7 +111,7 @@ void SimState::occupy_ground(u32 id, GroundOccupant occupant) {
     ground_occupants_[id] = std::move(occupant);
 }
 
-void SimState::release_ground(u32 id) {
+void SimState::release_ground(EntityId id) {
     const auto it = ground_occupants_.find(id);
     if (it == ground_occupants_.end()) return;
     const GroundOccupant gone = std::move(it->second);
@@ -239,10 +239,10 @@ void SimState::on_destroy(Entity& entity) {
 }
 
 void SimState::drop_adjacency(Unit& unit) {
-    const std::vector<u32> neighbours(unit.adjacent_unit_ids().begin(),
-                                      unit.adjacent_unit_ids().end());
+    const std::vector<EntityId> neighbours(unit.adjacent_unit_ids().begin(),
+                                           unit.adjacent_unit_ids().end());
     unit.clear_adjacents();
-    for (const u32 id : neighbours) {
+    for (const EntityId id : neighbours) {
         Entity* e = entity_registry_.find(id);
         if (!e || !e->is_unit()) {
             continue;
@@ -254,15 +254,15 @@ void SimState::drop_adjacency(Unit& unit) {
 }
 
 void SimState::detach_all_units(Unit& transport, bool destroy_some) {
-    std::vector<u32> cargo;
-    for (const u32 id : transport.cargo_ids()) {
+    std::vector<EntityId> cargo;
+    for (const EntityId id : transport.cargo_ids()) {
         Entity* e = entity_registry_.find(id);
         if (e && !e->destroyed() && e->is_unit() && !static_cast<Unit*>(e)->is_dying()) {
             cargo.push_back(id);
         }
     }
-    std::vector<u32> set_down;
-    for (const u32 id : cargo) {
+    std::vector<EntityId> set_down;
+    for (const EntityId id : cargo) {
         auto& unit = static_cast<Unit&>(*entity_registry_.find(id));
         if (destroy_some && sim_random_.range(0.0f, 1.0f) < 0.99f) {
             if (script_says(L_, unit, "CheckCanBeKilled")) {
@@ -287,7 +287,7 @@ void SimState::detach_all_units(Unit& transport, bool destroy_some) {
                     lua_settop(L_, top);
                 } else {
                     transport.remove_cargo(id);
-                    unit.set_transport_id(0);
+                    unit.set_transport_id(EntityId());
                     entity_registry_.destroy(unit);
                 }
                 continue;
@@ -320,20 +320,20 @@ void SimState::detach_all_units(Unit& transport, bool destroy_some) {
         }
         set_down.push_back(id);
     }
-    for (const u32 id : set_down) {
+    for (const EntityId id : set_down) {
         if (Entity* e = entity_registry_.find(id); e && !e->destroyed()) {
             transport_detach_unit(transport, static_cast<Unit&>(*e), terrain_.get());
         }
     }
-    const std::vector<u32> stored = transport.stored_ids();
-    for (const u32 id : stored) {
+    const std::vector<EntityId> stored = transport.stored_ids();
+    for (const EntityId id : stored) {
         Entity* e = entity_registry_.find(id);
         if (!e || e->destroyed() || !e->is_unit()) {
             continue;
         }
         auto& unit = static_cast<Unit&>(*e);
         transport.forget_stored(id);
-        unit.set_transport_id(0);
+        unit.set_transport_id(EntityId());
         unit.call_lua_method(L_, "DestroyedOnTransport");
         if (!unit.destroyed()) {
             unit.call_lua_method(L_, "Destroy");
@@ -351,7 +351,7 @@ void SimState::transport_detach_unit(Unit& transport, Unit& unit, const map::Ter
     }
     if (transport.is_stored_unit(unit.entity_id())) {
         transport.forget_stored(unit.entity_id());
-        unit.set_transport_id(0);
+        unit.set_transport_id(EntityId());
         unit.set_unit_state("Attached", false);
         return;
     }
@@ -424,10 +424,13 @@ void SimState::on_entity_unregistered(Entity& entity) {
         // A stored unit leaves its carrier's storage; a carrier's stored
         // units go with it (Moho's ~CAiTransportImpl), destroyed once this
         // unregistration is over (M206q).
-        if (unit.transport_id() != 0)
+        if (unit.transport_id()) {
             if (Entity* c = entity_registry_.find(unit.transport_id()); c && c->is_unit())
                 static_cast<Unit*>(c)->forget_stored(unit.entity_id());
-        for (const u32 id : unit.stored_ids()) stored_to_destroy_.push_back(id);
+        }
+        for (const EntityId id : unit.stored_ids()) {
+            stored_to_destroy_.push_back(id);
+        }
     }
 }
 
@@ -457,7 +460,7 @@ void SimState::release_script_handle(Entity& entity) {
 }
 
 void SimState::kill_cleanup() {
-    std::vector<std::pair<size_t, u32>> due;
+    std::vector<std::pair<size_t, EntityId>> due;
     entity_registry_.for_each_unit([&](Entity& e) {
         if (!static_cast<const Unit&>(e).needs_kill_cleanup()) {
             return;
@@ -476,26 +479,27 @@ void SimState::kill_cleanup() {
 }
 
 void SimState::run_deletion_queue() {
-    std::vector<u32> purged;
-    while (const u32 id = entity_registry_.take_destroyed()) {
+    std::vector<EntityId> purged;
+    while (const EntityId id = entity_registry_.take_destroyed()) {
         if (Entity* e = entity_registry_.find(id)) {
             on_destroy(*e);
             purged.push_back(id);
         }
     }
-    for (const u32 id : purged) {
+    for (const EntityId id : purged) {
         entity_registry_.unregister_entity(id);
     }
+    entity_registry_.update_id_pools();
 }
 
 void SimState::destroy_orphaned_stored_units() {
     while (!stored_to_destroy_.empty()) {
-        const u32 id = stored_to_destroy_.back();
+        const EntityId id = stored_to_destroy_.back();
         stored_to_destroy_.pop_back();
         Entity* e = entity_registry_.find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<Unit*>(e);
-        unit->set_transport_id(0);
+        unit->set_transport_id(EntityId());
         if (L_) unit->call_lua_method(L_, "Destroy");
         e = entity_registry_.find(id);
         if (e && !e->destroyed()) { // no script object (or no Destroy)
@@ -518,7 +522,7 @@ void SimState::clean_up_platoons() {
     if (!L_) return;
     // A unit leaves its platoon only as it is freed (Moho's ~Unit): a dying
     // one still counts; one destroyed last tick is gone by now.
-    const auto alive = [this](u32 id) {
+    const auto alive = [this](EntityId id) {
         const Entity* e = entity_registry_.find(id);
         return e && !e->destroyed();
     };
@@ -526,7 +530,7 @@ void SimState::clean_up_platoons() {
     // Artillery, Guard, Support or Scout), alive and not dying, has an
     // order at the head of its queue.
     const auto idle = [&](const Platoon& p) {
-        for (const u32 id : p.unit_ids()) {
+        for (const EntityId id : p.unit_ids()) {
             const int squad = Platoon::squad_class(p.get_unit_squad(id));
             if (squad < 1 || !alive(id)) continue;
             const Entity* e = entity_registry_.find(id);
@@ -548,8 +552,8 @@ void SimState::clean_up_platoons() {
             if (p->disband_on_idle() && p != pool && idle(*p)) {
                 // Its units go to the pool's unassigned squad first.
                 if (pool) {
-                    const std::vector<u32> ids = p->unit_ids();
-                    for (const u32 id : ids) {
+                    const std::vector<EntityId> ids = p->unit_ids();
+                    for (const EntityId id : ids) {
                         if (!alive(id)) continue;
                         p->remove_unit(id);
                         pool->add_unit(id);
@@ -605,17 +609,17 @@ void SimState::clean_up_platoons() {
 }
 
 Entity* SimState::attach_parent(const Entity& e) const {
-    u32 id = e.parent_entity_id();
+    EntityId id = e.parent_entity_id();
     if (e.is_collision_beam()) {
         id = e.beam_launcher_id();
-    } else if (e.is_unit() && static_cast<const Unit&>(e).transport_id() != 0) {
+    } else if (e.is_unit() && static_cast<const Unit&>(e).transport_id()) {
         id = static_cast<const Unit&>(e).transport_id();
     }
-    return id != 0 ? entity_registry_.find(id) : nullptr;
+    return id ? entity_registry_.find(id) : nullptr;
 }
 
 void SimState::follow_parent(Entity& e, const Entity& parent) {
-    if (e.is_unit() && static_cast<const Unit&>(e).transport_id() != 0) {
+    if (e.is_unit() && static_cast<const Unit&>(e).transport_id()) {
         if (parent.is_unit()) {
             static_cast<Unit&>(e).hang_from(static_cast<const Unit&>(parent));
         }
@@ -657,22 +661,14 @@ void SimState::refollow_attached() {
     }
 }
 
-void SimState::crash_impact(Unit& unit) {
+void SimState::crash_impact(Unit& unit, const char* surface) {
     if (unit.destroyed()) {
         return;
     }
-    const u32 id = unit.entity_id();
+    const EntityId id = unit.entity_id();
     if (!L_ || unit.lua_table_ref() < 0) {
         entity_registry_.destroy(unit);
         return;
-    }
-    const Vector3 p = unit.pending_position();
-    const bool water = terrain_ && terrain_->has_water() &&
-                       terrain_->get_terrain_height(p.x, p.z) < terrain_->water_elevation();
-    // On the ground it is a land unit now: its wreck follows the
-    // blueprint's WreckageLayers.Land.
-    if (!water) {
-        unit.set_layer_with_callback("Land", L_);
     }
     Entity* e = entity_registry_.find(id);
     if (!e || e->destroyed() || e->lua_table_ref() < 0) {
@@ -685,7 +681,7 @@ void SimState::crash_impact(Unit& unit) {
     bool handled = false;
     if (lua_isfunction(L_, -1)) {
         lua_pushvalue(L_, top + 1);
-        lua_pushstring(L_, water ? "Water" : "Terrain");
+        lua_pushstring(L_, surface);
         lua_pushnil(L_);
         if (lua_pcall(L_, 3, 0, 0) == 0) {
             handled = true;
@@ -871,7 +867,7 @@ bool SimState::is_valid_teleport_destination(
     auto nearby = entity_registry_.collect_in_rect(
         destination.x - half_x, destination.z - half_z,
         destination.x + half_x, destination.z + half_z);
-    for (u32 id : nearby) {
+    for (EntityId id : nearby) {
         if (id == unit.entity_id()) continue;
         auto* entity = entity_registry_.find(id);
         if (!entity || entity->destroyed() || !entity->is_unit()) continue;
@@ -1098,8 +1094,7 @@ void SimState::build_spatial_grid() {
 
 // --- Blip cache helpers ---
 
-const BlipSnapshot* SimState::get_blip_snapshot(u32 entity_id,
-                                                 u32 army) const {
+const BlipSnapshot* SimState::get_blip_snapshot(EntityId entity_id, u32 army) const {
     auto it = blip_cache_.find(entity_id);
     if (it == blip_cache_.end()) return nullptr;
     if (army >= MAX_VIS_ARMIES) return nullptr;
@@ -1108,7 +1103,7 @@ const BlipSnapshot* SimState::get_blip_snapshot(u32 entity_id,
     return snap.entity_army >= 0 ? &snap : nullptr;
 }
 
-u32 SimState::schedule_command(u32 source, const std::vector<u32>& unit_ids,
+u32 SimState::schedule_command(u32 source, const std::vector<EntityId>& unit_ids,
                                const UnitCommand& command, bool clear_existing) {
     const u32 exec_beat = beat_count_ + 1 + command_delay_;
     ScheduledCommand sc;
@@ -1159,7 +1154,7 @@ bool apply_silo_build(Unit& unit, const UnitCommand& cmd) {
 
 } // namespace
 
-u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+u32 SimState::route_command(const std::vector<EntityId>& unit_ids, const UnitCommand& command,
                             bool clear_existing) {
     // A player's order is a command, applied in a beat as Moho applies it:
     // under a network session it is broadcast and every peer schedules it
@@ -1217,7 +1212,7 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
 
 namespace {
 
-bool boards(const EntityRegistry& registry, const Unit& unit, u32 target_id) {
+bool boards(const EntityRegistry& registry, const Unit& unit, EntityId target_id) {
     const Entity* e = target_id ? registry.find(target_id) : nullptr;
     if (!e || !e->is_unit()) {
         return true;
@@ -1251,7 +1246,7 @@ bool boards(const EntityRegistry& registry, const Unit& unit, u32 target_id) {
 } // namespace
 
 void SimState::pick_target_point(UnitCommand& command) {
-    if (command.type != CommandType::Attack || command.target_id == 0) {
+    if (command.type != CommandType::Attack || !command.target_id) {
         return;
     }
     const Entity* target = entity_registry_.find(command.target_id);
@@ -1280,8 +1275,7 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
                         : command.type == CommandType::Capture ? "CAPTURE"
                         : command.type == CommandType::Repair  ? "REPAIR"
                                                                : nullptr;
-    if (needs &&
-        (!unit.has_category(needs) || (unit.transport_id() != 0 && unit.has_category("POD")))) {
+    if (needs && (!unit.has_category(needs) || (unit.transport_id() && unit.has_category("POD")))) {
         return false;
     }
     if (command.type == CommandType::Attack) {
@@ -1302,7 +1296,7 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
     }
     if (command.type == CommandType::TransportLoad || command.type == CommandType::Dock ||
         command.type == CommandType::WaitForFerry) {
-        return unit.transport_id() == 0 && boards(entity_registry_, unit, command.target_id);
+        return !unit.transport_id() && boards(entity_registry_, unit, command.target_id);
     }
     if (command.type != CommandType::Guard) return true;
     // A pod, or a unit a carrier holds, guards nothing; nor does a unit
@@ -1363,16 +1357,16 @@ std::optional<u32> edited_command(const SimCallbackEntry& cb) {
 
 } // namespace
 
-std::map<u32, SimState::QueueWithPending> SimState::queues_with_pending() const {
-    std::map<u32, QueueWithPending> queues;
-    const auto live_unit = [&](u32 id) -> const Unit* {
+std::map<EntityId, SimState::QueueWithPending> SimState::queues_with_pending() const {
+    std::map<EntityId, QueueWithPending> queues;
+    const auto live_unit = [&](EntityId id) -> const Unit* {
         const Entity* e = entity_registry_.find(id);
         if (!e || e->destroyed() || !e->is_unit()) {
             return nullptr;
         }
         return static_cast<const Unit*>(e);
     };
-    const auto queue_of = [&](u32 id, const Unit& unit) -> QueueWithPending& {
+    const auto queue_of = [&](EntityId id, const Unit& unit) -> QueueWithPending& {
         auto [it, fresh] = queues.try_emplace(id);
         if (fresh) {
             it->second.orders.assign(unit.command_queue().begin(), unit.command_queue().end());
@@ -1380,7 +1374,7 @@ std::map<u32, SimState::QueueWithPending> SimState::queues_with_pending() const 
         }
         return it->second;
     };
-    const auto holds = [&](u32 id, const Unit& unit, u32 command) {
+    const auto holds = [&](EntityId id, const Unit& unit, u32 command) {
         const auto it = queues.find(id);
         const auto has = [&](const UnitCommand& c) { return c.command_id == command; };
         if (it != queues.end()) {
@@ -1400,7 +1394,7 @@ std::map<u32, SimState::QueueWithPending> SimState::queues_with_pending() const 
                 continue;
             }
             std::vector<CommandToRetarget> orders;
-            for (const u32 id : cb.unit_ids) {
+            for (const EntityId id : cb.unit_ids) {
                 const Unit* unit = live_unit(id);
                 if (!unit || !holds(id, *unit, *command)) {
                     continue;
@@ -1430,7 +1424,7 @@ std::map<u32, SimState::QueueWithPending> SimState::queues_with_pending() const 
             continue;
         }
         const UnitCommand& cmd = scheduled.command;
-        for (const u32 id : scheduled.unit_ids) {
+        for (const EntityId id : scheduled.unit_ids) {
             const Unit* unit = live_unit(id);
             if (!unit) {
                 continue;
@@ -1465,10 +1459,10 @@ bool SimState::joins_rally_orders(const Unit& unit, CommandType type) {
     return rally_kind && unit.has_category("RALLYPOINT");
 }
 
-void SimState::route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
-                                    bool clear_existing) {
-    std::vector<u32> rally, others;
-    for (const u32 id : unit_ids) {
+void SimState::route_player_command(const std::vector<EntityId>& unit_ids,
+                                    const UnitCommand& command, bool clear_existing) {
+    std::vector<EntityId> rally, others;
+    for (const EntityId id : unit_ids) {
         const Entity* e = entity_registry_.find(id);
         const bool rally_point =
             e && e->is_unit() && joins_rally_orders(*static_cast<const Unit*>(e), command.type);
@@ -1483,12 +1477,12 @@ void SimState::route_player_command(const std::vector<u32>& unit_ids, const Unit
     }
 }
 
-void SimState::apply_factory_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
-                                     bool clear_existing) {
+void SimState::apply_factory_command(const std::vector<EntityId>& unit_ids,
+                                     const UnitCommand& command, bool clear_existing) {
     UnitCommand rally = command;
     rally.factory = false;
     const bool no_rush = no_rush_active();
-    for (const u32 id : unit_ids) {
+    for (const EntityId id : unit_ids) {
         Entity* e = entity_registry_.find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto& unit = static_cast<Unit&>(*e);
@@ -1503,9 +1497,10 @@ void SimState::apply_factory_command(const std::vector<u32>& unit_ids, const Uni
     }
 }
 
-std::vector<std::pair<u32, UnitCommand>>
-SimState::expand_group_command(const std::vector<u32>& unit_ids, const UnitCommand& command) const {
-    std::vector<std::pair<u32, UnitCommand>> out;
+std::vector<std::pair<EntityId, UnitCommand>>
+SimState::expand_group_command(const std::vector<EntityId>& unit_ids,
+                               const UnitCommand& command) const {
+    std::vector<std::pair<EntityId, UnitCommand>> out;
     if (!command.formation.empty() &&
         (command.type == CommandType::Move || command.type == CommandType::AggressiveMove)) {
         const auto slots = plan_formation(
@@ -1548,7 +1543,9 @@ SimState::expand_group_command(const std::vector<u32>& unit_ids, const UnitComma
             return out;
         }
     }
-    for (const u32 id : unit_ids) out.emplace_back(id, command);
+    for (const EntityId id : unit_ids) {
+        out.emplace_back(id, command);
+    }
     return out;
 }
 
@@ -1785,10 +1782,10 @@ void SimState::dispatch_due_commands() {
         // rest). A recording holds them as applied, so a replay's are
         // taken as they come.
         if (sc.source != kEngineSource && !playback_) {
-            const auto commandable_only = [&](std::vector<u32>& ids) {
+            const auto commandable_only = [&](std::vector<EntityId>& ids) {
                 const size_t named = ids.size();
                 ids.erase(std::remove_if(ids.begin(), ids.end(),
-                                         [&](u32 id) {
+                                         [&](EntityId id) {
                                              const Entity* e = entity_registry_.find(id);
                                              return !e || !okay_to_mess_with(e->army());
                                          }),
@@ -1821,6 +1818,10 @@ void SimState::dispatch_due_commands() {
         }
         if (sc.callback) {
             run_sim_callback(*sc.callback);
+            return;
+        }
+        // Moho's Sim::IssueCommand refuses a DestroySelf without cheats.
+        if (sc.command.type == CommandType::DestroySelf && !cheats_enabled()) {
             return;
         }
         UnitCommand base = sc.command;
@@ -2030,7 +2031,7 @@ void SimState::end_beat(bool ticked) {
     // VFX: expire timed effects (decals, splats) and garbage collect destroyed ones
     {
         PROFILE_ZONE("Sim::vfx_gc");
-        effect_registry_.destroy_detached([&](u32 id) {
+        effect_registry_.destroy_detached([&](EntityId id) {
             const Entity* e = entity_registry_.find(id);
             return !e || e->destroyed();
         });
@@ -2167,26 +2168,29 @@ void SimState::sweep_ferry_beacons() {
     // A beacon belongs to its route's orders (Moho's CUnitCommand keeps it):
     // once no living unit has a Ferry order holding it, it goes.
     if (ferry_beacons_.empty()) return;
-    std::vector<u32> held;
+    std::vector<EntityId> held;
     entity_registry_.for_each_unit([&](const Entity& e) {
         if (e.destroyed() || !e.is_unit()) return;
         const auto& unit = static_cast<const Unit&>(e);
         if (unit.is_dying() || unit.command_queue().empty()) return;
         // Only a route's first order, at the head while the route runs, holds one.
         const UnitCommand& head = unit.command_queue().front();
-        if (head.type == CommandType::Ferry && head.beacon_id != 0) held.push_back(head.beacon_id);
+        if (head.type == CommandType::Ferry && head.beacon_id) {
+            held.push_back(head.beacon_id);
+        }
     });
-    std::vector<u32> gone;
-    for (const u32 id : ferry_beacons_)
+    std::vector<EntityId> gone;
+    for (const EntityId id : ferry_beacons_) {
         if (std::find(held.begin(), held.end(), id) == held.end()) gone.push_back(id);
+    }
     if (gone.empty()) return;
     ferry_beacons_.erase(std::remove_if(ferry_beacons_.begin(), ferry_beacons_.end(),
-                                        [&](u32 id) {
+                                        [&](EntityId id) {
                                             return std::find(gone.begin(), gone.end(), id) !=
                                                    gone.end();
                                         }),
                          ferry_beacons_.end());
-    for (const u32 id : gone) {
+    for (const EntityId id : gone) {
         Entity* beacon = entity_registry_.find(id);
         if (!beacon || beacon->destroyed() || beacon->lua_table_ref() < 0) continue;
         const int top = lua_gettop(L_);
@@ -2211,7 +2215,7 @@ void SimState::request_economy_events(size_t index) {
     // Each event asks its unit's army for a tick's cost; one whose unit is
     // gone is cancelled.
     economy_events_.for_each([&](EconomyEvent& evt) {
-        if (!evt.active() || evt.unit_id() == 0) {
+        if (!evt.active() || !evt.unit_id()) {
             return;
         }
         const Entity* unit = entity_registry_.find(evt.unit_id());
@@ -2229,7 +2233,7 @@ void SimState::request_economy_events(size_t index) {
 void SimState::step_economy_events(Unit& unit) {
     const auto first = std::lower_bound(
         stepping_events_.begin(), stepping_events_.end(), unit.entity_id(),
-        [](const std::pair<u32, EconomyEvent*>& p, u32 id) { return p.first < id; });
+        [](const std::pair<EntityId, EconomyEvent*>& p, EntityId id) { return p.first < id; });
     for (auto it = first; it != stepping_events_.end() && it->first == unit.entity_id(); ++it) {
         EconomyEvent& evt = *it->second;
         if (!evt.active()) {
@@ -2272,7 +2276,7 @@ void SimState::step_economy_events(Unit& unit) {
 void SimState::tick_economy_events() {
     // An event with no unit runs on time alone.
     economy_events_.for_each([&](EconomyEvent& evt) {
-        if (evt.unit_id() == 0) {
+        if (!evt.unit_id()) {
             evt.step();
         }
     });
@@ -2306,14 +2310,14 @@ SimContext SimState::sim_context() {
 
 void SimState::tick_armies() {
     PROFILE_ZONE("Sim::armies");
-    std::vector<std::vector<u32>> by_army(armies_.size() + 1);
+    std::vector<std::vector<EntityId>> by_army(armies_.size() + 1);
     entity_registry_.for_each_unit([&](Entity& e) {
         const i32 army = e.army();
         const bool listed = army >= 0 && static_cast<size_t>(army) < armies_.size();
         by_army[listed ? static_cast<size_t>(army) : armies_.size()].push_back(e.entity_id());
     });
     for (size_t index = 0; index < by_army.size(); ++index) {
-        const std::vector<u32>& units = by_army[index];
+        const std::vector<EntityId>& units = by_army[index];
         if (index < armies_.size()) {
             tick_army_economy(index);
         }
@@ -2322,7 +2326,7 @@ void SimState::tick_armies() {
             steer_units(*this, units);
         }
         SimContext ctx = sim_context();
-        for (const u32 id : units) {
+        for (const EntityId id : units) {
             Entity* e = entity_registry_.find(id);
             if (e && !e->destroyed() && e->is_unit() &&
                 !static_cast<const Unit*>(e)->weapons().empty()) {
@@ -2336,15 +2340,14 @@ void SimState::tick_armies() {
     }
 }
 
-void SimState::navigate_units(const std::vector<u32>& ids) {
-    for (const u32 id : ids) {
+void SimState::navigate_units(const std::vector<EntityId>& ids) {
+    for (const EntityId id : ids) {
         Entity* e = entity_registry_.find(id);
         if (!e || e->destroyed() || !e->is_unit()) {
             continue;
         }
         auto& unit = *static_cast<Unit*>(e);
-        if (unit.is_dying() || unit.is_being_built() || unit.is_air_unit() ||
-            unit.transport_id() != 0) {
+        if (unit.is_dying() || unit.is_being_built() || unit.is_air_unit() || unit.transport_id()) {
             continue;
         }
         unit.navigator().navigate(unit);
@@ -2354,8 +2357,8 @@ void SimState::navigate_units(const std::vector<u32>& ids) {
 void SimState::tick_unit_orders() {
     PROFILE_ZONE("Sim::orders");
     SimContext ctx = sim_context();
-    std::vector<u32> ids;
-    std::unordered_set<u32> done; // looked up only
+    std::vector<EntityId> ids;
+    std::unordered_set<EntityId> done; // looked up only
     // CTaskStage::UserFrame runs its list to the end: a unit made during the stage runs in it too.
     while (true) {
         ids.clear();
@@ -2367,7 +2370,7 @@ void SimState::tick_unit_orders() {
         if (ids.empty()) {
             break;
         }
-        for (const u32 id : ids) {
+        for (const EntityId id : ids) {
             Entity* e = entity_registry_.find(id);
             if (e && !e->destroyed() && e->is_unit()) {
                 auto* unit = static_cast<Unit*>(e);
@@ -2386,7 +2389,7 @@ void SimState::update_entities() {
 
     stepping_events_.clear();
     economy_events_.for_each([&](EconomyEvent& evt) {
-        if (evt.active() && evt.unit_id() != 0) {
+        if (evt.active() && evt.unit_id()) {
             stepping_events_.emplace_back(evt.unit_id(), &evt);
         }
     });
@@ -2399,13 +2402,13 @@ void SimState::update_entities() {
     }
 
     followed_.clear();
-    std::vector<u32>& walk = entity_registry_.walk();
-    std::vector<u32> walked;
+    std::vector<EntityId>& walk = entity_registry_.walk();
+    std::vector<EntityId> walked;
     walked.reserve(walk.size());
-    std::unordered_map<u32, size_t> put_back;
+    std::unordered_map<EntityId, size_t> put_back;
     size_t last_step = 0;
     for (size_t i = 0; i < walk.size(); ++i) {
-        const u32 id = walk[i];
+        const EntityId id = walk[i];
         Entity* e = entity_registry_.find(id);
         if (!e || e->walk() != Entity::Walk::Stepping) {
             continue;
@@ -2466,8 +2469,9 @@ void SimState::separate_ground_units(bool submerged_only) {
         auto& u = static_cast<Unit&>(e);
         u.set_jostled(false);
         if (u.destroyed() || u.is_dying() || u.is_air_unit() || u.max_speed() <= 0 ||
-            u.is_being_built() || u.transport_id() != 0 || u.parent_entity_id() != 0)
+            u.is_being_built() || u.transport_id() || u.parent_entity_id()) {
             return;
+        }
         if (submerged_only && u.layer() != "Sub") return;
         const f32 r = u.separation_radius();
         if (r <= 0) return;
@@ -2643,13 +2647,17 @@ void SimState::feed_influence_map() {
 
     // A dead structure's entry goes once the army sees where it stood, or
     // it was an ally's; a mobile unit's fades out instead.
-    std::vector<u32> gone;
+    std::vector<EntityId> gone;
     map->for_each_entry([&](const InfluenceMap::EntryView& v) {
-        if (v.mobile || (v.id & kFakeBlipBit) != 0 || alive(entity_registry_.find(v.id))) return;
+        if (v.mobile || is_fake_blip(v.id) || alive(entity_registry_.find(v.id))) {
+            return;
+        }
         if (is_ally(owner, v.source_army) || (recon_at(v.position, a) & kReconLOS) != 0)
             gone.push_back(v.id);
     });
-    for (const u32 id : gone) map->remove(id);
+    for (const EntityId id : gone) {
+        map->remove(id);
+    }
 }
 
 void SimState::update_influence_maps() {
@@ -2661,13 +2669,13 @@ void SimState::update_influence_maps() {
         // The fakes the army holds now: their jammer's layer, never detailed
         // (one in sight or omni is a known fake), and whether it knows them
         // fake. One it holds no longer only fades, as a gone blip's entry.
-        std::map<u32, InfluenceMap::UnitState> fakes;
+        std::map<EntityId, InfluenceMap::UnitState> fakes;
         for (const HeldFake& f : held_fakes(owner))
             fakes[fake_blip_id(f.jammer, f.index)] = {threat_layer_of(*f.unit), false,
                                                       f.known_fake};
         map->update([&](i32 army) { return army == owner || is_ally(owner, army); },
-                    [&](u32 id) -> std::optional<InfluenceMap::UnitState> {
-                        if ((id & kFakeBlipBit) != 0) {
+                    [&](EntityId id) -> std::optional<InfluenceMap::UnitState> {
+                        if (is_fake_blip(id)) {
                             const auto fake = fakes.find(id);
                             if (fake == fakes.end()) return std::nullopt;
                             return fake->second;
@@ -2751,7 +2759,7 @@ void SimState::sync_intel() {
     // An entity's handles, as Moho's CIntel keeps them up to date: `wanted`
     // is each source's switch and radius.
     using Wanted = std::array<std::pair<bool, u32>, kIntelSources>;
-    const auto track = [&](u32 id, i32 army, const Vector3& pos, const Wanted& wanted) {
+    const auto track = [&](EntityId id, i32 army, const Vector3& pos, const Wanted& wanted) {
         auto [it, fresh] = painted_intel_.try_emplace(id);
         PaintedIntel& rec = it->second;
         if (!fresh && rec.army != army) { // its intel given to another army
@@ -3007,7 +3015,7 @@ void SimState::refresh_blips() {
 }
 
 void SimState::forget_gone(u32 army) {
-    const auto gone = [&](u32 id) {
+    const auto gone = [&](EntityId id) {
         const Entity* e = entity_registry_.find(id);
         return !e || e->destroyed();
     };
@@ -3046,8 +3054,8 @@ void SimState::recon_tick(u32 army) {
     forget_gone(army);
     const u32 sharers = intel_sharers(army);
     const u32 bit = 1u << army;
-    const std::vector<u32> ids = units_by_army();
-    const auto fire = [&](u32 id, const EntityVisSnapshot& was, const EntityVisSnapshot& now) {
+    const std::vector<EntityId> ids = units_by_army();
+    const auto fire = [&](EntityId id, const EntityVisSnapshot& was, const EntityVisSnapshot& now) {
         if (was.vision != now.vision) {
             fire_on_intel_change(id, army, "LOSNow", now.vision);
         }
@@ -3062,12 +3070,12 @@ void SimState::recon_tick(u32 army) {
         }
     };
     struct Fresh {
-        u32 id;
+        EntityId id{};
         EntityVisSnapshot now;
     };
     std::vector<Fresh> fresh;
-    std::set<u32> held;
-    for (const u32 id : ids) {
+    std::set<EntityId> held;
+    for (const EntityId id : ids) {
         const Entity* e = entity_registry_.find(id);
         if (!e || e->destroyed()) {
             continue;
@@ -3139,8 +3147,8 @@ Vector3 SimState::jam_offset(const Unit& u) {
 }
 
 // UpdateBlips keeps a jammer's fakes only where its army held the jammer's blip before this tick.
-std::vector<u32> SimState::units_by_army() const {
-    std::vector<std::pair<i32, u32>> order;
+std::vector<EntityId> SimState::units_by_army() const {
+    std::vector<std::pair<i32, EntityId>> order;
     order.reserve(entity_registry_.count());
     entity_registry_.for_each_unit([&](Entity& e) {
         if (!e.destroyed()) {
@@ -3148,7 +3156,7 @@ std::vector<u32> SimState::units_by_army() const {
         }
     });
     std::sort(order.begin(), order.end());
-    std::vector<u32> ids;
+    std::vector<EntityId> ids;
     ids.reserve(order.size());
     for (const auto& [owner, id] : order) {
         ids.push_back(id);
@@ -3156,9 +3164,9 @@ std::vector<u32> SimState::units_by_army() const {
     return ids;
 }
 
-void SimState::update_jam_blips(u32 army, const std::set<u32>& held) {
+void SimState::update_jam_blips(u32 army, const std::set<EntityId>& held) {
     std::set<u64> kept;
-    for (const u32 id : units_by_army()) {
+    for (const EntityId id : units_by_army()) {
         Entity* found = entity_registry_.find(id);
         if (!found || found->destroyed()) {
             continue;
@@ -3244,7 +3252,7 @@ std::vector<SimState::HeldFake> SimState::held_fakes(i32 viewer) const {
     for (const auto& [key, offsets] : jam_offsets_) {
         const auto army = static_cast<u32>(key & 0xFF);
         if (viewer >= 0 && army != static_cast<u32>(viewer)) continue;
-        const Entity* e = entity_registry_.find(static_cast<u32>(key >> 8));
+        const Entity* e = entity_registry_.find(EntityId(key >> 8));
         if (!e || e->destroyed() || !e->is_unit()) continue;
         const auto& u = static_cast<const Unit&>(*e);
         for (size_t i = 0; i < offsets.size(); ++i) {
@@ -3294,8 +3302,8 @@ void SimState::brain_hears(i32 army, const char* method) {
     lua_pop(L_, 1);
 }
 
-void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,
-                                    const char* recon_type, bool val) {
+void SimState::fire_on_intel_change(EntityId entity_id, u32 army_idx, const char* recon_type,
+                                    bool val) {
     auto* brain = get_army(static_cast<i32>(army_idx));
     if (!brain || brain->lua_table_ref() < 0) return;
 
@@ -3334,16 +3342,16 @@ void SimState::flush_intel_in_rect(i32 x0, i32 z0, i32 x1, i32 z1) {
                p.z >= static_cast<f32>(z0) && p.z <= static_cast<f32>(z1);
     };
     IntelFlushEvent event{x0, z0, x1, z1, {}};
-    std::vector<u32> ids;
+    std::vector<EntityId> ids;
     ids.reserve(blip_cache_.size());
     for (const auto& entry : blip_cache_) ids.push_back(entry.first);
     std::sort(ids.begin(), ids.end());
-    std::map<u32, u32> forgotten; // id -> armies
+    std::map<EntityId, u32> forgotten; // id -> armies
     const u32 n = static_cast<u32>(std::min(army_count(), static_cast<size_t>(MAX_VIS_ARMIES)));
     // Army by army, as Moho flushes each army's recon in turn. Looked up
     // afresh each time: OnIntelChange runs scripts.
     for (u32 a = 0; a < n; ++a) {
-        for (const u32 id : ids) {
+        for (const EntityId id : ids) {
             const auto it = blip_cache_.find(id);
             if (it == blip_cache_.end()) continue;
             BlipSnapshot& snap = it->second[a];
@@ -3373,7 +3381,7 @@ void SimState::flush_intel_in_rect(i32 x0, i32 z0, i32 x1, i32 z1) {
     intel_flush_events_.push_back(std::move(event));
 }
 
-void SimState::fire_on_detected_by(u32 entity_id, u32 army_idx) {
+void SimState::fire_on_detected_by(EntityId entity_id, u32 army_idx) {
     auto* entity = entity_registry_.find(entity_id);
     if (!L_ || !entity || entity->destroyed() || entity->lua_table_ref() < 0) return;
     lua_rawgeti(L_, LUA_REGISTRYINDEX, entity->lua_table_ref());
@@ -3459,13 +3467,13 @@ void push_blip_store(lua_State* L) {
 
 } // namespace
 
-void SimState::push_blip(lua_State* L, u32 entity_id, i32 army) {
+void SimState::push_blip(lua_State* L, EntityId entity_id, i32 army) {
     const auto make = [&] {
         push_blip_class(L);
         push_new_script_object(L, "Blip");
         const int blip = lua_gettop(L);
         lua_pushstring(L, "_c_entity_id");
-        lua_pushnumber(L, static_cast<lua_Number>(entity_id));
+        push_entity_key(L, entity_id);
         lua_rawset(L, blip);
         lua_pushstring(L, "_c_req_army");
         lua_pushnumber(L, static_cast<lua_Number>(army));
@@ -3477,12 +3485,14 @@ void SimState::push_blip(lua_State* L, u32 entity_id, i32 army) {
     }
     push_blip_store(L);
     const int store = lua_gettop(L);
-    lua_rawgeti(L, store, static_cast<int>(entity_id));
+    push_entity_key(L, entity_id);
+    lua_rawget(L, store);
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
         lua_newtable(L);
-        lua_pushvalue(L, -1);
-        lua_rawseti(L, store, static_cast<int>(entity_id));
+        push_entity_key(L, entity_id);
+        lua_pushvalue(L, -2);
+        lua_rawset(L, store);
     }
     const int per_entity = lua_gettop(L);
     lua_rawgeti(L, per_entity, army + 1);
@@ -3501,8 +3511,8 @@ void SimState::destroy_gone_blips(u32 army) {
     if (!L_ || blip_objects_.empty()) {
         return;
     }
-    std::vector<u32> gone;
-    for (const u32 id : blip_objects_) {
+    std::vector<EntityId> gone;
+    for (const EntityId id : blip_objects_) {
         const Entity* e = entity_registry_.find(id);
         if (!e || e->destroyed()) {
             gone.push_back(id);
@@ -3514,8 +3524,9 @@ void SimState::destroy_gone_blips(u32 army) {
     const u32 recon_armies = intel_grids_ ? intel_grids_->armies() : 0;
     push_blip_store(L_);
     const int store = lua_gettop(L_);
-    for (const u32 id : gone) {
-        lua_rawgeti(L_, store, static_cast<int>(id));
+    for (const EntityId id : gone) {
+        push_entity_key(L_, id);
+        lua_rawget(L_, store);
         const int per_entity = lua_gettop(L_);
         if (lua_istable(L_, per_entity)) {
             for (u32 a = 0; a < MAX_VIS_ARMIES; ++a) {
@@ -3549,8 +3560,9 @@ void SimState::destroy_gone_blips(u32 army) {
             }
         }
         blip_objects_.erase(id);
+        push_entity_key(L_, id);
         lua_pushnil(L_);
-        lua_rawseti(L_, store, static_cast<int>(id));
+        lua_rawset(L_, store);
         lua_settop(L_, store);
     }
     lua_pop(L_, 1);
@@ -3672,7 +3684,7 @@ void SimState::dispose_defeated_army(i32 army) {
     // PartialShare transfers only structures + engineers; the rest are destroyed.
     const bool partial = share_mode_ == ShareMode::PartialShare;
     bool transferred_any = false;
-    std::vector<u32> to_give, to_kill;
+    std::vector<EntityId> to_give, to_kill;
     entity_registry_.for_each_unit([&](Entity& e) {
         if (e.army() != army || e.destroyed() || !e.is_unit()) return;
         auto* u = static_cast<Unit*>(&e);
@@ -3685,7 +3697,7 @@ void SimState::dispose_defeated_army(i32 army) {
     });
     // Given and killed after the walk: a transfer makes units, a death runs
     // scripts, which may kill others.
-    for (const u32 id : to_give) {
+    for (const EntityId id : to_give) {
         Entity* e = entity_registry_.find(id);
         if (e && !e->destroyed() && e->is_unit() && e->army() == army) {
             if (give_unit(static_cast<Unit&>(*e), recipient)) {
@@ -3695,7 +3707,7 @@ void SimState::dispose_defeated_army(i32 army) {
             }
         }
     }
-    for (const u32 id : to_kill) {
+    for (const EntityId id : to_kill) {
         Entity* e = entity_registry_.find(id);
         if (e && !e->destroyed() && e->is_unit()) kill_unit(static_cast<Unit&>(*e));
     }

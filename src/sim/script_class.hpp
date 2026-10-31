@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 #include <string>
 #include <string_view>
@@ -8,6 +9,8 @@
 struct lua_State;
 
 namespace osc::sim {
+
+class EntityRegistry;
 
 /// The script module beside a blueprint file: "<dir>/<id>_unit.bp" ->
 /// "<dir>/<id>_script.lua" when `source` ends in `bp_suffix` ("_unit.bp",
@@ -39,10 +42,13 @@ void push_new_script_object(lua_State* L, const char* kind);
 /// command queues' targetId; faf-re). Scripts key tables by it -- retail's
 /// SimUnitEnhancements, FAF's UnitData -- and look those up with ids from
 /// other sources, so a number from one and a string from another miss.
-void push_entity_id(lua_State* L, u32 id);
-/// The entity id a script hands back (a string or a number, as push_entity_id gives it) at
-/// `idx`, as the engine numbers it; 0 when there is none. Scripts see Moho's ids, one below
-/// the engine's, which keeps 0 for no entity.
-u32 to_entity_id(lua_State* L, int idx);
+void push_entity_id(lua_State* L, EntityId id);
+/// The live entity a script's id (a string or a number, as push_entity_id gives it) at `idx`
+/// names; none when there is none.
+EntityId to_entity_id(lua_State* L, int idx, const EntityRegistry& registry);
+
+/// An entity's key in a hidden field of a script's table (`_c_entity_id`), and back.
+void push_entity_key(lua_State* L, EntityId id);
+EntityId to_entity_key(lua_State* L, int idx);
 
 } // namespace osc::sim

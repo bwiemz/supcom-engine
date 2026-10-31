@@ -74,23 +74,34 @@ void test_strategic_icons(TestContext& ctx) {
     // ARMY_1's: a tank (ground), an air scout (air), a support commander
     // (high-priority), a power generator being built, a tank to select, a
     // tank to stun, and a power generator as a radar.
-    const u32 tank = spawn_unit(ctx, "__osc_ic_tank", "uel0201", "ARMY_1", {sx, sz});
-    const u32 scout = spawn_unit(ctx, "__osc_ic_scout", "uea0101", "ARMY_1", {sx + 24, sz});
-    const u32 sacu = spawn_unit(ctx, "__osc_ic_sacu", "uel0301", "ARMY_1", {sx - 24, sz});
-    const u32 unbuilt = spawn_unit(ctx, "__osc_ic_unbuilt", "ueb1101", "ARMY_1", {sx, sz + 24});
-    const u32 picked = spawn_unit(ctx, "__osc_ic_picked", "uel0201", "ARMY_1", {sx, sz - 24});
-    const u32 dazed = spawn_unit(ctx, "__osc_ic_dazed", "uel0201", "ARMY_1", {sx + 24, sz - 24});
-    const u32 dying = spawn_unit(ctx, "__osc_ic_dying", "uel0201", "ARMY_1", {sx - 24, sz - 24});
-    const u32 off = spawn_unit(ctx, "__osc_ic_off", "uel0201", "ARMY_1", {sx + 24, sz + 24});
-    const u32 paused = spawn_unit(ctx, "__osc_ic_paused", "uel0105", "ARMY_1", {sx - 24, sz + 24});
+    const sim::EntityId tank = spawn_unit(ctx, "__osc_ic_tank", "uel0201", "ARMY_1", {sx, sz});
+    const sim::EntityId scout =
+        spawn_unit(ctx, "__osc_ic_scout", "uea0101", "ARMY_1", {sx + 24, sz});
+    const sim::EntityId sacu = spawn_unit(ctx, "__osc_ic_sacu", "uel0301", "ARMY_1", {sx - 24, sz});
+    const sim::EntityId unbuilt =
+        spawn_unit(ctx, "__osc_ic_unbuilt", "ueb1101", "ARMY_1", {sx, sz + 24});
+    const sim::EntityId picked =
+        spawn_unit(ctx, "__osc_ic_picked", "uel0201", "ARMY_1", {sx, sz - 24});
+    const sim::EntityId dazed =
+        spawn_unit(ctx, "__osc_ic_dazed", "uel0201", "ARMY_1", {sx + 24, sz - 24});
+    const sim::EntityId dying =
+        spawn_unit(ctx, "__osc_ic_dying", "uel0201", "ARMY_1", {sx - 24, sz - 24});
+    const sim::EntityId off =
+        spawn_unit(ctx, "__osc_ic_off", "uel0201", "ARMY_1", {sx + 24, sz + 24});
+    const sim::EntityId paused =
+        spawn_unit(ctx, "__osc_ic_paused", "uel0105", "ARMY_1", {sx - 24, sz + 24});
     (void)spawn_unit(ctx, "__osc_ic_radar", "ueb1101", "ARMY_1", {sx, sz + 60});
     // ARMY_2's, 24 beyond the radar (it reaches 60): an engineer, a power
     // generator, an air scout (none of them ever seen), and a tank to be
     // seen once.
-    const u32 e_eng = spawn_unit(ctx, "__osc_ic_eeng", "uel0105", "ARMY_2", {sx - 20, sz + 84});
-    const u32 e_gen = spawn_unit(ctx, "__osc_ic_egen", "ueb1101", "ARMY_2", {sx, sz + 84});
-    const u32 e_air = spawn_unit(ctx, "__osc_ic_eair", "uea0101", "ARMY_2", {sx + 20, sz + 84});
-    const u32 e_tank = spawn_unit(ctx, "__osc_ic_etank", "uel0201", "ARMY_2", {sx + 40, sz + 84});
+    const sim::EntityId e_eng =
+        spawn_unit(ctx, "__osc_ic_eeng", "uel0105", "ARMY_2", {sx - 20, sz + 84});
+    const sim::EntityId e_gen =
+        spawn_unit(ctx, "__osc_ic_egen", "ueb1101", "ARMY_2", {sx, sz + 84});
+    const sim::EntityId e_air =
+        spawn_unit(ctx, "__osc_ic_eair", "uea0101", "ARMY_2", {sx + 20, sz + 84});
+    const sim::EntityId e_tank =
+        spawn_unit(ctx, "__osc_ic_etank", "uel0201", "ARMY_2", {sx + 40, sz + 84});
     run_lua(ctx, "for _, u in {__osc_ic_tank, __osc_ic_scout, __osc_ic_sacu, __osc_ic_unbuilt,\n"
                  "              __osc_ic_picked, __osc_ic_dazed, __osc_ic_dying, __osc_ic_radar,\n"
                  "              __osc_ic_off, __osc_ic_paused} do\n"
@@ -123,7 +134,7 @@ void test_strategic_icons(TestContext& ctx) {
     // which the harness's views have
     r.camera().set_free(false);
 
-    const std::unordered_set<u32> selection = {picked};
+    const std::unordered_set<sim::EntityId> selection = {picked};
     std::vector<Spot> scry;
     sim::WorldHistory seen;
     const auto next = [&](bool recon = true) {
@@ -140,7 +151,7 @@ void test_strategic_icons(TestContext& ctx) {
         return drawn(r);
     };
     // The icons at unit `id`, in draw order (its icon, then any badge).
-    const auto icons_at = [&](const Frame& f, u32 id) {
+    const auto icons_at = [&](const Frame& f, sim::EntityId id) {
         std::vector<size_t> found;
         const sim::EntityRecord* e = seen.cur().find(id);
         const auto at = e ? screen_of(r, e->position) : std::nullopt;
@@ -152,7 +163,7 @@ void test_strategic_icons(TestContext& ctx) {
         return found;
     };
     // Whether unit `id`'s icon is `texture`, at its size, tinted (r, g, b).
-    const auto shows = [&](const Frame& f, u32 id, const std::string& texture,
+    const auto shows = [&](const Frame& f, sim::EntityId id, const std::string& texture,
                            const std::array<f32, 3>& tint) {
         const auto at = icons_at(f, id);
         if (at.empty()) return false;
@@ -193,7 +204,7 @@ void test_strategic_icons(TestContext& ctx) {
 
     // Test 4: ground, air, high-priority, selected.
     {
-        const auto first = [&](u32 id) {
+        const auto first = [&](sim::EntityId id) {
             const auto at = icons_at(f, id);
             return at.empty() ? f.icons.size() : at.front();
         };
@@ -216,7 +227,7 @@ void test_strategic_icons(TestContext& ctx) {
                             at.size()));
     }
     const std::string pause_badge = dir + "pause_rest.dds";
-    const auto badged = [&](const Frame& frame, u32 id) {
+    const auto badged = [&](const Frame& frame, sim::EntityId id) {
         const auto at = icons_at(frame, id);
         return at.size() == 2 && at[1] == at[0] + 1 && frame.icons[at[1]].texture == pause_badge &&
                same_colour(frame.icons[at[1]], 1.0f, 1.0f, 1.0f);
@@ -290,7 +301,7 @@ void test_strategic_icons(TestContext& ctx) {
     t.check(icons_at(f, tank).empty() && icons_at(f, scout).empty() && !icons_at(f, e_eng).empty(),
             fmt::format("Test 9: zoomed in, the tank has no icon ({}), the blip has ({})",
                         icons_at(f, tank).size(), icons_at(f, e_eng).size()));
-    const auto badge_alone = [&](const Frame& frame, u32 id) {
+    const auto badge_alone = [&](const Frame& frame, sim::EntityId id) {
         const auto at = icons_at(frame, id);
         return at.size() == 1 && frame.icons[at[0]].texture == pause_badge;
     };
@@ -334,7 +345,7 @@ void test_strategic_icons(TestContext& ctx) {
     const renderer::MapArea area =
         renderer::fit_map_area(mm_margin, static_cast<f32>(r.height()) - mm_size - mm_margin,
                                mm_size, mm_size, map_w, map_h);
-    const auto minimap_icons_at = [&](u32 id) {
+    const auto minimap_icons_at = [&](sim::EntityId id) {
         std::vector<const renderer::UIQuad*> found;
         const sim::EntityRecord* e = seen.cur().find(id);
         if (!e) {
@@ -351,7 +362,7 @@ void test_strategic_icons(TestContext& ctx) {
         }
         return found;
     };
-    const auto on_minimap = [&](u32 id, const std::string& texture,
+    const auto on_minimap = [&](sim::EntityId id, const std::string& texture,
                                 const std::array<f32, 3>& tint) {
         const auto at = minimap_icons_at(id);
         const renderer::GPUTexture* tex = r.texture_cache().get(texture);

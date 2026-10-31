@@ -3,6 +3,7 @@
 
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -17,6 +18,7 @@ extern "C" {
 #include <cmath>
 #include <memory>
 #include <string>
+#include <vector>
 
 using osc::sim::CommandType;
 using osc::sim::Prop;
@@ -31,7 +33,7 @@ struct WreckSite {
     lua_State* L = lua_open();
     SimState sim{L, nullptr};
     Unit* engineer = nullptr;
-    osc::u32 built_id = 0;
+    osc::sim::EntityId built_id{};
 
     explicit WreckSite(const char* extra_blueprints = "") {
         luaopen_base(L);
@@ -88,7 +90,7 @@ struct WreckSite {
         self->sim.entity_registry().register_entity(std::move(u));
         self->bind(*raw, nullptr);
         self->built_id = raw->entity_id();
-        lua_pushnumber(L, raw->entity_id());
+        osc::sim::push_entity_key(L, raw->entity_id());
         lua_rawgeti(L, LUA_REGISTRYINDEX, raw->lua_table_ref());
         return 2;
     }
@@ -105,10 +107,11 @@ struct WreckSite {
         e.set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
     }
 
-    osc::u32 prop(osc::f32 x, osc::f32 z, const char* associated, bool reclaimable,
-                  bool obstructs = false) {
+    osc::sim::EntityId prop(osc::f32 x, osc::f32 z, const char* associated, bool reclaimable,
+                            bool obstructs = false) {
         auto p = std::make_unique<Prop>();
         p->set_position({x, 0.0f, z});
+        p->set_collision_shape(box(0.5f, 0.5f));
         p->reclaimable_category = reclaimable;
         p->obstructs_building = obstructs;
         Prop* raw = p.get();
@@ -122,6 +125,14 @@ struct WreckSite {
             lua_pop(L, 1);
         }
         return raw->entity_id();
+    }
+
+    static osc::sim::CollisionShape box(osc::f32 half_x, osc::f32 half_z) {
+        return {osc::sim::CollisionShapeType::BOX, 0.0f, 0.5f, 0.0f, half_x, 0.5f, half_z};
+    }
+
+    static osc::sim::CollisionShape sphere(osc::f32 radius) {
+        return {osc::sim::CollisionShapeType::SPHERE, 0.0f, 0.0f, 0.0f, radius, 0.0f, 0.0f};
     }
 
     void build(const char* bp_id) {
@@ -140,7 +151,7 @@ struct WreckSite {
     }
 
     Unit* built() {
-        auto* e = built_id != 0 ? sim.entity_registry().find(built_id) : nullptr;
+        auto* e = built_id ? sim.entity_registry().find(built_id) : nullptr;
         return e ? static_cast<Unit*>(e) : nullptr;
     }
 };
@@ -150,7 +161,7 @@ struct WreckSite {
 TEST_CASE("A structure built on its own wreck starts half built, and the wreck goes",
           "[build][wreck]") {
     WreckSite w;
-    const osc::u32 wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
+    const osc::sim::EntityId wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
     w.build("ueb1103");
     w.start();
     REQUIRE(w.built());
@@ -160,7 +171,7 @@ TEST_CASE("A structure built on its own wreck starts half built, and the wreck g
 
 TEST_CASE("A wreck of another structure is reclaimed before the build starts", "[build][wreck]") {
     WreckSite w;
-    const osc::u32 wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
+    const osc::sim::EntityId wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
     w.build("uab1103");
     w.sim.tick();
     CHECK_FALSE(w.built());
@@ -177,17 +188,17 @@ TEST_CASE("A build stopped while it clears its site stops reclaiming", "[build][
     w.prop(11.0f, 11.0f, "ueb1103", true);
     w.build("uab1103");
     w.sim.tick();
-    REQUIRE(w.engineer->reclaim_target_id() != 0);
+    REQUIRE(w.engineer->reclaim_target_id());
     w.engineer->clear_commands();
     w.sim.tick();
-    CHECK(w.engineer->reclaim_target_id() == 0);
+    CHECK_FALSE(w.engineer->reclaim_target_id());
 }
 
 TEST_CASE("With OBSTRUCTSBUILDING in the data, only such props are cleared first",
           "[build][wreck]") {
     WreckSite w(
         "__blueprints.wreck = { BlueprintId = 'wreck', Categories = { 'OBSTRUCTSBUILDING' } }");
-    const osc::u32 tree = w.prop(10.5f, 10.5f, nullptr, true);
+    const osc::sim::EntityId tree = w.prop(10.5f, 10.5f, nullptr, true);
     w.build("uab1103");
     w.start();
     REQUIRE(w.built());
@@ -196,7 +207,7 @@ TEST_CASE("With OBSTRUCTSBUILDING in the data, only such props are cleared first
 
 TEST_CASE("A wreck worth nothing is reclaimed off the site all the same", "[build][wreck]") {
     WreckSite w("Engineer.GetReclaimCosts = function(self, target) return 1, 0, 0 end");
-    const osc::u32 wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
+    const osc::sim::EntityId wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
     w.build("uab1103");
     tick_until([&] { w.sim.tick(); }, "the build starts", 20, [&] { return w.built() != nullptr; });
     CHECK(w.sim.entity_registry().find(wreck) == nullptr);
@@ -205,7 +216,7 @@ TEST_CASE("A wreck worth nothing is reclaimed off the site all the same", "[buil
 TEST_CASE("A paused engineer clears its site, then makes its frame only on a retry after unpause",
           "[build][wreck][pause]") {
     WreckSite w;
-    const osc::u32 wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
+    const osc::sim::EntityId wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
     w.engineer->set_paused(true);
     w.build("uab1103");
     tick_until([&] { w.sim.tick(); }, "the paused engineer reclaims the wreck", 40,
@@ -298,7 +309,7 @@ TEST_CASE("A mobile build whose orders are cleared is let go at once, its frame 
     REQUIRE(w.engineer->build_target_id() == w.built_id);
     osc::sim::SimContext ctx = w.sim.sim_context();
     w.engineer->clear_commands(ctx);
-    CHECK(w.engineer->build_target_id() == 0);
+    CHECK_FALSE(w.engineer->build_target_id());
     CHECK_FALSE(w.engineer->economy().consumption_active);
     CHECK(heard(w.L) == "start MobileBuild stop MobileBuild failed ");
     REQUIRE(w.built());
@@ -333,7 +344,7 @@ TEST_CASE("A build whose unit is gone stops with nil for it, and fails as its ta
     w.built()->mark_destroyed();
     w.sim.entity_registry().unregister_entity(w.built_id);
     w.sim.tick();
-    CHECK(w.engineer->build_target_id() == 0);
+    CHECK_FALSE(w.engineer->build_target_id());
     CHECK(heard(w.L) == then);
 }
 
@@ -431,6 +442,53 @@ TEST_CASE("A build callback can clear its orders without stopping the build twic
     lua_getglobal(w.L, "__failed");
     CHECK(lua_tonumber(w.L, -1) == failures);
     lua_pop(w.L, 1);
-    CHECK(w.engineer->build_target_id() == 0);
+    CHECK_FALSE(w.engineer->build_target_id());
     CHECK_FALSE(w.engineer->economy().consumption_active);
+}
+
+TEST_CASE("A prop is cleared off the site if its shape meets the footprint, wherever its centre",
+          "[build][wreck]") {
+    using osc::sim::CollisionShape;
+    struct Row {
+        const char* name;
+        osc::f32 x, z;
+        CollisionShape shape;
+        osc::f32 yaw;
+        bool cleared;
+    };
+    const std::vector<Row> rows = {
+        {"a box reaching in", 13.0f, 11.0f, WreckSite::box(1.5f, 0.5f), 0.0f, true},
+        {"a box short of it", 13.0f, 11.0f, WreckSite::box(0.5f, 0.5f), 0.0f, false},
+        {"a box turned into it", 11.0f, 13.5f, WreckSite::box(2.0f, 0.5f), 1.5707964f, true},
+        {"the same box not turned", 11.0f, 13.5f, WreckSite::box(2.0f, 0.5f), 0.0f, false},
+        {"a sphere reaching in", 13.0f, 11.0f, WreckSite::sphere(1.2f), 0.0f, true},
+        {"a sphere short of it", 13.0f, 11.0f, WreckSite::sphere(0.9f), 0.0f, false},
+    };
+    for (const auto& row : rows) {
+        DYNAMIC_SECTION(row.name) {
+            WreckSite w;
+            const auto id = w.prop(row.x, row.z, nullptr, true);
+            auto* prop = w.sim.entity_registry().find(id);
+            prop->set_collision_shape(row.shape);
+            prop->set_orientation(osc::sim::euler_to_quat(row.yaw, 0.0f, 0.0f));
+            prop->place_now();
+            w.build("uab1103");
+            w.sim.tick();
+            CHECK((w.engineer->reclaim_target_id() == id) == row.cleared);
+            tick_until([&] { w.sim.tick(); }, "the build starts", 40,
+                       [&] { return w.built() != nullptr; });
+            CHECK((w.sim.entity_registry().find(id) == nullptr) == row.cleared);
+        }
+    }
+}
+
+TEST_CASE("The site's props are cleared nearest the builder first", "[build][wreck]") {
+    WreckSite w;
+    const auto far = w.prop(11.0f, 12.3f, nullptr, true);
+    const auto near = w.prop(11.0f, 9.7f, nullptr, true);
+    w.build("uab1103");
+    w.sim.tick();
+    CHECK(w.engineer->reclaim_target_id() == near);
+    tick_until([&] { w.sim.tick(); }, "the engineer turns to the far prop", 40,
+               [&] { return w.engineer->reclaim_target_id() == far; });
 }

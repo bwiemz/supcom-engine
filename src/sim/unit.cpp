@@ -15,6 +15,7 @@
 #include "sim/manipulator.hpp"
 #include "sim/occupancy.hpp"
 #include "sim/prop.hpp"
+#include "sim/script_class.hpp"
 #include "sim/script_warning.hpp"
 #include "sim/terrain_types.hpp"
 #include "sim/sim_state.hpp"
@@ -137,7 +138,7 @@ void Unit::clear_commands(SimContext& ctx) {
     if (!destroyed() && is_enhancing()) {
         cancel_enhance(ctx.L);
     }
-    if (!destroyed() && build_target_id_ != 0 && build_released_with_order_) {
+    if (!destroyed() && build_target_id_ && build_released_with_order_) {
         release_build(ctx.L, ctx.registry);
     }
     end_gone_orders(ctx);
@@ -317,7 +318,7 @@ void Unit::increase_build_count(int index, int count) {
 
 namespace {
 
-void destroy_unfinished(EntityRegistry& registry, lua_State* L, u32 target_id) {
+void destroy_unfinished(EntityRegistry& registry, lua_State* L, EntityId target_id) {
     // Through its own Destroy (OnDestroy and the rest of its script lifecycle).
     auto* target = registry.find(target_id);
     if (!target || target->destroyed()) return;
@@ -382,7 +383,7 @@ void tell_build_failed(const Unit& builder, lua_State* L, int frame_ref, const c
     }
 }
 
-int lua_ref_of(const EntityRegistry& registry, u32 id) {
+int lua_ref_of(const EntityRegistry& registry, EntityId id) {
     const Entity* e = registry.find(id);
     return e && !e->destroyed() ? e->lua_table_ref() : -1;
 }
@@ -390,8 +391,8 @@ int lua_ref_of(const EntityRegistry& registry, u32 id) {
 } // namespace
 
 void Unit::cancel_factory_build(EntityRegistry& registry, lua_State* L) {
-    const u32 target_id = build_target_id_;
-    if (target_id == 0) {
+    const EntityId target_id = build_target_id_;
+    if (!target_id) {
         return;
     }
     const int frame_ref = lua_ref_of(registry, target_id);
@@ -400,8 +401,8 @@ void Unit::cancel_factory_build(EntityRegistry& registry, lua_State* L) {
 }
 
 void Unit::cancel_upgrade(EntityRegistry& registry, lua_State* L) {
-    const u32 frame_id = build_target_id_;
-    if (frame_id == 0) {
+    const EntityId frame_id = build_target_id_;
+    if (!frame_id) {
         return;
     }
     const int frame_ref = lua_ref_of(registry, frame_id);
@@ -436,7 +437,7 @@ bool skirts_adjacent(const SkirtRect& a, const SkirtRect& b) {
 /// Call OnAdjacentTo(self_tbl, other_tbl, trigger_tbl) on self_tbl.
 /// Returns false if self entity was destroyed by the callback.
 bool call_on_adjacent_to(lua_State* L, int self_ref, int other_ref, int trigger_ref,
-                         u32 self_id, EntityRegistry& registry) {
+                         EntityId self_id, EntityRegistry& registry) {
     lua_rawgeti(L, LUA_REGISTRYINDEX, self_ref);
     int tbl = lua_gettop(L);
     lua_pushstring(L, "OnAdjacentTo");
@@ -473,9 +474,9 @@ void Unit::fire_adjacency_callbacks(EntityRegistry& registry, lua_State* L) {
         my_skirt.x0 - expand, my_skirt.z0 - expand,
         my_skirt.x1 + expand, my_skirt.z1 + expand);
 
-    u32 my_id = entity_id();
+    EntityId my_id = entity_id();
 
-    for (u32 cid : candidates) {
+    for (EntityId cid : candidates) {
         if (cid == my_id) continue;
         auto* ce = registry.find(cid);
         if (!ce || ce->destroyed() || !ce->is_unit()) continue;
@@ -541,20 +542,13 @@ void Unit::begin_dying() {
     economy_.dock_repair_energy = 0;
     dock_repair_asked_ = false;
     refuel_started_ = false;
-    // Killed in flight: it falls, tumbling, until it lands.
-    if (is_air_unit()) {
-        crashing_ = true;
-        crash_velocity_y_ = 0;
-        crash_spin_rate_ =
-            (static_cast<f32>(EntityRegistry::moho_id(entity_id()) % 100) / 100.0f - 0.5f) * 4.0f;
-    }
 }
 
 void Unit::kill_cleanup(lua_State* L) {
     needs_kill_cleanup_ = false;
     release_weapon_scripts(L);
     weapons_.clear();
-    auto_attack_target_ = 0;
+    auto_attack_target_ = EntityId();
     clear_commands();
     navigator_.abort_move();
 }
@@ -603,43 +597,6 @@ void Unit::update_speed_through() {
     navigator_.set_speed_through_goal(through);
 }
 
-bool Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
-    if (!dying_) {
-        return false;
-    }
-
-    if (crashing_) {
-        // Gravity acceleration
-        crash_velocity_y_ += -9.8f * dt;
-
-        // Spin and tumble
-        heading_ += crash_spin_rate_ * dt;
-        bank_angle_ += crash_spin_rate_ * 0.7f * dt;
-        pitch_ = std::clamp(pitch_ - 0.3f * dt, -1.0f, 0.3f);
-        set_orientation(euler_to_quat(heading_, pitch_, bank_angle_));
-
-        // Move forward (decaying) and down
-        auto p = pending_position();
-        f32 fwd = current_airspeed_ * 0.5f;
-        p.x += osc::dmath::sin(heading_) * fwd * dt;
-        p.z += osc::dmath::cos(heading_) * fwd * dt;
-        p.y += crash_velocity_y_ * dt;
-
-        // It lands on the ground, or on the water over it.
-        f32 ground = terrain ? terrain->get_surface_height(p.x, p.z) : 0.0f;
-        if (p.y <= ground) {
-            p.y = ground;
-            set_position(p);
-            crashing_ = false;
-            return true;
-        }
-
-        set_position(p);
-        current_airspeed_ *= (1.0f - 0.5f * dt); // decelerate forward speed
-    }
-    return false;
-}
-
 bool Unit::nav_update(f32 speed_cap) {
     nav_requested_ = true;
     course_ = {};
@@ -685,13 +642,13 @@ bool Unit::step_course(f64 dt, SimContext& ctx) {
         return nav_step(dt, ctx.terrain);
     }
     navigator_.set_ended(false);
-    if (transport_id_ != 0 || !ctx.sim) {
+    if (transport_id_ || !ctx.sim) {
         return false;
     }
     const f32 fdt = static_cast<f32>(dt);
     switch (course.kind) {
     case AirCourse::Kind::Run:
-        if (course.target_id == 0) {
+        if (!course.target_id) {
             fly_attack_run(*this, course.at, *ctx.sim, ctx.terrain, fdt);
         } else if (const Entity* target = ctx.registry.find(course.target_id);
                    target && !target->destroyed()) {
@@ -715,7 +672,7 @@ bool Unit::step_course(f64 dt, SimContext& ctx) {
 }
 
 void Unit::tick_weapons(SimContext& ctx) {
-    if (destroyed() || !in_registry() || dying_ || is_being_built() || transport_id_ != 0) {
+    if (destroyed() || !in_registry() || dying_ || is_being_built() || transport_id_) {
         return;
     }
     auto& registry = ctx.registry;
@@ -726,8 +683,8 @@ void Unit::tick_weapons(SimContext& ctx) {
         weapon->update(*this, registry, ctx.L, ctx.sim);
     }
     // Moho's CAcquireTargetTask issues its pick's attack order to this unit alone.
-    if (const u32 target_id = auto_attack_target_; target_id != 0) {
-        auto_attack_target_ = 0;
+    if (const EntityId target_id = auto_attack_target_; target_id) {
+        auto_attack_target_ = EntityId();
         const Entity* target = registry.find(target_id);
         if (ctx.sim && target && !target->destroyed() && !destroyed() && !dying_) {
             UnitCommand attack;
@@ -774,7 +731,7 @@ bool Unit::end_gone_tasks(SimContext& ctx) {
         ferry_phase_ = FerryPhase::Load;
         ferry_index_ = 0;
         ferry_leg_set_ = false;
-        ferry_for_ = 0;
+        ferry_for_ = EntityId();
     }
     if (has_unit_state("WaitForFerry") && !(head && head->type == CommandType::WaitForFerry)) {
         set_unit_state("WaitForFerry", false);
@@ -831,7 +788,7 @@ bool Unit::end_gone_tasks(SimContext& ctx) {
     // unfinished unit stays (Moho's build task ends with its command). It
     // had built on from afar, and the next build order had gone on with
     // the old one.
-    if (build_target_id_ != 0 && build_released_with_order_ &&
+    if (build_target_id_ && build_released_with_order_ &&
         !(head && head->command_id == build_command_id_)) {
         release_build(ctx.L, ctx.registry);
         if (destroyed() || !in_registry()) {
@@ -842,7 +799,7 @@ bool Unit::end_gone_tasks(SimContext& ctx) {
     if (is_reclaiming() &&
         !(head && (head->type == CommandType::Reclaim || head->type == CommandType::Guard ||
                    head->type == CommandType::Patrol || head->type == CommandType::AggressiveMove ||
-                   (head->type == CommandType::BuildMobile && head->clearing_prop_id != 0)))) {
+                   (head->type == CommandType::BuildMobile && head->clearing_prop_id)))) {
         stop_reclaiming(ctx.L, &ctx.registry);
         if (destroyed() || !in_registry()) {
             return false;
@@ -877,7 +834,7 @@ void Unit::end_gone_orders(SimContext& ctx) {
         end_script_task(ctx.L);
         return;
     }
-    if (end_gone_loading(ctx) && transport_id_ == 0) {
+    if (end_gone_loading(ctx) && !transport_id_) {
         end_gone_tasks(ctx);
     }
 }
@@ -902,7 +859,7 @@ void Unit::tick_commands(f64 dt, SimContext& ctx) {
         release_stale_slots(registry);
     }
     if (!storage_reserved_.empty()) {
-        std::erase_if(storage_reserved_, [&](u32 id) {
+        std::erase_if(storage_reserved_, [&](EntityId id) {
             const Entity* e = registry.find(id);
             const auto* u =
                 e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
@@ -910,7 +867,7 @@ void Unit::tick_commands(f64 dt, SimContext& ctx) {
         });
     }
 
-    if (transport_id_ != 0) {
+    if (transport_id_) {
         Entity* platform = registry.find(transport_id_);
         if (platform && !platform->destroyed() && platform->is_unit() &&
             static_cast<Unit*>(platform)->is_staging_platform() &&
@@ -924,7 +881,7 @@ void Unit::tick_commands(f64 dt, SimContext& ctx) {
     // carries the order out (Moho's motion target set, layer Air); so does an
     // experimental one made on the ground, with no order.
     if (can_fly() && !is_being_built() && (!command_queue_.empty() || lifts_off_) &&
-        parent_entity_id() == 0 && (layer_ == "Land" || layer_ == "Water")) {
+        !parent_entity_id() && (layer_ == "Land" || layer_ == "Water")) {
         take_off(ctx);
         if (destroyed() || !in_registry()) {
             return;
@@ -960,7 +917,7 @@ void Unit::tick_commands(f64 dt, SimContext& ctx) {
         }
     }
     tend_unfinished(ctx);
-    if (silo_assist_id_ != 0 && !silo_assist_renewed_) {
+    if (silo_assist_id_ && !silo_assist_renewed_) {
         end_silo_assist(ctx.L, registry);
     }
 }
@@ -1031,8 +988,12 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
         return;
     }
     if (dying_) {
-        if (tick_dying(static_cast<f32>(dt), ctx.terrain) && ctx.sim) {
-            ctx.sim->crash_impact(*this);
+        // Moho's Unit::MotionTick runs on for a dead unit: the stun counts down, then its motion.
+        if (stun_ticks_ > 0) {
+            --stun_ticks_;
+        }
+        if (ctx.sim) {
+            step_dead_motion(ctx.terrain, ctx.sim->random(), ctx.L, ctx.sim);
         }
         if (ctx.sim && in_registry()) {
             ctx.sim->step_economy_events(*this);
@@ -1094,10 +1055,10 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
 }
 
 bool Unit::attached() const {
-    if (transport_id_ != 0) {
+    if (transport_id_) {
         return true;
     }
-    return parent_entity_id() != 0 && registry() && registry()->find(parent_entity_id());
+    return parent_entity_id() && registry() && registry()->find(parent_entity_id());
 }
 
 void Unit::take_attached_step(f64 dt, SimContext& ctx) {
@@ -1114,7 +1075,7 @@ void Unit::take_attached_step(f64 dt, SimContext& ctx) {
         if (stun_ticks_ > 0) {
             --stun_ticks_;
         }
-        if (transport_id_ != 0) {
+        if (transport_id_) {
             stay_aboard(dt, ctx);
         } else if (!tick_fuel(dt, ctx, nullptr)) {
             return;
@@ -1140,7 +1101,7 @@ void Unit::take_attached_step(f64 dt, SimContext& ctx) {
 void Unit::stay_aboard(f64 dt, SimContext& ctx) {
     Entity* carrier = ctx.registry.find(transport_id_);
     if (!carrier || !carrier->is_unit()) {
-        transport_id_ = 0;
+        transport_id_ = EntityId();
         set_unit_state("Attached", false);
         return;
     }
@@ -1162,8 +1123,8 @@ void Unit::tend_unfinished(SimContext& ctx) {
     const bool build_waits = !command_queue_.empty() &&
                              command_queue_.front().type == CommandType::BuildMobile &&
                              command_queue_.front().task_wait > 0;
-    for (const u32 id : {build_waits ? 0u : build_target_id_, repair_target_id_}) {
-        Entity* e = id != 0 ? ctx.registry.find(id) : nullptr;
+    for (const EntityId id : {build_waits ? EntityId() : build_target_id_, repair_target_id_}) {
+        Entity* e = id ? ctx.registry.find(id) : nullptr;
         if (e && !e->destroyed() && e->is_unit() && static_cast<Unit*>(e)->is_being_built()) {
             static_cast<Unit*>(e)->set_creation_tick(ctx.sim->tick_count());
         }
@@ -1228,7 +1189,7 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     }
     // Moho's CUnitMotion::CalcMoveCommon: a unit on a layer its motion type can't be on loses 1%
     // of its health a tick, moving or not, unless being built, carried, falling or flying.
-    if (is_mobile() && !can_fly() && !is_being_built() && !crashing_ && parent_entity_id() == 0 &&
+    if (is_mobile() && !can_fly() && !is_being_built() && !is_crashing() && !parent_entity_id() &&
         !on_valid_layer()) {
         set_health(health() - max_health() * 0.0099999998f);
         if (health() <= 0.0f && ctx.sim) {
@@ -1285,7 +1246,7 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     // Moho's motion task ends a ground unit's tick in MoveTo, which normalizes its
     // orientation, standing or not (CUnitMotion::MoveTo, 0x006B92E0).
     // (A hover's comes after its hover tick, which tilts it.)
-    if (moho && is_mobile() && !can_fly() && !immobile() && parent_entity_id() == 0 && !crashing_ &&
+    if (moho && is_mobile() && !can_fly() && !immobile() && !parent_entity_id() && !is_crashing() &&
         !is_hover()) {
         set_orientation(quat_normalized_moho(pending_orientation()));
     }
@@ -1348,7 +1309,9 @@ bool Unit::auto_initiate_allowed(const EntityRegistry& registry) const {
     if (command_queue_.empty()) return true;
     if (command_queue_.size() != 1) return false;
     const UnitCommand& only = command_queue_.front();
-    if (only.type != CommandType::Attack || only.target_id == 0) return false;
+    if (only.type != CommandType::Attack || !only.target_id) {
+        return false;
+    }
     const Entity* target = registry.find(only.target_id);
     return !target || target->destroyed();
 }
@@ -1362,7 +1325,7 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
                             ? find_build_site_frame(registry, cmd.blueprint_id, cmd.target_pos)
                             : nullptr;
     if (frame) {
-        lua_pushnumber(L, frame->entity_id());
+        push_entity_key(L, frame->entity_id());
         lua_rawgeti(L, LUA_REGISTRYINDEX, frame->lua_table_ref());
     } else {
         // Call __osc_create_building_unit from Lua registry
@@ -1387,9 +1350,13 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
         lua_pushnumber(L, bz);
         // Held to the unit cap, but for an upgrade (Moho makes those uncapped).
         lua_pushboolean(L, cmd.type != CommandType::Upgrade);
-        lua_pushnumber(L, entity_id());
+        push_entity_key(L, entity_id());
+        const bool facing = cmd.type == CommandType::BuildMobile && cmd.has_facing;
+        if (facing) {
+            lua_pushnumber(L, cmd.facing);
+        }
 
-        if (lua_pcall(L, 7, 2, 0) != 0) {
+        if (lua_pcall(L, facing ? 8 : 7, 2, 0) != 0) {
             spdlog::warn("start_build pcall failed: {}", lua_tostring(L, -1));
             lua_pop(L, 1);
             return BuildStart::Failed;
@@ -1403,7 +1370,7 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
         }
     }
 
-    build_target_id_ = static_cast<u32>(lua_tonumber(L, -2));
+    build_target_id_ = to_entity_key(L, -2);
     build_command_id_ = cmd.command_id;
     build_released_with_order_ = cmd.type == CommandType::BuildMobile;
     build_repairs_ = false;
@@ -1413,7 +1380,7 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
     auto* target = registry.find(build_target_id_);
     if (!target) {
         lua_pop(L, 2);
-        build_target_id_ = 0;
+        build_target_id_ = EntityId();
         return BuildStart::Failed;
     }
     if (cmd.type == CommandType::Upgrade && target->is_unit()) {
@@ -1555,7 +1522,7 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
     f32 progress_rate = build_rate_ / static_cast<f32>(build_time_);
     static_cast<Unit*>(target)->materialize(progress_rate * static_cast<f32>(dt) * efficiency);
     work_progress_ = target->fraction_complete();
-    const u32 target_id = target->entity_id();
+    const EntityId target_id = target->entity_id();
     report_build_progress(L, registry, target_id);
     if (destroyed() || !in_registry()) return false;
     target = registry.find(target_id);
@@ -1576,7 +1543,7 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
                         map::PathfindingGrid* grid) {
     // Retire the task before any script can clear or replace the builder's
     // orders. Keep its target and callback name locally for completion.
-    const u32 target_id = std::exchange(build_target_id_, 0);
+    const EntityId target_id = std::exchange(build_target_id_, EntityId());
     const std::string order = std::exchange(build_order_, std::string());
     build_command_id_ = 0;
     build_released_with_order_ = false;
@@ -1591,7 +1558,7 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
     build_cost_energy_ = 0;
     work_progress_ = 0.0f;
 
-    if (success && target_id != 0) {
+    if (success && target_id) {
         auto* target = registry.find(target_id);
         Unit* completed_here = nullptr;
         // Completed once: another builder (or a repairer) may have finished
@@ -1602,7 +1569,6 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
             target_unit->set_is_being_built(false);
             target_unit->set_unit_state("BeingUpgraded", false);
             target_unit->set_fraction_complete(1.0f);
-            target_unit->set_health(target_unit->max_health());
 
             spdlog::info("finish_build: entity #{} completed building target #{}", entity_id(),
                          target_id);
@@ -1682,7 +1648,7 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
 
         tell_stop_build(*this, L, lua_ref_of(registry, target_id),
                         order.empty() ? nullptr : order.c_str());
-    } else if (target_id != 0) {
+    } else if (target_id) {
         spdlog::debug("finish_build: entity #{} failed/cancelled build of target #{}", entity_id(),
                       target_id);
 
@@ -1733,7 +1699,7 @@ void Unit::call_build_callback(lua_State* L, const char* method, Entity* target,
 }
 
 void Unit::stop_assisting(lua_State* L, EntityRegistry* registry) {
-    const u32 target_id = std::exchange(build_target_id_, 0);
+    const EntityId target_id = std::exchange(build_target_id_, EntityId());
     const std::string order = std::exchange(build_order_, std::string());
     build_command_id_ = 0;
     build_released_with_order_ = false;
@@ -1748,7 +1714,7 @@ void Unit::stop_assisting(lua_State* L, EntityRegistry* registry) {
     build_cost_energy_ = 0;
     work_progress_ = 0.0f;
     // A callback may clear the queue again or begin a new task.
-    if (L && registry && target_id != 0) {
+    if (L && registry && target_id) {
         tell_stop_build(*this, L, lua_ref_of(*registry, target_id),
                         order.empty() ? nullptr : order.c_str());
     }
@@ -1769,8 +1735,8 @@ namespace {
 
 /// self:method(other, was, now) on a unit's script, an error logged (Moho's
 /// CScriptObject::RunScript_OnBuildProgress and RunScript_OnBeingBuiltProgress).
-void run_progress_script(lua_State* L, EntityRegistry& registry, u32 self_id, const char* method,
-                         u32 other_id, f32 was, f32 now) {
+void run_progress_script(lua_State* L, EntityRegistry& registry, EntityId self_id,
+                         const char* method, EntityId other_id, f32 was, f32 now) {
     const Entity* self = registry.find(self_id);
     if (!self || self->lua_table_ref() < 0) return;
     const int top = lua_gettop(L);
@@ -1797,7 +1763,7 @@ void run_progress_script(lua_State* L, EntityRegistry& registry, u32 self_id, co
 
 } // namespace
 
-void Unit::report_build_progress(lua_State* L, EntityRegistry& registry, u32 target_id) {
+void Unit::report_build_progress(lua_State* L, EntityRegistry& registry, EntityId target_id) {
     const Entity* target = registry.find(target_id);
     if (!target) return;
     const f32 was = build_progress_seen_;
@@ -1806,7 +1772,7 @@ void Unit::report_build_progress(lua_State* L, EntityRegistry& registry, u32 tar
     // DidCrossBuildProgressBand
     const auto crossed = [&](f32 band) { return was < band && now >= band; };
     if (!L || !(crossed(0.25f) || crossed(0.5f) || crossed(0.75f))) return;
-    const u32 self_id = entity_id();
+    const EntityId self_id = entity_id();
     run_progress_script(L, registry, self_id, "OnBuildProgress", target_id, was, now);
     run_progress_script(L, registry, target_id, "OnBeingBuiltProgress", self_id, was, now);
 }
@@ -1852,7 +1818,7 @@ bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry, lua_State* L,
     return work_progress_ < 1.0f;
 }
 
-void Unit::begin_reclaim(u32 target_id, lua_State* L, EntityRegistry& registry) {
+void Unit::begin_reclaim(EntityId target_id, lua_State* L, EntityRegistry& registry) {
     reclaim_target_id_ = target_id;
     auto* target = registry.find(target_id);
     // Moho's CUnitReclaimTask takes a tick in Starting and one in Processing
@@ -1868,19 +1834,18 @@ void Unit::begin_reclaim(u32 target_id, lua_State* L, EntityRegistry& registry) 
 }
 
 void Unit::stop_reclaiming(lua_State* L, EntityRegistry* registry) {
-    if (L && registry && reclaim_target_id_ != 0) {
+    if (L && registry && reclaim_target_id_) {
         call_lua_method_with_entity(L, "OnStopReclaim", registry->find(reclaim_target_id_));
     }
     economy_.reclaim_mass = 0;
     economy_.reclaim_energy = 0;
-    reclaim_target_id_ = 0;
+    reclaim_target_id_ = EntityId();
     reclaim_rate_ = 0;
     reclaim_wait_ = 0;
 }
 
 /// Helper: call OnReclaimed on target, then ensure it's marked destroyed.
-void Unit::call_on_reclaimed(u32 target_id, EntityRegistry& registry,
-                              lua_State* L) {
+void Unit::call_on_reclaimed(EntityId target_id, EntityRegistry& registry, lua_State* L) {
     auto* target = registry.find(target_id);
     if (!target || target->destroyed()) return;
 
@@ -1960,15 +1925,15 @@ bool Unit::wear_down(Unit& target) const {
     return true;
 }
 
-u32 Unit::reclaim_into_wreck(u32 target_id, EntityRegistry& registry, lua_State* L) {
+EntityId Unit::reclaim_into_wreck(EntityId target_id, EntityRegistry& registry, lua_State* L) {
     auto* target = registry.find(target_id);
     if (!target || target->destroyed()) {
-        return 0;
+        return EntityId();
     }
     const int target_ref = target->lua_table_ref();
     run_on_reclaimed(*target, L);
 
-    u32 wreck_id = 0;
+    EntityId wreck_id{};
     if (L && target_ref >= 0) {
         const int top = lua_gettop(L);
         lua_rawgeti(L, LUA_REGISTRYINDEX, target_ref);
@@ -2013,7 +1978,7 @@ bool Unit::progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L) {
 
     // Already fully reclaimed (e.g., an assister finished it)
     if (target->fraction_complete() <= 0.0f) {
-        u32 tid = reclaim_target_id_;
+        EntityId tid = reclaim_target_id_;
         stop_reclaiming(L, &registry);
         call_on_reclaimed(tid, registry, L);
         spdlog::info("Reclaim complete: entity #{} finished reclaiming #{}",
@@ -2026,7 +1991,7 @@ bool Unit::progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L) {
     target->set_fraction_complete(new_frac);
 
     if (new_frac <= 0.0f) {
-        u32 tid = reclaim_target_id_;
+        EntityId tid = reclaim_target_id_;
         stop_reclaiming(L, &registry);
         call_on_reclaimed(tid, registry, L);
         spdlog::info("Reclaim complete: entity #{} finished reclaiming #{}",
@@ -2093,7 +2058,7 @@ BuildEconomy blueprint_build_economy(lua_State* L, const std::string& blueprint_
 namespace {
 
 Entity* shield_focus(const Unit& unit, EntityRegistry& registry) {
-    if (unit.focus_entity_id() == 0 || !unit.has_category("SHIELD")) {
+    if (!unit.focus_entity_id() || !unit.has_category("SHIELD")) {
         return nullptr;
     }
     Entity* focus = registry.find(unit.focus_entity_id());
@@ -2253,7 +2218,7 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
     const bool damaged = target->health() < target->max_health();
     auto& target_unit = static_cast<Unit&>(*target);
     Entity* bubble = shield_focus(target_unit, registry);
-    if (bubble) {
+    if (bubble && efficiency != 0.0f) {
         // Moho asks ShieldIsOn only of an undamaged unit, so a damaged one's
         // bubble regains health while off. FAF's patched exe always asks, and
         // repairs only the hull of a damaged one that is off
@@ -2272,8 +2237,13 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
                     heal_amount *= 0.5f;
                 }
                 const f32 regen = script_number(L, *bubble, "RegenRate") * static_cast<f32>(dt);
+                // FA-Binary-Patches section/Fixes/ShieldRepairEfficiency.cpp
+                f32 repair = regen * build_rate_;
+                if (registry.faf_exe()) {
+                    repair *= efficiency;
+                }
                 bubble->set_health(
-                    std::min(bubble->max_health(), bubble->health() + regen * build_rate_ / mult));
+                    std::min(bubble->max_health(), bubble->health() + repair / mult));
             }
         }
     }
@@ -2293,10 +2263,10 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
 }
 
 void Unit::stop_repairing(lua_State* L, EntityRegistry& registry) {
-    u32 target_id = repair_target_id_;
+    EntityId target_id = repair_target_id_;
 
     // Zero repair state BEFORE lua_pcall to prevent re-entrant double-callback
-    repair_target_id_ = 0;
+    repair_target_id_ = EntityId();
     repair_build_time_ = 0;
     repair_cost_mass_ = 0;
     repair_cost_energy_ = 0;
@@ -2310,7 +2280,7 @@ void Unit::stop_repairing(lua_State* L, EntityRegistry& registry) {
     set_unit_state("Repairing", false);
 
     // Call builder:OnStopBuild(target) — FA handles OnStopRepair inside
-    if (target_id != 0) {
+    if (target_id) {
         tell_stop_build(*this, L, lua_ref_of(registry, target_id), "Repair");
     }
 }
@@ -2446,14 +2416,14 @@ bool Unit::progress_capture(f64 dt, EntityRegistry& registry, lua_State* L,
 
     if (work_progress_ >= 1.0f) {
         // Capture complete
-        u32 target_id = capture_target_id_;
+        EntityId target_id = capture_target_id_;
 
         // Clear being_captured on target
         if (target->is_unit())
             static_cast<Unit*>(target)->set_being_captured(false);
 
         // Zero capture state BEFORE lua_pcall (re-entrancy protection)
-        capture_target_id_ = 0;
+        capture_target_id_ = EntityId();
         capture_time_ = 0;
         capture_energy_cost_ = 0;
         economy_.capture_energy = 0;
@@ -2515,16 +2485,18 @@ bool Unit::progress_capture(f64 dt, EntityRegistry& registry, lua_State* L,
 }
 
 void Unit::stop_capturing(lua_State* L, EntityRegistry& registry, bool failed) {
-    u32 target_id = capture_target_id_;
+    EntityId target_id = capture_target_id_;
 
     // Zero capture state BEFORE lua_pcall (re-entrancy protection)
-    capture_target_id_ = 0;
+    capture_target_id_ = EntityId();
     capture_time_ = 0;
     capture_energy_cost_ = 0;
     economy_.capture_energy = 0;
     work_progress_ = 0.0f;
 
-    if (target_id == 0) return;
+    if (!target_id) {
+        return;
+    }
 
     auto* target = registry.find(target_id);
     if (!target || target->destroyed()) return;
@@ -3067,7 +3039,7 @@ f32 Unit::transport_load_factor(const EntityRegistry& registry) const {
         return 1.0f;
     }
     f32 carried = 0.0f;
-    for (const u32 id : cargo_ids_) {
+    for (const EntityId id : cargo_ids_) {
         const Entity* e = registry.find(id);
         if (e && e->is_unit()) {
             carried += static_cast<const Unit*>(e)->load_metric();
@@ -3099,7 +3071,7 @@ void Unit::hang_from(const Unit& transport) {
 }
 
 void Unit::release_stale_slots(const EntityRegistry& registry) {
-    std::vector<u32> stale;
+    std::vector<EntityId> stale;
     for (const TransportSlots::Slot& slot : transport_slots_->slots()) {
         const Entity* e = registry.find(slot.unit_id);
         const auto* u =
@@ -3115,10 +3087,12 @@ void Unit::release_stale_slots(const EntityRegistry& registry) {
              u->docks_at(entity_id())); // an aircraft on its way to dock (M206r)
         if (!aboard && !coming) stale.push_back(slot.unit_id);
     }
-    for (const u32 id : stale) transport_slots_->release(id);
+    for (const EntityId id : stale) {
+        transport_slots_->release(id);
+    }
 }
 
-void Unit::remove_cargo(u32 id) {
+void Unit::remove_cargo(EntityId id) {
     cargo_ids_.erase(std::remove(cargo_ids_.begin(), cargo_ids_.end(), id),
                      cargo_ids_.end());
 }
@@ -3193,26 +3167,26 @@ bool Unit::footprint_fits(const map::PathfindingGrid& grid) const {
     return true;
 }
 
-void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L,
+void Unit::detach_cargo(std::vector<EntityId> ids, EntityRegistry& registry, lua_State* L,
                         const map::Terrain* terrain, bool heard) {
     // Taken off the cargo list first (safety against modification during
     // Lua callbacks), in cargo order.
-    std::vector<u32> snapshot;
-    std::erase_if(cargo_ids_, [&](u32 id) {
+    std::vector<EntityId> snapshot;
+    std::erase_if(cargo_ids_, [&](EntityId id) {
         if (std::find(ids.begin(), ids.end(), id) == ids.end()) return false;
         snapshot.push_back(id);
         return true;
     });
 
     const bool staging = is_staging_platform();
-    for (u32 cargo_id : snapshot) {
+    for (EntityId cargo_id : snapshot) {
         auto* cargo_entity = registry.find(cargo_id);
         if (!cargo_entity || cargo_entity->destroyed() ||
             !cargo_entity->is_unit())
             continue;
         auto* cargo = static_cast<Unit*>(cargo_entity);
 
-        cargo->set_transport_id(0);
+        cargo->set_transport_id(EntityId());
         cargo->set_unit_state("Attached", false);
         // Set down where it hangs, level, its slot given up (M206l); a
         // transport without slots drops it at its origin.
@@ -3409,7 +3383,7 @@ void Unit::add_impulse(const Vector3& impulse, bool moving) {
 
 bool Unit::coast_moho(const map::Terrain* terrain) {
     target_speed_ = 0;
-    if (immobile_ || parent_entity_id() != 0) {
+    if (immobile_ || parent_entity_id()) {
         ground_speed_ = 0;
         motion_velocity_ = {};
         return false;
@@ -3456,7 +3430,7 @@ bool Unit::coast(f64 dt, const map::Terrain* terrain) {
     if (ground_speed_ == 0) {
         return false;
     }
-    if (immobile_ || parent_entity_id() != 0) {
+    if (immobile_ || parent_entity_id()) {
         ground_speed_ = 0;
         return false;
     }
@@ -3665,7 +3639,7 @@ void limit_length(Vector3& v, f32 max_length) {
 
 void Unit::tick_hover(const map::Terrain* terrain, u32 tick, SimRandom& random, bool moho) {
     if (!is_hover() || can_fly() || is_being_built_ || dying_ || immobile_ || is_stunned() ||
-        parent_entity_id() != 0) {
+        parent_entity_id()) {
         return;
     }
     const Vector3& at = pending_position();
@@ -3716,8 +3690,7 @@ void Unit::stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quater
 // meets (ProcessSurfaceCollisionFromLastMove).
 const Unit* Unit::raised_platform() const {
     const EntityRegistry* registry = this->registry();
-    if (!registry || is_air_unit() || is_being_built_ || parent_entity_id() != 0 ||
-        layer_ == "Sub") {
+    if (!registry || is_air_unit() || is_being_built_ || parent_entity_id() || layer_ == "Sub") {
         return nullptr;
     }
     const Vector3 at = pending_position();
@@ -3956,9 +3929,10 @@ void Unit::fly_on_from_here(const map::Terrain* terrain) {
 
 bool Unit::tick_idle_landing(f64 dt, SimContext& ctx, bool flown) {
     // Not one under construction: it neither moves nor flies yet.
-    if (!can_fly() || dying_ || is_being_built() || parent_entity_id() != 0 || !ctx.sim ||
-        !ctx.terrain)
+    if (!can_fly() || dying_ || is_being_built() || parent_entity_id() || !ctx.sim ||
+        !ctx.terrain) {
         return false;
+    }
     SimState& sim = *ctx.sim;
     lua_State* L = ctx.L;
     // Up at its height after a take-off: level flight.
@@ -4083,8 +4057,8 @@ bool Unit::tick_idle_landing(f64 dt, SimContext& ctx, bool flown) {
 }
 
 void Unit::fly_unflown_tick(f64 dt, SimContext& ctx) {
-    if (!ctx.sim || !is_air_unit() || !can_fly() || dying_ || crashing_ || is_being_built() ||
-        parent_entity_id() != 0 || transport_id_ != 0 || is_stunned() || immobile_) {
+    if (!ctx.sim || !is_air_unit() || !can_fly() || dying_ || is_crashing() || is_being_built() ||
+        parent_entity_id() || transport_id_ || is_stunned() || immobile_) {
         return;
     }
     const u32 now = ctx.sim->tick_count();
@@ -5083,7 +5057,7 @@ void Unit::set_silo_blocks(i32 blocks) {
 }
 
 void Unit::end_silo_assist(lua_State* L, EntityRegistry& registry) {
-    const u32 silo = std::exchange(silo_assist_id_, 0);
+    const EntityId silo = std::exchange(silo_assist_id_, EntityId());
     aim_builder_arms(nullptr, L);
     if (!is_building() && !is_reclaiming() && !is_repairing() && !is_capturing() && !enhancing_) {
         economy_.consumption_energy = 0;

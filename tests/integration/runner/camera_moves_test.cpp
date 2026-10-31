@@ -43,8 +43,8 @@ void test_camera_moves(TestContext& ui, TestContext& sim, const std::function<vo
     Tally t;
     lua_State* L = ui.L;
     const map::Terrain* terrain = sim.sim.terrain();
-    const u32 acu = army_acu_id(sim.sim, 0);
-    if (!terrain || acu == 0) {
+    const sim::EntityId acu = army_acu_id(sim.sim, 0);
+    if (!terrain || !acu) {
         t.check(false, "the map and ARMY_1's ACU");
         return;
     }

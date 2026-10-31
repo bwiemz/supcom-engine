@@ -27,6 +27,7 @@ add_executable(osc_tests
     test_image.cpp
     test_navigation_throttle.cpp
     test_build_placement.cpp
+    test_build_structure.cpp
     test_manipulators.cpp
     test_patrol.cpp
     test_guard.cpp
@@ -58,6 +59,7 @@ add_executable(osc_tests
     test_air_landing.cpp
     test_air_lift.cpp
     test_air_motion.cpp
+    test_ballistic_fall.cpp
     test_air_circling.cpp
     test_unit_blocking.cpp
     test_hull_facing.cpp
@@ -69,6 +71,7 @@ add_executable(osc_tests
     test_build_on_wreck.cpp
     test_entity_health.cpp
     test_entity_lifetime.cpp
+    test_entity_ids.cpp
     test_fixed_step.cpp
     test_frame_times.cpp
     test_interpolation.cpp
@@ -84,9 +87,12 @@ add_executable(osc_tests
     test_order_editing.cpp
     test_user_unit.cpp
     test_verify_script_command.cpp
+    test_command_issued.cpp
     test_faf_bindings.cpp
     test_engine_stats.cpp
     test_army_stats_sync.cpp
+    test_sim_console.cpp
+    test_cheat_commands.cpp
     test_external_factory.cpp
     test_damage_callbacks.cpp
     test_profiler_self_time.cpp

@@ -129,7 +129,7 @@ struct RangeUnit {
     f32 radar = 0, sonar = 0, omni = 0; ///< its intel radii, on or off
     f32 counter_intel = 0;              ///< its largest stealth or cloak field or spoof
     u16 script_bits = 0;
-    u32 id = 0; ///< its entity, to tell the selected from the rest
+    sim::EntityId id{}; ///< its entity, to tell the selected from the rest
 };
 
 /// Whether `unit` carries radar, sonar or omni: selecting it shows that

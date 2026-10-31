@@ -87,11 +87,13 @@ namespace osc::lua {
 
 // Helper: extract entity from blip table (same _c_object pattern as check_entity)
 /// Read _c_entity_id from blip table (arg 1).
-static u32 get_blip_entity_id(lua_State* L) {
-    if (!lua_istable(L, 1)) return 0;
+static sim::EntityId get_blip_entity_id(lua_State* L) {
+    if (!lua_istable(L, 1)) {
+        return sim::EntityId();
+    }
     lua_pushstring(L, "_c_entity_id");
     lua_rawget(L, 1);
-    u32 id = lua_isnumber(L, -1) ? static_cast<u32>(lua_tonumber(L, -1)) : 0;
+    const sim::EntityId id = sim::to_entity_key(L, -1);
     lua_pop(L, 1);
     return id;
 }
@@ -100,8 +102,10 @@ static u32 get_blip_entity_id(lua_State* L) {
 /// keep blips across ticks, and the entity may be gone.
 static sim::Entity* check_blip_entity(lua_State* L) {
     auto* sim = get_sim(L);
-    const u32 id = get_blip_entity_id(L);
-    if (!sim || id == 0) return nullptr;
+    const sim::EntityId id = get_blip_entity_id(L);
+    if (!sim || !id) {
+        return nullptr;
+    }
     auto* e = sim->entity_registry().find(id);
     return (e && !e->destroyed()) ? e : nullptr;
 }
@@ -129,7 +133,7 @@ static int blip_GetPosition(lua_State* L) {
                 push_vector3(L, e->position());
             } else {
                 // Dead-reckoning: return cached position
-                u32 eid = e->entity_id();
+                sim::EntityId eid = e->entity_id();
                 auto* snap = sim ? sim->get_blip_snapshot(
                     eid, static_cast<u32>(req_army)) : nullptr;
                 if (snap)
@@ -142,7 +146,7 @@ static int blip_GetPosition(lua_State* L) {
         }
     } else {
         // Entity destroyed — use blip cache
-        u32 eid = get_blip_entity_id(L);
+        sim::EntityId eid = get_blip_entity_id(L);
         i32 req_army = get_blip_req_army(L);
         auto* sim = get_sim(L);
         if (sim && req_army >= 0) {
@@ -192,7 +196,7 @@ static int blip_IsSeenEver(lua_State* L) {
     auto* e = check_blip_entity(L);
     if (!e || e->destroyed()) {
         // Destroyed entity — if we have a blip cache entry, it was seen
-        u32 eid = get_blip_entity_id(L);
+        sim::EntityId eid = get_blip_entity_id(L);
         i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
                                       : -1;
         auto* sim = get_sim(L);
@@ -263,7 +267,7 @@ static int blip_GetBlueprint(lua_State* L) {
         bp_id = e->blueprint_id();
     } else {
         // Entity destroyed — use blip cache
-        u32 eid = get_blip_entity_id(L);
+        sim::EntityId eid = get_blip_entity_id(L);
         i32 req_army = get_blip_req_army(L);
         auto* sim = get_sim(L);
         if (sim && req_army >= 0) {
@@ -283,7 +287,7 @@ static int blip_GetArmy(lua_State* L) {
         return 1;
     }
     // Entity destroyed — use blip cache
-    u32 eid = get_blip_entity_id(L);
+    sim::EntityId eid = get_blip_entity_id(L);
     i32 req_army = get_blip_req_army(L);
     auto* sim = get_sim(L);
     if (sim && req_army >= 0) {
@@ -303,7 +307,7 @@ static int blip_GetAIBrain(lua_State* L) {
     if (e && !e->destroyed()) {
         army = e->army();
     } else {
-        u32 eid = get_blip_entity_id(L);
+        sim::EntityId eid = get_blip_entity_id(L);
         i32 req_army = get_blip_req_army(L);
         auto* sim = get_sim(L);
         if (sim && req_army >= 0) {

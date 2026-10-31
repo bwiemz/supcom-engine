@@ -105,11 +105,16 @@ void test_beam_render(TestContext& ctx) {
     // ARMY_1's engineers, 3 up: A to B (additive), C (a beam along its
     // facing), D to E (subtractive), A to C (the LOD's).
     constexpr f32 kLift = 3.0f;
-    const u32 a = spawn_unit(ctx, "__osc_bt_a", "uel0105", "ARMY_1", {sx - 12, sz}, kLift);
-    const u32 b = spawn_unit(ctx, "__osc_bt_b", "uel0105", "ARMY_1", {sx + 12, sz}, kLift);
-    const u32 c = spawn_unit(ctx, "__osc_bt_c", "uel0105", "ARMY_1", {sx - 12, sz + 20}, kLift);
-    const u32 d = spawn_unit(ctx, "__osc_bt_d", "uel0105", "ARMY_1", {sx - 12, sz - 20}, kLift);
-    const u32 e = spawn_unit(ctx, "__osc_bt_e", "uel0105", "ARMY_1", {sx + 12, sz - 20}, kLift);
+    const sim::EntityId a =
+        spawn_unit(ctx, "__osc_bt_a", "uel0105", "ARMY_1", {sx - 12, sz}, kLift);
+    const sim::EntityId b =
+        spawn_unit(ctx, "__osc_bt_b", "uel0105", "ARMY_1", {sx + 12, sz}, kLift);
+    const sim::EntityId c =
+        spawn_unit(ctx, "__osc_bt_c", "uel0105", "ARMY_1", {sx - 12, sz + 20}, kLift);
+    const sim::EntityId d =
+        spawn_unit(ctx, "__osc_bt_d", "uel0105", "ARMY_1", {sx - 12, sz - 20}, kLift);
+    const sim::EntityId e =
+        spawn_unit(ctx, "__osc_bt_e", "uel0105", "ARMY_1", {sx + 12, sz - 20}, kLift);
     const auto effect_id = [&](const char* global) {
         run_lua(ctx, fmt::format("__osc_bt_id = {0} and {0}._c_effect_id or 0\n", global));
         lua_pushstring(ctx.L, "__osc_bt_id");
@@ -150,7 +155,7 @@ void test_beam_render(TestContext& ctx) {
     const u32 cbfx = effect_id("__osc_bt_cbfx");
     lua_pushstring(ctx.L, "__osc_bt_cbid");
     lua_rawget(ctx.L, LUA_GLOBALSINDEX);
-    const u32 cb = osc::sim::to_entity_id(ctx.L, -1);
+    const sim::EntityId cb = osc::sim::to_entity_id(ctx.L, -1, ctx.sim.entity_registry());
     lua_pop(ctx.L, 1);
     sim::Vector3 cb_end{beam_at.x, 0, beam_at.z + 20};
     cb_end.y = ctx.sim.terrain()->get_terrain_height(cb_end.x, cb_end.z) + kLift;
@@ -175,7 +180,7 @@ void test_beam_render(TestContext& ctx) {
         shots.redraw();
         seen.capture(ctx.sim);
     };
-    const auto pos = [&](u32 id) {
+    const auto pos = [&](sim::EntityId id) {
         const sim::EntityRecord* rec = seen.cur().find(id);
         return rec ? rec->position : sim::Vector3{};
     };
@@ -318,20 +323,25 @@ void test_beam_render(TestContext& ctx) {
                             "local eng = CreateUnitHPR('uel0105', 'ARMY_1', {0}, 0, {1}, 0, 0, 0)\n"
                             "IssueBuildMobile({{eng}}, Vector({0}, 0, {2}), 'ueb1101', {{}})\n",
                             sx + 20, sz + 20, sz + 30));
-        tick_until([&] { next(); }, "Test 7: a building engineer draws retail's build beams", 200,
-                   [&] {
-                       const auto& beams = r.beam_renderer().drawn();
-                       return std::any_of(beams.begin(), beams.end(), [](const auto& drawn_beam) {
-                           return drawn_beam.blueprint.find("build_beam") != std::string::npos;
-                       });
-                   });
+        tick_until(
+            [&] {
+                next();
+                shots.redraw_until_loaded();
+            },
+            "Test 7: a building engineer draws retail's build beams", 200,
+            [&] {
+                const auto& beams = r.beam_renderer().drawn();
+                return std::any_of(beams.begin(), beams.end(), [](const auto& drawn_beam) {
+                    return drawn_beam.blueprint.find("build_beam") != std::string::npos;
+                });
+            });
         // Test 7b: and no line of the overlay's from it to what it builds
         bool lined = false;
         bool building = false;
         const Frame frame = drawn(r);
         for (const sim::EntityRecord& e : seen.cur().entities) {
             const sim::EntityRecord* target =
-                e.is_unit && e.build_target_id != 0 ? seen.cur().find(e.build_target_id) : nullptr;
+                e.is_unit && e.build_target_id ? seen.cur().find(e.build_target_id) : nullptr;
             if (!target) {
                 continue;
             }
@@ -357,19 +367,19 @@ void test_beam_render(TestContext& ctx) {
     // Test 7c: two power generators side by side, one selected: adjacent,
     // and no line of the overlay's between them
     {
-        const u32 p1 =
+        const sim::EntityId p1 =
             spawn_unit(ctx, "__osc_bt_p1", "ueb1101", "ARMY_1", {sx - 20.5f, sz + 30.5f});
-        const u32 p2 =
+        const sim::EntityId p2 =
             spawn_unit(ctx, "__osc_bt_p2", "ueb1101", "ARMY_1", {sx - 18.5f, sz + 30.5f});
         next(2);
         const sim::EntityRecord* first = seen.cur().find(p1);
         bool adjacent = false;
         if (first) {
-            for (u32 id : seen.cur().adjacent_of(*first)) {
+            for (sim::EntityId id : seen.cur().adjacent_of(*first)) {
                 adjacent = adjacent || id == p2;
             }
         }
-        const std::unordered_set<u32> selected{p1};
+        const std::unordered_set<sim::EntityId> selected{p1};
         shots.redraw(&selected);
         bool lined = false;
         for (const Quad& q : drawn(r).overlay) {

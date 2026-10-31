@@ -50,10 +50,10 @@ struct LuaGuard {
 };
 
 /// The same world in every sim, as a scenario would build it.
-std::vector<osc::u32> setup(SimState& sim) {
+std::vector<osc::sim::EntityId> setup(SimState& sim) {
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2");
-    std::vector<osc::u32> ids;
+    std::vector<osc::sim::EntityId> ids;
     for (int i = 0; i < 3; ++i) {
         auto u = std::make_unique<Unit>();
         u->set_army(i % 2);
@@ -98,7 +98,7 @@ UnitCommand move_to(osc::f32 x, osc::f32 z) {
 }
 
 /// A player's order, as the UI gives one between ticks.
-void player_order(SimState& sim, osc::u32 unit, const UnitCommand& cmd) {
+void player_order(SimState& sim, osc::sim::EntityId unit, const UnitCommand& cmd) {
     sim.set_human_input_active(true);
     sim.route_command({unit}, cmd, true);
     sim.set_human_input_active(false);
@@ -116,7 +116,7 @@ SavedGame sample_save() {
     save.game.checksums.assign(12, 0xabcdef01u);
     osc::sim::ScheduledCommand c;
     c.exec_beat = 13; // given before the save, not run yet
-    c.unit_ids = {7};
+    c.unit_ids = {osc::sim::EntityId::of(7, 1)};
     c.command = move_to(5.0f, 6.0f);
     save.game.commands.push_back(c);
     return save;

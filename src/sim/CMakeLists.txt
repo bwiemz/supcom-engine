@@ -29,6 +29,7 @@ add_library(osc_sim STATIC
     unit_patrol.cpp
     unit_staging.cpp
     unit_storage.cpp
+    unit_fall.cpp
     weapon.cpp
     projectile.cpp
     flight_math.cpp
@@ -80,6 +81,7 @@ add_library(osc_sim STATIC
     build_info.cpp
     sim_callbacks.cpp
     sim_checksum.cpp
+    sim_console.cpp
 )
 add_library(osc::sim ALIAS osc_sim)
 

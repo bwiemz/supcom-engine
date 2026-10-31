@@ -137,22 +137,25 @@ ReclaimCosts reclaim_costs(lua_State* L, const Unit& reclaimer, const Entity& ta
 
 } // namespace
 
-u32 Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
+EntityId Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
     auto& registry = ctx.registry;
-    if (head.beacon_id != 0) {
+    if (head.beacon_id) {
         const Entity* beacon = registry.find(head.beacon_id);
         if (beacon && !beacon->destroyed()) return head.beacon_id;
-        head.beacon_id = 0;
+        head.beacon_id = EntityId();
     }
     // A transport of the army ferrying from here keeps one already: an order
     // given to several shares its beacon, as Moho's shared command does.
-    u32 shared = 0;
+    EntityId shared{};
     registry.for_each_unit([&](const Entity& e) {
-        if (shared != 0 || e.destroyed() || !e.is_unit() || e.army() != army() ||
-            e.entity_id() == entity_id())
+        if (shared || e.destroyed() || !e.is_unit() || e.army() != army() ||
+            e.entity_id() == entity_id()) {
             return;
+        }
         for (const UnitCommand& c : static_cast<const Unit&>(e).command_queue()) {
-            if (c.type != CommandType::Ferry || c.beacon_id == 0) continue;
+            if (c.type != CommandType::Ferry || !c.beacon_id) {
+                continue;
+            }
             const Entity* beacon = registry.find(c.beacon_id);
             const f32 dx = c.target_pos.x - head.target_pos.x;
             const f32 dz = c.target_pos.z - head.target_pos.z;
@@ -162,13 +165,15 @@ u32 Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
             }
         }
     });
-    if (shared != 0) {
+    if (shared) {
         head.beacon_id = shared;
         return shared;
     }
     // Else a new one, of its blueprint's AI.BeaconName.
     lua_State* L = ctx.L;
-    if (!L || !ctx.sim) return 0;
+    if (!L || !ctx.sim) {
+        return {};
+    }
     std::string beacon_bp;
     const int top = lua_gettop(L);
     if (blueprints::push_blueprint(L, blueprint_id())) {
@@ -181,12 +186,14 @@ u32 Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
         }
     }
     lua_settop(L, top);
-    if (beacon_bp.empty()) return 0;
+    if (beacon_bp.empty()) {
+        return {};
+    }
     lua_pushstring(L, "CreateUnitHPR");
     lua_rawget(L, LUA_GLOBALSINDEX);
     if (!lua_isfunction(L, -1)) {
         lua_settop(L, top);
-        return 0;
+        return {};
     }
     const f32 y = ctx.terrain
                       ? ctx.terrain->get_terrain_height(head.target_pos.x, head.target_pos.z)
@@ -199,12 +206,12 @@ u32 Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
     lua_pushnumber(L, 0);
     lua_pushnumber(L, 0);
     lua_pushnumber(L, 0);
-    u32 made = 0;
+    EntityId made{};
     if (lua_pcall(L, 8, 1, 0) == 0) {
         if (lua_istable(L, -1)) {
             lua_pushstring(L, "EntityId");
             lua_rawget(L, -2);
-            made = to_entity_id(L, -1);
+            made = to_entity_id(L, -1, registry);
         }
     } else {
         const char* err = lua_tostring(L, -1);
@@ -214,7 +221,9 @@ u32 Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
         if (test_status::count_lua_failures()) test_status::record_failure(message);
     }
     lua_settop(L, top);
-    if (made == 0) return 0;
+    if (!made) {
+        return {};
+    }
     head.beacon_id = made;
     ctx.sim->track_ferry_beacon(made);
     // Its script hears the route set (no retail script listens).
@@ -234,7 +243,7 @@ void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx) {
             return !(t.get_terrain_height(p.x, p.z) > water);
         };
         const auto destination = [&](const UnitCommand& c) {
-            const Entity* target = c.target_id != 0 ? ctx.registry.find(c.target_id) : nullptr;
+            const Entity* target = c.target_id ? ctx.registry.find(c.target_id) : nullptr;
             return target ? target->position() : c.target_pos;
         };
         using_alt_footprint_ = false;
@@ -326,7 +335,7 @@ Vector3 Unit::build_place(const Vector3& site, f32 skirt_x, f32 skirt_z, SimCont
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
     const bool awaited = std::exchange(arm_awaited_, false);
     if (!awaited && !is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
-        silo_assist_id_ == 0 &&
+        !silo_assist_id_ &&
         (command_queue_.empty() || (command_queue_.front().type != CommandType::BuildMobile &&
                                     command_queue_.front().task_wait <= 0))) {
         aim_builder_arms(nullptr, ctx.L);
@@ -349,7 +358,7 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         if (destroyed() || !in_registry()) return false;
         if (!command_queue_.front().begun) {
             // Moho's IAiCommandDispatchImpl::Execute, on UNITSTATE_Attached.
-            if (parent_entity_id() != 0 && is_mobile()) {
+            if (parent_entity_id() && is_mobile()) {
                 return true;
             }
             // Its scripts may change the queue, or kill the unit: look again.
@@ -450,10 +459,34 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     case CommandType::Teleport: return order_teleport(cmd, ctx.L);
     case CommandType::Ferry: return order_ferry(cmd, ctx);
     case CommandType::WaitForFerry: return order_wait_for_ferry(cmd, ctx);
+    case CommandType::DestroySelf: return order_destroy_self(ctx);
     default: // an order no handler runs: dropped
         command_queue_.pop_front();
         return OrderStep::Next;
     }
+}
+
+OrderStep Unit::order_destroy_self(SimContext& ctx) {
+    // IAiCommandDispatchImpl's UNITCOMMAND_DestroySelf: unit->Destroy(), as a
+    // script's Destroy does it
+    command_queue_.pop_front();
+    if (ctx.L && lua_table_ref() >= 0) {
+        const int top = lua_gettop(ctx.L);
+        lua_rawgeti(ctx.L, LUA_REGISTRYINDEX, lua_table_ref());
+        lua_pushstring(ctx.L, "Destroy");
+        lua_gettable(ctx.L, -2);
+        if (lua_isfunction(ctx.L, -1)) {
+            lua_pushvalue(ctx.L, top + 1);
+            if (lua_pcall(ctx.L, 1, 0, 0) != 0) {
+                spdlog::warn("Destroy error: {}", lua_tostring(ctx.L, -1));
+            }
+        }
+        lua_settop(ctx.L, top);
+    }
+    if (!destroyed()) {
+        ctx.registry.destroy(*this);
+    }
+    return OrderStep::Gone;
 }
 
 OrderStep Unit::order_stop(lua_State* L) {
@@ -496,7 +529,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     // attack task drops the formation as it starts for them).
     if (cmd.has_slot && (!is_mobile() || has_category("TARGETCHASER"))) cmd.has_slot = false;
     // Attack: move toward target if out of weapon range, else stop
-    if (cmd.target_id == 0) {
+    if (!cmd.target_id) {
         return order_attack_ground(cmd, ctx);
     }
     auto* target = registry.find(cmd.target_id);
@@ -849,8 +882,8 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     const u32 order_id = cmd.command_id;
-    if (build_target_id_ == 0) {
-        if (!cmd.site_cleared && cmd.clearing_prop_id == 0) {
+    if (!build_target_id_) {
+        if (!cmd.site_cleared && !cmd.clearing_prop_id) {
             // The site, as the task takes it: snapped to the footprint's
             // cells (Moho's CUnitMobileBuildTask, as made). An order from
             // the UI comes snapped already; a script's may not.
@@ -861,7 +894,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             if (destroyed() || !in_registry()) {
                 return OrderStep::Gone;
             }
-            if (site.reclaim_id != 0) {
+            if (site.reclaim_id) {
                 cmd.clearing_prop_id = site.reclaim_id;
                 cmd.clearing_approached = false;
             } else {
@@ -872,7 +905,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                 }
             }
         }
-        if (cmd.clearing_prop_id != 0) {
+        if (cmd.clearing_prop_id) {
             UnitCommand reclaim;
             reclaim.type = CommandType::Reclaim;
             reclaim.target_id = cmd.clearing_prop_id;
@@ -886,7 +919,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                 return OrderStep::Next;
             }
             const bool done = step == OrderStep::Next;
-            cmd.clearing_prop_id = done ? 0 : reclaim.target_id;
+            cmd.clearing_prop_id = done ? EntityId() : reclaim.target_id;
             cmd.clearing_approached = !done && reclaim.approached;
             return OrderStep::Hold;
         }
@@ -965,7 +998,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             return OrderStep::Hold;
         }
         const u32 building = cmd.command_id; // cmd may go with the scripts' changes
-        const u32 wreck_id = cmd.rebuild_wreck_id;
+        const EntityId wreck_id = cmd.rebuild_wreck_id;
         const f32 bonus = cmd.rebuild_bonus;
         switch (start_build(cmd, registry, L)) {
         case BuildStart::Started: break;
@@ -979,7 +1012,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         if (command_queue_.empty() || &command_queue_.front() != &cmd ||
             command_queue_.front().command_id != order_id)
             return OrderStep::Next;
-        if (Entity* wreck = wreck_id != 0 ? registry.find(wreck_id) : nullptr;
+        if (Entity* wreck = wreck_id ? registry.find(wreck_id) : nullptr;
             wreck && !wreck->destroyed()) {
             registry.destroy(*wreck);
         }
@@ -1022,7 +1055,7 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
         if (holds_for_rolloff(cmd.rolloff_wait)) return OrderStep::Hold;
         return end_factory_build_order(cmd);
     }
-    if (build_target_id_ == 0) {
+    if (!build_target_id_) {
         // Factory: spawn immediately at own position
         if (waits_out_task(cmd)) {
             return OrderStep::Hold;
@@ -1046,7 +1079,7 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
     }
     bool built = false;
     const u32 order_id = cmd.command_id;
-    const u32 target = build_target_id_;
+    const EntityId target = build_target_id_;
     const bool factory_build = cmd.type == CommandType::BuildFactory; // not an upgrade
     if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff, &built)) {
         if (built && factory_build) hand_over_rally_orders(target, entity_id(), ctx);
@@ -1216,7 +1249,7 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
 OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
-    if (cmd.target_id == 0) {
+    if (!cmd.target_id) {
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         end_approach(cmd);
         return OrderStep::Next;
@@ -1317,11 +1350,11 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         if (wear_down(static_cast<Unit&>(*reclaimed))) {
             return OrderStep::Hold;
         }
-        const u32 wreck_id = reclaim_into_wreck(cmd.target_id, registry, L);
+        const EntityId wreck_id = reclaim_into_wreck(cmd.target_id, registry, L);
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
         }
-        auto* wreck = wreck_id != 0 ? registry.find(wreck_id) : nullptr;
+        auto* wreck = wreck_id ? registry.find(wreck_id) : nullptr;
         if (!wreck) {
             stop_reclaiming(L, &registry);
             return OrderStep::Next;
@@ -1349,12 +1382,12 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
     // or the build of one under construction.
     const auto let_go = [&] {
         if (is_repairing()) stop_repairing(L, registry);
-        if (build_target_id_ != 0 && build_target_id_ == cmd.target_id) {
+        if (build_target_id_ && build_target_id_ == cmd.target_id) {
             stop_assisting(L, &registry);
         }
         end_approach(cmd);
     };
-    if (cmd.target_id == 0) {
+    if (!cmd.target_id) {
         let_go();
         command_queue_.pop_front();
         return OrderStep::Next;
@@ -1445,7 +1478,7 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
                                           Unit& target, bool task_waits) {
     auto& registry = ctx.registry;
     const u32 order_id = cmd.command_id;
-    const u32 tid = target.entity_id();
+    const EntityId tid = target.entity_id();
     const bool guarding = cmd.type == CommandType::Guard;
     const auto done = [&] {
         // A guard lends a construction task to its target; completing that
@@ -1500,7 +1533,7 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
 OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
-    if (cmd.target_id == 0) {
+    if (!cmd.target_id) {
         if (is_capturing()) stop_capturing(L, registry, true);
         end_approach(cmd);
         command_queue_.pop_front();
@@ -1621,7 +1654,7 @@ bool Unit::rally_point(lua_State* L, Vector3& out) const {
     return true;
 }
 
-void Unit::hand_over_rally_orders(u32 built_id, u32 rally_id, SimContext& ctx) {
+void Unit::hand_over_rally_orders(EntityId built_id, EntityId rally_id, SimContext& ctx) {
     if (is_mobile()) return; // a mobile factory's units take none (Moho)
     auto* built_entity = ctx.registry.find(built_id);
     auto* rally_entity = ctx.registry.find(rally_id);
@@ -1682,7 +1715,7 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
     }
     // It looks every 6 ticks (Moho's Execute returns 7), and not while it
     // helps: Moho's help is a task of its own above the guard's.
-    if (is_building() || is_reclaiming() || is_repairing() || silo_assist_id_ != 0) {
+    if (is_building() || is_reclaiming() || is_repairing() || silo_assist_id_) {
         return std::nullopt;
     }
     if (cmd.patrol_scan > 0) {
@@ -1703,7 +1736,7 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
     ctx.sim->pick_target_point(attack);
     attack.command_id = cmd.command_id;
     attack.from_guard = true;
-    attack.leash_anchor_id = guarded ? guarded->entity_id() : 0;
+    attack.leash_anchor_id = guarded ? guarded->entity_id() : EntityId();
     attack.leash_anchor_pos = ref;
     cmd.guard_returning = true;
     navigator_.abort_move();
@@ -1737,7 +1770,7 @@ OrderStep Unit::order_guard_point(UnitCommand& cmd, SimContext& ctx) {
 OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
-    if (cmd.target_id == 0) {
+    if (!cmd.target_id) {
         end_guard_build(registry, L);
         return order_guard_point(cmd, ctx);
     }
@@ -1865,7 +1898,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                                         : nullptr;
     if (guarded_build && !guarded_build->destroyed()) {
         working = true;
-        u32 target_build_id = target_unit->build_target_id();
+        EntityId target_build_id = target_unit->build_target_id();
         const bool helping = build_target_id_ == target_build_id;
         const bool factory_build = !helping && target_unit->has_category("FACTORY");
         const Entity& reach = factory_build ? *target_unit : *guarded_build;
@@ -1935,7 +1968,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             }
 
             // Progress the build with our own build rate
-            if (build_target_id_ != 0) {
+            if (build_target_id_) {
                 const bool building_on = progress_build_assist(dt, registry, ctx.L, econ_eff);
                 if (destroyed() || !in_registry()) return OrderStep::Gone;
                 if (!building_on) {
@@ -1947,7 +1980,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         // Assist reclaim: contribute reclaim power
         working = true;
         if (is_building()) stop_assisting(ctx.L, &ctx.registry);
-        u32 target_reclaim_id = target_unit->reclaim_target_id();
+        EntityId target_reclaim_id = target_unit->reclaim_target_id();
         if (!within_reach(*guarded_reclaim, false, false)) {
             if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         } else {
@@ -1978,7 +2011,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                              entity_id(), cmd.target_id, target_reclaim_id);
             }
 
-            if (reclaim_target_id_ != 0) {
+            if (reclaim_target_id_) {
                 const bool held = reclaim_held_by_pause(*this, guarded_reclaim, ctx);
                 if (!progress_reclaim_assist(held ? 0.0 : dt, registry)) {
                     stop_reclaiming(ctx.L, &ctx.registry);
@@ -2011,7 +2044,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                     return OrderStep::Gone;
                 }
                 if (!turns_to_face(at) && !awaits_arm() && !task_waits) {
-                    if (silo_assist_id_ != 0) {
+                    if (silo_assist_id_) {
                         end_silo_assist(ctx.L, registry);
                     }
                     silo_assist_id_ = cmd.target_id;
@@ -2070,9 +2103,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                         start_repair(repair_cmd, registry, L);
                     }
                 }
-                if (repair_target_id_ != 0) {
+                if (repair_target_id_) {
                     progress_repair(dt, registry, L, econ_eff);
-                    if (repair_target_id_ == 0 && target_unit->silo_building()) {
+                    if (!repair_target_id_ && target_unit->silo_building()) {
                         cmd.task_wait = 6;
                         cmd.patrol_scan = 0;
                     }
@@ -2096,8 +2129,8 @@ OrderStep Unit::guard_factory_queue(UnitCommand& cmd, Unit& target_unit, f64 dt,
             if (!holds_for_rolloff(assist_rolloff_wait_)) factory_assist_build_ = false;
             return OrderStep::Hold;
         }
-        const u32 built_id = build_target_id_;
-        const u32 guarded_id = cmd.target_id; // cmd may go with the scripts' changes
+        const EntityId built_id = build_target_id_;
+        const EntityId guarded_id = cmd.target_id; // cmd may go with the scripts' changes
         bool built = false;
         if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff, &built)) {
             // Built for the guarded factory, the unit takes its rally
@@ -2145,7 +2178,7 @@ OrderStep Unit::guard_factory_queue(UnitCommand& cmd, Unit& target_unit, f64 dt,
     if (waits_out_task(cmd)) {
         return OrderStep::Hold;
     }
-    const u32 guarded_factory = cmd.target_id;
+    const EntityId guarded_factory = cmd.target_id;
     auto& queue = target_unit.command_queue_;
     const bool repeats = target_unit.repeat_queue_;
     for (size_t i = 0; i < queue.size() && L; ++i) {
@@ -2331,13 +2364,13 @@ Quaternion blend_orientation(const Quaternion& a, Quaternion b, f32 t) {
     return q;
 }
 
-bool loads_itself(const UnitCommand& cmd, u32 id) {
+bool loads_itself(const UnitCommand& cmd, EntityId id) {
     return cmd.type == CommandType::TransportLoad && cmd.target_id == id;
 }
 
 } // namespace
 
-bool Unit::calls_transport(u32 transport_id) const {
+bool Unit::calls_transport(EntityId transport_id) const {
     return transport_id != entity_id() && !command_queue_.empty() &&
            loads_itself(command_queue_.front(), transport_id);
 }
@@ -2364,7 +2397,7 @@ OrderStep Unit::order_transport_load(UnitCommand& cmd, SimContext& ctx) {
             return OrderStep::Next;
         }
     }
-    if (cmd.target_id != 0 && cmd.target_id == entity_id()) {
+    if (cmd.target_id && cmd.target_id == entity_id()) {
         if (cmd.type == CommandType::Dock) { // at itself: nothing to do
             command_queue_.pop_front();
             return OrderStep::Next;
@@ -2378,7 +2411,7 @@ OrderStep Unit::order_transport_load(UnitCommand& cmd, SimContext& ctx) {
 OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
-    const u32 me = entity_id();
+    const EntityId me = entity_id();
     // Ending ran scripts, which may have cleared the queue (and cmd with it)
     // or replaced it: the order goes only if it is still the head.
     const u32 order_id = cmd.command_id;
@@ -2408,7 +2441,9 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
         registry.for_each_unit([&](Entity& e) {
             if (e.destroyed() || !e.is_unit() || e.army() != army() || e.entity_id() == me) return;
             auto& u = static_cast<Unit&>(e);
-            if (u.is_dying() || u.transport_id() != 0) return;
+            if (u.is_dying() || u.transport_id()) {
+                return;
+            }
             const bool ordered =
                 std::any_of(u.command_queue_.begin(), u.command_queue_.end(),
                             [&](const UnitCommand& c) { return loads_itself(c, me); });
@@ -2507,7 +2542,7 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
     // At the pickup: hover while the units come aboard, as long as the wait
     // allows.
     ++pickup_ticks_;
-    std::erase_if(pickup_ids_, [&](u32 id) {
+    std::erase_if(pickup_ids_, [&](EntityId id) {
         const Entity* e = registry.find(id);
         const auto* u =
             e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
@@ -2527,8 +2562,11 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
 void Unit::finish_pickup(bool completed, lua_State* L) {
     // Units that never came give their slots up (Moho removes them at the
     // timeout).
-    if (transport_slots_)
-        for (const u32 id : pickup_ids_) transport_slots_->release(id);
+    if (transport_slots_) {
+        for (const EntityId id : pickup_ids_) {
+            transport_slots_->release(id);
+        }
+    }
     pickup_ids_.clear();
     pickup_phase_ = PickupPhase::None;
     pickup_ticks_ = 0;
@@ -2582,7 +2620,7 @@ bool Unit::hover_low(f64 dt, SimContext& ctx) {
 OrderStep Unit::order_call_transport(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
-    const u32 me = entity_id();
+    const EntityId me = entity_id();
     // Scripts run on the way (the beam, the attach) may clear the queue (and
     // cmd with it) or replace it: the order goes only if it is still the head.
     const u32 order_id = cmd.command_id;
@@ -2600,12 +2638,14 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, SimContext& ctx) {
         release_navigator(); // its walk to the transport ends with it
         return finish_order();
     };
-    if (cmd.target_id == 0 || transport_id_ != 0) return end();
+    if (!cmd.target_id || transport_id_) {
+        return end();
+    }
     Entity* target = registry.find(cmd.target_id);
     if (!target || target->destroyed() || !target->is_unit()) return end();
     auto* transport = static_cast<Unit*>(target);
     if (transport->is_dying()) return end();
-    const u32 tid = transport->entity_id();
+    const EntityId tid = transport->entity_id();
 
     // The transport runs the pickup once its head is the load order; one
     // without it queued is given it (Moho's command is the transport's too).
@@ -2723,7 +2763,7 @@ OrderStep Unit::order_transport_unload(UnitCommand& cmd, SimContext& ctx) {
     const bool any_aboard =
         cmd.unload_ids.empty()
             ? !cargo_ids_.empty()
-            : std::any_of(cmd.unload_ids.begin(), cmd.unload_ids.end(), [&](u32 id) {
+            : std::any_of(cmd.unload_ids.begin(), cmd.unload_ids.end(), [&](EntityId id) {
                   return std::find(cargo_ids_.begin(), cargo_ids_.end(), id) != cargo_ids_.end();
               });
     if (!any_aboard) {
@@ -2756,7 +2796,7 @@ OrderStep Unit::order_transport_unload(UnitCommand& cmd, SimContext& ctx) {
     // where it fits. Scripts ran, which may have cleared the queue (and cmd
     // with it): the order goes only if it is still the head.
     const u32 order_id = cmd.command_id;
-    const std::vector<u32> ids = cmd.unload_ids;
+    const std::vector<EntityId> ids = cmd.unload_ids;
     if (!unload_step(ctx, ids)) {
         return OrderStep::Hold;
     }
@@ -2774,20 +2814,23 @@ OrderStep Unit::order_staging_release(UnitCommand& cmd, SimContext& ctx) {
     // their queues cleared. Scripts ran: the order goes only if it is still
     // the head.
     const u32 order_id = cmd.command_id;
-    std::vector<u32> released;
-    for (const u32 id : cmd.unload_ids.empty() ? cargo_ids_ : cmd.unload_ids)
+    std::vector<EntityId> released;
+    for (const EntityId id : cmd.unload_ids.empty() ? cargo_ids_ : cmd.unload_ids) {
         if (std::find(cargo_ids_.begin(), cargo_ids_.end(), id) != cargo_ids_.end())
             released.push_back(id);
+    }
     UnitCommand move;
     move.type = CommandType::Move;
     move.target_pos = cmd.target_pos;
     detach_cargo(released, ctx.registry, ctx.L, ctx.terrain);
     if (destroyed() || !in_registry()) return OrderStep::Gone;
-    for (const u32 id : released) {
+    for (const EntityId id : released) {
         Entity* e = ctx.registry.find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<Unit*>(e);
-        if (unit->transport_id() == 0) unit->push_command(move, true);
+        if (!unit->transport_id()) {
+            unit->push_command(move, true);
+        }
     }
     set_unit_state("TransportUnloading", false);
     if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
@@ -2796,15 +2839,15 @@ OrderStep Unit::order_staging_release(UnitCommand& cmd, SimContext& ctx) {
     return OrderStep::Next;
 }
 
-bool Unit::unload_step(SimContext& ctx, const std::vector<u32>& ids) {
+bool Unit::unload_step(SimContext& ctx, const std::vector<EntityId>& ids) {
     if (is_air_unit() && vert_event_ != "Hover") {
         set_course({.kind = AirCourse::Kind::HoverLow});
         return false;
     }
     // Those whose footprint fits the ground where they hang; the rest stay
     // aboard (Moho's TransportDetachUnit asks FitsAt of an aircraft's cargo).
-    std::vector<u32> down;
-    for (const u32 id : ids.empty() ? cargo_ids_ : ids) {
+    std::vector<EntityId> down;
+    for (const EntityId id : ids.empty() ? cargo_ids_ : ids) {
         if (std::find(cargo_ids_.begin(), cargo_ids_.end(), id) == cargo_ids_.end()) continue;
         const Entity* e = ctx.registry.find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
@@ -2830,13 +2873,13 @@ OrderStep Unit::order_launch(UnitCommand& cmd, SimContext& ctx) {
     const bool overcharge = cmd.type == CommandType::Overcharge;
     Weapon* weapon =
         overcharge ? overcharge_weapon() : launch_weapon(cmd.type == CommandType::Nuke);
-    if (!weapon || cmd.launched || (overcharge && cmd.target_id == 0)) {
+    if (!weapon || cmd.launched || (overcharge && !cmd.target_id)) {
         release_navigator(); // a back-off under way ends with it
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     Vector3 at = cmd.target_pos;
-    if (cmd.target_id != 0) {
+    if (cmd.target_id) {
         const Entity* target = registry.find(cmd.target_id);
         if (!target || target->destroyed()) {
             release_navigator();
@@ -2969,8 +3012,8 @@ bool sacrifice_upgrading(const Unit& u) {
            (!u.command_queue().empty() && u.command_queue().front().type == CommandType::Upgrade);
 }
 
-Unit* live_unit(EntityRegistry& registry, u32 id) {
-    Entity* e = id != 0 ? registry.find(id) : nullptr;
+Unit* live_unit(EntityRegistry& registry, EntityId id) {
+    Entity* e = id ? registry.find(id) : nullptr;
     if (!e || e->destroyed() || !e->is_unit()) {
         return nullptr;
     }
@@ -2980,7 +3023,7 @@ Unit* live_unit(EntityRegistry& registry, u32 id) {
 } // namespace
 
 void Unit::destroy_through_script(EntityRegistry& registry, lua_State* L) {
-    const u32 id = entity_id();
+    const EntityId id = entity_id();
     call_lua_method(L, "Destroy");
     Entity* self = registry.find(id);
     if (self && !self->destroyed()) {
@@ -3111,9 +3154,9 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, SimContext& ctx) {
     // which stay queued. The first is where it loads, at a beacon;
     // the last where it unloads; those between are waypoints, flown
     // out and back.
-    const u32 beacon_id = ferry_beacon(ctx, cmd);
+    const EntityId beacon_id = ferry_beacon(ctx, cmd);
     if (destroyed() || !in_registry()) return OrderStep::Gone;
-    if (beacon_id == 0) {
+    if (!beacon_id) {
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -3143,7 +3186,9 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, SimContext& ctx) {
         registry.for_each_unit([&](const Entity& e) {
             if (e.destroyed() || !e.is_unit() || e.army() != army()) return;
             const auto& u = static_cast<const Unit&>(e);
-            if (u.is_dying() || u.transport_id() != 0 || u.command_queue().empty()) return;
+            if (u.is_dying() || u.transport_id() || u.command_queue().empty()) {
+                return;
+            }
             const UnitCommand& wait = u.command_queue().front();
             if (wait.type == CommandType::WaitForFerry && wait.assigned_id == entity_id())
                 ++boarding;
@@ -3159,7 +3204,9 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, SimContext& ctx) {
             registry.for_each_unit([&](const Entity& e) {
                 if (e.destroyed() || !e.is_unit() || e.army() != army()) return;
                 const auto& u = static_cast<const Unit&>(e);
-                if (u.is_dying() || u.transport_id() != 0 || u.command_queue().empty()) return;
+                if (u.is_dying() || u.transport_id() || u.command_queue().empty()) {
+                    return;
+                }
                 const UnitCommand& wait = u.command_queue().front();
                 if (wait.type == CommandType::WaitForFerry && wait.assigned_id == entity_id())
                     (void)trial->assign(u.entity_id(), u.transport_class(),
@@ -3174,14 +3221,16 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, SimContext& ctx) {
             registry.for_each_unit([&](Entity& e) {
                 if (room <= 0 || e.destroyed() || !e.is_unit() || e.army() != army()) return;
                 auto& u = static_cast<Unit&>(e);
-                if (u.is_dying() || u.transport_id() != 0 || u.command_queue().empty() ||
-                    !u.has_category("LAND") || !u.has_unit_state("WaitForFerry"))
+                if (u.is_dying() || u.transport_id() || u.command_queue().empty() ||
+                    !u.has_category("LAND") || !u.has_unit_state("WaitForFerry")) {
                     return;
+                }
                 if (u.has_category("COMMAND") && !has_category("CANTRANSPORTCOMMANDER")) return;
                 const UnitCommand& wait = u.command_queue().front();
                 if (wait.type != CommandType::WaitForFerry || wait.target_id != beacon_id ||
-                    wait.assigned_id != 0)
+                    wait.assigned_id) {
                     return;
+                }
                 if (trial &&
                     !trial->assign(u.entity_id(), u.transport_class(), u.transport_attach_bone()))
                     return;
@@ -3255,14 +3304,14 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, SimContext& ctx) {
         command_queue_.pop_front();
         return OrderStep::Next;
     }
-    if (cmd.assigned_id != 0) {
+    if (cmd.assigned_id) {
         Entity* e = registry.find(cmd.assigned_id);
         auto* ferry = e && !e->destroyed() && e->is_unit() ? static_cast<Unit*>(e) : nullptr;
         const bool ferrying_here = ferry && !ferry->is_dying() && !ferry->command_queue().empty() &&
                                    ferry->command_queue().front().type == CommandType::Ferry &&
                                    ferry->command_queue().front().beacon_id == cmd.target_id;
         if (!ferrying_here) {
-            cmd.assigned_id = 0;
+            cmd.assigned_id = EntityId();
         } else {
             constexpr f32 load_range = 5.0f;
             const f32 ldx = ferry->position().x - position().x;

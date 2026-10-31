@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 #include <functional>
 #include <vector>
@@ -17,10 +18,10 @@ namespace osc::blueprints { class BlueprintStore; }
 namespace osc::test {
 
 /// Entity id of an army's commander (0-based army; lowest-id registered unit
-/// with the COMMAND category, destroyed or not), or 0 if it has none. Tests
+/// with the COMMAND category, destroyed or not), or none if it has none. Tests
 /// used to hardcode entity #1/#2, which only held when the ACUs happened to be
 /// created before any prop (FAF); retail creates props and deposits first.
-u32 army_acu_id(sim::SimState& sim, i32 army);
+sim::EntityId army_acu_id(sim::SimState& sim, i32 army);
 
 /// Lua helpers for the embedded test scripts, e.g. __osc_test_acu_id(army)
 /// (1-based army, mirroring the Lua convention) -> entity id or nil; and
@@ -95,6 +96,8 @@ void test_waves(TestContext& ctx);
 void test_strata(TestContext& ctx);
 /// --meshless-test, in meshless_test.cpp.
 void test_meshless(TestContext& ctx);
+/// --lod-test, in lod_test.cpp.
+void test_lod(TestContext& ctx);
 /// --scroll-render-test, in scroll_render_test.cpp.
 void test_scroll_render(TestContext& ctx);
 /// --camera-test (M217a), in camera_test.cpp.
@@ -314,7 +317,7 @@ public:
 private:
     void finish();
 
-    u32 acu_ = 0;
+    sim::EntityId acu_{};
     int frames_ = 0;         // since the move order
     bool have_last_ = false;
     f32 last_[3] = {};
@@ -335,7 +338,7 @@ public:
     explicit RenderDumpProbe(std::string path) : path_(std::move(path)) {}
     /// Once per frame, after render().
     void on_frame(sim::SimState& sim, const std::function<bool(const char*)>& sim_lua,
-                  const std::function<void(const std::vector<u32>&)>& select,
+                  const std::function<void(const std::vector<sim::EntityId>&)>& select,
                   const std::function<void(std::ostream&)>& dump);
     bool done() const { return done_; }
 

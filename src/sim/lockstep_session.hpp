@@ -48,7 +48,7 @@ public:
     /// Queue a local order for the frame currently being entered. It is applied
     /// to the local sim immediately (scheduled) and broadcast on the next
     /// send_frame().
-    void submit_local(const std::vector<u32>& unit_ids, const UnitCommand& cmd,
+    void submit_local(const std::vector<EntityId>& unit_ids, const UnitCommand& cmd,
                       bool clear_existing);
 
     /// Queue a local SimCallback the same way: every peer runs it in the

@@ -330,8 +330,8 @@ void finish_world_load(osc::sim::SimState& sim_state, osc::lua::LuaState& sim_lu
                        osc::GameStateManager& game_state_mgr, osc::renderer::Renderer* renderer,
                        osc::blueprints::BlueprintStore* ui_store,
                        osc::renderer::InputHandler* input_handler,
-                       std::unordered_set<osc::u32>* prev_selection, double& sim_accumulator,
-                       const std::string& launch_scenario) {
+                       std::unordered_set<osc::sim::EntityId>* prev_selection,
+                       double& sim_accumulator, const std::string& launch_scenario) {
     lua_State* uiL = ui_lua_state.raw();
 
     // 13. Update UI state's sim_state registry pointer to new SimState
@@ -380,22 +380,21 @@ void finish_world_load(osc::sim::SimState& sim_state, osc::lua::LuaState& sim_lu
 }
 
 // Returns true on success, false on critical failure.
-bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
-                             std::unique_ptr<osc::sim::SimState>& sim_state,
-                             osc::lua::LuaState& ui_lua_state, osc::vfs::VirtualFileSystem& vfs,
-                             osc::blueprints::BlueprintStore& store, osc::lua::InitLoader& loader,
-                             const osc::lua::InitConfig& config,
-                             osc::lua::ScenarioMetadata& scenario_meta,
-                             osc::GameStateManager& game_state_mgr,
-                             osc::renderer::Renderer* renderer,            // nullable for headless
-                             osc::blueprints::BlueprintStore* ui_store,    // nullable for headless
-                             osc::renderer::InputHandler* input_handler,   // nullable for headless
-                             std::unordered_set<osc::u32>* prev_selection, // nullable for headless
-                             WorldInterp* world_interp,                    // nullable for headless
-                             osc::u64 seed, // the new game's random seed
-                             double& sim_accumulator, const std::string& launch_scenario,
-                             const osc::sim::Replay* replay,       // a replay to play instead
-                             const osc::sim::GameSetup* restart) { // a game started again
+bool execute_reload_sequence(
+    std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
+    std::unique_ptr<osc::sim::SimState>& sim_state, osc::lua::LuaState& ui_lua_state,
+    osc::vfs::VirtualFileSystem& vfs, osc::blueprints::BlueprintStore& store,
+    osc::lua::InitLoader& loader, const osc::lua::InitConfig& config,
+    osc::lua::ScenarioMetadata& scenario_meta, osc::GameStateManager& game_state_mgr,
+    osc::renderer::Renderer* renderer,                      // nullable for headless
+    osc::blueprints::BlueprintStore* ui_store,              // nullable for headless
+    osc::renderer::InputHandler* input_handler,             // nullable for headless
+    std::unordered_set<osc::sim::EntityId>* prev_selection, // nullable for headless
+    WorldInterp* world_interp,                              // nullable for headless
+    osc::u64 seed,                                          // the new game's random seed
+    double& sim_accumulator, const std::string& launch_scenario,
+    const osc::sim::Replay* replay,       // a replay to play instead
+    const osc::sim::GameSetup* restart) { // a game started again
     WorldLoad load =
         begin_world_load(sim_lua_state, sim_state, ui_lua_state, vfs, store, loader, config,
                          scenario_meta, renderer, seed, launch_scenario, replay, restart);

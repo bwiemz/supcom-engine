@@ -100,7 +100,7 @@ void save_world(StateWriter& w, const path::PathWorld& world) {
     w.b(world.use_whole_map);
     w.i32v(world.pathcap);
     w.b(world.blockers != nullptr);
-    w.u32v(world.owner);
+    w.id(world.owner);
 }
 
 path::PathWorld load_world(StateReader& r, const SimState& sim) {
@@ -112,7 +112,7 @@ path::PathWorld load_world(StateReader& r, const SimState& sim) {
     world.pathcap = r.i32v();
     // The mobile units are the sim's, asked for the unit it was saved for.
     world.blockers = r.b() ? &sim.unit_blockers() : nullptr;
-    world.owner = r.u32v();
+    world.owner = r.id();
     // The sim's, which isn't saved either
     world.personal_pos_max_distance = sim.navigator_personal_pos_max_distance();
     return world;
@@ -120,16 +120,17 @@ path::PathWorld load_world(StateReader& r, const SimState& sim) {
 
 } // namespace
 
-u32 StateIO::traveler_id(const SimState& sim, const path::Traveler* t) {
-    u32 id = 0;
+EntityId StateIO::traveler_id(const SimState& sim, const path::Traveler* t) {
+    EntityId id{};
     sim.entity_registry().for_each_unit([&](const Entity& e) {
-        if (id == 0 && &static_cast<const Unit&>(e).navigator_.moho_.finder_ == t)
+        if (!id && &static_cast<const Unit&>(e).navigator_.moho_.finder_ == t) {
             id = e.entity_id();
+        }
     });
     return id;
 }
 
-path::PathFinder* StateIO::traveler_of(SimState& sim, u32 id) {
+path::PathFinder* StateIO::traveler_of(SimState& sim, EntityId id) {
     Entity* e = sim.entity_registry().find(id);
     if (!e || !e->is_unit()) return nullptr;
     return &static_cast<Unit*>(e)->navigator_.moho_.finder_;
@@ -345,8 +346,10 @@ void StateIO::load(StateReader& r, path::PathSearch& s) {
 void StateIO::save(StateWriter& w, const path::PathQueue& q, const SimState& sim) {
     // searches_done_, expansions_done_: the bench's counters, not game state
     w.size(q.pending_.size());
-    for (const path::Traveler* t : q.pending_) w.u32v(traveler_id(sim, t));
-    w.u32v(q.search_.traveler_ ? traveler_id(sim, q.search_.traveler_) : 0);
+    for (const path::Traveler* t : q.pending_) {
+        w.id(traveler_id(sim, t));
+    }
+    w.id(q.search_.traveler_ ? traveler_id(sim, q.search_.traveler_) : EntityId());
     save(w, q.search_);
 }
 
@@ -355,14 +358,14 @@ void StateIO::load(StateReader& r, path::PathQueue& q, SimState& sim) {
     if (q.search_.traveler_) q.search_.traveler_->queue_ = nullptr;
     q.pending_.clear();
     q.search_.traveler_ = nullptr;
-    const size_t pending = r.size(4);
+    const size_t pending = r.size(8);
     for (size_t i = 0; i < pending && r.ok(); ++i) {
-        path::PathFinder* f = traveler_of(sim, r.u32v());
+        path::PathFinder* f = traveler_of(sim, r.id());
         if (!f) return r.fail("a path queue names no unit");
         q.pending_.push_back(f);
         f->queue_ = &q;
     }
-    if (const u32 id = r.u32v(); id != 0) {
+    if (const EntityId id = r.id()) {
         path::PathFinder* f = traveler_of(sim, id);
         if (!f) return r.fail("a path search names no unit");
         q.search_.traveler_ = f;

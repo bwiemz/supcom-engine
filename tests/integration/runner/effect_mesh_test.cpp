@@ -242,6 +242,12 @@ void test_effect_meshes(TestContext& ctx) {
             "brain:GiveResource('MASS', 5000)\n"
             "brain:GiveResource('ENERGY', 50000)\n"
             "local sx, sz = brain:GetArmyStartPos()\n"
+            "-- Trees reaching a site are reclaimed first (FindObstructingPropToReclaim)\n"
+            "for _, p in GetReclaimablesInRect(Rect(sx - 20, sz + 8, sx + 20, sz + 28)) do\n"
+            "    if IsProp(p) and string.find(p:GetBlueprint().BlueprintId, '/trees/') then\n"
+            "        p:Destroy()\n"
+            "    end\n"
+            "end\n"
             "local uef = CreateUnitHPR('uel0105', 'ARMY_1', sx - 10, 0, sz + 12, 0, 0, 0)\n"
             "IssueBuildMobile({uef}, Vector(sx - 10, 0, sz + 18), 'ueb1101', {})\n"
             "local aeon = CreateUnitHPR('ual0105', 'ARMY_1', sx + 10, 0, sz + 12, 0, 0, 0)\n"
@@ -719,7 +725,8 @@ void test_effect_meshes(TestContext& ctx) {
             (void)ctx.lua_state.do_string("__osc_number = __osc_scaled:GetEntityId()");
             lua_pushstring(ctx.L, "__osc_number");
             lua_rawget(ctx.L, LUA_GLOBALSINDEX);
-            const auto* p = ctx.sim.entity_registry().find(osc::sim::to_entity_id(ctx.L, -1));
+            const auto& registry = ctx.sim.entity_registry();
+            const auto* p = registry.find(osc::sim::to_entity_id(ctx.L, -1, registry));
             lua_pop(ctx.L, 1);
             const f32 x = p ? p->position().x : 0.0f;
             const f32 z = p ? p->position().z : 0.0f;

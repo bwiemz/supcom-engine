@@ -15,6 +15,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -81,6 +82,11 @@ struct StatTrigger {
     std::optional<std::set<std::string>> blueprints;
 };
 
+struct BuildReservation {
+    EntityId builder{};
+    u32 command = 0;
+};
+
 class ArmyBrain {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
@@ -104,6 +110,15 @@ public:
     /// playable area (SetIgnorePlayableRect; Moho's CArmyImpl::UseWholeMap):
     /// a campaign's reinforcements come in from off the playable area.
     bool use_whole_map() const { return use_whole_map_; }
+
+    /// Moho's CAiBrain::mBuildStructureMap.
+    std::map<std::pair<i32, i32>, BuildReservation>& build_reservations() {
+        return build_reservations_;
+    }
+    const std::map<std::pair<i32, i32>, BuildReservation>& build_reservations() const {
+        return build_reservations_;
+    }
+
     /// Its units' path searches (Moho's CArmyImpl PathQueue, roadmap item
     /// 4c), served kArmyPathBudget a tick.
     path::PathQueue& path_queue() { return path_queue_; }
@@ -187,6 +202,8 @@ public:
     /// original game does. Kept apart because update_economy recounts the
     /// units' part every tick; applied to max_storage at once too, so a
     /// GiveResource in the same script call can fill it.
+    f64 extra_storage_mass() const { return extra_storage_mass_; }
+    f64 extra_storage_energy() const { return extra_storage_energy_; }
     void set_extra_storage(f64 mass, f64 energy) {
         economy_.mass.max_storage += static_cast<f32>(mass - extra_storage_mass_);
         economy_.energy.max_storage += static_cast<f32>(energy - extra_storage_energy_);
@@ -354,6 +371,7 @@ private:
     i32 faction_ = 1;
     std::string ai_personality_;
     bool use_whole_map_ = false;
+    std::map<std::pair<i32, i32>, BuildReservation> build_reservations_;
     bool is_human_ = true;
     bool is_civilian_ = false;
 

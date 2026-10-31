@@ -89,13 +89,14 @@ std::vector<std::string> formation_scripts(lua_State* L, bool air) {
 }
 
 std::vector<FormationSlot> plan_formation(lua_State* L, const EntityRegistry& registry,
-                                          const map::Terrain* terrain, std::vector<u32> unit_ids,
+                                          const map::Terrain* terrain,
+                                          std::vector<EntityId> unit_ids,
                                           const std::string& formation, const Vector3& target,
                                           std::optional<f32> facing) {
     std::sort(unit_ids.begin(), unit_ids.end());
     unit_ids.erase(std::unique(unit_ids.begin(), unit_ids.end()), unit_ids.end());
     std::vector<FormationMember> members;
-    for (const u32 id : unit_ids) {
+    for (const EntityId id : unit_ids) {
         const Entity* e = registry.find(id);
         if (e && !e->destroyed() && e->is_unit() && e->lua_table_ref() >= 0) {
             members.push_back({id, e->army(), e->position(),

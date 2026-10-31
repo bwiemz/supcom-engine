@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 struct lua_State;
 
@@ -22,7 +23,7 @@ class SimState;
 /// The next check comes CollisionCheckInterval + 1 ticks later.
 /// `before_step` is for a check made earlier in the tick than the beam's
 /// step, which then counts down once more.
-void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_step);
+void check_collision_beam(SimState& sim, lua_State* L, EntityId beam_id, bool before_step);
 
 /// Moho's CollisionBeamEntity::MotionTick: false once its launcher or its weapon is gone.
 bool step_collision_beam(SimState& sim, lua_State* L, Entity& beam);

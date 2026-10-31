@@ -143,7 +143,7 @@ bool TransportSlots::has_space_for(i32 transport_class) const {
     return false;
 }
 
-std::optional<i32> TransportSlots::assign(u32 unit_id, i32 transport_class, i32 unit_bone) {
+std::optional<i32> TransportSlots::assign(EntityId unit_id, i32 transport_class, i32 unit_bone) {
     if (const Slot* held = slot_of(unit_id)) return held->bone;
     const AttachList list = attach_list(transport_class);
     const i32 size = std::max(1, list.attach_size);
@@ -156,13 +156,13 @@ std::optional<i32> TransportSlots::assign(u32 unit_id, i32 transport_class, i32 
     return std::nullopt;
 }
 
-const TransportSlots::Slot* TransportSlots::slot_of(u32 unit_id) const {
+const TransportSlots::Slot* TransportSlots::slot_of(EntityId unit_id) const {
     for (const Slot& slot : slots_)
         if (slot.unit_id == unit_id) return &slot;
     return nullptr;
 }
 
-void TransportSlots::release(u32 unit_id) {
+void TransportSlots::release(EntityId unit_id) {
     std::erase_if(slots_, [&](const Slot& slot) { return slot.unit_id == unit_id; });
 }
 

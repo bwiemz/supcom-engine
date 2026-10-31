@@ -31,6 +31,7 @@ extern "C" {
 #include <vector>
 
 using osc::sim::CommandType;
+using osc::sim::EntityId;
 using osc::sim::LockstepSession;
 using osc::sim::LoopbackHub;
 using osc::sim::LoopbackTransport;
@@ -46,7 +47,7 @@ struct LuaGuard {
     ~LuaGuard() { lua_close(L); }
 };
 
-osc::u32 spawn_mover(SimState& sim, osc::f32 speed) {
+EntityId spawn_mover(SimState& sim, osc::f32 speed) {
     auto u = std::make_unique<Unit>();
     u->set_army(0);
     u->set_max_speed(speed);
@@ -67,8 +68,8 @@ TEST_CASE("Two lockstep peers stay in sync over a transport", "[lockstep]") {
     LuaGuard ga, gb;
     SimState a(ga.L, nullptr);
     SimState b(gb.L, nullptr);
-    osc::u32 ida = spawn_mover(a, 5.0f);
-    osc::u32 idb = spawn_mover(b, 5.0f);
+    EntityId ida = spawn_mover(a, 5.0f);
+    EntityId idb = spawn_mover(b, 5.0f);
     REQUIRE(ida == idb);
 
     LoopbackHub hub;
@@ -302,7 +303,7 @@ TEST_CASE("LockstepSession times out a silent peer", "[lockstep][drop]") {
 TEST_CASE("A peer's frame carries only its own commands", "[lockstep]") {
     LuaGuard g;
     SimState a(g.L, nullptr);
-    const osc::u32 id = spawn_mover(a, 6.0f);
+    const EntityId id = spawn_mover(a, 6.0f);
     LoopbackHub hub;
     LoopbackTransport ta(hub, hub.add_endpoint());
     LoopbackTransport raw(hub, hub.add_endpoint()); // writes frames by hand
@@ -416,7 +417,7 @@ TEST_CASE("Survivors agree on a dropped peer's last frame", "[lockstep][drop]") 
     // defeat C's army on the same tick.
     LuaGuard ga, gb, gc;
     SimState a(ga.L, nullptr), b(gb.L, nullptr), c(gc.L, nullptr);
-    std::vector<osc::u32> movers;
+    std::vector<EntityId> movers;
     for (SimState* s : {&a, &b, &c}) {
         s->set_victory_condition("sandbox");
         for (const char* army : {"ARMY_1", "ARMY_2", "ARMY_3"}) s->add_army(army, army);
@@ -617,11 +618,12 @@ struct PausePair {
     LoopbackTransport ta{hub, hub.add_endpoint()}, tb{hub, hub.add_endpoint()};
     LockstepSession sa{a, ta, 0, {0, 1}};
     LockstepSession sb{b, tb, 1, {0, 1}};
+    EntityId mover{};
     PausePair() {
         for (SimState* s : {&a, &b}) {
             s->set_victory_condition("sandbox");
             for (const char* army : {"ARMY_1", "ARMY_2"}) s->add_army(army, army);
-            spawn_mover(*s, 5.0f);
+            mover = spawn_mover(*s, 5.0f);
         }
         sa.set_drop_timeout(5);
         sb.set_drop_timeout(5);
@@ -765,7 +767,7 @@ TEST_CASE("An order given while paused runs in a paused beat on every peer (M218
     REQUIRE(g.a.paused());
     REQUIRE(g.b.paused());
     const osc::u32 held = g.a.tick_count();
-    const osc::u32 mover = 1;
+    const EntityId mover = g.mover;
     REQUIRE(g.a.entity_registry().find(mover));
     g.sa.submit_local({mover}, move_to(90.0f, 90.0f), true);
     for (int i = 0; i < 3; ++i) {
@@ -805,7 +807,7 @@ TEST_CASE("A replay recorded before resumes were commands doesn't hold its pause
 }
 
 TEST_CASE("A drop report fits one wire message, keeping the newest frames", "[lockstep][drop]") {
-    // The dropped peer's last frames each name 600,000 units (2.4 MB): all
+    // The dropped peer's last frames each name 300,000 units (2.4 MB): all
     // three would make a report over the wire limit, and a survivor that
     // sent it would be dropped as hostile. The report keeps the newest.
     LuaGuard ga, gc;
@@ -820,8 +822,10 @@ TEST_CASE("A drop report fits one wire message, keeping the newest frames", "[lo
     LockstepSession sc(c, tc, 1, {0, 1});
     sa.set_drop_timeout(5);
 
-    std::vector<osc::u32> crowd(600000);
-    for (size_t i = 0; i < crowd.size(); ++i) crowd[i] = static_cast<osc::u32>(1000000 + i);
+    std::vector<EntityId> crowd(300000);
+    for (size_t i = 0; i < crowd.size(); ++i) {
+        crowd[i] = EntityId::of(static_cast<osc::u32>(1000000 + i), 1);
+    }
     for (int round = 0; round < 3; ++round) {
         sc.submit_local(crowd, move_to(10.0f * static_cast<osc::f32>(round), 0.0f), true);
         sa.send_frame();
@@ -841,7 +845,7 @@ TEST_CASE("A drop report fits one wire message, keeping the newest frames", "[lo
         CHECK(msg.size() <= osc::sim::kMaxWireMessage);
         largest = std::max(largest, msg.size());
     }
-    CHECK(largest > crowd.size() * sizeof(osc::u32)); // the newest frame went
+    CHECK(largest > crowd.size() * sizeof(osc::u64)); // the newest frame went
 }
 
 TEST_CASE("A drop report's frame number can't make a survivor work forever", "[lockstep][drop]") {
@@ -964,7 +968,7 @@ TEST_CASE("Latency costs a local order's delay, not the game's pace (M218h)", "[
             hub.delay = delay;
             LuaGuard ga, gb;
             SimState a(ga.L, nullptr), b(gb.L, nullptr);
-            const osc::u32 ida = spawn_mover(a, 5.0f);
+            const EntityId ida = spawn_mover(a, 5.0f);
             spawn_mover(b, 5.0f);
             DelayedTransport ta(hub, hub.add_endpoint()), tb(hub, hub.add_endpoint());
             LockstepSession sa(a, ta, 0, {0, 1});
@@ -1013,7 +1017,7 @@ TEST_CASE("The slowest peer sets the game's pace, and isn't dropped (M218h)", "[
     LoopbackHub hub;
     LuaGuard ga, gb;
     SimState a(ga.L, nullptr), b(gb.L, nullptr);
-    const osc::u32 ida = spawn_mover(a, 5.0f);
+    const EntityId ida = spawn_mover(a, 5.0f);
     spawn_mover(b, 5.0f);
     LoopbackTransport ta(hub, hub.add_endpoint()), tb(hub, hub.add_endpoint());
     LockstepSession sa(a, ta, 0, {0, 1});
@@ -1188,7 +1192,7 @@ TEST_CASE("A network game every player saved resumes from each one's copy as if 
     osc::lua::LuaState la, lb;
     SimState a(la.raw(), nullptr);
     SimState b(lb.raw(), nullptr);
-    const osc::u32 ida = spawn_mover(a, 5.0f);
+    const EntityId ida = spawn_mover(a, 5.0f);
     spawn_mover(b, 5.0f);
     LoopbackHub hub;
     LoopbackTransport ta(hub, hub.add_endpoint());

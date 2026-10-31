@@ -34,6 +34,7 @@
 // resumed game's interface must hear nothing of it.
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 #include <optional>
 #include <string>
@@ -105,7 +106,7 @@ private:
     u32 quit_at_ = 0; ///< the joiner leaves at this tick (0: it plays on)
     std::optional<u32> end_beat_; // replay checksum index for kEndTick
     u32 self_destruct_at_ = 0; ///< the joiner self-destructs then (0: never)
-    u32 self_destructed_ = 0;  ///< the joiner's commander, once it self-destructs
+    sim::EntityId self_destructed_{}; ///< the joiner's commander, once it self-destructs
     bool self_destruct_failed_ = false;
     std::string save_as_;           ///< the host saves the game as this (none: no save)
     bool save_sent_ = false;        ///< it asked to

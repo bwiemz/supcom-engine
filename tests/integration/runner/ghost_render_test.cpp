@@ -73,9 +73,7 @@ void test_ghost_render(TestContext& ctx) {
     ghost.y = ctx.sim.terrain()->get_terrain_height(spot->x, spot->z);
 
     const auto shot = [&](const renderer::BuildGhost* g) {
-        for (int i = 0; i < 10; ++i) {
-            shots.redraw(nullptr, g);
-        }
+        shots.redraw_until_loaded(nullptr, g);
         return centre_pixels(shots.grab(nullptr, g));
     };
     const Pixels bare = shot(nullptr);
@@ -120,7 +118,7 @@ void test_ghost_render(TestContext& ctx) {
                         "factory for a generator changes {} pixels)",
                         both, factory.pixels));
 
-    const u32 generator =
+    const sim::EntityId generator =
         spawn_unit(ctx, "__osc_ghost_shield", "ueb4202", "ARMY_1", {spot->x + 9.0f, spot->z});
     run_lua(ctx, "ForkThread(function()\n"
                  "  while true do ArmyBrains[1]:GiveResource('ENERGY', 5000) WaitTicks(1) end\n"

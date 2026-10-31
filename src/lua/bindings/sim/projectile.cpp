@@ -94,7 +94,10 @@ static sim::Projectile* check_projectile(lua_State* L, int idx = 1) {
 
 static int proj_GetLauncher(lua_State* L) {
     auto* p = check_projectile(L);
-    if (!p || p->launcher_id == 0) { lua_pushnil(L); return 1; }
+    if (!p || !p->launcher_id) {
+        lua_pushnil(L);
+        return 1;
+    }
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
     auto* launcher = sim->entity_registry().find(p->launcher_id);
@@ -211,7 +214,7 @@ static int proj_SetNewTargetGround(lua_State* L) {
         lua_rawgeti(L, 2, 3);
         p->target_position.z = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
-        p->target_entity_id = 0; // ground target
+        p->target_entity_id = sim::EntityId(); // ground target
         p->target_point = -1;
         p->has_target_position = true;
     }
@@ -227,7 +230,7 @@ static int proj_SetNewTargetGroundXYZ(lua_State* L) {
     p->target_position = {static_cast<f32>(luaL_checknumber(L, 2)),
                           static_cast<f32>(luaL_checknumber(L, 3)),
                           static_cast<f32>(luaL_checknumber(L, 4))};
-    p->target_entity_id = 0; // ground target
+    p->target_entity_id = sim::EntityId(); // ground target
     p->target_point = -1;
     p->has_target_position = true;
     return 0;
@@ -296,7 +299,10 @@ static int proj_GetCurrentTargetPositionXYZ(lua_State* L) {
 
 static int proj_GetTrackingTarget(lua_State* L) {
     auto* p = check_projectile(L);
-    if (!p || p->target_entity_id == 0) { lua_pushnil(L); return 1; }
+    if (!p || !p->target_entity_id) {
+        lua_pushnil(L);
+        return 1;
+    }
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
     auto* target = sim->entity_registry().find(p->target_entity_id);
@@ -402,9 +408,14 @@ static int proj_SetLocalAngularVelocity(lua_State* L) {
 
 // --- Projectile collision + CreateChildProjectile (M51) ---
 
+// Both flags, as Moho's (faf-re cfunc_ProjectileSetCollisionL)
 static int proj_SetCollision(lua_State* L) {
     auto* p = check_projectile(L);
-    if (p) p->collision_enabled = (lua_toboolean(L, 2) != 0);
+    if (p) {
+        const bool on = lua_toboolean(L, 2) != 0;
+        p->collide_surface = on;
+        p->collide_entity = on;
+    }
     lua_pushvalue(L, 1); return 1; // return self for chaining
 }
 
@@ -452,7 +463,7 @@ static int proj_CreateChildProjectile(lua_State* L) {
     apply_script_projectile_physics(L, *child);
     child->arm_lost_target_aim(sim->entity_registry());
 
-    u32 child_id = sim->entity_registry().register_entity(std::move(child));
+    sim::EntityId child_id = sim->entity_registry().register_entity(std::move(child));
     auto* child_ptr = static_cast<sim::Projectile*>(
         sim->entity_registry().find(child_id));
 

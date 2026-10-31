@@ -24,9 +24,9 @@ class Frustum;
 /// from the UI state `L`.
 RangeScene collect_range_scene(const RangeOverlays& overlays, const sim::FrameView& view,
                                const Frustum& frustum, i32 focus_army,
-                               const std::unordered_set<u32>* selected, u32 hovered,
-                               const std::string* placing, f32 cursor_x, f32 cursor_z,
-                               RangeBlueprints& blueprints, lua_State* L);
+                               const std::unordered_set<sim::EntityId>* selected,
+                               sim::EntityId hovered, const std::string* placing, f32 cursor_x,
+                               f32 cursor_z, RangeBlueprints& blueprints, lua_State* L);
 
 /// Draws range batches as Moho's RenderRingBatch does: each ring a stencil
 /// volume on the depth so far (range.fx's Cast), its fills counted then

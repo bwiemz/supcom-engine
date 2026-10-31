@@ -4,6 +4,7 @@
 #include "integration_tests.hpp"
 #include "map/terrain.hpp"
 #include "sim/sim_state.hpp"
+#include "tick_until.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -21,6 +22,17 @@ void Tally::check(bool ok, const std::string& what) {
         ++fail;
         osc::test_status::fail("[FAIL] {}", what);
     }
+}
+
+void draw_until_loaded(renderer::Renderer& r, const std::function<void()>& draw) {
+    int settled = 0;
+    tick_until(
+        [&] {
+            r.texture_cache().wait_reads();
+            draw();
+            settled = r.texture_cache().loading() == 0 ? settled + 1 : 0;
+        },
+        "the textures drawn have loaded", 600, [&] { return settled == 3; });
 }
 
 Pixels centre_pixels(const ImageRGBA8& image) {
@@ -90,7 +102,7 @@ void OffscreenShots::recapture() {
     history_.capture(ctx_.sim);
 }
 
-void OffscreenShots::redraw(const std::unordered_set<u32>* selected,
+void OffscreenShots::redraw(const std::unordered_set<sim::EntityId>* selected,
                             const renderer::BuildGhost* ghost) {
     // The sight of the army the test watches (it may have changed since)
     history_.set_sight_army(renderer_.player_army(), &ctx_.sim);
@@ -99,7 +111,12 @@ void OffscreenShots::redraw(const std::unordered_set<u32>* selected,
     renderer_.poll_events(0.016);
 }
 
-ImageRGBA8 OffscreenShots::grab(const std::unordered_set<u32>* selected,
+void OffscreenShots::redraw_until_loaded(const std::unordered_set<sim::EntityId>* selected,
+                                         const renderer::BuildGhost* ghost) {
+    draw_until_loaded(renderer_, [&] { redraw(selected, ghost); });
+}
+
+ImageRGBA8 OffscreenShots::grab(const std::unordered_set<sim::EntityId>* selected,
                                 const renderer::BuildGhost* ghost) {
     ImageRGBA8 shot;
     renderer_.request_capture([&](ImageRGBA8 image) { shot = std::move(image); });
@@ -139,18 +156,12 @@ ImageRGBA8 OffscreenShots::capture(const map::Terrain& terrain, f32 x, f32 z, f3
     cam.set_input_enabled(false);
     cam.set_eye_distance(distance);
     cam.set_target(x, z);
-    // Draw until every texture the view asks for has loaded (they load as
-    // they are first drawn), then capture one more frame.
     const auto draw = [&] {
         renderer_.render(sim::FrameView(&world.prev(), &world.cur(), 1.0f), world.events(), nullptr,
                          ctx_.L);
         renderer_.poll_events(0.016);
     };
-    int settled = 0;
-    for (int f = 0; f < 600 && settled < 3; ++f) {
-        draw();
-        settled = renderer_.texture_cache().loading() == 0 ? settled + 1 : 0;
-    }
+    draw_until_loaded(renderer_, draw);
     ImageRGBA8 shot;
     renderer_.request_capture([&](ImageRGBA8 image) { shot = std::move(image); });
     draw();

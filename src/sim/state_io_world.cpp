@@ -63,20 +63,20 @@ template <typename Map> Map load_str_f64(StateReader& r) {
     return map;
 }
 
-template <typename Map> void save_u32_str(StateWriter& w, const Map& map) {
-    std::vector<std::pair<u32, std::string>> sorted(map.begin(), map.end());
+template <typename Map> void save_id_str(StateWriter& w, const Map& map) {
+    std::vector<std::pair<EntityId, std::string>> sorted(map.begin(), map.end());
     std::sort(sorted.begin(), sorted.end());
     w.size(sorted.size());
     for (const auto& [k, v] : sorted) {
-        w.u32v(k);
+        w.id(k);
         w.str(v);
     }
 }
-template <typename Map> Map load_u32_str(StateReader& r) {
+template <typename Map> Map load_id_str(StateReader& r) {
     Map map;
-    const size_t n = r.size(8);
+    const size_t n = r.size(12);
     for (size_t i = 0; i < n; ++i) {
-        const u32 k = r.u32v();
+        const EntityId k = r.id();
         map[k] = r.str();
     }
     return map;
@@ -128,9 +128,9 @@ void StateIO::save(StateWriter& w, const Platoon& p) {
     w.b(p.destroyed_);
     w.b(p.disband_on_idle_);
     w.str(p.plan_name_);
-    save_ids(w, p.unit_ids_);
-    save_u32_str(w, p.squad_map_);
-    save_u32_str(w, p.formation_map_);
+    w.ids(p.unit_ids_);
+    save_id_str(w, p.squad_map_);
+    save_id_str(w, p.formation_map_);
     w.str(p.formation_override_);
     w.i32v(p.priority_targets_ref_);
 }
@@ -145,9 +145,9 @@ void StateIO::load(StateReader& r, Platoon& p) {
     p.destroyed_ = r.b();
     p.disband_on_idle_ = r.b();
     p.plan_name_ = r.str();
-    p.unit_ids_ = load_ids(r);
-    p.squad_map_ = load_u32_str<std::unordered_map<u32, std::string>>(r);
-    p.formation_map_ = load_u32_str<std::unordered_map<u32, std::string>>(r);
+    p.unit_ids_ = r.ids();
+    p.squad_map_ = load_id_str<std::unordered_map<EntityId, std::string>>(r);
+    p.formation_map_ = load_id_str<std::unordered_map<EntityId, std::string>>(r);
     p.formation_override_ = r.str();
     p.priority_targets_ref_ = r.i32v();
 }
@@ -164,7 +164,7 @@ void StateIO::save(StateWriter& w, const InfluenceMap& m) {
     for (const InfluenceMap::Cell& c : m.cells_) {
         w.size(c.entries.size());
         for (const auto& [id, e] : c.entries) {
-            w.u32v(id);
+            w.id(id);
             w.i32v(e.source_army);
             w.vec3(e.position);
             w.f32v(e.source.air);
@@ -203,7 +203,7 @@ void StateIO::load(StateReader& r, InfluenceMap& m) {
         c.entries.clear();
         const size_t entries = r.size(40);
         for (size_t k = 0; k < entries && r.ok(); ++k) {
-            const u32 id = r.u32v();
+            const EntityId id = r.id();
             InfluenceMap::Entry& e = c.entries[id];
             e.source_army = r.i32v();
             e.position = r.vec3();
@@ -277,6 +277,13 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
         }
     }
     w.vec3(a.start_position_);
+    w.size(a.build_reservations_.size());
+    for (const auto& [cell, reservation] : a.build_reservations_) {
+        w.i32v(cell.first);
+        w.i32v(cell.second);
+        w.id(reservation.builder);
+        w.u32v(reservation.command);
+    }
     w.b(a.influence_map_ != nullptr); // made when first asked for
     if (a.influence_map_) save(w, *a.influence_map_);
     w.i32v(a.current_enemy_index_);
@@ -365,6 +372,15 @@ void StateIO::load(StateReader& r, ArmyBrain& a, SimState& sim) {
         a.alliances_[army] = enum32<Alliance>(r);
     }
     a.start_position_ = r.vec3();
+    a.build_reservations_.clear();
+    const size_t reservations = r.size(16);
+    for (size_t i = 0; i < reservations; ++i) {
+        const i32 x = r.i32v();
+        const i32 z = r.i32v();
+        auto& reservation = a.build_reservations_[{x, z}];
+        reservation.builder = r.id();
+        reservation.command = r.u32v();
+    }
     a.influence_map_.reset();
     if (r.b()) {
         const map::Terrain* terrain = sim.terrain();
@@ -435,8 +451,8 @@ void StateIO::save(StateWriter& w, const IEffectRegistry& fx) {
         w.u32v(e->id_);
         enum8(w, e->type_);
         w.str(e->blueprint_path_);
-        w.u32v(e->entity_id_);
-        w.u32v(e->target_entity_id_);
+        w.id(e->entity_id_);
+        w.id(e->target_entity_id_);
         w.i32v(e->bone_index_);
         w.i32v(e->target_bone_index_);
         w.i32v(e->army_);
@@ -501,8 +517,8 @@ void StateIO::load(StateReader& r, IEffectRegistry& fx) {
         e->id_ = r.u32v();
         e->type_ = enum8<EffectType>(r);
         e->blueprint_path_ = r.str();
-        e->entity_id_ = r.u32v();
-        e->target_entity_id_ = r.u32v();
+        e->entity_id_ = r.id();
+        e->target_entity_id_ = r.id();
         e->bone_index_ = r.i32v();
         e->target_bone_index_ = r.i32v();
         e->army_ = r.i32v();
@@ -582,7 +598,7 @@ void StateIO::save(StateWriter& w, const EconomyEventRegistry& ev) {
     for (const auto& e : ev.events_) {
         w.i32v(e->waiting_thread_ref_);
         w.u64v(e->waiting_thread_serial_);
-        w.u32v(e->unit_id_);
+        w.id(e->unit_id_);
         w.f64v(e->total_mass_);
         w.f64v(e->total_energy_);
         w.f64v(e->duration_);
@@ -602,7 +618,7 @@ void StateIO::load(StateReader& r, EconomyEventRegistry& ev) {
     for (size_t i = 0; i < n && r.ok(); ++i) {
         const int waiting_ref = r.i32v();
         const u64 waiting_serial = r.u64v();
-        const u32 unit = r.u32v();
+        const EntityId unit = r.id();
         const f64 mass = r.f64v();
         const f64 energy = r.f64v();
         const f64 duration = r.f64v();
@@ -670,7 +686,7 @@ void StateIO::save(StateWriter& w, const SimCallbackEntry& c) {
     }
     w.b(c.value.has_value());
     if (c.value) save_arg(w, *c.value);
-    save_ids(w, c.unit_ids);
+    w.ids(c.unit_ids);
     w.b(c.lua_args.has_value());
     if (c.lua_args) {
         w.str(*c.lua_args);
@@ -687,7 +703,7 @@ void StateIO::load(StateReader& r, SimCallbackEntry& c) {
     }
     c.value.reset();
     if (r.b()) c.value = load_arg(r);
-    c.unit_ids = load_ids(r);
+    c.unit_ids = r.ids();
     c.lua_args.reset();
     if (r.b()) {
         c.lua_args = r.str();
@@ -699,7 +715,7 @@ void StateIO::save(StateWriter& w, const ScheduledCommand& c) {
     w.u32v(c.source);
     w.u64v(c.sequence);
     save(w, c.command);
-    save_ids(w, c.unit_ids);
+    w.ids(c.unit_ids);
     w.b(c.clear_existing);
     w.b(c.callback.has_value());
     if (c.callback) save(w, *c.callback);
@@ -710,7 +726,7 @@ void StateIO::load(StateReader& r, ScheduledCommand& c) {
     c.source = r.u32v();
     c.sequence = r.u64v();
     load(r, c.command);
-    c.unit_ids = load_ids(r);
+    c.unit_ids = r.ids();
     c.clear_existing = r.b();
     c.callback.reset();
     if (r.b()) {

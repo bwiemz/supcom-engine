@@ -14,6 +14,7 @@
 #include "map/terrain.hpp"
 #include "sim/occupancy.hpp"
 #include "sim/saved_game.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_snapshot.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -70,45 +71,45 @@ struct World {
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = "
                  "5},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}}",
                  "{BlueprintId = 'giant', Categories = {'AIR', 'MOBILE', 'EXPERIMENTAL'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = "
                  "5},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}}",
                  "{BlueprintId = 'drone', Categories = {'AIR', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 0},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}}",
                  "{BlueprintId = 'ferry', Categories = {'AIR', 'MOBILE', 'TRANSPORTATION'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = 5,"
                  " TransportHoverHeight = 3},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}}",
                  "{BlueprintId = 'pod', Categories = {'AIR', 'MOBILE', 'CANLANDONWATER'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = "
                  "5},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}}",
                  "{BlueprintId = 'fighter', Categories = {'AIR', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, Winged = true, MaxAirspeed = 15, KMove = 1,"
                  " KMoveDamping = 1, StartTurnDistance = 5, TurnSpeed = 1.5, AutoLandTime = 1},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 18}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 15, Elevation = 18}}",
                  "{BlueprintId = 'flier', Categories = {'AIR', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, Winged = true, MaxAirspeed = 15, KMove = 1,"
                  " KMoveDamping = 1, StartTurnDistance = 5, TurnSpeed = 1.5, AutoLandTime = 0},"
-                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 18}}",
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 15, Elevation = 18}}",
                  "{BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
-                 " Physics = {MotionType = 'RULEUMT_Land'}}",
+                 " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 1}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
@@ -156,8 +157,7 @@ struct World {
         lua_pushnil(L);
         lua_pushnumber(L, z);
         REQUIRE(lua_pcall(L, 5, 2, 0) == 0);
-        auto* u =
-            static_cast<Unit*>(sim.entity_registry().find(static_cast<u32>(lua_tonumber(L, -2))));
+        auto* u = static_cast<Unit*>(sim.entity_registry().find(osc::sim::to_entity_key(L, -2)));
         lua_settop(L, 0);
         REQUIRE(u);
         return u;
@@ -259,7 +259,7 @@ TEST_CASE("With nowhere to land an aircraft stays up, CannotFindPlaceToLand; one
     osc::sim::GroundOccupant everything;
     everything.caps = oc::kLand;
     everything.rects = {{0, 0, 64, 64}};
-    w.sim.occupy_ground(9999, everything);
+    w.sim.occupy_ground(osc::sim::EntityId::of(9999, 1), everything);
     Unit& plane = *w.make("plane", 32.0f, 32.0f);
     tick_until([&] { w.sim.tick(); }, "the plane finds no place to land", 80,
                [&] { return plane.has_unit_state("CannotFindPlaceToLand"); });
@@ -621,7 +621,7 @@ TEST_CASE("An aircraft flies one step when a move hands over to a guard", "[air_
     // plain Move.
     osc::sim::UnitCommand next = guard;
     next.type = osc::sim::CommandType::Move;
-    next.target_id = 0;
+    next.target_id = {};
     reference.push_command(next, false);
     bool handed_over = false;
     int tick = 0;

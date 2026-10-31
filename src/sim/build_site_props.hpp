@@ -13,9 +13,9 @@ class EntityRegistry;
 class Unit;
 
 struct BuildSiteProp {
-    u32 reclaim_id = 0;
+    EntityId reclaim_id{};
     bool rebuild = false;
-    u32 wreck_id = 0;
+    EntityId wreck_id{};
     f32 bonus = 0.0f;
 };
 

@@ -46,7 +46,7 @@ struct World {
     osc::lua::LuaState ui;
     osc::renderer::InputHandler input;
     osc::sim::WorldSnapshot seen;
-    osc::u32 id = 0;
+    osc::sim::EntityId id{};
 
     World() {
         std::vector<osc::u16> heights(65 * 65, 1000);
@@ -176,7 +176,7 @@ TEST_CASE("An order's commandType is Moho's UNITCOMMAND number", "[faf][orders]"
     order = {};
     order.type = CommandType::TransportUnload;
     CHECK(osc::sim::moho_command_number(order) == 24);
-    order.unload_ids = {7};
+    order.unload_ids = {osc::sim::EntityId::of(7, 1)};
     CHECK(osc::sim::moho_command_number(order) == 25);
 }
 
@@ -214,7 +214,8 @@ TEST_CASE("A sim unit's queue gives each order's place, target and build", "[faf
     auto guarded = std::make_unique<osc::sim::Unit>();
     guarded->set_army(0);
     guarded->set_position({33, 7, 44});
-    const osc::u32 guarded_id = w.sim.entity_registry().register_entity(std::move(guarded));
+    const osc::sim::EntityId guarded_id =
+        w.sim.entity_registry().register_entity(std::move(guarded));
     lua_State* S = w.sim_lua.raw();
     for (const auto& [name, id] : {std::pair{"unit", w.id}, std::pair{"guarded", guarded_id}}) {
         lua_newtable(S);
@@ -274,7 +275,8 @@ TEST_CASE("A repairer's focus unit is what it repairs", "[faf][repair]") {
     damaged->set_position({8, 0, 5});
     damaged->set_max_health(600.0f);
     damaged->set_health(120.0f);
-    const osc::u32 damaged_id = w.sim.entity_registry().register_entity(std::move(damaged));
+    const osc::sim::EntityId damaged_id =
+        w.sim.entity_registry().register_entity(std::move(damaged));
     lua_State* S = w.sim_lua.raw();
     for (const auto& [name, id] : {std::pair{"unit", w.id}, std::pair{"damaged", damaged_id}}) {
         lua_newtable(S);

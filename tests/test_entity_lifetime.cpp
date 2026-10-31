@@ -120,7 +120,7 @@ TEST_CASE("a removed structure stops blocking paths", "[nav][m183]") {
     auto& grid = *sim.pathfinding_grid();
 
     auto* factory = spawn_structure(sim, 20.0f, 20.0f);
-    const osc::u32 id = factory->entity_id();
+    const osc::sim::EntityId id = factory->entity_id();
     sim.occupy_footprint(*factory);
     sim.occupy_footprint(*factory); // idempotent
     REQUIRE(sim.occupies_footprint(id));
@@ -156,7 +156,7 @@ TEST_CASE("C++-side removal severs the Lua table's pointer to the entity",
 
     auto u = std::make_unique<Unit>();
     auto* raw = u.get();
-    const osc::u32 id = sim.entity_registry().register_entity(std::move(u));
+    const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(u));
 
     // The unit's Lua table, as create_unit_core builds it.
     lua_newtable(L);
@@ -185,11 +185,12 @@ TEST_CASE("a crashed aircraft is removed from the registry", "[lifetime][m183]")
 
     auto u = std::make_unique<Unit>();
     u->set_layer("Air");
+    u->set_motion_type("RULEUMT_Air");
     u->set_position({32.0f, 40.0f, 32.0f});
     u->set_current_altitude(40.0f);
     u->set_current_airspeed(10.0f);
     auto* plane = u.get();
-    const osc::u32 id = sim.entity_registry().register_entity(std::move(u));
+    const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(u));
     const size_t before = sim.entity_registry().count();
 
     plane->begin_dying(); // killed in flight; with no script it goes on landing
@@ -210,7 +211,7 @@ TEST_CASE("an expired projectile's Lua table no longer points at it",
     auto p = std::make_unique<osc::sim::Projectile>();
     p->set_lifetime(0.04f, 0);
     auto* raw = p.get();
-    const osc::u32 id = sim.entity_registry().register_entity(std::move(p));
+    const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(p));
     lua_newtable(L);
     lua_pushstring(L, "_c_object");
     lua_pushlightuserdata(L, raw);
@@ -236,7 +237,7 @@ TEST_CASE("an unregistered entity stays allocated until the tick's garbage colle
     osc::sim::EntityRegistry registry;
     auto u = std::make_unique<Unit>();
     auto* raw = u.get();
-    const osc::u32 id = registry.register_entity(std::move(u));
+    const osc::sim::EntityId id = registry.register_entity(std::move(u));
 
     registry.unregister_entity(id);
     CHECK(registry.find(id) == nullptr); // gone for every lookup at once

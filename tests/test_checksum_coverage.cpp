@@ -45,10 +45,10 @@ struct LuaGuard {
 };
 
 /// Two armies, a gunned tank each, as every sim here starts.
-std::vector<osc::u32> setup(SimState& sim) {
+std::vector<osc::sim::EntityId> setup(SimState& sim) {
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2");
-    std::vector<osc::u32> ids;
+    std::vector<osc::sim::EntityId> ids;
     for (int i = 0; i < 2; ++i) {
         auto u = std::make_unique<Unit>();
         u->set_army(i);
@@ -66,7 +66,7 @@ std::vector<osc::u32> setup(SimState& sim) {
     return ids;
 }
 
-Unit& unit(SimState& sim, osc::u32 id) {
+Unit& unit(SimState& sim, osc::sim::EntityId id) {
     return static_cast<Unit&>(*sim.entity_registry().find(id));
 }
 
@@ -318,7 +318,7 @@ TEST_CASE("The checksum trace keeps the threads column, after the compared domai
 }
 
 TEST_CASE("A game saved with that state, restored and played on, matches", "[sync][checksum]") {
-    const auto mid_game = [](SimState& sim, const std::vector<osc::u32>& ids) {
+    const auto mid_game = [](SimState& sim, const std::vector<osc::sim::EntityId>& ids) {
         Unit& u = unit(sim, ids[0]);
         osc::sim::Weapon& w = *u.weapons().front();
         w.shots_at_target = 2;

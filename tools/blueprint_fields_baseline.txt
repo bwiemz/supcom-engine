@@ -2,7 +2,6 @@
 CatchUpAcc
 GroundCollisionOffset
 IgnoreIfDisabled
-LAYER_Air
 PlaceholderMeshName
 QuickSelectPriority
 RepairRate

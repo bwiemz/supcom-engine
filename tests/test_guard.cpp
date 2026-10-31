@@ -87,7 +87,7 @@ Unit* still(SimState& sim, int army, f32 x, f32 z) {
 UnitCommand guard(const Unit* of, osc::u32 id, osc::sim::Vector3 point = {}) {
     UnitCommand c;
     c.type = CommandType::Guard;
-    c.target_id = of ? of->entity_id() : 0;
+    c.target_id = of ? of->entity_id() : osc::sim::EntityId();
     c.target_pos = of ? of->position() : point;
     c.command_id = id;
     return c;
@@ -177,7 +177,7 @@ TEST_CASE("A guard's ward moved while the guard fights moves, before its tick to
     osc::sim::SimCallbackEntry cb;
     cb.func_name = osc::sim::kSetCommandTargetCallback;
     cb.args["Command"] = 7.0;
-    cb.args["Target"] = static_cast<double>(other->entity_id());
+    cb.args["Target"] = static_cast<double>(other->entity_id().key());
     cb.unit_ids = {tank->entity_id()};
     sim.submit_callback(cb);
     const auto pending = sim.queues_with_pending();
@@ -259,10 +259,10 @@ TEST_CASE("A guard of a point goes there and takes on enemies near it", "[guard]
                [&] { return fight(*tank) != nullptr; });
     const UnitCommand* f = fight(*tank);
     CHECK(f->target_id == enemy->entity_id());
-    CHECK(f->leash_anchor_id == 0);
+    CHECK_FALSE(f->leash_anchor_id);
     CHECK(f->leash_anchor_pos.x == 60.0f);
     CHECK(f->leash_anchor_pos.z == 60.0f);
-    CHECK(tank->guarded_unit_id() == 0);
+    CHECK_FALSE(tank->guarded_unit_id());
     CHECK(tank->guard_order() != nullptr);
 
     sim.entity_registry().unregister_entity(enemy->entity_id());
@@ -351,7 +351,7 @@ TEST_CASE("Engineers assisting a shield generator regenerate its bubble while it
     for (int t = 0; t < 10; ++t) {
         sim.tick();
     }
-    CHECK(eng->repair_target_id() == 0);
+    CHECK_FALSE(eng->repair_target_id());
     CHECK(bubble->health() == off_at);
 
     run_lua(g.L, "on = true");
@@ -408,6 +408,80 @@ TEST_CASE("On FAF's data an engineer repairing a damaged shield generator leaves
         } else {
             CHECK(bubble->health() > 1000.0f);
         }
+    }
+}
+
+namespace {
+
+struct ShieldAssist {
+    LuaGuard g;
+    SimState sim{g.L, nullptr};
+    Unit* gen = nullptr;
+    osc::sim::Shield* bubble = nullptr;
+    Unit* eng = nullptr;
+    double energy_a_tick;
+
+    ShieldAssist(bool faf, double energy) : energy_a_tick(energy) {
+        flat(sim);
+        sim.set_faf_exe(faf);
+        run_lua(g.L, "__blueprints = { gen = { Economy = { BuildTime = 100, BuildCostEnergy = 400"
+                     " }, Defense = { Shield = { RegenAssistMult = 60 } } } }");
+        gen = still(sim, 0, 50.0f, 50.0f);
+        gen->set_unit_id("gen");
+        gen->add_category("SHIELD");
+        gen->set_lua_table_ref(lua_ref_of(g.L, "{ ShieldIsOn = function() return true end }"));
+        auto bubble_owned = std::make_unique<osc::sim::Shield>();
+        bubble = bubble_owned.get();
+        bubble->set_army(0);
+        bubble->set_max_health(9000.0f);
+        bubble->set_health(1000.0f);
+        sim.entity_registry().register_entity(std::move(bubble_owned));
+        bubble->set_lua_table_ref(lua_ref_of(g.L, "{ RegenRate = 120 }"));
+        gen->set_focus_entity_id(bubble->entity_id());
+
+        eng = walker(sim, 0, 53.0f, 50.0f);
+        eng->add_category("ENGINEER");
+        eng->add_category("REPAIR");
+        eng->set_build_rate(5.0f);
+        eng->set_max_build_distance(5.0f);
+        eng->push_command(guard(gen, 1), true);
+    }
+
+    void tick() {
+        sim.get_army(0)->set_stored_resources(0.0, energy_a_tick);
+        sim.tick();
+    }
+};
+
+} // namespace
+
+TEST_CASE("An engineer granted nothing regenerates no shield generator's bubble", "[guard]") {
+    for (const bool faf : {false, true}) {
+        INFO("FAF's exe " << faf);
+        ShieldAssist s(faf, 0.0);
+        for (int t = 0; t < 10; ++t) {
+            s.tick();
+        }
+        CHECK(s.eng->repair_target_id() == s.gen->entity_id());
+        CHECK(s.eng->economy().resource_consumed == 0.0);
+        CHECK(s.bubble->health() == 1000.0f);
+    }
+}
+
+TEST_CASE("On FAF's data an engineer regenerates a shield generator's bubble at the share of its "
+          "request granted",
+          "[guard]") {
+    for (const bool faf : {false, true}) {
+        INFO("FAF's exe " << faf);
+        ShieldAssist s(faf, 0.5);
+        for (int t = 0; t < 10; ++t) {
+            s.tick();
+        }
+        CHECK(s.eng->repair_target_id() == s.gen->entity_id());
+        CHECK(std::abs(s.eng->economy().resource_consumed - 0.25) < 1e-6);
+        const f32 before = s.bubble->health();
+        s.tick();
+        CHECK(std::abs(s.bubble->health() - before - (faf ? 0.25f : 1.0f)) < 1e-4f);
     }
 }
 
@@ -542,7 +616,7 @@ TEST_CASE("A guarding engineer displaced between a factory's builds walks back t
     tick_until([&] { sim.tick(); }, "the engineer starts helping", 400,
                [&] { return eng->is_building(); });
 
-    factory->set_build_target_id(0);
+    factory->set_build_target_id({});
     first->set_is_being_built(false);
     sim.tick();
     REQUIRE_FALSE(eng->is_building());

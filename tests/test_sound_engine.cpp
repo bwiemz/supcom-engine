@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "app/world_sounds.hpp"
 #include "audio/sound_manager.hpp"
 #include "xact_fixtures.hpp"
 
@@ -339,12 +340,14 @@ TEST_CASE("Sound engine: a world sound at a point that isn't finite is not heard
     SoundManager sm(s.dir, false);
     LogCapture log;
     const f32 nan = std::numeric_limits<f32>::quiet_NaN();
-    CHECK(sm.play_world({"Test", "Click", "", {10, nan, 0}, false, 1, 7}) == INVALID_SOUND);
-    CHECK(sm.play_world({"Test", "Click", "", {10, nan, 0}, false, 2, 7}) == INVALID_SOUND);
+    const sim::EntityId entity = sim::EntityId::of(7, 1);
+    CHECK(sm.play_world({"Test", "Click", "", {10, nan, 0}, false, 1, entity}) == INVALID_SOUND);
+    CHECK(sm.play_world({"Test", "Click", "", {10, nan, 0}, false, 2, entity}) == INVALID_SOUND);
 
     using EL = SoundManager::EntityLoop;
     sm.set_global_variable("CameraDistance", 50);
-    std::vector<EL> want{EL{1, "Test", "Shot", "", {nan, nan, nan}, false, true, 8}};
+    std::vector<EL> want{
+        EL{1, "Test", "Shot", "", {nan, nan, nan}, false, true, sim::EntityId::of(8, 1)}};
     sm.sync_entity_loops(want);
     sm.sync_entity_loops(want);
     CHECK(sm.entity_loop(1) == INVALID_SOUND);
@@ -635,4 +638,10 @@ TEST_CASE("Sound engine: replace-lowest-priority stops the lowest priority", "[a
     CHECK(sm.current_gain(click) < click_gain * 0.9f); // fading
     CHECK_THAT(sm.current_gain(shot), WithinAbs(shot_gain, 1e-5)); // untouched
     CHECK(sm.is_playing(shot2));
+}
+
+TEST_CASE("A dead entity's loop and the loop of the entity with its Moho id have two keys",
+          "[audio][ids]") {
+    CHECK(app::entity_loop_key(sim::EntityId::of(7, 1), "Ambient") !=
+          app::entity_loop_key(sim::EntityId::of(7, 2), "Ambient"));
 }

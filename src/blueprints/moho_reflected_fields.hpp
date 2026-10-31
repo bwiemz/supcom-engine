@@ -8,12 +8,15 @@
 // every script after registration, as the class constructor's default.
 //
 // The engine fills only what the table leaves out, with those defaults and
-// the derived values, and normalizes resource ids as Moho's RResId does. See
+// the derived values, normalizes resource ids as Moho's RResId does, and
+// writes the flag enums as their lexical form. See
 // docs/plans/2026-10-23-moho-blueprint-reflection-design.md.
 
+#include "blueprints/footprint.hpp"
 #include "core/types.hpp"
 
 #include <span>
+#include <vector>
 
 struct lua_State;
 
@@ -34,13 +37,6 @@ struct ReflectedField {
     u32 address;      ///< the Moho function that sets it (faf-re)
 };
 
-/// A reflected field the engine does not fill, and why.
-struct UnfilledField {
-    const char* section;
-    const char* name;
-    const char* reason;
-};
-
 /// A unit blueprint's fields, but for its weapons' (REntityBlueprint,
 /// RUnitBlueprint and its sections).
 std::span<const ReflectedField> unit_reflected_fields();
@@ -48,13 +44,11 @@ std::span<const ReflectedField> unit_reflected_fields();
 std::span<const ReflectedField> weapon_reflected_fields();
 /// A projectile blueprint's fields the engine fills (RProjectileBlueprintPhysics).
 std::span<const ReflectedField> projectile_reflected_fields();
-/// A unit blueprint's reflected fields left as the .bp gives them.
-std::span<const UnfilledField> unit_unfilled_fields();
 
 /// Fill the unit blueprint table at stack index `bp` as Moho's write-back
-/// leaves it: defaults for what it leaves out, derived values, resource ids
-/// lowercased.
-void apply_unit_reflection(lua_State* L, int bp);
+/// leaves it: defaults for what it leaves out, derived values (a mobile
+/// unit's footprint the nearest of `classes`), resource ids lowercased.
+void apply_unit_reflection(lua_State* L, int bp, const std::vector<NamedFootprint>& classes);
 /// The same for a projectile blueprint table.
 void apply_projectile_reflection(lua_State* L, int bp);
 

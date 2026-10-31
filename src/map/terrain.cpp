@@ -17,6 +17,42 @@ f32 Terrain::get_surface_height(f32 x, f32 z) const {
     return std::max(heightmap_.get_height(x, z), water_elevation_);
 }
 
+namespace {
+
+/// Moho's PlaneIntersection for the level plane at `height`: where the segment meets it, if
+/// within [0, length] (an unordered t is no hit).
+std::optional<f32> level_plane_intersect(f32 py, f32 dy, f32 length, f32 height) {
+    if (dy == 0.0f) {
+        return std::nullopt;
+    }
+    const f32 t = (height - py) / dy;
+    if (!(t >= 0.0f) || !(length >= t)) {
+        return std::nullopt;
+    }
+    return t;
+}
+
+} // namespace
+
+std::optional<f32> Terrain::surface_intersect(f32 px, f32 py, f32 pz, f32 dx, f32 dy, f32 dz,
+                                              f32 length) const {
+    if (!has_water_) {
+        const auto hit = heightmap_.intersect(px, py, pz, dx, dy, dz, 0.0f, length);
+        if (hit && py + dy * *hit > heightmap_.min_height()) {
+            return hit;
+        }
+        return level_plane_intersect(py, dy, length, heightmap_.min_height());
+    }
+    if (water_elevation_ > py) {
+        return 0.0f;
+    }
+    const auto hit = heightmap_.intersect(px, py, pz, dx, dy, dz, 0.0f, length);
+    if (!hit || py + dy * *hit < water_elevation_) {
+        return level_plane_intersect(py, dy, length, water_elevation_);
+    }
+    return hit;
+}
+
 f32 Terrain::look_ahead_for_max_terrain(f32 x, f32 z, bool fly_in_water, f32 look_ahead) const {
     const f32 ground = heightmap_.look_ahead_max(x, z, look_ahead);
     return fly_in_water ? ground : std::max(ground, water_elevation_);

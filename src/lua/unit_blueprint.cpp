@@ -1,6 +1,7 @@
 #include "lua/unit_blueprint.hpp"
 
 #include "blueprints/blueprint_store.hpp"
+#include "blueprints/flag_enums.hpp"
 #include "blueprints/footprint.hpp"
 #include "lua/sim_bindings.hpp"
 #include "map/terrain.hpp"
@@ -130,10 +131,9 @@ static void read_drive(lua_State* L, const BlueprintStore& store, const Blueprin
         drive.turn_radius = number("TurnRadius", 0);
         // FAF: MaxSpeedReverse defaults to MaxSpeed (every retail unit gives it).
         drive.max_speed_reverse = number("MaxSpeedReverse", max_speed);
-        // Two retail blueprints spell it BackupDistance. Unset (negative), it
-        // is three times the unit's length (RUnitBlueprintPhysics; SizeZ
-        // defaults to 1).
-        drive.backup_distance = number("BackUpDistance", number("BackupDistance", -1));
+        // Unset (negative), three times the unit's length (RUnitBlueprintPhysics;
+        // SizeZ defaults to 1).
+        drive.backup_distance = number("BackUpDistance", -1);
         if (drive.backup_distance < 0) {
             lua_pushstring(L, "SizeZ");
             lua_rawget(L, physics - 1);
@@ -960,6 +960,20 @@ static void resolve_footprints(lua_State* L, const sim::SimState& sim, const Blu
         own.max_water_depth = number(fp, "MaxWaterDepth");
     }
     lua_pop(L, 1);
+    blueprints::Footprint own_alt = own;
+    lua_pushstring(L, "AltFootprint");
+    lua_rawget(L, bp);
+    if (lua_istable(L, -1)) {
+        const int fp = lua_gettop(L);
+        own_alt.size_x = cells(number(fp, "SizeX"));
+        own_alt.size_z = cells(number(fp, "SizeZ"));
+        own_alt.caps = cells(number(fp, "OccupancyCaps"));
+        own_alt.flags = cells(number(fp, "Flags"));
+        own_alt.max_slope = number(fp, "MaxSlope");
+        own_alt.min_water_depth = number(fp, "MinWaterDepth");
+        own_alt.max_water_depth = number(fp, "MaxWaterDepth");
+    }
+    lua_pop(L, 1);
     std::string alt_motion;
     lua_pushstring(L, "Physics");
     lua_rawget(L, bp);
@@ -975,7 +989,7 @@ static void resolve_footprints(lua_State* L, const sim::SimState& sim, const Blu
     const u8 build_caps = (rules.on_land ? oc::kLand : 0) | (rules.on_seabed ? oc::kSeabed : 0) |
                           (rules.on_sub ? oc::kSub : 0) | (rules.on_water ? oc::kWater : 0);
     const blueprints::UnitFootprints resolved = blueprints::resolve_unit_footprints(
-        store.footprint_classes(), own, unit.motion_type(), alt_motion, build_caps);
+        store.footprint_classes(), own, own_alt, unit.motion_type(), alt_motion, build_caps);
     unit.set_footprints(resolved);
     // The class replaces the footprint whole, and Moho's ranges, formations and
     // steering read that size; the skirt is then at least it. A skirt the .bp
@@ -1205,18 +1219,17 @@ static void read_command_caps(lua_State* L, const BlueprintStore& store,
         for (const bool command : {true, false}) {
             lua_pushstring(L, command ? "CommandCaps" : "ToggleCaps");
             lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushnil(L);
-                while (lua_next(L, -2) != 0) {
-                    if (lua_type(L, -2) == LUA_TSTRING && lua_toboolean(L, -1)) {
-                        const std::string cap = lua_tostring(L, -2);
-                        if (command) unit.add_command_cap(cap);
-                        else unit.add_toggle_cap(cap);
-                    }
-                    lua_pop(L, 1); // value; key stays for lua_next
+            const blueprints::FlagEnum& caps =
+                command ? blueprints::kCommandCapsEnum : blueprints::kToggleCapsEnum;
+            const u32 value = blueprints::read_flag_enum(L, -1, caps).value_or(0);
+            for (const char* cap : blueprints::flag_enum_tokens(caps, value)) {
+                if (command) {
+                    unit.add_command_cap(cap);
+                } else {
+                    unit.add_toggle_cap(cap);
                 }
             }
-            lua_pop(L, 1); // caps table (or nil)
+            lua_pop(L, 1);
         }
         lua_pushstring(L, "SelectionPriority");
         lua_rawget(L, -2);

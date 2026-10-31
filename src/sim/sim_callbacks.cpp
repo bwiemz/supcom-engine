@@ -7,6 +7,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/lua_bytes.hpp"
+#include "sim/sim_console.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/work_range.hpp"
@@ -19,7 +20,6 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <cmath>
 #include <optional>
@@ -62,7 +62,7 @@ const f64* number_in(const SimCallbackEntry& cb, const char* key, f64 lo, f64 hi
 
 /// The live units a callback names, in its order.
 template <typename Fn> void for_each_unit(SimState& sim, const SimCallbackEntry& cb, Fn fn) {
-    for (u32 eid : cb.unit_ids) {
+    for (const EntityId eid : cb.unit_ids) {
         auto* e = sim.entity_registry().find(eid);
         if (!e || !e->is_unit() || e->destroyed()) continue;
         fn(*static_cast<Unit*>(e));
@@ -236,7 +236,7 @@ void forget_target(UnitCommand& c) {
     c.approached = false;
     c.site_cleared = false;
     c.prepared = false; // Moho's build task rewinds to TASKSTATE_Preparing
-    c.clearing_prop_id = 0;
+    c.clearing_prop_id = EntityId();
     c.clearing_approached = false;
     c.engaged = false;
     c.in_band = false;
@@ -368,7 +368,7 @@ void decrease_command_count(SimState& sim, lua_State* L, const SimCallbackEntry&
     if (!command || !count) return;
     const auto id = static_cast<u32>(*command);
     const auto fewer = static_cast<i32>(*count);
-    std::vector<u32> holders;
+    std::vector<EntityId> holders;
     sim.entity_registry().for_each_unit([&](Entity& e) {
         auto& u = static_cast<Unit&>(e);
         if (!u.destroyed() && !u.commands_with_id(id).empty()) holders.push_back(u.entity_id());
@@ -378,7 +378,7 @@ void decrease_command_count(SimState& sim, lua_State* L, const SimCallbackEntry&
     if (!first || !sim.okay_to_mess_with(first->army())) return;
     SimContext ctx = sim.sim_context();
     ctx.L = L;
-    for (const u32 holder : holders) {
+    for (const EntityId holder : holders) {
         auto* e = sim.entity_registry().find(holder);
         if (!e || !e->is_unit() || e->destroyed()) continue;
         auto& u = *static_cast<Unit*>(e);
@@ -504,15 +504,15 @@ void SimState::retarget_command(const SimCallbackEntry& cb,
     }
     const UnitCommand& order = *orders.front().command;
     for (const auto& o : orders) {
-        if (o.command->type == CommandType::BuildMobile && o.unit->build_target_id() != 0 &&
-            o.front) {
+        if (o.command->type == CommandType::BuildMobile && o.unit->build_target_id() && o.front) {
             return;
         }
     }
-    if (order.target_id != 0) {
-        const auto* target = number_in(cb, "Target", 1, 4294967295.0);
+    if (order.target_id) {
+        const auto* target = number_in(cb, "Target", 1, 9007199254740991.0);
         const Entity* old = entity_registry_.find(order.target_id);
-        const Entity* to = target ? entity_registry_.find(static_cast<u32>(*target)) : nullptr;
+        const Entity* to =
+            target ? entity_registry_.find(EntityId(static_cast<u64>(*target))) : nullptr;
         if (!old || old->destroyed() || !to || to->destroyed() || to->army() != old->army() ||
             to->is_unit() != old->is_unit()) {
             return;
@@ -558,24 +558,6 @@ void SimState::retarget_command(const SimCallbackEntry& cb,
 
 namespace {
 
-/// Lua's base library loaders: dofile and require run a file from this
-/// machine's own disk, the others make code of data. Whether the function at
-/// `idx` is one, by name or under another (`x = dofile`).
-bool is_base_loader(lua_State* L, const std::string& name, int idx) {
-    constexpr std::array<const char*, 5> kLoaders{"dofile", "require", "loadfile", "loadstring",
-                                                  "loadlib"};
-    const lua_CFunction f = lua_tocfunction(L, idx);
-    for (const char* loader : kLoaders) {
-        if (name == loader) return true;
-        lua_pushstring(L, loader);
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        const bool same = f && lua_tocfunction(L, -1) == f;
-        lua_pop(L, 1);
-        if (same) return true;
-    }
-    return false;
-}
-
 /// Moho's Sim::ExecuteLuaInSim (0x00749A70): with cheats on, the sim's global
 /// `Func` called with the value lua_args holds; an error, or a name that
 /// isn't a function, logged. Moho calls any global; here a base library
@@ -603,6 +585,38 @@ void exec_lua_in_sim(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     }
 }
 
+/// Moho's Sim::ExecuteDebugCommand (0x00749DA0): the sim console's line.
+void debug_command(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
+    const auto* command = arg<std::string>(cb, "Command");
+    if (!command) return;
+    const auto number = [&](const char* name) {
+        const auto* v = arg<f64>(cb, name);
+        return v ? *v : 0.0;
+    };
+    const Vector3 at{static_cast<f32>(number("X")), static_cast<f32>(number("Y")),
+                     static_cast<f32>(number("Z"))};
+    const f64 focus = number("FocusArmy");
+    // (a NaN or a number past an int is no army)
+    const i32 army = focus > -1e9 && focus < 1e9 ? static_cast<i32>(focus) : -1;
+    execute_debug_command(sim, L, *command, at, army, cb.unit_ids);
+}
+
+/// Moho's Sim::WarpEntity (0x00748CD0, ICommandSink's
+/// WarpEntity): a cheat, so nothing unless cheats are on; the unit warped as
+/// Unit::Warp places it, its height and layer those of the place.
+void warp_entity(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
+    if (!sim.cheats_enabled()) return;
+    const auto* id = number_in(cb, "Entity", 1, 9007199254740991.0);
+    const auto* x = number_in(cb, "X", -1e6, 1e6);
+    const auto* y = number_in(cb, "Y", -1e6, 1e6);
+    const auto* z = number_in(cb, "Z", -1e6, 1e6);
+    if (!id || !x || !y || !z) return;
+    Entity* e = sim.entity_registry().find(EntityId(static_cast<u64>(*id)));
+    if (!e || e->destroyed() || !e->is_unit()) return;
+    static_cast<Unit*>(e)->warp(
+        sim.terrain(), {static_cast<f32>(*x), static_cast<f32>(*y), static_cast<f32>(*z)}, L);
+}
+
 } // namespace
 
 void SimState::run_sim_callback(const SimCallbackEntry& cb) {
@@ -624,7 +638,9 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     else if (cb.func_name == kRemoveCommandCallback) remove_command(*this, L, cb);
     else if (cb.func_name == kSetCommandTypeCallback) set_command_type(*this, cb);
     else if (cb.func_name == kCreateUnitCallback) create_unit(*this, L, cb);
+    else if (cb.func_name == kWarpEntityCallback) warp_entity(*this, L, cb);
     else if (cb.func_name == kExecLuaInSimCallback) exec_lua_in_sim(*this, L, cb);
+    else if (cb.func_name == kDebugCommandCallback) debug_command(*this, L, cb);
     else if (cb.func_name == kDecreaseCommandCountCallback) decrease_command_count(*this, L, cb);
     else do_callback(*this, L, cb);
     lua_settop(L, top);

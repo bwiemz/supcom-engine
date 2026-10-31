@@ -66,21 +66,23 @@ TEST_CASE("Emitters end when their emission does", "[effects]") {
 TEST_CASE("Effects that follow an entity go with it; placed ones stay", "[effects]") {
     using osc::sim::EffectType;
     IEffectRegistry reg;
-    const auto make = [&](EffectType type, osc::u32 entity) {
+    using osc::sim::EntityId;
+    const auto make = [&](EffectType type, EntityId entity) {
         auto* fx = reg.create();
         fx->set_type(type);
         fx->set_entity_id(entity);
         return fx;
     };
-    auto* on_entity = make(EffectType::ATTACHED_EMITTER, 7);
-    auto* trail = make(EffectType::TRAIL_EMITTER, 7);
-    auto* beam = make(EffectType::ATTACHED_BEAM, 7);
-    auto* at_entity = make(EffectType::EMITTER_AT_ENTITY, 7);
-    auto* at_bone = make(EffectType::EMITTER_AT_BONE, 7);
-    auto* other = make(EffectType::ATTACHED_EMITTER, 8);
-    auto* unowned = make(EffectType::ATTACHED_EMITTER, 0);
+    const EntityId gone = EntityId::of(7, 1);
+    auto* on_entity = make(EffectType::ATTACHED_EMITTER, gone);
+    auto* trail = make(EffectType::TRAIL_EMITTER, gone);
+    auto* beam = make(EffectType::ATTACHED_BEAM, gone);
+    auto* at_entity = make(EffectType::EMITTER_AT_ENTITY, gone);
+    auto* at_bone = make(EffectType::EMITTER_AT_BONE, gone);
+    auto* other = make(EffectType::ATTACHED_EMITTER, EntityId::of(8, 1));
+    auto* unowned = make(EffectType::ATTACHED_EMITTER, EntityId());
 
-    reg.destroy_detached([](osc::u32 id) { return id == 7 || id == 0; });
+    reg.destroy_detached([&](EntityId id) { return id == gone || !id; });
     CHECK(on_entity->destroyed());
     CHECK(trail->destroyed());
     CHECK(beam->destroyed());

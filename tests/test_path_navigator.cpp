@@ -24,6 +24,7 @@ using osc::i32;
 using osc::u32;
 using osc::u8;
 using osc::blueprints::NamedFootprint;
+using osc::sim::EntityId;
 using osc::sim::OccupancyGrid;
 using osc::sim::PathTables;
 using osc::sim::path::Cell;
@@ -47,13 +48,15 @@ struct FakeBlockers final : path::MobileBlockers {
     bool at = false;
     bool swept = false;
     mutable int at_asked = 0;
-    bool unit_blocked(u32 /*unit*/, Cell /*cell*/, i32 /*mode*/) const override { return cell; }
-    bool unit_blocked_at(u32 /*unit*/, f32 /*x*/, f32 /*z*/, i32 /*mode*/) const override {
+    bool unit_blocked(EntityId /*unit*/, Cell /*cell*/, i32 /*mode*/) const override {
+        return cell;
+    }
+    bool unit_blocked_at(EntityId /*unit*/, f32 /*x*/, f32 /*z*/, i32 /*mode*/) const override {
         ++at_asked;
         return at;
     }
     /// (Only a long way: the unit's own cell stays clear.)
-    bool swept_blocked(u32 /*unit*/, const path::WorldPoint& from, const path::WorldPoint& to,
+    bool swept_blocked(EntityId /*unit*/, const path::WorldPoint& from, const path::WorldPoint& to,
                        i32 /*mode*/) const override {
         return swept && std::hypot(to.x - from.x, to.z - from.z) > 2.0f;
     }
@@ -118,7 +121,7 @@ struct Walk {
                     false,
                     100000};
         w.blockers = blockers;
-        w.owner = 1;
+        w.owner = EntityId::of(1, 1);
         w.personal_pos_max_distance = personal;
         return w;
     }

@@ -14,6 +14,7 @@
 #include "sim/occupancy.hpp"
 #include "sim/replay.hpp"
 #include "sim/resource_deposit.hpp"
+#include "sim/sim_console.hpp"
 #include "sim/thread_manager.hpp"
 #include "sim/unit_blocking.hpp"
 
@@ -115,8 +116,8 @@ struct CameraShakeEvent {
 /// A projectile whose blueprint has Display.CameraFollowsProjectile: a
 /// camera following `source` goes on to it (Moho's SCamFollowParams).
 struct CameraFollowEvent {
-    u32 source = 0;
-    u32 projectile = 0;
+    EntityId source{};
+    EntityId projectile{};
     f32 timeout = 1.0f;
 };
 
@@ -157,7 +158,7 @@ public:
     blueprints::BlueprintStore* blueprint_store() const { return blueprint_store_; }
     /// Ferry beacons made for ferry routes (M206f); one no route holds any
     /// more is destroyed at the end of the tick.
-    void track_ferry_beacon(u32 id) { ferry_beacons_.push_back(id); }
+    void track_ferry_beacon(EntityId id) { ferry_beacons_.push_back(id); }
     /// What a projectile blueprint says of its projectiles as targets (its
     /// categories, its DesiredShooterCap), read once per blueprint (M206b).
     std::shared_ptr<const ProjectileBlueprintInfo>
@@ -205,6 +206,12 @@ public:
     /// AI_RunOpponentAI, true by default, has no console here). The host's, not saved.
     bool run_opponent_ai() const { return run_opponent_ai_; }
     void set_run_opponent_ai(bool on) { run_opponent_ai_ = on; }
+    /// The sim console's variables (Moho's TSimConVar instances): NoDamage,
+    /// AI_RunOpponentAI. Saved with the game.
+    SimConVars& con_vars() { return con_vars_; }
+    const SimConVars& con_vars() const { return con_vars_; }
+    /// CAiBrain::IsOpponentAIRunning: no /noai, and AI_RunOpponentAI on.
+    bool opponent_ai_running() const { return run_opponent_ai_ && con_vars_.run_opponent_ai; }
     /// The AI brains' personality (CAiPersonality), the same for every
     /// brain: read from /lua/aipersonality.lua as the first is asked for
     /// (lua/bindings/sim/aipersonality.cpp); nullptr until then.
@@ -233,12 +240,12 @@ public:
     size_t ground_occupant_count() const { return ground_occupants_.size(); }
     /// Entity `id` stands on `occupant`'s rects (Moho's ExecuteOccupyGround,
     /// a prop's reclaim-area claim), in place of any claim it had.
-    void occupy_ground(u32 id, GroundOccupant occupant);
+    void occupy_ground(EntityId id, GroundOccupant occupant);
     /// Its claim goes (Moho's ReleaseOccupyGround): its cells clear, but for
     /// those another occupant also stands on. Moho's grid, bits alone,
     /// clears those too; this keeps them, so a load can rebuild the grid
     /// from its occupants.
-    void release_ground(u32 id);
+    void release_ground(EntityId id);
     /// Reserve, or free, a place a unit will come to rest (Moho's
     /// Unit::ReserveOgridRect, an aircraft's landing place).
     void reserve_ground(const OccupancyRect& r, bool reserved) { occupancy_.reserve(r, reserved); }
@@ -266,7 +273,7 @@ public:
     void record_unit_death(Unit& unit, i32 killer_army);
 
     /// Whether this entity currently blocks the grid (tests / diagnostics).
-    bool occupies_footprint(u32 entity_id) const {
+    bool occupies_footprint(EntityId entity_id) const {
         return occupied_footprints_.count(entity_id) != 0;
     }
     const map::Pathfinder* pathfinder() const { return pathfinder_.get(); }
@@ -286,8 +293,8 @@ public:
         i32 army = -1; ///< 0-based
         std::map<std::string, Source> sources;
     };
-    EntityIntel& entity_intel(u32 id) { return entity_intel_[id]; }
-    const EntityIntel* find_entity_intel(u32 id) const {
+    EntityIntel& entity_intel(EntityId id) { return entity_intel_[id]; }
+    const EntityIntel* find_entity_intel(EntityId id) const {
         const auto it = entity_intel_.find(id);
         return it != entity_intel_.end() ? &it->second : nullptr;
     }
@@ -415,7 +422,7 @@ public:
 
     /// Submit an order for `unit_ids` from `source`, to execute after the
     /// command delay. Returns the beat it will run in.
-    u32 schedule_command(u32 source, const std::vector<u32>& unit_ids,
+    u32 schedule_command(u32 source, const std::vector<EntityId>& unit_ids,
                          const UnitCommand& command, bool clear_existing);
 
     /// The army a command source plays (-1: none, an observer's), for the
@@ -529,9 +536,8 @@ public:
     // local human input (InputHandler and the human UI-command drain).
     // `route_command` forwards to the sink while human input is active and MP is
     // on; otherwise it applies the order directly this instant.
-    using LocalCommandSink =
-        std::function<void(const std::vector<u32>& unit_ids,
-                           const UnitCommand& command, bool clear_existing)>;
+    using LocalCommandSink = std::function<void(const std::vector<EntityId>& unit_ids,
+                                                const UnitCommand& command, bool clear_existing)>;
     void set_local_command_sink(LocalCommandSink sink) {
         local_command_sink_ = std::move(sink);
     }
@@ -570,7 +576,7 @@ public:
     /// (a fresh one unless it came with its own), which is what Issue* hands
     /// scripts for IsCommandDone; 0 for a scheduled order, a Stop, a factory
     /// command, or one no unit took.
-    u32 route_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+    u32 route_command(const std::vector<EntityId>& unit_ids, const UnitCommand& command,
                       bool clear_existing);
     /// The source whose player's orders get ids from its own pool, as Moho's
     /// ISSUE_Command packs the issuing source into the id it allocates.
@@ -591,7 +597,7 @@ public:
         size_t kept_from_queue = 0;
     };
     /// Moho's UserCommandQueue with its pending edits applied
-    std::map<u32, QueueWithPending> queues_with_pending() const;
+    std::map<EntityId, QueueWithPending> queues_with_pending() const;
     struct CommandToRetarget {
         const Unit* unit = nullptr;
         UnitCommand* command = nullptr;
@@ -605,7 +611,7 @@ public:
     /// (M206k): a move, patrol or transport call goes to the RALLYPOINT
     /// units among them (factories) as a factory command -- their rally
     /// orders -- and to the rest as an order. Routed like route_command.
-    void route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+    void route_player_command(const std::vector<EntityId>& unit_ids, const UnitCommand& command,
                               bool clear_existing);
     /// Whether a player's order of `type` joins `unit`'s rally orders, as a
     /// factory command, rather than its own queue: a move, patrol or
@@ -616,11 +622,11 @@ public:
     /// its slots, the group held to its slowest member's speed (M204); any
     /// other order goes to every unit as it is. Done where the sim applies
     /// the order, so every peer and replay computes the same.
-    std::vector<std::pair<u32, UnitCommand>> expand_group_command(const std::vector<u32>& unit_ids,
-                                                                  const UnitCommand& command) const;
+    std::vector<std::pair<EntityId, UnitCommand>>
+    expand_group_command(const std::vector<EntityId>& unit_ids, const UnitCommand& command) const;
     /// A factory command (Moho's UNIT_IssueFactoryCommand): each unit that
     /// keeps rally orders takes it, clearing them first when `clear_existing`.
-    void apply_factory_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+    void apply_factory_command(const std::vector<EntityId>& unit_ids, const UnitCommand& command,
                                bool clear_existing);
 
     // --- Replay recording / playback ---
@@ -851,8 +857,10 @@ public:
 
     /// Global sim generation — incremented each time a SimState is constructed.
     /// Used by entity handle safety to detect stale references across reloads.
-    /// A downed aircraft landing: its OnImpact (Moho's CUnitMotion::CalcMoveBallistic).
-    void crash_impact(Unit& unit);
+    /// A downed aircraft meeting `surface` ("Terrain" or "Water"): its OnImpact (Moho's
+    /// CUnitMotion::CalcMoveBallistic). A unit whose script can't play the death out (no
+    /// OnImpact, or one that failed) is destroyed.
+    void crash_impact(Unit& unit, const char* surface);
     /// Destroy the stored units of carriers that went this tick (M206q).
     void destroy_orphaned_stored_units();
     /// Moho's KillCleanup for the units killed this tick, army by army.
@@ -915,7 +923,7 @@ public:
         std::string bank, cue, lod_cutoff;
         Vector3 pos;
         bool underwater = false; ///< a sub's or seabed unit's
-        u32 entity_id = 0;
+        EntityId entity_id{};
     };
     void request_sound(SoundRequest r) { sound_requests_.push_back(std::move(r)); }
     const std::vector<SoundRequest>& sound_requests() const { return sound_requests_; }
@@ -963,12 +971,12 @@ public:
     static constexpr u32 MAX_VIS_ARMIES = 16;
     /// Every army's recon of unit `id` as its last recon tick left it, or null
     /// (not a unit, or no grids).
-    const std::array<EntityVisSnapshot, MAX_VIS_ARMIES>* entity_recon(u32 id) const {
+    const std::array<EntityVisSnapshot, MAX_VIS_ARMIES>* entity_recon(EntityId id) const {
         const auto it = prev_entity_vis_.find(id);
         return it == prev_entity_vis_.end() ? nullptr : &it->second;
     }
     // Moho's ReconBlip::mReconDat[army].mReconFlags: set by the army's ReconTick only.
-    EntityVisSnapshot recon_flags(u32 id, u32 army) const {
+    EntityVisSnapshot recon_flags(EntityId id, u32 army) const {
         const auto it = prev_entity_vis_.find(id);
         if (it == prev_entity_vis_.end() || army >= MAX_VIS_ARMIES) {
             return {};
@@ -987,12 +995,12 @@ public:
     /// offset). Whether the army senses a fake, and knows it fake, is asked
     /// where it falls (world_snapshot). Keyed by jam_key(unit, army).
     const std::map<u64, std::vector<Vector3>>& jam_offsets() const { return jam_offsets_; }
-    static u64 jam_key(u32 unit, u32 army) { return (static_cast<u64>(unit) << 8) | army; }
+    static u64 jam_key(EntityId unit, u32 army) { return (unit.key() << 8) | army; }
 
     /// A fake blip an army holds, where it is now and what the army makes of
     /// it (Moho's CAiReconDBImpl::UpdateBlip for a fake).
     struct HeldFake {
-        u32 jammer = 0;             ///< the jamming unit
+        EntityId jammer{};          ///< the jamming unit
         const Unit* unit = nullptr; ///< it, until the sim moves on
         u32 viewer = 0;             ///< the army holding it (0-based)
         u32 index = 0;              ///< which of the jammer's JammerBlips
@@ -1012,7 +1020,7 @@ public:
     /// so while held, which held_fakes adds).
     bool fake_known_now(const Unit& jammer, const Vector3& pos, u32 army) const;
 
-    bool ever_in_sight(u32 id, u32 army) const {
+    bool ever_in_sight(EntityId id, u32 army) const {
         const auto it = los_ever_.find(id);
         return it != los_ever_.end() && army < 32 && ((it->second >> army) & 1u) != 0;
     }
@@ -1037,7 +1045,7 @@ public:
     /// lost one, in id order.
     struct IntelFlushEvent {
         i32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
-        std::vector<std::pair<u32, u32>> forgotten;
+        std::vector<std::pair<EntityId, u32>> forgotten;
     };
     const std::vector<IntelFlushEvent>& intel_flush_events() const { return intel_flush_events_; }
 
@@ -1071,7 +1079,7 @@ private:
     /// pathing its navigators and steering, its units' weapons, its path
     /// searches.
     void tick_armies();
-    void navigate_units(const std::vector<u32>& ids);
+    void navigate_units(const std::vector<EntityId>& ids);
     /// Moho's stage B: each unit's orders, in creation order.
     void tick_unit_orders();
     /// Moho's stage A (CTaskStage::UserFrame over Entity::TaskTick): each entity in the walk's
@@ -1083,8 +1091,8 @@ private:
     /// What follows a unit separation or no-rush moved after the walk follows it again.
     void refollow_attached();
     struct Followed {
-        u32 id;
-        u32 parent;
+        EntityId id{};
+        EntityId parent{};
         Vector3 at;
         Quaternion facing;
     };
@@ -1136,13 +1144,12 @@ private:
     void request_economy_events(size_t index);
     void sweep_ferry_beacons();
     void tick_economy_events();
-    void fire_on_intel_change(u32 entity_id, u32 army_idx,
-                              const char* recon_type, bool val);
+    void fire_on_intel_change(EntityId entity_id, u32 army_idx, const char* recon_type, bool val);
     /// unit:OnDetectedBy(army), 1-based: `army_idx` has just made its first
     /// blip of the unit (Moho calls it as its recon makes the blip).
-    void fire_on_detected_by(u32 entity_id, u32 army_idx);
+    void fire_on_detected_by(EntityId entity_id, u32 army_idx);
     /// Keep each jammer's fakes for each army that senses it (M215e).
-    void update_jam_blips(u32 army, const std::set<u32>& held);
+    void update_jam_blips(u32 army, const std::set<EntityId>& held);
     /// A fake's offset from jammer `u`: JamRadius's Min plus a share of
     /// its range, then a random fraction of that along a random heading.
     Vector3 jam_offset(const Unit& u);
@@ -1151,13 +1158,13 @@ private:
     void destroy_gone_blips(u32 army);
     void refresh_blips();
     /// The units alive, by army, then id: the order Moho's ReconTick walks them in (EntId).
-    std::vector<u32> units_by_army() const;
+    std::vector<EntityId> units_by_army() const;
     void recon_tick(u32 army);
     void forget_gone(u32 army);
     bool holds_blip(const Entity& e, u32 army) const;
 
     /// Whether army `army` sensed unit `id` at its last recon tick.
-    bool sensed_now(u32 id, u32 army) const { return recon_flags(id, army).any(); }
+    bool sensed_now(EntityId id, u32 army) const { return recon_flags(id, army).any(); }
     /// The intel each entity paints, brought up to date (Moho's handles:
     /// enable, disable, radius, moving and stopping) before the recon pass.
     void sync_intel();
@@ -1183,7 +1190,7 @@ private:
     blueprints::BlueprintStore* blueprint_store_;
     std::unordered_map<std::string, std::shared_ptr<const ProjectileBlueprintInfo>>
         projectile_info_;
-    std::vector<u32> ferry_beacons_;
+    std::vector<EntityId> ferry_beacons_;
     bool checksum_trace_header_ = false;
     mutable ChecksumParts beat_checksum_;
     mutable u32 beat_checksum_beat_ = 0;
@@ -1204,9 +1211,9 @@ private:
     /// Footprints this sim has marked on the grid, by entity id (lookup only;
     /// never iterated, so the unordered order cannot leak into the sim).
     struct Footprint { f32 x, z, size_x, size_z; };
-    std::unordered_map<u32, Footprint> occupied_footprints_;
+    std::unordered_map<EntityId, Footprint> occupied_footprints_;
     OccupancyGrid occupancy_;
-    std::unordered_map<u32, GroundOccupant> ground_occupants_;
+    std::unordered_map<EntityId, GroundOccupant> ground_occupants_;
     /// One cluster map a footprint class over terrain_ and occupancy_
     /// (roadmap item 4c), made with the pathfinding grid.
     std::unique_ptr<PathTables> path_tables_;
@@ -1216,11 +1223,12 @@ private:
     bool moho_pathing_ = false;
     bool faf_exe_ = false; // see faf_exe
     bool run_opponent_ai_ = true;                 // see run_opponent_ai
+    SimConVars con_vars_;                         // see con_vars
     std::optional<AiPersonality> ai_personality_; // see ai_personality
     f32 nav_personal_pos_max_distance_ = 50.0f;   // see navigator_personal_pos_max_distance
     /// Stored units whose carrier is gone, destroyed at a safe point of the
     /// tick (destroy_orphaned_stored_units).
-    std::vector<u32> stored_to_destroy_;
+    std::vector<EntityId> stored_to_destroy_;
 
     /// Registry unregister hook: run the script's OnDestroy and release what
     /// the entity holds in the sim (its footprint, weapons, storage).
@@ -1231,7 +1239,7 @@ private:
 
     std::unique_ptr<map::Pathfinder> pathfinder_;
     std::unique_ptr<map::IntelGrids> intel_grids_;
-    std::map<u32, PaintedIntel> painted_intel_; ///< by entity id
+    std::map<EntityId, PaintedIntel> painted_intel_; ///< by entity id
     u32 intel_pass_ = 0;
     audio::SoundManager* sound_manager_ = nullptr;
     std::function<void(const SimState&)> beat_observer_;
@@ -1251,7 +1259,7 @@ private:
     ArmorDefinition armor_def_;
     IEffectRegistry effect_registry_;
     EconomyEventRegistry economy_events_;
-    std::vector<std::pair<u32, EconomyEvent*>> stepping_events_;
+    std::vector<std::pair<EntityId, EconomyEvent*>> stepping_events_;
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;
     u32 beat_count_ = 0;
@@ -1279,7 +1287,7 @@ private:
         bool painted; ///< in its army's vision grid
     };
     std::vector<TempVision> temp_visions_;
-    std::map<u32, EntityIntel> entity_intel_; ///< by entity id: painted in id order
+    std::map<EntityId, EntityIntel> entity_intel_; ///< by entity id: painted in id order
     u32 next_command_id_ = 0;
     u32 issuing_source_ = 0;
     u32 player_commands_issued_ = 0;
@@ -1310,12 +1318,11 @@ private:
     static u32 s_sim_generation_;
 
     // Per-entity per-army previous visibility for OnIntelChange detection
-    std::unordered_map<u32, std::array<EntityVisSnapshot, MAX_VIS_ARMIES>>
-        prev_entity_vis_;
+    std::unordered_map<EntityId, std::array<EntityVisSnapshot, MAX_VIS_ARMIES>> prev_entity_vis_;
 
     // Per entity, a bit per army that has ever had it in line of sight
     // (see ever_in_sight). Looked up, never walked.
-    std::unordered_map<u32, u32> los_ever_;
+    std::unordered_map<EntityId, u32> los_ever_;
 
     // Jammers' fake blips' offsets, by jam_key (see jam_offsets).
     std::map<u64, std::vector<Vector3>> jam_offsets_;
@@ -1326,11 +1333,10 @@ private:
     std::map<u64, u64> jam_sensed_;
 
     // Dead-reckoning blip cache: per-entity per-army last-known data
-    std::unordered_map<u32, std::array<BlipSnapshot, MAX_VIS_ARMIES>>
-        blip_cache_;
+    std::unordered_map<EntityId, std::array<BlipSnapshot, MAX_VIS_ARMIES>> blip_cache_;
 
     // Entities that have blip objects in Lua (push_blip), in id order.
-    std::set<u32> blip_objects_;
+    std::set<EntityId> blip_objects_;
 
 public:
     // Build preview ghost (set by UI, consumed by renderer)
@@ -1345,7 +1351,7 @@ public:
     f32 build_ghost_foot_z() const { return build_ghost_foot_z_; }
 
     /// Look up cached blip snapshot for a specific entity+army pair.
-    const BlipSnapshot* get_blip_snapshot(u32 entity_id, u32 army) const;
+    const BlipSnapshot* get_blip_snapshot(EntityId entity_id, u32 army) const;
 
     /// Push `army`'s blip of entity `entity_id` (armies 0-based): Moho's
     /// ReconBlip, one Lua object per entity and army, made on first use as
@@ -1354,7 +1360,7 @@ public:
     /// when that module won't load). It holds the entity's id and the army,
     /// never a pointer. Once its entity is gone the sim calls its OnDestroy
     /// and forgets it. A negative army's blip is a fresh one, kept nowhere.
-    void push_blip(lua_State* L, u32 entity_id, i32 army);
+    void push_blip(lua_State* L, EntityId entity_id, i32 army);
 
     /// Whether army `req_army`'s last recon tick sensed `entity` at all.
     bool has_any_intel(const Entity* entity, u32 req_army) const {

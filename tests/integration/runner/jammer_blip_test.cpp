@@ -38,7 +38,8 @@ void test_jammer_blips(TestContext& ctx) {
     }
     const f32 sx = spot->x;
     const f32 sz = spot->z;
-    const u32 engineer = spawn_unit(ctx, "__osc_jb_engineer", "xel0209", "ARMY_2", {sx, sz});
+    const sim::EntityId engineer =
+        spawn_unit(ctx, "__osc_jb_engineer", "xel0209", "ARMY_2", {sx, sz});
     (void)spawn_unit(ctx, "__osc_jb_radar", "ueb3101", "ARMY_1", {sx, sz + 70});
     const auto lua = [&](const std::string& code) { run_lua(ctx, code); };
     lua("__osc_jb_engineer:SetFireState(1)\n__osc_jb_engineer:SetImmobile(true)\n"
@@ -68,10 +69,11 @@ void test_jammer_blips(TestContext& ctx) {
     sim::InfluenceMap* threat = ctx.sim.influence_map(0);
     const auto fake_entries = [&] {
         size_t n = 0;
-        if (threat)
+        if (threat) {
             threat->for_each_entry([&](const sim::InfluenceMap::EntryView& v) {
-                n += (v.id & sim::kFakeBlipBit) != 0 && v.source_army == 1 ? 1 : 0;
+                n += sim::is_fake_blip(v.id) && v.source_army == 1 ? 1 : 0;
             });
+        }
         return n;
     };
     const auto threat_about = [&] {

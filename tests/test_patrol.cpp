@@ -35,6 +35,7 @@ extern "C" {
 #include <vector>
 
 using osc::sim::CommandType;
+using osc::sim::EntityId;
 using osc::sim::Prop;
 using osc::sim::SimState;
 using osc::sim::Unit;
@@ -113,8 +114,8 @@ Prop* rock(SimState& sim, osc::f32 x, osc::f32 z, osc::f32 mass, osc::f32 energy
     return raw;
 }
 
-std::vector<osc::u32> break_offs(SimState& sim, Unit& u, CommandType type, int ticks) {
-    std::vector<osc::u32> seen;
+std::vector<EntityId> break_offs(SimState& sim, Unit& u, CommandType type, int ticks) {
+    std::vector<EntityId> seen;
     bool was = false;
     for (int t = 0; t < ticks; ++t) {
         sim.tick();
@@ -373,7 +374,7 @@ TEST_CASE("A patrol breaks off to attack an enemy within its GuardScanRadius of 
     still(sim, 1, 70.0f, 40.0f);
     tank->push_command(patrol(100.0f, 10.0f, 1), true);
     const auto first = break_offs(sim, *tank, CommandType::Attack, 80);
-    REQUIRE(first == std::vector<osc::u32>{near->entity_id()});
+    REQUIRE(first == std::vector<EntityId>{near->entity_id()});
     sim.entity_registry().unregister_entity(near->entity_id());
     const auto rest = break_offs(sim, *tank, CommandType::Attack, 300);
     CHECK(rest.empty());
@@ -475,10 +476,10 @@ TEST_CASE("A patrolling engineer reclaims a RECLAIMABLE prop on its route once a
     two_armies(sim);
     Unit* eng = engineer(sim, 10.0f, 10.0f);
     rock(sim, 30.0f, 12.0f, 1.0f, 0.0f, false);
-    const osc::u32 stone = rock(sim, 50.0f, 14.0f, 1.0f, 0.0f)->entity_id();
+    const EntityId stone = rock(sim, 50.0f, 14.0f, 1.0f, 0.0f)->entity_id();
     eng->push_command(patrol(90.0f, 10.0f, 1), true);
     const auto seen = break_offs(sim, *eng, CommandType::Reclaim, 400);
-    CHECK(seen == std::vector<osc::u32>{stone});
+    CHECK(seen == std::vector<EntityId>{stone});
 }
 
 TEST_CASE("A patrol back from reclaiming looks for the next prop at once", "[patrol]") {
@@ -511,7 +512,7 @@ TEST_CASE("A patrol leg looks over all of itself, behind the unit too", "[patrol
                [&] { return eng->position().x >= 70.0f; });
     Prop* behind = rock(sim, 12.0f, 14.0f, 1.0f, 0.0f);
     CHECK(break_offs(sim, *eng, CommandType::Reclaim, 7) ==
-          std::vector<osc::u32>{behind->entity_id()});
+          std::vector<EntityId>{behind->entity_id()});
 }
 
 TEST_CASE("A patrol's break-off starts 6 ticks after the patrol looked", "[patrol]") {
@@ -544,7 +545,7 @@ TEST_CASE("A patrolling engineer reclaims a still enemy at half its distance's w
     enemy->add_category("RECLAIMABLE");
     eng->push_command(patrol(90.0f, 10.0f, 1), true);
     const auto seen = break_offs(sim, *eng, CommandType::Reclaim, 3);
-    CHECK(seen == std::vector<osc::u32>{enemy->entity_id()});
+    CHECK(seen == std::vector<EntityId>{enemy->entity_id()});
 }
 
 TEST_CASE("A patrolling engineer repairs a damaged ally only with both stores nearly full",
@@ -561,7 +562,7 @@ TEST_CASE("A patrolling engineer repairs a damaged ally only with both stores ne
     CHECK(break_offs(sim, *eng, CommandType::Repair, 12).empty());
     store(sim, 900.0, 900.0);
     CHECK(break_offs(sim, *eng, CommandType::Repair, 12) ==
-          std::vector<osc::u32>{ally->entity_id()});
+          std::vector<EntityId>{ally->entity_id()});
 }
 
 TEST_CASE("A patrolling engineer leaves a prop of a resource it has no room for", "[patrol]") {
@@ -575,7 +576,7 @@ TEST_CASE("A patrolling engineer leaves a prop of a resource it has no room for"
     eng->push_command(patrol(90.0f, 10.0f, 1), true);
     store(sim, 900.0, 100.0);
     CHECK(break_offs(sim, *eng, CommandType::Reclaim, 3) ==
-          std::vector<osc::u32>{tree->entity_id()});
+          std::vector<EntityId>{tree->entity_id()});
 }
 
 TEST_CASE("A patrol point added while the patrol has broken off joins the loop", "[patrol]") {
@@ -697,7 +698,7 @@ TEST_CASE("A patrol broken off to reclaim plays on the same after a restore",
     LuaGuard ga;
     SimState a(ga.L, nullptr);
     a.set_seed(31);
-    const osc::u32 id = world(a, ga.L);
+    const EntityId id = world(a, ga.L);
     a.set_recording(true);
     const auto* eng = static_cast<const Unit*>(a.entity_registry().find(id));
     tick_until([&] { a.tick(); }, "the patrol claims two props", 400,
@@ -744,7 +745,7 @@ TEST_CASE("An attack-move goes for an enemy near its route, then ends where it a
     go.command_id = 1;
     tank->push_command(go, true);
     const auto seen = break_offs(sim, *tank, CommandType::Attack, 120);
-    REQUIRE(seen == std::vector<osc::u32>{near->entity_id()});
+    REQUIRE(seen == std::vector<EntityId>{near->entity_id()});
     sim.entity_registry().unregister_entity(near->entity_id());
     tick_until([&] { sim.tick(); }, "the attack-move ends", 400,
                [&] { return tank->command_queue().empty(); });
@@ -761,7 +762,7 @@ TEST_CASE("A commander on attack-move leaves the reclaiming to others; on patrol
     two_armies(sim);
     Unit* acu = engineer(sim, 10.0f, 10.0f);
     acu->add_category("COMMAND");
-    const osc::u32 stone = rock(sim, 50.0f, 14.0f, 1.0f, 0.0f)->entity_id();
+    const EntityId stone = rock(sim, 50.0f, 14.0f, 1.0f, 0.0f)->entity_id();
     osc::sim::UnitCommand go;
     go.type = CommandType::AggressiveMove;
     go.target_pos = {90.0f, 0.0f, 10.0f};
@@ -770,7 +771,7 @@ TEST_CASE("A commander on attack-move leaves the reclaiming to others; on patrol
     CHECK(break_offs(sim, *acu, CommandType::Reclaim, 300).empty());
 
     acu->push_command(patrol(10.0f, 10.0f, 2), true);
-    CHECK(break_offs(sim, *acu, CommandType::Reclaim, 300) == std::vector<osc::u32>{stone});
+    CHECK(break_offs(sim, *acu, CommandType::Reclaim, 300) == std::vector<EntityId>{stone});
 }
 
 TEST_CASE("A support commander on attack-move leaves the reclaiming to others, as retail's "
@@ -784,7 +785,7 @@ TEST_CASE("A support commander on attack-move leaves the reclaiming to others, a
         two_armies(sim);
         Unit* sacu = engineer(sim, 10.0f, 10.0f);
         sacu->add_category(category);
-        const osc::u32 stone = rock(sim, 50.0f, 14.0f, 1.0f, 0.0f)->entity_id();
+        const EntityId stone = rock(sim, 50.0f, 14.0f, 1.0f, 0.0f)->entity_id();
         osc::sim::UnitCommand go;
         go.type = CommandType::AggressiveMove;
         go.target_pos = {90.0f, 0.0f, 10.0f};
@@ -793,7 +794,7 @@ TEST_CASE("A support commander on attack-move leaves the reclaiming to others, a
         CHECK(break_offs(sim, *sacu, CommandType::Reclaim, 300).empty());
 
         sacu->push_command(patrol(10.0f, 10.0f, 2), true);
-        CHECK(break_offs(sim, *sacu, CommandType::Reclaim, 300) == std::vector<osc::u32>{stone});
+        CHECK(break_offs(sim, *sacu, CommandType::Reclaim, 300) == std::vector<EntityId>{stone});
     }
 }
 
@@ -1102,7 +1103,7 @@ TEST_CASE("A right click gives the whole selection one order", "[attack][capture
     auto order = one_order(40.0f, 10.0f);
     CHECK(order.first.type == CommandType::Attack);
     CHECK(order.first.target_id == enemy->entity_id());
-    CHECK(order.second == std::vector<osc::u32>{tank->entity_id(), eng->entity_id()});
+    CHECK(order.second == std::vector<EntityId>{tank->entity_id(), eng->entity_id()});
     order = one_order(70.0f, 40.0f);
     CHECK(order.first.type == CommandType::Reclaim);
     CHECK(order.second.size() == 2);
@@ -1110,7 +1111,7 @@ TEST_CASE("A right click gives the whole selection one order", "[attack][capture
     input.set_selected({eng->entity_id(), flak->entity_id()});
     order = one_order(40.0f, 10.0f);
     CHECK(order.first.type == CommandType::Capture);
-    CHECK(order.second == std::vector<osc::u32>{eng->entity_id(), flak->entity_id()});
+    CHECK(order.second == std::vector<EntityId>{eng->entity_id(), flak->entity_id()});
 }
 
 TEST_CASE("A right click on an own unit gives the whole selection one order",
@@ -1154,23 +1155,23 @@ TEST_CASE("A right click on an own unit gives the whole selection one order",
     input.set_selected({eng->entity_id(), tank->entity_id()});
     auto order = one_order(*frame);
     CHECK(order.first.type == CommandType::Repair);
-    CHECK(order.second == std::vector<osc::u32>{eng->entity_id(), tank->entity_id()});
+    CHECK(order.second == std::vector<EntityId>{eng->entity_id(), tank->entity_id()});
     CHECK(one_order(*factory).first.type == CommandType::Guard);
     CHECK(one_order(*damaged).first.type == CommandType::Guard);
 
     input.set_selected({tank->entity_id(), fighter->entity_id()});
     order = one_order(*transport);
     CHECK(order.first.type == CommandType::TransportLoad);
-    CHECK(order.second == std::vector<osc::u32>{tank->entity_id(), fighter->entity_id()});
+    CHECK(order.second == std::vector<EntityId>{tank->entity_id(), fighter->entity_id()});
     order = one_order(*pad);
     CHECK(order.first.type == CommandType::TransportLoad);
-    CHECK(order.second == std::vector<osc::u32>{tank->entity_id(), fighter->entity_id()});
+    CHECK(order.second == std::vector<EntityId>{tank->entity_id(), fighter->entity_id()});
 
     input.set_selected({tank->entity_id()});
     const auto orders = input.right_click_orders(sim, tank->position().x, tank->position().z);
     REQUIRE(orders.size() == 1);
     CHECK(orders.front().first.type == CommandType::Move);
-    CHECK(orders.front().second == std::vector<osc::u32>{tank->entity_id()});
+    CHECK(orders.front().second == std::vector<EntityId>{tank->entity_id()});
 }
 
 TEST_CASE("A load order goes only to a unit its transport can carry", "[transport]") {
@@ -1265,7 +1266,7 @@ TEST_CASE("A unit with no weapon takes an attack order and drops it when it come
     attack.type = CommandType::Attack;
     attack.target_id = enemy->entity_id();
     attack.target_pos = enemy->position();
-    const std::vector<osc::u32> both{eng->entity_id(), tank->entity_id()};
+    const std::vector<EntityId> both{eng->entity_id(), tank->entity_id()};
 
     sim.route_command({eng->entity_id()}, move, true);
     sim.tick();

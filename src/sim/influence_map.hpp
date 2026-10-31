@@ -82,13 +82,13 @@ public:
     /// The army's intel reports unit `id` of `source_army` at `pos`
     /// (UpdateBlipPosition): a new or moved entry starts afresh; one in the
     /// same cell is refreshed to full strength for another 10 updates.
-    void report(u32 id, i32 source_army, const Vector3& pos, const ThreatSource& source);
+    void report(EntityId id, i32 source_army, const Vector3& pos, const ThreatSource& source);
     /// Drop unit `id`'s entry (a dead structure the army has seen gone).
-    void remove(u32 id);
-    bool has_entry(u32 id) const { return entry_cells_.count(id) > 0; }
+    void remove(EntityId id);
+    bool has_entry(EntityId id) const { return entry_cells_.count(id) > 0; }
     size_t entry_count() const { return entry_cells_.size(); }
     /// Unit `id`'s entry strength, or 0 without one.
-    f32 strength(u32 id) const;
+    f32 strength(EntityId id) const;
 
     /// What the army knows now of an entry's unit, which the update reads for
     /// a unit of an army that is neither its own nor allied and still exists.
@@ -102,7 +102,7 @@ public:
     /// Moho's Update, every 30 ticks: entries fade (and those at 0 go), the
     /// script-assigned threat fades, and each army's threat is summed again.
     void update(const std::function<bool(i32 army)>& allied_or_self,
-                const std::function<std::optional<UnitState>(u32 id)>& unit_state);
+                const std::function<std::optional<UnitState>(EntityId id)>& unit_state);
 
     /// A cell's threat of `type` from `army`'s units, or every army's (-1),
     /// plus what scripts assigned (InfluenceGrid::GetThreat).
@@ -133,7 +133,7 @@ public:
 
     /// What the sim reads of an entry.
     struct EntryView {
-        u32 id = 0;
+        EntityId id{};
         i32 source_army = -1;
         Vector3 position;
         bool mobile = false;
@@ -180,20 +180,20 @@ private:
         i32 decay_ticks = 10;
     };
     struct Cell {
-        std::map<u32, Entry> entries; ///< by unit id
+        std::map<EntityId, Entry> entries; ///< by unit id
         std::vector<Lanes> threats;   ///< per source army, rebuilt each update
         Lanes assigned{};             ///< scripts'
         Lanes assigned_decay{};
     };
 
-    void insert(u32 id, i32 source_army, const Vector3& pos, const ThreatSource& source);
+    void insert(EntityId id, i32 source_army, const Vector3& pos, const ThreatSource& source);
     const Cell* cell_at(i32 x, i32 z) const;
 
     i32 grid_ = 32;
     i32 width_ = 0;
     i32 height_ = 0;
     std::vector<Cell> cells_;
-    std::map<u32, i32> entry_cells_; ///< unit id -> its entry's cell
+    std::map<EntityId, i32> entry_cells_; ///< unit id -> its entry's cell
 };
 
 } // namespace osc::sim

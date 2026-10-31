@@ -27,6 +27,7 @@ extern "C" {
 using Catch::Approx;
 using osc::sim::EconomyEvent;
 using osc::sim::EconomyEventRegistry;
+using osc::sim::EntityId;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::test::tick_until;
@@ -239,7 +240,7 @@ TEST_CASE("A unit's consumed rate is what it spent in the tick, as Moho's GetEco
 
 TEST_CASE("An economy event asks for a tick's share of its cost and moves on a tick a step",
           "[economy_event]") {
-    EconomyEvent evt(1, 50.0, 1000.0, 1.0);
+    EconomyEvent evt(EntityId::of(1, 1), 50.0, 1000.0, 1.0);
     CHECK(evt.request().requested.mass == 5.0f);
     CHECK(evt.request().requested.energy == 100.0f);
     for (int i = 0; i < 9; ++i) {
@@ -283,11 +284,13 @@ TEST_CASE("Events made during a pass wait for the next", "[economy_event]") {
     // Only the first visit makes them: a pass that visited new events would
     // otherwise make more without end, filling memory instead of failing.
     EconomyEventRegistry registry;
-    registry.create(1, 0.0, 10.0, 1.0);
+    registry.create(EntityId::of(1, 1), 0.0, 10.0, 1.0);
     int visits = 0;
     registry.for_each([&](EconomyEvent&) {
         if (++visits > 1) return;
-        for (int i = 0; i < 64; ++i) registry.create(2, 0.0, 1.0, 1.0);
+        for (int i = 0; i < 64; ++i) {
+            registry.create(EntityId::of(2, 1), 0.0, 1.0, 1.0);
+        }
     });
     CHECK(visits == 1);
     CHECK(registry.count() == 65);
@@ -299,9 +302,9 @@ TEST_CASE("Events made during a pass wait for the next", "[economy_event]") {
 
 TEST_CASE("Finished and cancelled events are collected", "[economy_event]") {
     EconomyEventRegistry registry;
-    EconomyEvent* done = registry.create(1, 0.0, 1.0, 0.1);
-    EconomyEvent* cancelled = registry.create(1, 0.0, 1.0, 1.0);
-    registry.create(1, 0.0, 1.0, 1.0);
+    EconomyEvent* done = registry.create(EntityId::of(1, 1), 0.0, 1.0, 0.1);
+    EconomyEvent* cancelled = registry.create(EntityId::of(1, 1), 0.0, 1.0, 1.0);
+    registry.create(EntityId::of(1, 1), 0.0, 1.0, 1.0);
     done->step();
     cancelled->cancel();
     CHECK_FALSE(cancelled->active());

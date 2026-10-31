@@ -30,7 +30,7 @@
 set(OSC_DATA_TESTS_GATE
     adjacency-test ai-test aim-test air-attack-run-test air-auto-engage-test air-staging-test air-turn-test anim-render-test attack-move-test anim-test arc-test area-test armor-test
     army-colors-test audio-test
-    beam-render-test beam-test beam-weapon-test binding-tail-test bitmap-test blend-test bone-test border-render-test build-test
+    beam-render-test beam-test beam-weapon-test binding-tail-test bitmap-test blend-test bone-test border-render-test bp-reflect-test build-test
     camera-test
     camera-moves-test window-test options-test canpath-test capture-test colors-test carrier-land-test carrier-test chain-test change-army-test charge-test cmd-test collide-test crowd-test choke-test crowdgap-test collision-test combat-test
     construction-test controls-test counter-intel-test decal-render-test cursor-render-test damage-test decal-test
@@ -44,7 +44,7 @@ set(OSC_DATA_TESTS_GATE
     input-test intel-field-test intel-overlay-test intel-test interp-test itemlist-render-test
     economy-overlay-test jammer-blip-test jammer-test keyboard-test keymap-test
     layercap-test lighting-test los-test map-parse-test wave-test material-test bloom-test build-shader-test effect-mesh-test dispatch-matrix-test skinning-test prop-material-test clipped-shadow-test shadow-map-test lowstub-test manip-test massstub-test massstub2-test missile-test
-    massstub3-test massstub4-test medstub-test meshless-test move-test naval-depth-test need-unpack-test normal-test notify-upgrade-test
+    lod-test massstub3-test massstub4-test medstub-test meshless-test move-test naval-depth-test need-unpack-test normal-test notify-upgrade-test
     onframe-test particle-render-test path-test phase2-test phase3-test placement-layers-test pod-rebuild-test phase4-test phase5-test
     patrol-test persist-test platoon-test prebuilt-test profile-test projectile-test prop-test range-render-test range-test reclaim-test refract-render-test
     runtime-decal-test terrain-normal-render-test

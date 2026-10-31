@@ -20,6 +20,7 @@ extern "C" {
 #include <memory>
 
 using osc::sim::CommandType;
+using osc::sim::EntityId;
 using osc::sim::SimState;
 using osc::sim::Unit;
 using osc::sim::UnitCommand;
@@ -33,7 +34,7 @@ struct LuaGuard {
     ~LuaGuard() { lua_close(L); }
 };
 
-osc::u32 spawn_mover(SimState& sim, int army, const Vector3& pos, osc::f32 speed) {
+EntityId spawn_mover(SimState& sim, int army, const Vector3& pos, osc::f32 speed) {
     auto u = std::make_unique<Unit>();
     u->set_army(army);
     u->set_max_speed(speed);
@@ -74,7 +75,7 @@ TEST_CASE("No Rush pins a straying unit at the boundary", "[norush]") {
     sim.get_army(0)->set_start_position({0.0f, 0.0f, 0.0f});
     sim.set_no_rush(100.0f, 50.0f);
 
-    osc::u32 id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 10.0f);
+    EntityId id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 10.0f);
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
     // Direct order (as an AI would issue) toward a far target.
     u->push_command(move_to(1000.0f, 0.0f), true);
@@ -92,7 +93,7 @@ TEST_CASE("No Rush clamps a scheduled move goal to the zone", "[norush]") {
     sim.get_army(0)->set_start_position({0.0f, 0.0f, 0.0f});
     sim.set_no_rush(100.0f, 50.0f);
 
-    osc::u32 id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 10.0f);
+    EntityId id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 10.0f);
     sim.schedule_command(0, {id}, move_to(500.0f, 0.0f), true);
     sim.tick(); // dispatch clamps the goal
 
@@ -111,7 +112,7 @@ TEST_CASE("Units confined during No Rush are freed once it expires", "[norush]")
     sim.get_army(0)->set_start_position({0.0f, 0.0f, 0.0f});
     sim.set_no_rush(1.0f, 50.0f); // 1 second window
 
-    osc::u32 id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 20.0f);
+    EntityId id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 20.0f);
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
     u->push_command(move_to(1000.0f, 0.0f), true);
 
@@ -126,17 +127,22 @@ TEST_CASE("No Rush confines each army to its own start", "[norush]") {
     const Vector3 base2{200.0f, 0.0f, 0.0f};
     LuaGuard g;
     SimState sim(g.L, nullptr);
+    sim.set_victory_condition("sandbox");
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2");
     sim.get_army(0)->set_start_position({0.0f, 0.0f, 0.0f});
     sim.get_army(1)->set_start_position({200.0f, 0.0f, 0.0f});
     sim.set_no_rush(100.0f, 50.0f);
 
-    osc::u32 id = spawn_mover(sim, 1, {200.0f, 0.0f, 0.0f}, 10.0f);
+    EntityId id = spawn_mover(sim, 1, {200.0f, 0.0f, 0.0f}, 10.0f);
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
     u->push_command(move_to(0.0f, 0.0f), true); // head toward the other base
 
-    for (int i = 0; i < 40; ++i) sim.tick();
+    tick_until([&] { sim.tick(); }, "the unit reaches its own boundary", 150,
+               [&] { return dist_xz(u->position(), base2) >= 49.5f; });
+    for (int i = 0; i < 40; ++i) {
+        sim.tick();
+    }
     CHECK(dist_xz(u->position(), base2) <= 50.5f);
     CHECK(u->position().x >= 149.5f); // never crossed toward the enemy base
 }
@@ -149,7 +155,7 @@ TEST_CASE("Civilian units are exempt from No Rush", "[norush]") {
     sim.get_army(0)->set_start_position({0.0f, 0.0f, 0.0f});
     sim.set_no_rush(100.0f, 50.0f);
 
-    osc::u32 id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 20.0f);
+    EntityId id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 20.0f);
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
     u->push_command(move_to(1000.0f, 0.0f), true);
 

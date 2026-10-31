@@ -115,11 +115,7 @@ void test_map_border(TestContext& ctx) {
     // Draw until what the border loads has loaded, then capture the frame
     // and its scene (the glow in alpha).
     const auto settle = [&](renderer::Renderer::SceneImage* scene) {
-        for (int f = 0; f < 600; ++f) {
-            shots.redraw();
-            if (r.texture_cache().loading() == 0) break;
-        }
-        shots.redraw();
+        shots.redraw_until_loaded();
         if (scene)
             r.request_scene_capture(
                 [&](renderer::Renderer::SceneImage captured) { *scene = std::move(captured); });

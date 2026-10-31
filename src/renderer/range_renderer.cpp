@@ -22,9 +22,9 @@ using stencil_volume::stencil;
 
 RangeScene collect_range_scene(const RangeOverlays& overlays, const sim::FrameView& view,
                                const Frustum& frustum, i32 focus_army,
-                               const std::unordered_set<u32>* selected, u32 hovered,
-                               const std::string* placing, f32 cursor_x, f32 cursor_z,
-                               RangeBlueprints& blueprints, lua_State* L) {
+                               const std::unordered_set<sim::EntityId>* selected,
+                               sim::EntityId hovered, const std::string* placing, f32 cursor_x,
+                               f32 cursor_z, RangeBlueprints& blueprints, lua_State* L) {
     RangeScene scene;
     const RangeOverlays::Settings& settings = overlays.settings();
     if (!settings.enabled) return scene;
@@ -65,8 +65,11 @@ RangeScene collect_range_scene(const RangeOverlays& overlays, const sim::FrameVi
             if (frustum.is_sphere_visible(at.x, at.y, at.z, reach)) scene.in_view.push_back(*unit);
         }
     }
-    if (hovered != 0 && settings.render_highlighted)
-        if (const sim::EntityRecord* e = view.find(hovered)) scene.hovered = own(*e);
+    if (hovered && settings.render_highlighted) {
+        if (const sim::EntityRecord* e = view.find(hovered)) {
+            scene.hovered = own(*e);
+        }
+    }
     const sim::ArmyRecord* army = snap->army(focus_army);
     if (snap->no_rush_radius > 0.0f && army && army->valid)
         scene.no_rush = RangeRing{army->start_x, army->start_z, 0.0f, snap->no_rush_radius};

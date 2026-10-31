@@ -131,7 +131,7 @@ sim::Entity* check_entity(lua_State* L, int idx) {
     lua_pushstring(L, "_c_entity_id");
     lua_rawget(L, idx);
     const bool by_id = lua_isnumber(L, -1);
-    const auto id = by_id ? static_cast<u32>(lua_tonumber(L, -1)) : 0u;
+    const sim::EntityId id = sim::to_entity_key(L, -1);
     lua_pop(L, 1);
     if (!by_id) return nullptr;
     auto* sim = get_sim(L);
@@ -2005,7 +2005,7 @@ void push_unit_for_ui(lua_State* L, sim::Entity* entity) {
     push_user_unit(L, entity->entity_id(), entity->army());
 }
 
-void push_user_unit(lua_State* L, u32 id, i32 army) {
+void push_user_unit(lua_State* L, sim::EntityId id, i32 army) {
     lua_newtable(L);
     int tbl = lua_gettop(L);
 
@@ -2014,7 +2014,7 @@ void push_user_unit(lua_State* L, u32 id, i32 army) {
     // id on every call. The sim generation rejects handles from an earlier
     // game, whose ids a new sim reuses.
     lua_pushstring(L, "_c_entity_id");
-    lua_pushnumber(L, static_cast<lua_Number>(id));
+    sim::push_entity_key(L, id);
     lua_rawset(L, tbl);
     lua_pushstring(L, "_c_sim_gen");
     lua_pushnumber(L, static_cast<lua_Number>(sim::SimState::sim_generation()));
@@ -2056,13 +2056,13 @@ void push_user_unit(lua_State* L, u32 id, i32 army) {
 }
 
 
-void push_units_for_ui(lua_State* L, const std::vector<u32>& ids) {
+void push_units_for_ui(lua_State* L, const std::vector<sim::EntityId>& ids) {
     lua_newtable(L);
     int result = lua_gettop(L);
     auto* sim = get_sim(L);
     if (!sim) return;
     int idx = 1;
-    for (u32 eid : ids) {
+    for (sim::EntityId eid : ids) {
         auto* entity = sim->entity_registry().find(eid);
         if (entity && entity->is_unit() && !entity->destroyed()) {
             push_unit_for_ui(L, entity);
@@ -2185,7 +2185,7 @@ void notify_focus_army_damage(lua_State* uiL, sim::SimState& sim) {
     // Per sim, told apart by generation: a new SimState can reuse the old
     // one's address, and its entity ids restart.
     static u32 last_generation = 0;
-    static std::unordered_map<u32, f32> last_health;
+    static std::unordered_map<sim::EntityId, f32> last_health;
     if (last_generation != sim::SimState::sim_generation()) {
         last_generation = sim::SimState::sim_generation();
         last_health.clear();
@@ -2196,7 +2196,7 @@ void notify_focus_army_damage(lua_State* uiL, sim::SimState& sim) {
     lua_pop(uiL, 1);
 
     std::vector<sim::Entity*> damaged;
-    std::unordered_map<u32, f32> health;
+    std::unordered_map<sim::EntityId, f32> health;
     sim.entity_registry().for_each_unit([&](const sim::Entity& e) {
         if (focus < 0 || !e.is_unit() || e.destroyed() || e.army() != focus) return;
         health.emplace(e.entity_id(), e.health());
@@ -2217,8 +2217,9 @@ void notify_focus_army_damage(lua_State* uiL, sim::SimState& sim) {
 template <typename Pred>
 static std::vector<sim::Entity*> idle_focus_army_units(lua_State* L, Pred pred) {
     auto* sim = get_sim(L);
-    const auto pending = sim && !sim->playback() ? sim->queues_with_pending()
-                                                 : std::map<u32, sim::SimState::QueueWithPending>();
+    const auto pending = sim && !sim->playback()
+                             ? sim->queues_with_pending()
+                             : std::map<sim::EntityId, sim::SimState::QueueWithPending>();
     return focus_army_units(L, [&](const sim::Unit& u) {
         if (!pred(u)) {
             return false;
@@ -2419,12 +2420,12 @@ static int l_ToggleScriptBit(lua_State* L) {
 /// GetAssistingUnitsList(units) -> the units guarding/assisting any of them.
 static int l_GetAssistingUnitsList(lua_State* L) {
     const auto targets = ui_unit_list(L, 1);
-    std::unordered_set<u32> ids;
+    std::unordered_set<sim::EntityId> ids;
     for (auto* u : targets) ids.insert(u->entity_id());
     push_ui_unit_array(L,
                        focus_army_units(L,
                                         [&](const sim::Unit& u) {
-                                            return u.guarded_unit_id() != 0 &&
+                                            return u.guarded_unit_id() &&
                                                    ids.count(u.guarded_unit_id()) > 0;
                                         }),
                        false);
@@ -2451,7 +2452,7 @@ static int extra_select_set(lua_State* L, bool add) {
     auto* e = check_entity(L, 1);
     if (!e) return 0;
     push_extra_select_table(L);
-    lua_pushnumber(L, e->entity_id());
+    sim::push_entity_key(L, e->entity_id());
     if (add) lua_pushboolean(L, 1);
     else lua_pushnil(L);
     lua_rawset(L, -3);
@@ -3054,8 +3055,8 @@ static int l_GetUnitCommandDataOfUnit(lua_State* L) {
 // applies in its next beat, and that a networked match broadcasts.
 
 /// Route `cmd` for `ids` as the local player's order.
-void issue_player_order(lua_State* L, const std::vector<u32>& ids, const sim::UnitCommand& cmd,
-                        bool clear) {
+void issue_player_order(lua_State* L, const std::vector<sim::EntityId>& ids,
+                        const sim::UnitCommand& cmd, bool clear) {
     auto* sim = get_sim(L);
     if (!sim || ids.empty()) return;
     sim->set_human_input_active(true);
@@ -3063,8 +3064,8 @@ void issue_player_order(lua_State* L, const std::vector<u32>& ids, const sim::Un
     sim->set_human_input_active(false);
 }
 
-static std::vector<u32> ui_unit_ids(lua_State* L, int idx) {
-    std::vector<u32> ids;
+static std::vector<sim::EntityId> ui_unit_ids(lua_State* L, int idx) {
+    std::vector<sim::EntityId> ids;
     for (auto* u : ui_unit_list(L, idx)) ids.push_back(u->entity_id());
     return ids;
 }
@@ -3081,8 +3082,9 @@ std::string ui_command_name(const char* name) {
 /// An order with no target: Stop, Dive, a silo build, or a Script order
 /// (M206w: the construction panel's enhancements, as EnhanceTask). `data`
 /// is the order's table.
-void issue_targetless_order(lua_State* L, const std::vector<u32>& ids, const std::string& name,
-                            int data, bool clear) {
+bool issue_targetless_order(lua_State* L, const std::vector<sim::EntityId>& ids,
+                            const std::string& name, int data, bool clear, bool tell,
+                            const std::string& blueprint) {
     sim::UnitCommand cmd;
     if (name == "Stop") {
         cmd.type = sim::CommandType::Stop;
@@ -3093,25 +3095,59 @@ void issue_targetless_order(lua_State* L, const std::vector<u32>& ids, const std
         // it, not its queue, so `clear` does nothing).
         cmd.type = name == "BuildSiloNuke" ? sim::CommandType::SiloBuildNuke
                                            : sim::CommandType::SiloBuildTactical;
-    } else if (name == "Script" && lua_istable(L, data)) {
+    } else if (name == "DestroySelf") {
+        cmd.type = sim::CommandType::DestroySelf;
+    } else if (name == "Script" && data != 0 && lua_istable(L, data)) {
         auto bytes = sim::lua_to_bytes(L, data);
         if (!bytes) {
             spdlog::warn("IssueCommand: a Script order's table can't be carried");
-            return;
+            return false;
         }
         cmd.type = sim::CommandType::Script;
         cmd.script_args = std::move(*bytes);
     } else {
         spdlog::warn("IssueCommand: unsupported order '{}'", name);
-        return;
+        return false;
     }
     issue_player_order(L, ids, cmd, clear);
+    if (tell) {
+        report_script_order(L, name, ids, clear, data, blueprint);
+    }
+    return true;
 }
 
-/// IssueUnitCommand(units, command)
+/// IssueUnitCommand(units, command [, data [, clear]]), as Moho's
+/// cfunc_IssueUnitCommandL
 static int l_IssueUnitCommand(lua_State* L) {
-    const std::string name = ui_command_name(luaL_checkstring(L, 2));
-    issue_targetless_order(L, ui_unit_ids(L, 1), name, 3, true);
+    const int argc = lua_gettop(L);
+    if (argc < 1 || argc > 4) {
+        return arg_range_error(L, "IssueUnitCommand(unitList,command,[string],[clear])", 1, 4,
+                               argc);
+    }
+    if (!get_sim(L)) {
+        spdlog::warn("Attempt to call IssueCommand before world sessions exists.");
+        return 0;
+    }
+    if (!lua_istable(L, 1)) {
+        return luaL_error(L, "Unit list expected as first argument");
+    }
+    std::vector<sim::EntityId> ids;
+    lua_pushnil(L);
+    while (lua_next(L, 1) != 0) {
+        const sim::Entity* e = check_entity(L, lua_gettop(L));
+        if (!e) {
+            return luaL_error(L, "Expected a game object. (Did you call with '.' instead of ':'?)");
+        }
+        if (e->is_unit() && !e->destroyed()) {
+            ids.push_back(e->entity_id());
+        }
+        lua_pop(L, 1);
+    }
+    if (!lua_tostring(L, 2)) {
+        return arg_type_error(L, 2, "string");
+    }
+    const std::string name = ui_command_name(lua_tostring(L, 2));
+    issue_targetless_order(L, ids, name, 3, argc < 4 || arg_boolean(L, 4));
     return 0;
 }
 
@@ -3168,7 +3204,7 @@ static int l_GetAttachedUnitsList(lua_State* L) {
         if (!entity || !entity->is_unit() || entity->destroyed()) continue;
         auto* unit = static_cast<sim::Unit*>(entity);
 
-        for (u32 cargo_id : unit->cargo_ids()) {
+        for (sim::EntityId cargo_id : unit->cargo_ids()) {
             auto* cargo = reg.find(cargo_id);
             if (cargo && !cargo->destroyed() && cargo->is_unit()) {
                 push_unit_for_ui(L, cargo);
@@ -3211,7 +3247,7 @@ static int l_GetUnitById(lua_State* L) {
     if (!sim) { lua_pushnil(L); return 1; }
 
     luaL_checknumber(L, 1);
-    auto* entity = sim->entity_registry().find(sim::to_entity_id(L, 1));
+    auto* entity = sim->entity_registry().find(sim::to_entity_id(L, 1, sim->entity_registry()));
     if (!entity || entity->destroyed()) {
         lua_pushnil(L);
         return 1;
@@ -3449,7 +3485,7 @@ static int l_ClearCurrentFactoryForQueueDisplay(lua_State* L) {
 static int push_build_count_request(lua_State* L, const char* func_name) {
     auto* fq = get_factory_queue(L);
     auto* queue = get_callback_queue(L);
-    if (!fq || !queue || fq->current_factory_id() == 0) return 0;
+    if (!fq || !queue || !fq->current_factory_id()) return 0;
     sim::SimCallbackEntry entry;
     entry.func_name = func_name;
     entry.args["Index"] = static_cast<f64>(luaL_checknumber(L, 1));
@@ -3521,11 +3557,10 @@ static int l_GetOrderBitmapNames(lua_State* L) {
 static int l_GetEnhancements(lua_State* L) {
     auto* sim = get_sim(L);
     luaL_checknumber(L, 1);
-    const u32 entity_id = sim::to_entity_id(L, 1);
     lua_newtable(L);
 
     if (!sim) return 1;
-    auto* entity = sim->entity_registry().find(entity_id);
+    auto* entity = sim->entity_registry().find(sim::to_entity_id(L, 1, sim->entity_registry()));
     if (!entity || !entity->is_unit()) return 1;
     auto* unit = static_cast<osc::sim::Unit*>(entity);
 
@@ -3840,7 +3875,15 @@ static int l_ui_GameTick(lua_State* L) {
     return 1;
 }
 
-/// GetGameTime() → formatted string "MM:SS"
+/// Moho's clock text: wx 2.6's wxTimeSpan(0, 0, seconds).Format("%H:%M:%S").
+static void push_clock_text(lua_State* L, double seconds) {
+    const auto total = static_cast<long long>(seconds);
+    char text[64];
+    std::snprintf(text, sizeof(text), "%02lld:%02lld:%02lld", total / 3600, total / 60 % 60,
+                  total % 60);
+    lua_pushstring(L, text);
+}
+
 static int l_GetGameTime(lua_State* L) {
     if (lua_gettop(L) != 0)
         return arg_count_error(L,
@@ -3849,12 +3892,7 @@ static int l_GetGameTime(lua_State* L) {
                                0, lua_gettop(L));
     if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
     auto* sim = get_sim(L);
-    f64 t = sim ? sim->game_time() : 0.0;
-    int minutes = static_cast<int>(t) / 60;
-    int seconds = static_cast<int>(t) % 60;
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%02d:%02d", minutes, seconds);
-    lua_pushstring(L, buf);
+    push_clock_text(L, sim ? sim->game_time() : 0.0);
     return 1;
 }
 
@@ -3894,19 +3932,6 @@ static int l_GetSystemTimeSeconds(lua_State* L) {
     double secs = duration<double>(now).count();
     lua_pushnumber(L, secs);
     return 1;
-}
-
-/// Moho's clock text: `seconds` as HH:MM:SS, the hours wrapping at 24, with a
-/// leading '-' when negative.
-static void push_clock_text(lua_State* L, double seconds) {
-    const auto total = static_cast<long long>(seconds);
-    const unsigned long long abs_s = total < 0 ? static_cast<unsigned long long>(-(total + 1)) + 1
-                                               : static_cast<unsigned long long>(total);
-    char text[24];
-    std::snprintf(text, sizeof(text), total < 0 ? "-%02d:%02d:%02d" : "%02d:%02d:%02d",
-                  static_cast<int>((abs_s / 3600) % 24), static_cast<int>((abs_s / 60) % 60),
-                  static_cast<int>(abs_s % 60));
-    lua_pushstring(L, text);
 }
 
 /// FormatTime(seconds) → "HH:MM:SS" (FAF's logger and replay UI). Moho's
@@ -4038,11 +4063,18 @@ static ui::Console* get_console(lua_State* L) {
     return console;
 }
 
-/// ConExecute(line) / ConExecuteSave(line): run a console line (Moho's
-/// CON_Execute; the engine keeps no history to save it to).
+/// ConExecute(line): run a console line (Moho's CON_Execute).
 static int l_ConExecute(lua_State* L) {
     const char* line = luaL_checkstring(L, 1);
     if (auto* console = get_console(L)) console->execute(L, line);
+    return 0;
+}
+
+/// ConExecuteSave(line): the line saved for CON_ExecuteLastCommand, then run
+/// (Moho's CON_ExecuteSave; retail's console and create-unit dialogs use it).
+static int l_ConExecuteSave(lua_State* L) {
+    const char* line = luaL_checkstring(L, 1);
+    if (auto* console = get_console(L)) console->execute_save(L, line);
     return 0;
 }
 
@@ -4126,6 +4158,10 @@ void register_console_commands(ui::Console& console) {
     console.add("UI_ToggleGamePanels", [](lua_State* L, const Args&) {
         call_module_function(L, "/lua/ui/game/gamemain.lua", "HideGameUI", {});
     });
+    // CON_ExecuteLastCommand: the last line ConExecuteSave saved, run again
+    // (the debug key map's Ctrl-Shift-X)
+    console.add("CON_ExecuteLastCommand",
+                [&console](lua_State* L, const Args&) { console.execute_last(L); });
     // ShowStats [section]: retail's engine statistics window, the section
     // given (or all) open, toggled (Moho's ShowStats, 0x00834F90)
     console.add("ShowStats", [](lua_State* L, const Args& args) {
@@ -5058,7 +5094,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetGameSpeed", l_GetGameSpeed);
     state.register_function("ConExecute", l_ConExecute);
     state.register_function("ConTextMatches", l_ConTextMatches);
-    state.register_function("ConExecuteSave", l_ConExecute);
+    state.register_function("ConExecuteSave", l_ConExecuteSave);
     state.register_function("SessionRequestPause", l_SessionRequestPause);
     state.register_function("SessionResume", l_SessionResume);
 

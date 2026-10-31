@@ -241,7 +241,7 @@ TEST_CASE("A repair whose target is gone stops with nil for it, and fails nothin
         w.sim.tick();
     }
     REQUIRE(w.log().find("start Repair") != std::string::npos);
-    const osc::u32 id = w.site->entity_id();
+    const osc::sim::EntityId id = w.site->entity_id();
     w.site->mark_destroyed();
     w.sim.entity_registry().unregister_entity(id);
     w.sim.tick();
@@ -262,7 +262,7 @@ TEST_CASE("A guard's help ends with OnStopBuild when what it guards is gone", "[
     tick_until([&] { w.sim.tick(); }, "the helper starts building", 10,
                [&] { return helper->is_building(); });
     w.log();
-    const osc::u32 id = eng->entity_id();
+    const osc::sim::EntityId id = eng->entity_id();
     eng->mark_destroyed();
     w.sim.entity_registry().unregister_entity(id);
     w.sim.tick();
@@ -546,7 +546,7 @@ TEST_CASE("A repairer's focus is the unit it repairs, and nothing once it is don
     CHECK(eng->focus_id() == w.site->entity_id());
     tick_until([&] { w.sim.tick(); }, "the repair ends", 200, [&] { return !eng->is_repairing(); });
     REQUIRE(w.site->health() == w.site->max_health());
-    CHECK(eng->focus_id() == 0);
+    CHECK_FALSE(eng->focus_id());
 
     w.site->set_health(50.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 2), true);
@@ -555,7 +555,7 @@ TEST_CASE("A repairer's focus is the unit it repairs, and nothing once it is don
     REQUIRE(eng->focus_id() == w.site->entity_id());
     eng->push_command(order(CommandType::Stop, *w.site, 3), true);
     w.sim.tick();
-    CHECK(eng->focus_id() == 0);
+    CHECK_FALSE(eng->focus_id());
 }
 
 TEST_CASE("A helper with no build rate takes up the build it guards and adds no work",
@@ -718,6 +718,18 @@ TEST_CASE("A slow helper's step brings the unit it helps build level with its he
     CHECK(w.site->health() ==
           Catch::Approx(w.site->max_health() * w.site->fraction_complete() + 0.05f));
     CHECK(helper->work_progress() == w.site->fraction_complete());
+}
+
+TEST_CASE("A unit damaged while it is being built is finished with that damage",
+          "[build][assist]") {
+    AssistSim w;
+    w.site->set_fraction_complete(0.995f);
+    w.site->set_health(50.0f);
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    tick_until([&] { w.sim.tick(); }, "the site is built", 10,
+               [&] { return !w.site->is_being_built(); });
+    CHECK(w.site->health() == Catch::Approx(51.0f));
 }
 
 namespace {

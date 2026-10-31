@@ -5,6 +5,7 @@
 // show.
 
 #include <catch2/catch_test_macros.hpp>
+#include <fmt/format.h>
 
 #include "app/app_internal.hpp"
 #include "core/game_state.hpp"
@@ -170,4 +171,21 @@ TEST_CASE("A game's session is active while it loads its sim and after its score
     CHECK(ended.error_of("assert(SessionIsActive() == false)").empty());
     CHECK(ended.error_of("assert(type(GetArmiesTable().armiesTable) == 'table')").empty());
     CHECK(ended.error_of("assert(SessionIsReplay() == false)").empty());
+}
+
+TEST_CASE("GetGameTime and FormatTime give Moho's hours, minutes and seconds", "[session][time]") {
+    UserState s;
+    CHECK(s.error_of("assert(GetGameTime() == '00:00:00', GetGameTime())").empty());
+    for (int i = 0; i < 375; ++i) {
+        s.sim.tick();
+    }
+    CHECK(s.error_of("assert(GetGameTime() == '00:00:37', GetGameTime())").empty());
+
+    constexpr std::pair<const char*, const char*> kFormatted[] = {
+        {"3725", "01:02:05"}, {"59.9", "00:00:59"}, {"90061.7", "25:01:01"}, {"-5", "00:00:-5"}};
+    for (const auto& [seconds, text] : kFormatted) {
+        CHECK(s.error_of(
+                   fmt::format("assert(FormatTime({0}) == '{1}', FormatTime({0}))", seconds, text))
+                  .empty());
+    }
 }

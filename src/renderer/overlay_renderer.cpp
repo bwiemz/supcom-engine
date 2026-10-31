@@ -334,9 +334,9 @@ void OverlayRenderer::emit_lifebars(const sim::EntityRecord& e, const sim::Vecto
 
 void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& events,
                              const Camera& camera, const std::array<f32, 16>& vp_matrix,
-                             const std::unordered_set<u32>* selected_ids, TextureCache& tex_cache,
-                             u32 viewport_w, u32 viewport_h, i32 game_result, f32 dt,
-                             const Frustum* frustum) {
+                             const std::unordered_set<sim::EntityId>* selected_ids,
+                             TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
+                             i32 game_result, f32 dt, const Frustum* frustum) {
     quads_.clear();
     quads_.reserve(MAX_OVERLAY_QUADS);
     quad_count_ = 0;
@@ -381,7 +381,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
 
 void OverlayRenderer::add_unit_overlays(const sim::FrameView& view, const sim::WorldSnapshot& snap,
                                         const Camera& camera, const std::array<f32, 16>& vp_matrix,
-                                        const std::unordered_set<u32>* selected_ids,
+                                        const std::unordered_set<sim::EntityId>* selected_ids,
                                         const Frustum* frustum, f32 sw, f32 sh, f32 cam_dist) {
     for (const sim::EntityRecord& entity : view.entities()) {
         if (!entity.is_unit) continue;
@@ -443,12 +443,13 @@ void OverlayRenderer::add_unit_overlays(const sim::FrameView& view, const sim::W
 
 void OverlayRenderer::add_intel_rings(const sim::FrameView& view, const sim::WorldSnapshot& snap,
                                       const std::array<f32, 16>& vp_matrix,
-                                      const std::unordered_set<u32>* selected_ids, f32 sw, f32 sh) {
+                                      const std::unordered_set<sim::EntityId>* selected_ids, f32 sw,
+                                      f32 sh) {
     constexpr u32 INTEL_SEGMENTS = 24;
     constexpr f32 INTEL_LINE_THICK = 1.5f;
     constexpr f32 PI2 = 6.2831853f;
 
-    for (u32 uid : *selected_ids) {
+    for (sim::EntityId uid : *selected_ids) {
         auto* e = view.find(uid);
         if (!e || !e->is_unit) continue;
         auto pos = view.position(*e);
@@ -564,7 +565,7 @@ void OverlayRenderer::add_effect_particles(const sim::FrameView& view,
         f32 wy = fx_ptr->offset_y;
         f32 wz = fx_ptr->offset_z;
 
-        if (fx_ptr->entity_id > 0) {
+        if (fx_ptr->entity_id) {
             auto* parent = view.find(fx_ptr->entity_id);
             if (!parent) continue;
             auto pp = view.position(*parent);
@@ -580,7 +581,9 @@ void OverlayRenderer::add_effect_particles(const sim::FrameView& view,
 
         // Beam entity-to-entity: draw line between two entities
         if (type == sim::EffectType::BEAM_ENTITY_TO_ENTITY) {
-            if (fx_ptr->target_entity_id == 0) continue;
+            if (!fx_ptr->target_entity_id) {
+                continue;
+            }
             auto* target = view.find(fx_ptr->target_entity_id);
             if (!target) continue;
 
@@ -609,7 +612,7 @@ void OverlayRenderer::add_effect_particles(const sim::FrameView& view,
             if (!world_to_screen(wx, wy, wz, vp_matrix, sw, sh, sx0, sy0)) continue;
             // Use entity heading to orient the beam
             f32 fwd_x = 0.0f, fwd_y = 0.0f, fwd_z = 1.0f;
-            if (fx_ptr->entity_id > 0) {
+            if (fx_ptr->entity_id) {
                 auto* beam_parent = view.find(fx_ptr->entity_id);
                 if (beam_parent) {
                     const auto q = view.orientation(*beam_parent);

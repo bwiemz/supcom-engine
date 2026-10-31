@@ -134,7 +134,7 @@ void BlueprintStore::register_blueprint(lua_State* L, BlueprintType type,
     if (type == BlueprintType::Unit || type == BlueprintType::Prop ||
         type == BlueprintType::Projectile) {
         const int bp = stack_index > 0 ? stack_index : lua_gettop(L) + stack_index + 1;
-        if (type == BlueprintType::Unit) apply_unit_reflection(L, bp);
+        if (type == BlueprintType::Unit) apply_unit_reflection(L, bp, footprint_classes_);
         else if (type == BlueprintType::Prop) apply_prop_defaults(L, bp);
         else apply_projectile_reflection(L, bp);
     }

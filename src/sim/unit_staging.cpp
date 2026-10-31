@@ -34,7 +34,7 @@ constexpr f32 kFuelTickScale = 0.1f;
 /// Close enough over the bone to settle onto it.
 constexpr f32 kOverBone = 0.5f;
 
-Unit* live_unit(EntityRegistry& registry, u32 id) {
+Unit* live_unit(EntityRegistry& registry, EntityId id) {
     Entity* e = registry.find(id);
     return e && !e->destroyed() && e->is_unit() ? static_cast<Unit*>(e) : nullptr;
 }
@@ -98,7 +98,7 @@ bool Unit::is_staging_platform() const {
     return has_category(kAir) || has_category(kPod);
 }
 
-bool Unit::docks_at(u32 platform_id) const {
+bool Unit::docks_at(EntityId platform_id) const {
     if (command_queue_.empty()) return false;
     const UnitCommand& head = command_queue_.front();
     return refuels(head) && head.target_id == platform_id && head.dock_phase == DockPhase::Approach;
@@ -363,7 +363,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, SimContext& ctx) {
 }
 
 Unit::LandStep Unit::carrier_land_step(Unit& carrier, bool refuel, SimContext& ctx) {
-    const u32 me = entity_id();
+    const EntityId me = entity_id();
     const auto fail = [&] {
         abandon_landing(ctx.registry);
         return LandStep::Failed;
@@ -459,8 +459,10 @@ OrderStep Unit::order_carrier_landing(UnitCommand& cmd, SimContext& ctx) {
         return OrderStep::Next;
     };
     Unit* carrier = live_unit(ctx.registry, cmd.target_id);
-    if (!carrier || carrier->is_dying() || transport_id_ != 0) return finish();
-    const u32 cid = carrier->entity_id();
+    if (!carrier || carrier->is_dying() || transport_id_) {
+        return finish();
+    }
+    const EntityId cid = carrier->entity_id();
     if (std::none_of(carrier->command_queue_.begin(), carrier->command_queue_.end(),
                      [&](const UnitCommand& c) {
                          return c.type == CommandType::TransportLoad && c.target_id == cid &&
@@ -522,7 +524,7 @@ Unit* Unit::find_platform(SimContext& ctx) {
 }
 
 void Unit::tick_docked(SimContext& ctx, Unit& platform) {
-    const u32 platform_id = platform.entity_id();
+    const EntityId platform_id = platform.entity_id();
     if (!command_queue_.empty()) {
         UnitCommand& head = command_queue_.front();
         if (refuels(head) && head.target_id == platform_id &&

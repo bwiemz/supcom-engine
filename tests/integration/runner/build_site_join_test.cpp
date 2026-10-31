@@ -21,8 +21,9 @@ namespace osc::test {
 
 namespace {
 
-std::vector<u32> global_ids(lua_State* L, const char* name) {
-    std::vector<u32> ids;
+std::vector<sim::EntityId> global_ids(lua_State* L, const sim::EntityRegistry& registry,
+                                      const char* name) {
+    std::vector<sim::EntityId> ids;
     lua_pushstring(L, name);
     lua_rawget(L, LUA_GLOBALSINDEX);
     if (lua_istable(L, -1)) {
@@ -32,7 +33,7 @@ std::vector<u32> global_ids(lua_State* L, const char* name) {
                 lua_pop(L, 1);
                 break;
             }
-            ids.push_back(osc::sim::to_entity_id(L, -1));
+            ids.push_back(osc::sim::to_entity_id(L, -1, registry));
             lua_pop(L, 1);
         }
     }
@@ -122,7 +123,8 @@ void test_build_site_join(TestContext& ctx) {
         build.blueprint_id = "ueb1101";
         build.target_pos = {262.0f, 0.0f, 784.0f};
         ctx.sim.set_human_input_active(true);
-        ctx.sim.route_player_command(global_ids(L, "__osc_join_player_ids"), build, true);
+        ctx.sim.route_player_command(
+            global_ids(L, ctx.sim.entity_registry(), "__osc_join_player_ids"), build, true);
         ctx.sim.set_human_input_active(false);
     }
     run("each of the others sent by its own order, one more to a site beside theirs", R"(

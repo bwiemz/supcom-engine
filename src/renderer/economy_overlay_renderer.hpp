@@ -3,6 +3,7 @@
 #include "renderer/ui_renderer.hpp" // UIInstance
 #include "renderer/vk_types.hpp"
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 #include <array>
 #include <functional>
@@ -24,7 +25,7 @@ class TextureCache;
 std::string economy_rate_text(f32 per_second, bool trailing_space);
 
 struct EconomyReadout {
-    u32 unit_id = 0;
+    sim::EntityId unit_id{};
     f32 bar_left = 0, bar_top = 0, bar_width = 0, bar_height = 0;
     std::string energy, mass;
     u32 energy_color = 0, mass_color = 0;

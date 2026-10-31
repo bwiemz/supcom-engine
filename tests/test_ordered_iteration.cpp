@@ -15,20 +15,21 @@
 #include <vector>
 
 using osc::sim::Entity;
+using osc::sim::EntityId;
 using osc::sim::EntityRegistry;
 using osc::sim::Prop;
 using osc::sim::Unit;
 
 namespace {
 
-osc::u32 add(EntityRegistry& reg, float x = 0, float z = 0) {
+EntityId add(EntityRegistry& reg, float x = 0, float z = 0) {
     auto e = std::make_unique<Unit>();
     e->set_position({x, 0, z});
     return reg.register_entity(std::move(e));
 }
 
-std::vector<osc::u32> walk(const EntityRegistry& reg) {
-    std::vector<osc::u32> ids;
+std::vector<EntityId> walk(const EntityRegistry& reg) {
+    std::vector<EntityId> ids;
     reg.for_each([&](const Entity& e) { ids.push_back(e.entity_id()); });
     return ids;
 }
@@ -37,11 +38,11 @@ std::vector<osc::u32> walk(const EntityRegistry& reg) {
 
 TEST_CASE("for_each visits entities in the order they were made", "[determinism]") {
     EntityRegistry reg;
-    std::vector<osc::u32> ids;
+    std::vector<EntityId> ids;
     ids.reserve(260);
     for (int i = 0; i < 200; ++i) ids.push_back(add(reg));
     // Remove a scattering, as deaths and expiring projectiles do.
-    std::vector<osc::u32> live;
+    std::vector<EntityId> live;
     for (size_t i = 0; i < ids.size(); ++i) {
         if (i % 3 == 0) reg.unregister_entity(ids[i]);
         else live.push_back(ids[i]);
@@ -57,12 +58,12 @@ TEST_CASE("for_each visits entities in the order they were made", "[determinism]
 
 TEST_CASE("for_each tolerates the walk creating and removing entities", "[determinism]") {
     EntityRegistry reg;
-    const osc::u32 a = add(reg);
-    const osc::u32 b = add(reg);
-    const osc::u32 c = add(reg);
+    const EntityId a = add(reg);
+    const EntityId b = add(reg);
+    const EntityId c = add(reg);
 
-    std::vector<osc::u32> seen;
-    osc::u32 spawned = 0;
+    std::vector<EntityId> seen;
+    EntityId spawned{};
     reg.for_each([&](const Entity& e) {
         seen.push_back(e.entity_id());
         if (e.entity_id() == a) {
@@ -70,20 +71,20 @@ TEST_CASE("for_each tolerates the walk creating and removing entities", "[determ
             spawned = add(reg);       // born during the walk: visited next walk
         }
     });
-    CHECK(seen == std::vector<osc::u32>{a, c});
-    CHECK(walk(reg) == std::vector<osc::u32>{a, c, spawned});
+    CHECK(seen == std::vector<EntityId>{a, c});
+    CHECK(walk(reg) == std::vector<EntityId>{a, c, spawned});
 }
 
 TEST_CASE("for_each_unit visits the units alone, in id order", "[determinism]") {
     EntityRegistry reg;
-    std::vector<osc::u32> units;
-    std::vector<osc::u32> props;
+    std::vector<EntityId> units;
+    std::vector<EntityId> props;
     for (int i = 0; i < 60; ++i) {
         if (i % 4 == 0) units.push_back(add(reg));
         else props.push_back(reg.register_entity(std::make_unique<Prop>()));
     }
     const auto unit_walk = [&reg] {
-        std::vector<osc::u32> ids;
+        std::vector<EntityId> ids;
         reg.for_each_unit([&](const Entity& e) {
             CHECK(e.is_unit());
             ids.push_back(e.entity_id());
@@ -105,8 +106,8 @@ TEST_CASE("for_each_unit visits the units alone, in id order", "[determinism]") 
 
     // A unit born during a unit walk is visited by the next one; one that
     // dies before its turn is skipped.
-    std::vector<osc::u32> seen;
-    osc::u32 spawned = 0;
+    std::vector<EntityId> seen;
+    EntityId spawned{};
     reg.for_each_unit([&](const Entity& e) {
         seen.push_back(e.entity_id());
         if (e.entity_id() == units[0]) {
@@ -124,7 +125,7 @@ TEST_CASE("Spatial queries return ids in ascending order", "[determinism]") {
     EntityRegistry reg;
     reg.init_spatial_grid(512, 512);
     // Spread across cells, registered and moved in a scrambled order.
-    std::vector<osc::u32> ids;
+    std::vector<EntityId> ids;
     ids.reserve(40);
     for (int i = 0; i < 40; ++i)
         ids.push_back(
@@ -150,8 +151,13 @@ TEST_CASE("Spatial queries return ids in ascending order", "[determinism]") {
 
 TEST_CASE("A unit's neighbours and enhancements come in a fixed order", "[determinism]") {
     Unit u;
-    for (osc::u32 id : {40u, 7u, 1000u, 3u, 99u}) u.add_adjacent(id);
-    std::vector<osc::u32> adj(u.adjacent_unit_ids().begin(), u.adjacent_unit_ids().end());
+    for (osc::u32 id : {40u, 7u, 1000u, 3u, 99u}) {
+        u.add_adjacent(EntityId::of(id, 1));
+    }
+    std::vector<osc::u32> adj;
+    for (const EntityId id : u.adjacent_unit_ids()) {
+        adj.push_back(id.moho());
+    }
     CHECK(adj == std::vector<osc::u32>{3, 7, 40, 99, 1000});
 
     u.add_enhancement("RCH", "ResourceAllocation");
@@ -170,12 +176,12 @@ TEST_CASE("units_in_radius and units_in_rect are collect_in_radius's and collect
     const auto check_matches = [](EntityRegistry& reg) {
         for (const auto& [x, z, r] : std::vector<std::array<float, 3>>{
                  {100, 100, 60}, {0, 0, 300}, {37, 181, 25}, {199, 5, 0.5f}, {-50, -50, 10}}) {
-            std::vector<osc::u32> expected;
-            for (osc::u32 id : reg.collect_in_radius(x, z, r)) {
+            std::vector<EntityId> expected;
+            for (const EntityId id : reg.collect_in_radius(x, z, r)) {
                 const Entity* e = reg.find(id);
                 if (e && e->is_unit() && !e->destroyed()) expected.push_back(id);
             }
-            std::vector<osc::u32> got;
+            std::vector<EntityId> got;
             for (const Entity* e : reg.units_in_radius(x, z, r)) got.push_back(e->entity_id());
             INFO("query at " << x << "," << z << " r " << r);
             CHECK(got == expected);
@@ -183,18 +189,18 @@ TEST_CASE("units_in_radius and units_in_rect are collect_in_radius's and collect
         // Rects given either way round, a point-sized one and one off the map
         for (const auto& [x0, z0, x1, z1] : std::vector<std::array<float, 4>>{
                  {40, 60, 160, 140}, {200, 200, 0, 0}, {37, 181, 37, 181}, {-80, -80, -10, -10}}) {
-            std::vector<osc::u32> expected;
-            for (osc::u32 id : reg.collect_in_rect(x0, z0, x1, z1)) {
+            std::vector<EntityId> expected;
+            for (const EntityId id : reg.collect_in_rect(x0, z0, x1, z1)) {
                 const Entity* e = reg.find(id);
                 if (e && e->is_unit() && !e->destroyed()) expected.push_back(id);
             }
-            std::vector<osc::u32> got;
+            std::vector<EntityId> got;
             for (const Entity* e : reg.units_in_rect(x0, z0, x1, z1)) got.push_back(e->entity_id());
             INFO("rect " << x0 << "," << z0 << " to " << x1 << "," << z1);
             CHECK(got == expected);
             // for_each_in_rect: the same entities, each once, in any order
             const auto visited = [&](bool units_only) {
-                std::vector<osc::u32> ids;
+                std::vector<EntityId> ids;
                 reg.for_each_in_rect(x0, z0, x1, z1, units_only,
                                      [&](Entity& e) { ids.push_back(e.entity_id()); });
                 std::sort(ids.begin(), ids.end());
@@ -205,8 +211,8 @@ TEST_CASE("units_in_radius and units_in_rect are collect_in_radius's and collect
         }
     };
     const auto fill = [](EntityRegistry& reg) {
-        std::vector<osc::u32> units;
-        std::vector<osc::u32> props;
+        std::vector<EntityId> units;
+        std::vector<EntityId> props;
         for (int i = 0; i < 60; ++i) {
             const float x = static_cast<float>((i * 37) % 200);
             const float z = static_cast<float>((i * 53) % 200);

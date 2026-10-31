@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 
 #include <vector>
 
@@ -19,7 +20,7 @@ class Unit;
 /// Units and candidates are taken in id order, so every platform decides the
 /// same.
 void steer_ground_units(SimState& sim);
-void steer_units(SimState& sim, const std::vector<u32>& ids);
+void steer_units(SimState& sim, const std::vector<EntityId>& ids);
 
 /// The formation a unit moves in, as a key (0: none): Moho's
 /// mInfoCache.mFormationLayer (Unit::GetFormation, kept only for a form

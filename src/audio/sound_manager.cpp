@@ -903,8 +903,8 @@ SoundManager::Filter SoundManager::filter(std::string_view lod_cutoff, const sim
     return Filter::Pass;
 }
 
-void SoundManager::warn_nowhere(std::string_view bank, std::string_view cue, u32 entity_id,
-                                const sim::Vector3& pos) {
+void SoundManager::warn_nowhere(std::string_view bank, std::string_view cue,
+                                sim::EntityId entity_id, const sim::Vector3& pos) {
     if (!nowhere_warned_.insert(entity_id).second) {
         return;
     }

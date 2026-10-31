@@ -4,6 +4,7 @@
 #include "renderer/mesh_cache.hpp"
 #include "renderer/frustum.hpp"
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
 #include "sim/game_colors.hpp"
 
 #include <iosfwd>
@@ -64,14 +65,14 @@ class MeshBirths {
 public:
     /// The tick entity `id`'s mesh instance was made: the one it had at the
     /// last update with these `mesh_changes`, else `now`.
-    u32 tick(u32 id, u32 mesh_changes, u32 now);
+    u32 tick(sim::EntityId id, u32 mesh_changes, u32 now);
     /// Ends the update: keeps what it asked for, one each.
     void finish();
     size_t size() const { return births_.size(); }
 
 private:
     struct Birth {
-        u32 id = 0;
+        sim::EntityId id{};
         u32 mesh_changes = 0; ///< the entity's Entity::mesh_changes when drawn
         u32 tick = 0;
     };
@@ -133,11 +134,12 @@ public:
     /// (between the last two ticks).
     /// `meshes_drawn` false (strategic zoom, which draws icons in their
     /// place): no instances, only each entity's mesh birth kept.
+    /// A mesh draws at the LOD Moho's LOD metric picks (the view's width at
+    /// its depth), and not at all past its last LOD's cutoff.
     /// `lod_metric`: an orthographic view's LOD metric, the same for every
-    /// entity (the cartographic minimap's, minimap_meshes.hpp). Then only a
-    /// mesh whose LOD reach takes it is drawn, at the LOD it picks in place
-    /// of the eye's distance; a unit without one draws no cube, and no birth
-    /// is kept (the cartographic techniques read no time).
+    /// entity (the cartographic minimap's, minimap_meshes.hpp); a unit
+    /// without a mesh then draws no cube, and no birth is kept (the
+    /// cartographic techniques read no time).
     void update(const sim::FrameView& view, MeshCache& mesh_cache, lua_State* L,
                 TextureCache* tex_cache = nullptr, const Camera* camera = nullptr,
                 const Frustum* frustum = nullptr, bool meshes_drawn = true,
@@ -247,15 +249,17 @@ private:
 
     // Per-frame draw groups (rebuilt each frame)
     std::vector<MeshDrawGroup> mesh_groups_;
-    /// Each entity's LOD reach, for an update at a fixed metric, by entity
-    /// id (Moho's ids are sparse, a pool per family in their high bits), each
-    /// read at the entity's mesh_changes (a SetMesh reads it again).
-    /// A whole map's props then cost a look each, not a blueprint lookup.
+    /// Each entity's LOD reach, by entity id (Moho's ids are sparse, a pool
+    /// per family in their high bits), each read at the entity's
+    /// mesh_changes and blueprint (a SetMesh, or a later entity of the id,
+    /// reads it again). A whole map's props then cost a look each, not a
+    /// blueprint lookup.
     struct CachedReach {
         u32 mesh_changes = 0;
         f32 reach = -1.0f; ///< below 0: not read
+        std::string blueprint_id;
     };
-    std::unordered_map<u32, CachedReach> reaches_;
+    std::unordered_map<sim::EntityId, CachedReach> reaches_;
 
     sim::GameColors game_colors_;
     const ReconView* recon_ = nullptr;

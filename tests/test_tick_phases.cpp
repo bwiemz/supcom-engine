@@ -75,7 +75,8 @@ struct Phases {
         for (const char* bp : {
                  "{BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
-                 " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Land'}}",
+                 " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Land', "
+                 "MaxSpeed = 1}}",
                  "{BlueprintId = 'fac', CategoriesHash = {STRUCTURE = true, FACTORY = true},"
                  " Economy = {BuildRate = 20, BuildTime = 100, BuildCostMass = 10,"
                  " BuildCostEnergy = 10, BuildableCategory = {'MOBILE TECH1'}},"
@@ -85,7 +86,8 @@ struct Phases {
                  " Defense = {MaxHealth = 10}}",
                  "{BlueprintId = 'ship', Categories = {'NAVAL', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
-                 " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Water'}}",
+                 " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Water', "
+                 "MaxSpeed = 1}}",
                  "{BlueprintId = 'gen', CategoriesHash = {MOBILE = true, TECH1 = true},"
                  " Economy = {BuildTime = 10, BuildCostMass = 1, BuildCostEnergy = 1,"
                  " ProductionPerSecondEnergy = 5}, Defense = {MaxHealth = 10}}",
@@ -276,7 +278,7 @@ TEST_CASE("A unit's weapon takes its attack order's target on the tick after the
     Weapon& gun = w.arm(tank, "gun");
     gun.target_check_clock = 1000000;
     w.sim.tick();
-    REQUIRE(gun.target_entity_id == 0);
+    REQUIRE_FALSE(gun.target_entity_id);
 
     UnitCommand attack;
     attack.type = CommandType::Attack;
@@ -285,7 +287,7 @@ TEST_CASE("A unit's weapon takes its attack order's target on the tick after the
     const osc::u32 issued = w.sim.tick_count() + 1;
     w.sim.tick();
     REQUIRE_FALSE(tank.command_queue().empty());
-    CHECK(gun.target_entity_id == 0);
+    CHECK_FALSE(gun.target_entity_id);
     CHECK(w.run("assert(table.getn(heard) == 0)"));
     w.sim.tick();
     CHECK(gun.target_entity_id == rival.entity_id());
@@ -315,7 +317,7 @@ TEST_CASE("A weapon that needs prep hears its attack order's target as the order
     w.sim.route_command({tank.entity_id()}, attack, true);
     const osc::u32 issued = w.sim.tick_count() + 1;
     w.sim.tick();
-    CHECK(gun.target_entity_id == 0);
+    CHECK_FALSE(gun.target_entity_id);
     CHECK(w.run("assert(table.getn(heard) == 1 and heard[1] == " + std::to_string(issued) + ")"));
     w.sim.tick();
     CHECK(gun.target_entity_id == rival.entity_id());
@@ -711,7 +713,7 @@ std::pair<double, double> killed_in_its_step(const char* what) {
     REQUIRE(w.run(std::string("seen = {} ForkThread(function()"
                               "   while true do seen[GetGameTick()] = ") +
                   what + " WaitTicks(1) end end)"));
-    const osc::u32 id = ship.entity_id();
+    const osc::sim::EntityId id = ship.entity_id();
     w.sim.tick();
     REQUIRE(w.sim.tick_count() == 2);
     const auto* left = w.sim.entity_registry().find(id);
@@ -1007,7 +1009,7 @@ TEST_CASE("The snapshot of the tick that finds a hit holds the projectile at the
     w.make("shooter", "tank", 1, 100.0f, 100.0f);
     Unit& rival = w.make("rival", "tank", 2, 110.0f, 100.0f);
     w.fire_at_rival(rival);
-    osc::u32 shot_id = 0;
+    osc::sim::EntityId shot_id{};
     tick_until(
         [&] {
             w.sim.tick();
@@ -1018,7 +1020,7 @@ TEST_CASE("The snapshot of the tick that finds a hit holds the projectile at the
             });
         },
         "the shell's collision check runs", 20, [&] { return w.number("checked") != 0; });
-    REQUIRE(shot_id != 0);
+    REQUIRE(shot_id);
     osc::sim::WorldSnapshot snap;
     osc::sim::capture_world(w.sim, snap);
     const osc::sim::EntityRecord* shot = snap.find(shot_id);
@@ -1098,7 +1100,7 @@ TEST_CASE("SetLifetime(0.5) from OnLostTarget leaves a projectile six steps", "[
                   "   WaitTicks(3)"
                   "   EM.Destroy(rival)"
                   " end)"));
-    osc::u32 shot_id = 0;
+    osc::sim::EntityId shot_id{};
     std::vector<f32> xs;
     tick_until(
         [&] {
@@ -1132,7 +1134,7 @@ TEST_CASE("A projectile's sweep finds a shield a tenth of a step past the step's
     auto made = std::make_unique<osc::sim::Projectile>();
     made->set_position({102.825f, 30.0f, 100.0f});
     made->velocity = {35.0f, 0.0f, 0.0f};
-    const osc::u32 shot_id = w.sim.entity_registry().register_entity(std::move(made));
+    const osc::sim::EntityId shot_id = w.sim.entity_registry().register_entity(std::move(made));
     for (int t = 0; t < 4; ++t) {
         w.sim.tick();
     }
@@ -1338,7 +1340,7 @@ TEST_CASE("A unit a thread destroys is found and takes its step, then hears OnDe
     Unit& later = w.make("later", "tank", 1, 100.0f, 120.0f);
     Phases::drive_east(victim);
     Phases::drive_east(later);
-    const osc::u32 victim_id = victim.entity_id();
+    const osc::sim::EntityId victim_id = victim.entity_id();
     REQUIRE(w.run("log = {} victim.tag = 'victim' later.tag = 'later'"
                   " Plain.OnMotionHorzEventChange = function(self)"
                   "   if GetEntityById(" +
@@ -1671,6 +1673,7 @@ TEST_CASE("A downed aircraft's OnImpact runs in its own step: a shot it makes mo
                   " end"));
     w.projectile_class("/shell", "");
     plane.set_layer("Air");
+    plane.set_motion_type("RULEUMT_Air"); // a flier: only one falls (Moho's CalcMoveAir)
     plane.set_position({100.0f, 11.0f, 100.0f});
     plane.place_now();
     plane.begin_dying();
@@ -1802,7 +1805,7 @@ TEST_CASE("IsSeenNow and the UI read their army's last recon tick, not where the
     const int viewer = GENERATE_COPY(range(0, armies));
     Recon w(armies);
     w.eye("eye", viewer, 100.0f, 100.0f, "Vision", 20.0f);
-    const osc::u32 tank =
+    const osc::sim::EntityId tank =
         w.make("tank", "tank", (viewer + 1) % armies + 1, 105.0f, 100.0f).entity_id();
     const int away = w.turn_after(2 * armies + 1, (viewer + 1) % armies);
     const int back = away + 2 * armies + 1;
@@ -1867,7 +1870,7 @@ TEST_CASE("A jammer's fakes are made, and known fake, only in the recon tick of 
     jammer.set_jammer(2, 5.0f, 10.0f);
     jammer.add_intel("Jammer", 0.0f);
     jammer.enable_intel("Jammer");
-    const osc::u32 id = jammer.entity_id();
+    const osc::sim::EntityId id = jammer.entity_id();
     int blip = 0;
     int fakes = 0;
     const auto note_blip_and_fakes = [&] {
@@ -1975,7 +1978,7 @@ osc::sim::SimCallbackEntry callback(const char* name) {
     return cb;
 }
 
-UnitCommand order(CommandType type, osc::u32 target_id) {
+UnitCommand order(CommandType type, osc::sim::EntityId target_id) {
     UnitCommand c;
     c.type = type;
     c.target_id = target_id;
@@ -2027,7 +2030,7 @@ TEST_CASE("A Lua thread's IssueClearCommands ends a unit's task inside the call"
         wreck->set_position({102.0f, 10.0f, 100.0f});
         wreck->reclaim_mass_max = 30.0f;
         wreck->reclaimable_category = true;
-        const osc::u32 id = w.sim.entity_registry().register_entity(std::move(wreck));
+        const osc::sim::EntityId id = w.sim.entity_registry().register_entity(std::move(wreck));
         eng.push_command(order(CommandType::Reclaim, id), false);
     } else if (task == "repair" || task == "capture") {
         Unit& target = w.make("target", "t1", task == "repair" ? 1 : 2, 102.0f, 100.0f);
@@ -2116,7 +2119,7 @@ TEST_CASE("A Stop given to a building engineer while paused ends its build befor
     eng.push_command(build, false);
     tick_until([&] { w.sim.tick(); }, "the engineer starts its build", 20,
                [&] { return w.number("started") != 0; });
-    REQUIRE(eng.build_target_id() != 0);
+    REQUIRE(eng.build_target_id());
     command(w, osc::sim::kRequestPauseCallback);
     w.sim.tick();
     REQUIRE(w.sim.paused());
@@ -2126,7 +2129,7 @@ TEST_CASE("A Stop given to a building engineer while paused ends its build befor
     CHECK(w.sim.paused());
     CHECK(w.sim.tick_count() == held);
     CHECK(w.number("stopped") == static_cast<f32>(held));
-    CHECK(eng.build_target_id() == 0);
+    CHECK_FALSE(eng.build_target_id());
     CHECK(eng.command_queue().empty());
     command(w, osc::sim::kResumeCallback);
     w.sim.tick();
@@ -2138,7 +2141,7 @@ TEST_CASE("A unit a command destroys while paused hears OnDestroy in that beat",
           "[tick-phases][beats]") {
     Phases w;
     callbacks_module(w);
-    const osc::u32 id = w.make("victim", "tank", 1, 100.0f, 100.0f).entity_id();
+    const osc::sim::EntityId id = w.make("victim", "tank", 1, 100.0f, 100.0f).entity_id();
     REQUIRE(w.run("gone = -1 function Plain:OnDestroy() gone = GetGameTick() end"
                   " function Doom() EM.Destroy(victim) end"));
     w.sim.tick();

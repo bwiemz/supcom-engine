@@ -49,6 +49,10 @@ enum class CommandType : u8 {
     // patrol, engaging and, for engineers, reclaiming and repairing on the
     // way; the order ends where it arrives.
     AggressiveMove = 81,
+    // A cheat (Moho's UNITCOMMAND_DestroySelf, the console's
+    // DestroySelectedUnits): the unit destroyed as the order comes up. The
+    // sim refuses it without cheats.
+    DestroySelf = 82,
 };
 
 /// Moho's CommandIsInstant: an order that takes no move of its own.
@@ -103,6 +107,7 @@ inline int moho_command_number(CommandType type, bool formed) {
     case CommandType::Overcharge: return 34;
     case CommandType::AggressiveMove: return formed ? 36 : 35;
     case CommandType::Dock: return 39;
+    case CommandType::DestroySelf: return 31;
     }
     return 0;
 }
@@ -118,7 +123,7 @@ enum class DockPhase : u8 {
 struct UnitCommand {
     CommandType type = CommandType::Stop;
     Vector3 target_pos;
-    u32 target_id = 0;          // entity ID for Attack/Guard
+    EntityId target_id{};       // entity ID for Attack/Guard
     std::string blueprint_id;   // for Build commands (empty for non-build)
     u32 command_id = 0;         // unique ID for IsCommandsActive tracking
     /// A group order's formation (a /lua/formations.lua function, e.g.
@@ -127,6 +132,7 @@ struct UnitCommand {
     std::string formation;
     /// The formation's facing, as IssueFormMove's degrees give it (south 0,
     /// east 90: the engine's heading). Unset: from the group to the target.
+    /// For BuildMobile, the structure's angle as BuildStructure's place gives it.
     bool has_facing = false;
     f32 facing = 0;
     /// The formation moves as one, at its slowest unit's pace (Moho's
@@ -159,7 +165,7 @@ struct UnitCommand {
     /// (IssueTransportUnloadSpecific's category, as Moho's
     /// UNITCOMMAND_TransportUnloadSpecificUnits carries its unit set). The
     /// rest stays aboard. Empty: all of it.
-    std::vector<u32> unload_ids;
+    std::vector<EntityId> unload_ids;
     /// A Script order's Lua table (TaskName and its task's data), as
     /// lua_to_bytes wrote it.
     std::string script_args;
@@ -209,9 +215,9 @@ struct UnitCommand {
     /// walk is sent, cleared when it ends, so a later move is not taken for
     /// it. Runtime state.
     bool prepared = false;
-    u32 rebuild_wreck_id = 0;
+    EntityId rebuild_wreck_id{};
     f32 rebuild_bonus = 0;
-    u32 clearing_prop_id = 0;
+    EntityId clearing_prop_id{};
     bool clearing_approached = false;
     /// A launch order's target is within its weapon's range band this tick:
     /// only then does the weapon take it, as Moho's fire-at task hands the
@@ -219,10 +225,10 @@ struct UnitCommand {
     bool in_band = false;
     /// A ferry route's first order: the beacon it loads at (runtime state; 0
     /// until the route starts).
-    u32 beacon_id = 0;
+    EntityId beacon_id{};
     /// A WaitForFerry order: the ferry that took the unit, which it boards
     /// (runtime state; 0 while it waits).
-    u32 assigned_id = 0;
+    EntityId assigned_id{};
     /// A factory build whose unit is done: ticks until it next looks at
     /// whether the factory is still busy rolling the unit off (runtime
     /// state; 0 while it builds). See Unit::order_build_in_place.
@@ -238,7 +244,7 @@ struct UnitCommand {
     /// A carrier's unload that launches its stored units (M206q; runtime
     /// state): those still to go, and ticks until the next leaves (-1: the
     /// launch has not started).
-    std::vector<u32> launch_queue;
+    std::vector<EntityId> launch_queue;
     i32 launch_wait = -1;
     /// A refuel order (M206r; runtime state): its phase, and ticks until it
     /// next looks (Moho's task waits: 9 ticks between asks for a slot and
@@ -256,7 +262,7 @@ struct UnitCommand {
     i32 patrol_scan = 0;
     /// What a patrol leg has gone to reclaim, not to be picked again on it
     /// (Moho's patrol task's entity set). Runtime state.
-    std::vector<u32> patrol_claimed;
+    std::vector<EntityId> patrol_claimed;
     /// Where the unit stood as its patrol leg began (Moho's patrol task
     /// builds its search box then). Runtime state.
     Vector3 patrol_from;
@@ -277,7 +283,7 @@ struct UnitCommand {
     /// That leash's anchor: the guarded unit, while it lives (0: none),
     /// else the point (Moho's GuardedPos: a guarded point, or where a patrol
     /// broke off). Runtime state.
-    u32 leash_anchor_id = 0;
+    EntityId leash_anchor_id{};
     Vector3 leash_anchor_pos;
 };
 

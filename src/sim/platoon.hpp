@@ -43,10 +43,10 @@ public:
     void mark_destroyed() { destroyed_ = true; }
 
     // Unit membership
-    void add_unit(u32 entity_id);
-    void remove_unit(u32 entity_id);
-    bool has_unit(u32 entity_id) const;
-    const std::vector<u32>& unit_ids() const { return unit_ids_; }
+    void add_unit(EntityId entity_id);
+    void remove_unit(EntityId entity_id);
+    bool has_unit(EntityId entity_id) const;
+    const std::vector<EntityId>& unit_ids() const { return unit_ids_; }
 
     // Compute centroid position of all living units
     Vector3 get_position(const EntityRegistry& registry) const;
@@ -56,22 +56,22 @@ public:
     void set_plan_name(const std::string& p) { plan_name_ = p; }
 
     // Squad tracking (simplified: just store squad name per unit)
-    void set_unit_squad(u32 entity_id, const std::string& squad);
-    const std::string& get_unit_squad(u32 entity_id) const;
+    void set_unit_squad(EntityId entity_id, const std::string& squad);
+    const std::string& get_unit_squad(EntityId entity_id) const;
     /// Moho's squad class of a squad name: 0 Unassigned (also no name), 1
     /// Attack, 2 Artillery, 3 Guard, 4 Support, 5 Scout, or -1 for another
     /// name. Moho reads the names in any case (retail asks for 'scout').
     static int squad_class(std::string_view squad);
     /// Whether `entity_id` is in squad `squad`: same class, in any case, or
     /// the same name when it is no class.
-    bool in_squad(u32 entity_id, std::string_view squad) const;
+    bool in_squad(EntityId entity_id, std::string_view squad) const;
 
     // The formation each unit was assigned with (AssignUnitsToPlatoon, a
     // template's fifth field); the override, if set, stands for all.
-    void set_unit_formation(u32 entity_id, const std::string& formation);
+    void set_unit_formation(EntityId entity_id, const std::string& formation);
     /// The formation `entity_id` moves in: the override, else its own ("" for
     /// none).
-    std::string unit_formation(u32 entity_id) const;
+    std::string unit_formation(EntityId entity_id) const;
 
     // Formation override
     const std::string& formation_override() const { return formation_override_; }
@@ -90,9 +90,9 @@ private:
     bool destroyed_ = false;
     bool disband_on_idle_ = false;
     std::string plan_name_;
-    std::vector<u32> unit_ids_;
-    std::unordered_map<u32, std::string> squad_map_;
-    std::unordered_map<u32, std::string> formation_map_; // lookup only
+    std::vector<EntityId> unit_ids_;
+    std::unordered_map<EntityId, std::string> squad_map_;
+    std::unordered_map<EntityId, std::string> formation_map_; // lookup only
     std::string formation_override_;
     int priority_targets_ref_ = -2; // LUA_NOREF
 };

@@ -109,7 +109,7 @@ void push_projectile_class(lua_State* L, const std::string& bp_id) {
 } // namespace
 
 void create_projectile_object(lua_State* L, Projectile& proj, bool in_water, bool push,
-                              u32 source) {
+                              EntityId source) {
     // Below the water as it is made, as Moho's constructor sets mBelowWater: its surface pass
     // alone changes that (a shot that skims no surface keeps it)
     proj.in_water = in_water;
@@ -119,8 +119,8 @@ void create_projectile_object(lua_State* L, Projectile& proj, bool in_water, boo
     auto* sim_of_registry = get_sim(L);
     if (sim_of_registry) {
         auto info = sim_of_registry->projectile_blueprint_info(proj.blueprint_id());
-        const u32 from = source != 0 ? source : proj.launcher_id;
-        if (info->camera_follows && from != 0) {
+        const EntityId from = source ? source : proj.launcher_id;
+        if (info->camera_follows && from) {
             sim_of_registry->add_camera_follow(
                 {from, proj.entity_id(), info->camera_follow_timeout});
         }

@@ -350,10 +350,10 @@ TEST_CASE("A weapon's shot count starts again with a new target", "[ground-attac
     w.set_target_ground({2.0f, 0.0f, 1.0f});
     CHECK(w.shots_at_target == 0);
     w.shots_at_target = 2;
-    w.set_target_entity(7);
+    w.set_target_entity(osc::sim::EntityId::of(7, 1));
     CHECK(w.shots_at_target == 0);
     w.shots_at_target = 2;
-    w.set_target_entity(7);
+    w.set_target_entity(osc::sim::EntityId::of(7, 1));
     CHECK(w.shots_at_target == 2);
 }
 
@@ -390,6 +390,6 @@ TEST_CASE("Which weapons can attack the ground: CannotAttackGround and the layer
     CHECK_FALSE(w.ground_fire_barred());
     w.set_target_ground(on_land);
     CHECK(w.ground_fire_barred());
-    w.set_target_entity(5);
+    w.set_target_entity(osc::sim::EntityId::of(5, 1));
     CHECK_FALSE(w.ground_fire_barred());
 }

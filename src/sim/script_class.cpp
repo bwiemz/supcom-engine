@@ -132,13 +132,23 @@ void push_blueprint_script_class(lua_State* L, const std::string& bp_id, std::st
     lua_remove(L, cache);
 }
 
-void push_entity_id(lua_State* L, u32 id) {
-    lua_pushstring(L, std::to_string(static_cast<i32>(EntityRegistry::moho_id(id))).c_str());
+void push_entity_id(lua_State* L, EntityId id) {
+    lua_pushstring(L, id ? std::to_string(static_cast<i32>(id.moho())).c_str() : "-1");
 }
 
-u32 to_entity_id(lua_State* L, int idx) {
-    if (!lua_isnumber(L, idx)) return 0;
-    return EntityRegistry::from_moho_id(static_cast<u32>(static_cast<i32>(lua_tonumber(L, idx))));
+EntityId to_entity_id(lua_State* L, int idx, const EntityRegistry& registry) {
+    if (!lua_isnumber(L, idx)) {
+        return EntityId();
+    }
+    return registry.live_id(static_cast<u32>(static_cast<i32>(lua_tonumber(L, idx))));
+}
+
+void push_entity_key(lua_State* L, EntityId id) {
+    lua_pushnumber(L, static_cast<lua_Number>(id.key()));
+}
+
+EntityId to_entity_key(lua_State* L, int idx) {
+    return lua_isnumber(L, idx) ? EntityId(static_cast<u64>(lua_tonumber(L, idx))) : EntityId();
 }
 
 void push_new_script_object(lua_State* L, const char* kind) {

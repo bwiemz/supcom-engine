@@ -2,98 +2,69 @@
 
 #include "renderer/mesh_cache.hpp"
 
-#include <algorithm>
+#include <string>
+#include <vector>
 
 using namespace osc;
 using namespace osc::renderer;
 
-// Helper: build a LODEntry with only index_count set (GPU buffers left null).
-static LODEntry make_entry(u32 index_count, f32 cutoff) {
+namespace {
+
+/// A LODEntry with only index_count set (GPU buffers left null).
+LODEntry make_entry(u32 index_count, f32 cutoff) {
     LODEntry e;
     e.mesh.index_count = index_count;
     e.cutoff = cutoff;
     return e;
 }
 
-TEST_CASE("LOD: single LOD always returned", "[lod]") {
-    LODSet set;
-    set.lods.push_back(make_entry(1000, 0.0f));
-
-    auto select_lod = [&](f32 distance) -> const GPUMesh* {
-        for (const auto& entry : set.lods) {
-            if (entry.cutoff == 0.0f || entry.cutoff >= distance)
-                return &entry.mesh;
-        }
-        return &set.lods.back().mesh;
-    };
-
-    CHECK(set.lods.size() == 1);
-    CHECK(select_lod(0.0f)->index_count == 1000);
-    CHECK(select_lod(50.0f)->index_count == 1000);
-    CHECK(select_lod(9999.0f)->index_count == 1000);
+u32 drawn(const LODSet& set, f32 metric) {
+    const GPUMesh* mesh = lod_at(set, metric);
+    return mesh ? mesh->index_count : 0;
 }
 
-TEST_CASE("LOD: multiple LODs sorted by cutoff", "[lod]") {
+} // namespace
+
+TEST_CASE("A mesh draws its first LOD whose cutoff takes the LOD metric, none past them all",
+          "[lod]") {
     LODSet set;
-    // Insert out of order: low, high, medium
-    set.lods.push_back(make_entry(100, 600.0f));  // low detail
-    set.lods.push_back(make_entry(1000, 100.0f)); // high detail
-    set.lods.push_back(make_entry(500, 300.0f));   // medium detail
-
-    // Sort by cutoff ascending (highest detail = smallest cutoff first).
-    // cutoff 0 means "no limit" and should sort last.
-    std::sort(set.lods.begin(), set.lods.end(), [](const LODEntry& a, const LODEntry& b) {
-        if (a.cutoff == 0.0f) return false;
-        if (b.cutoff == 0.0f) return true;
-        return a.cutoff < b.cutoff;
-    });
-
-    REQUIRE(set.lods.size() == 3);
-    CHECK(set.lods[0].cutoff == 100.0f);
-    CHECK(set.lods[0].mesh.index_count == 1000);
-    CHECK(set.lods[1].cutoff == 300.0f);
-    CHECK(set.lods[1].mesh.index_count == 500);
-    CHECK(set.lods[2].cutoff == 600.0f);
-    CHECK(set.lods[2].mesh.index_count == 100);
+    set.lods.push_back(make_entry(1000, 100.0f));
+    set.lods.push_back(make_entry(500, 215.0f));
+    CHECK(drawn(set, 0.0f) == 1000);
+    CHECK(drawn(set, 100.0f) == 1000);
+    CHECK(drawn(set, 100.5f) == 500);
+    CHECK(drawn(set, 215.0f) == 500);
+    CHECK(drawn(set, 215.5f) == 0);
 }
 
-TEST_CASE("LOD: distance-based selection", "[lod]") {
-    LODSet set;
-    set.lods.push_back(make_entry(1000, 100.0f)); // high detail, cutoff 100
-    set.lods.push_back(make_entry(500, 300.0f));   // medium detail, cutoff 300
-    set.lods.push_back(make_entry(100, 600.0f));   // low detail, cutoff 600
+TEST_CASE("A mesh's LODs are taken in its blueprint's order, one of cutoff 0 or less at any "
+          "metric",
+          "[lod]") {
+    LODSet unordered;
+    unordered.lods.push_back(make_entry(100, 600.0f));
+    unordered.lods.push_back(make_entry(1000, 100.0f));
+    CHECK(drawn(unordered, 50.0f) == 100);
 
-    auto select_lod = [&](f32 distance) -> const GPUMesh* {
-        for (const auto& entry : set.lods) {
-            if (entry.cutoff == 0.0f || entry.cutoff >= distance)
-                return &entry.mesh;
-        }
-        return &set.lods.back().mesh;
-    };
+    LODSet effect;
+    effect.lods.push_back(make_entry(300, -1.0f));
+    CHECK(drawn(effect, 1e6f) == 300);
+    LODSet after;
+    after.lods.push_back(make_entry(1000, 100.0f));
+    after.lods.push_back(make_entry(300, 0.0f));
+    CHECK(drawn(after, 50.0f) == 1000);
+    CHECK(drawn(after, 1e6f) == 300);
+}
 
-    SECTION("close range selects high detail") {
-        CHECK(select_lod(0.0f)->index_count == 1000);
-        CHECK(select_lod(50.0f)->index_count == 1000);
-    }
-
-    SECTION("exactly at cutoff boundary selects that LOD") {
-        CHECK(select_lod(100.0f)->index_count == 1000);
-        CHECK(select_lod(300.0f)->index_count == 500);
-        CHECK(select_lod(600.0f)->index_count == 100);
-    }
-
-    SECTION("just beyond cutoff selects next LOD") {
-        CHECK(select_lod(100.1f)->index_count == 500);
-        CHECK(select_lod(300.1f)->index_count == 100);
-    }
-
-    SECTION("beyond all cutoffs returns lowest detail") {
-        CHECK(select_lod(601.0f)->index_count == 100);
-        CHECK(select_lod(9999.0f)->index_count == 100);
-    }
-
-    SECTION("mid-range distances") {
-        CHECK(select_lod(200.0f)->index_count == 500);
-        CHECK(select_lod(450.0f)->index_count == 100);
-    }
+TEST_CASE("An LOD's bones map onto the first LOD's of the same name, any other onto 0", "[lod]") {
+    // UAB0101 (Aeon land factory): its LOD1 keeps 7 of LOD0's 22 bones, in
+    // another order, under another root's name.
+    const std::vector<std::string> first = {
+        "UAB0101",    "B01",        "B02",        "B03",        "Ring01_B01", "Ring02_B02",
+        "Ring02_B03", "Ring03_B02", "Ring03_B03", "Ring03_B04", "Ring03_B05", "Ring04_B03",
+        "Ring03_B06", "Ring02_B04", "Ring02_B01", "Ring03_B01", "Tier1_Arm"};
+    const std::vector<std::string> lod1 = {"lod1_UAB0101", "B01",       "B02",      "Ring02_B01",
+                                           "Ring02_B04",   "Tier1_Arm", "tier1_arm"};
+    CHECK(lod_bone_remap(lod1, first) == std::vector<u8>{0, 1, 2, 14, 13, 16, 0});
+    CHECK(lod_bone_remap(first, first).size() == first.size());
+    CHECK(lod_bone_remap(lod1, {}) == std::vector<u8>(lod1.size(), 0));
 }

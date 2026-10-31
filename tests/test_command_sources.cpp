@@ -86,17 +86,19 @@ struct SourcesWorld {
         return v;
     }
 
-    osc::u32 spawn(osc::i32 army) {
+    osc::sim::EntityId spawn(osc::i32 army) {
         auto u = std::make_unique<Unit>();
         u->set_army(army);
         u->set_max_speed(6.0f); // so a Move lasts past the tick it starts in
         return sim.entity_registry().register_entity(std::move(u));
     }
-    Unit& unit(osc::u32 id) { return *static_cast<Unit*>(sim.entity_registry().find(id)); }
-    size_t orders(osc::u32 id) { return unit(id).command_queue().size(); }
+    Unit& unit(osc::sim::EntityId id) {
+        return *static_cast<Unit*>(sim.entity_registry().find(id));
+    }
+    size_t orders(osc::sim::EntityId id) { return unit(id).command_queue().size(); }
 
     /// `source` orders `ids` to move, appending to their queues.
-    void order(osc::u32 source, const std::vector<osc::u32>& ids) {
+    void order(osc::u32 source, const std::vector<osc::sim::EntityId>& ids) {
         UnitCommand move;
         move.type = CommandType::Move;
         move.target_pos = {100.0f, 0.0f, 100.0f};
@@ -160,7 +162,7 @@ TEST_CASE("A player's orders move only the armies it commands", "[sources]") {
     CHECK(w.orders(theirs) == 0);
     // The recording keeps the order as applied
     REQUIRE(w.sim.recorded_replay().commands.size() == 1);
-    CHECK(w.sim.recorded_replay().commands[0].unit_ids == std::vector<osc::u32>{mine});
+    CHECK(w.sim.recorded_replay().commands[0].unit_ids == std::vector<osc::sim::EntityId>{mine});
 
     w.order(1, {mine, theirs});
     CHECK(w.orders(mine) == 1);

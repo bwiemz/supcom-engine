@@ -168,7 +168,7 @@ void test_script_orders(TestContext& ctx) {
     // decide who takes it: here the Eye, not the ACU selected beside it.
     if (!run(ctx, "the Eye's id", "__eye_id = tonumber(__eye:GetEntityId())")) return;
     lua_getglobal(ctx.L, "__eye_id");
-    const auto eye_id = osc::sim::to_entity_id(ctx.L, -1);
+    const auto eye_id = osc::sim::to_entity_id(ctx.L, -1, ctx.sim.entity_registry());
     lua_pop(ctx.L, 1);
     acu = acu_of(ctx.sim);
     if (!acu) return;
@@ -182,9 +182,10 @@ void test_script_orders(TestContext& ctx) {
     mode.mode = "order";
     mode.name = "RULEUCC_Script";
     bool asked_right = false;
-    mode.verify_script = [&](const std::vector<u32>& units, u32 target_id, const sim::Vector3& p,
+    mode.verify_script = [&](const std::vector<sim::EntityId>& units, sim::EntityId target_id,
+                             const sim::Vector3& p,
                              bool clear) -> std::optional<renderer::VerifiedScript> {
-        asked_right = units.size() == 2 && target_id == 0 && clear && std::abs(p.x - cx) < 0.01f &&
+        asked_right = units.size() == 2 && !target_id && clear && std::abs(p.x - cx) < 0.01f &&
                       std::abs(p.z - cz) < 0.01f;
         lua_State* L = ctx.L;
         const std::string code = fmt::format("return {{ TaskName = 'TargetLocation', UserValidated "

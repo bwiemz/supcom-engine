@@ -25,8 +25,8 @@ struct Replay {
     // operation's flow; 13: a callback's Args as Lua data;
     // 14: the game's random stream; 15: a formation's Move or FormMove;
     // 16: the game's pathing (--moho-pathing); 17: beats, not ticks, and
-    // pauses held until a resume command
-    static constexpr u32 kVersion = 17;
+    // pauses held until a resume command; 18: entity keys
+    static constexpr u32 kVersion = 18;
 
     u32 version = kVersion;
     u32 final_beat = 0;               // last beat the recording covers

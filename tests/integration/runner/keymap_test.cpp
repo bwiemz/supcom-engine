@@ -135,6 +135,16 @@ void test_keymap(TestContext& ctx, ui::UIControlRegistry& registry, GameStateMan
     t.check(num("chat_hits") == 1, "Test 8: out of a game, Enter opens no chat");
     game.transition_to(GameState::GAME, nullptr);
 
+    // An unbound ` (Moho's wx code for it is ~) shows or hides retail's console
+    // (MAUI_ToggleConsole: uimain.lua's ToggleConsole); retail binds no key to it.
+    run(R"(
+        console_toggles = 0
+        import('/lua/ui/uimain.lua').ToggleConsole = function() console_toggles = console_toggles + 1 end
+    )");
+    press(GLFW_KEY_GRAVE_ACCENT);
+    press(GLFW_KEY_GRAVE_ACCENT);
+    t.check(num("console_toggles") == 2, "Test 9: an unbound ` (wx's ~) toggles the console");
+
     spdlog::info("Key map test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

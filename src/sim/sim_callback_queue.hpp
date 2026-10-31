@@ -1,6 +1,8 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/entity_id.hpp"
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -68,6 +70,9 @@ inline constexpr const char* kSetCommandTypeCallback = "__osc_SetCommandType";
 /// cheat making a complete unit of `Blueprint` for `Army` (0-based) at X, Z,
 /// facing `Heading` (radians).
 inline constexpr const char* kCreateUnitCallback = "__osc_CreateUnit";
+/// Func name of Moho's CMDST_WarpEntity, as TeleportSelectedUnits sends it:
+/// a cheat warping unit `Entity` to X, Y, Z (as Unit::Warp places it).
+inline constexpr const char* kWarpEntityCallback = "__osc_WarpEntity";
 
 /// Func name of Moho's CMDST_DecreaseCommandCount, as DeleteCommand sends it:
 /// order `Command` made `Count` fewer; an order at none leaves every queue.
@@ -82,6 +87,10 @@ inline constexpr const char* kSaveGameCallback = "__osc_SaveGame";
 /// cheats on, the sim's global function `Func` called with the one value
 /// lua_args holds.
 inline constexpr const char* kExecLuaInSimCallback = "__osc_ExecLuaInSim";
+/// Func name of Moho's CMDST_ExecuteDebugCommand, as DoSimCommand sends it:
+/// the sim console's `Command` line, run with the cursor at X, Y, Z, the
+/// `FocusArmy` (0-based, -1 for none) and the selection (unit_ids).
+inline constexpr const char* kDebugCommandCallback = "__osc_DebugCommand";
 
 /// The engine's own callbacks start with this; a script may not issue one.
 inline constexpr const char* kEngineCallbackPrefix = "__osc_";
@@ -97,14 +106,24 @@ struct SimCallbackEntry {
     // A script's Args given as one value, in replays v8 to v12.
     std::optional<SimCallbackArg> value;
     // Optional: selected unit entity IDs (when addUnitSelection=true)
-    std::vector<u32> unit_ids;
+    std::vector<EntityId> unit_ids;
     // A script's Args as lua_to_bytes wrote them (Moho's SCR_ToByteStream).
     std::optional<std::string> lua_args;
 };
 
 class SimCallbackQueue {
 public:
+    /// Takes a pushed callback at once if it can (false: it waits for drain()).
+    using Send = std::function<bool(SimCallbackEntry&)>;
+
+    /// Moho's UI hands each SimCallback to its sim driver as it is made, in
+    /// turn with the orders issued around it.
+    void set_send(Send send) { send_ = std::move(send); }
+
     void push(SimCallbackEntry entry) {
+        if (send_ && send_(entry)) {
+            return;
+        }
         queue_.push_back(std::move(entry));
     }
 
@@ -117,6 +136,7 @@ public:
     bool empty() const { return queue_.empty(); }
 
 private:
+    Send send_;
     std::vector<SimCallbackEntry> queue_;
 };
 

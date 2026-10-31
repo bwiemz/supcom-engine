@@ -130,24 +130,40 @@ const GPUMesh* MeshCache::get_file(const std::string& scm_path, const std::strin
     return &lod_cache_.emplace(key, std::move(set)).first->second.lods.front().mesh;
 }
 
-const GPUMesh* MeshCache::get_lod(const std::string& blueprint_id,
-                                   f32 camera_distance, lua_State* L) {
+const GPUMesh* lod_at(const LODSet& set, f32 metric) {
+    for (const LODEntry& entry : set.lods) {
+        if (entry.cutoff <= 0.0f || metric <= entry.cutoff) {
+            return &entry.mesh;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<u8> lod_bone_remap(const std::vector<std::string>& bones,
+                               const std::vector<std::string>& reference) {
+    std::vector<u8> remap(bones.size(), 0);
+    for (size_t i = 0; i < bones.size(); ++i) {
+        const auto found = std::find(reference.begin(), reference.end(), bones[i]);
+        if (found != reference.end()) {
+            remap[i] = static_cast<u8>(found - reference.begin());
+        }
+    }
+    return remap;
+}
+
+void remap_vertex_bones(sim::SCMMesh& mesh, const std::vector<u8>& remap) {
+    for (sim::SCMMesh::Vertex& v : mesh.vertices) {
+        for (u8& index : v.bone_indices) {
+            index = index < remap.size() ? remap[index] : 0;
+        }
+    }
+}
+
+const GPUMesh* MeshCache::get_lod(const std::string& blueprint_id, f32 metric, lua_State* L) {
     if (device_ == VK_NULL_HANDLE) return nullptr;
 
-    // Check if already loaded
-    auto it = lod_cache_.find(blueprint_id);
-    if (it != lod_cache_.end()) {
-        const auto& lods = it->second.lods;
-        if (lods.empty()) return nullptr;
-
-        // Walk from highest detail (index 0) to lowest
-        for (const auto& entry : lods) {
-            if (entry.cutoff == 0.0f || entry.cutoff >= camera_distance) {
-                return &entry.mesh;
-            }
-        }
-        // Camera distance exceeds all cutoffs — return lowest detail
-        return &lods.back().mesh;
+    if (auto it = lod_cache_.find(blueprint_id); it != lod_cache_.end()) {
+        return lod_at(it->second, metric);
     }
 
     if (failed_.count(blueprint_id)) return nullptr;
@@ -159,7 +175,7 @@ const GPUMesh* MeshCache::get_lod(const std::string& blueprint_id,
     }
 
     // Recurse once now that lod_cache_ is populated
-    return get_lod(blueprint_id, camera_distance, L);
+    return get_lod(blueprint_id, metric, L);
 }
 
 const LODSet* MeshCache::get_lod_set(const std::string& blueprint_id) const {
@@ -172,7 +188,21 @@ const LODSet* MeshCache::get_lod_set(const std::string& blueprint_id) const {
 // LOD loading
 // ---------------------------------------------------------------------------
 
-GPUMesh MeshCache::upload_scm_mesh(const std::string& mesh_path) {
+std::vector<std::string> MeshCache::scm_bone_names(const std::string& mesh_path) {
+    std::vector<std::string> names;
+    const auto file_data = vfs_->read_file(mesh_path);
+    const auto bones = file_data ? sim::parse_scm_bones(*file_data) : std::nullopt;
+    if (bones) {
+        names.reserve(bones->bones.size());
+        for (const sim::BoneInfo& bone : bones->bones) {
+            names.push_back(bone.name);
+        }
+    }
+    return names;
+}
+
+GPUMesh MeshCache::upload_scm_mesh(const std::string& mesh_path,
+                                   const std::vector<std::string>& reference) {
     GPUMesh result{};
 
     auto file_data = vfs_->read_file(mesh_path);
@@ -185,6 +215,16 @@ GPUMesh MeshCache::upload_scm_mesh(const std::string& mesh_path) {
     if (!mesh || mesh->vertices.empty() || mesh->indices.empty()) {
         spdlog::debug("MeshCache: SCM parse failed for '{}'", mesh_path);
         return result;
+    }
+    if (!reference.empty()) {
+        if (const auto bones = sim::parse_scm_bones(*file_data)) {
+            std::vector<std::string> names;
+            names.reserve(bones->bones.size());
+            for (const sim::BoneInfo& bone : bones->bones) {
+                names.push_back(bone.name);
+            }
+            remap_vertex_bones(*mesh, lod_bone_remap(names, reference));
+        }
     }
 
     auto vert_buf = upload_buffer(
@@ -422,12 +462,17 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
     const f32 sort_order = read_mesh_number(mesh_bp_id, "SortOrder", L);
     LODSet lod_set;
 
-    // Try LODs[1] through LODs[4] from the mesh blueprint
-    for (i32 lod_index = 1; lod_index <= 4; ++lod_index) {
+    // Each LOD skins onto the first's bones (Mesh::CreateLOD's previous
+    // resource).
+    const std::vector<LodFields> fields = read_lods(mesh_bp_id, L);
+    std::vector<std::string> first_bones;
+    for (i32 lod_index = 1; lod_index <= static_cast<i32>(fields.size()); ++lod_index) {
         std::string mesh_path = resolve_mesh_path_for_lod(mesh_bp_id, lod_index, L);
         if (mesh_path.empty()) continue;
+        if (lod_index == 1) first_bones = scm_bone_names(mesh_path);
 
-        GPUMesh gpu = upload_scm_mesh(mesh_path);
+        GPUMesh gpu =
+            lod_index == 1 ? upload_scm_mesh(mesh_path) : upload_scm_mesh(mesh_path, first_bones);
         if (!gpu.vertex_buf.buffer) continue;
 
         gpu.uniform_scale = scale;
@@ -445,11 +490,10 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         gpu.sort_order = sort_order;
         gpu.scrolling = read_lod_flag(mesh_bp_id, lod_index, "Scrolling", L);
 
-        f32 cutoff = read_lod_cutoff(mesh_bp_id, lod_index, L);
-
         LODEntry entry;
         entry.mesh = std::move(gpu);
-        entry.cutoff = cutoff;
+        entry.cutoff =
+            fields[static_cast<size_t>(lod_index - 1)].cutoff.value_or(kDefaultLodCutoff);
         lod_set.lods.push_back(std::move(entry));
     }
 
@@ -495,16 +539,6 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         entry.cutoff = 0.0f; // no limit — single LOD
         lod_set.lods.push_back(std::move(entry));
     }
-
-    // Sort by cutoff ascending (highest detail / smallest cutoff first)
-    std::sort(lod_set.lods.begin(), lod_set.lods.end(),
-              [](const LODEntry& a, const LODEntry& b) {
-                  // 0 means "no limit" — sort to the end
-                  if (a.cutoff == 0.0f && b.cutoff == 0.0f) return false;
-                  if (a.cutoff == 0.0f) return false;
-                  if (b.cutoff == 0.0f) return true;
-                  return a.cutoff < b.cutoff;
-              });
 
     spdlog::debug("MeshCache: loaded '{}' with {} LOD level(s), scale={:.2f}",
                    bp_id, lod_set.lods.size(), scale);
@@ -566,37 +600,6 @@ f32 MeshCache::read_mesh_number(const std::string& mesh_bp_id, const char* field
     const f32 value = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
     lua_pop(L, 2); // value, the mesh blueprint
     return value;
-}
-
-f32 MeshCache::read_lod_cutoff(const std::string& mesh_bp_id, i32 lod_index,
-                                lua_State* L) {
-    if (!L || !blueprints::push_blueprint(L, mesh_bp_id)) return 0.0f;
-    int mbp = lua_gettop(L);
-
-    lua_pushstring(L, "LODs");
-    lua_rawget(L, mbp);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 2);
-        return 0.0f;
-    }
-    int lods_tbl = lua_gettop(L);
-
-    lua_rawgeti(L, lods_tbl, lod_index);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 3);
-        return 0.0f;
-    }
-    int lod_table = lua_gettop(L);
-
-    lua_pushstring(L, "LODCutoff");
-    lua_rawget(L, lod_table);
-    f32 cutoff = 0.0f;
-    if (lua_isnumber(L, -1)) {
-        cutoff = static_cast<f32>(lua_tonumber(L, -1));
-    }
-    lua_pop(L, 4); // cutoff + lod_table + lods_tbl + mbp
-
-    return cutoff;
 }
 
 std::string MeshCache::resolve_mesh_path_for_lod(const std::string& mesh_bp_id,

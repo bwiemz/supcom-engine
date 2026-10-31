@@ -495,7 +495,7 @@ TEST_CASE("AttachBoneToEntityBone pins the unit's bone to the entity", "[pose][l
                           "-1, false)")
                 .ok());
     REQUIRE(lua.do_string("assert(manip.Destroy)").ok());
-    CHECK(target.parent_entity_id() == 0);
+    CHECK_FALSE(target.parent_entity_id());
 
     unit.tick_manipulators(0.1f, L);
     Vector3 at = unit.bone_world_position(1);

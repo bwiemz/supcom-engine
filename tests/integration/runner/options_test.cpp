@@ -164,7 +164,7 @@ void test_options(TestContext& ui, TestContext& sim, const std::function<void(in
     // Test 4: ui_AlwaysRenderStrategicIcons draws the units' icons at a zoom
     // their meshes show at (inside their IconFadeInZoom), and off, not
     {
-        const u32 acu = army_acu_id(sim.sim, 0);
+        const sim::EntityId acu = army_acu_id(sim.sim, 0);
         const auto* e = sim.sim.entity_registry().find(acu);
         u32 on = 0;
         u32 off = 0;

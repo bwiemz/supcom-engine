@@ -7,6 +7,7 @@ add_executable(osc_integration
     runner/test_modes.cpp
     runner/lan_modes.cpp
     runner/integration_tests.cpp
+    runner/attack_move_click_test.cpp
     runner/audio_data_test.cpp
     runner/map_parse_test.cpp
     runner/terrain_glow_test.cpp
@@ -15,6 +16,7 @@ add_executable(osc_integration
     runner/wave_test.cpp
     runner/movie_test.cpp
     runner/combo_click_test.cpp
+    runner/command_issued_test.cpp
     runner/command_sources_test.cpp
     runner/edit_text_test.cpp
     runner/hidpi_test.cpp
@@ -24,12 +26,14 @@ add_executable(osc_integration
     runner/window_test.cpp
     runner/options_test.cpp
     runner/world_views_test.cpp
+    runner/bp_reflect_test.cpp
     runner/unitview_sweep_test.cpp
     runner/lighting_test.cpp
     runner/render_probe.cpp
     runner/tick_until.cpp
     runner/strata_test.cpp
     runner/meshless_test.cpp
+    runner/lod_test.cpp
     runner/scroll_render_test.cpp
     runner/camera_test.cpp
     runner/material_test.cpp
@@ -237,6 +241,14 @@ set_tests_properties(data.unitview-sweep-test PROPERTIES
     LABELS "data;gate"
     SKIP_RETURN_CODE 77
     TIMEOUT 900)
+# The UI's orders reach OnCommandIssued with their LuaParams (FAF's run is
+# data.command-issued_faf)
+add_test(NAME data.command-issued-test
+         COMMAND osc_integration --map ${OSC_TEST_MAP} --command-issued-test)
+set_tests_properties(data.command-issued-test PROPERTIES
+    LABELS "data;gate"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 900)
 
 # M196: the same game, played twice as two processes (every address
 # different), stays identical tick for tick -- nothing depends on hash
@@ -422,6 +434,51 @@ if(Python3_Interpreter_FOUND)
                          "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
     endif()
     set_tests_properties(data.unitview-sweep_faf PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
+    # FAF's enhancement queue and attack-move read an order's LuaParams
+    if(_osc_faf_data)
+        add_test(NAME data.command-issued_faf
+                 COMMAND osc_integration --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP}
+                         --command-issued-test)
+    else()
+        add_test(NAME data.command-issued_faf
+                 COMMAND ${Python3_EXECUTABLE} -c
+                         "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
+    endif()
+    set_tests_properties(data.command-issued_faf PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
+    # An attack-move click in the window's own frames, through a tick's: FAF's
+    # AttackMove SimCallback after the click's Script order
+    if(_osc_faf_data)
+        add_test(NAME data.attack-move-click_faf
+                 COMMAND osc_integration --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP}
+                         --camera 672,346,60 --attack-move-click-test)
+    else()
+        add_test(NAME data.attack-move-click_faf
+                 COMMAND ${Python3_EXECUTABLE} -c
+                         "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
+    endif()
+    set_tests_properties(data.attack-move-click_faf PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
+
+    # A blueprint's flag enums and footprint under FAF's scripts: its unit view
+    # and formations (the retail run is data.bp-reflect-test).
+    if(_osc_faf_data)
+        add_test(NAME data.bp-reflect_faf
+                 COMMAND osc_integration --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP}
+                         --bp-reflect-test)
+    else()
+        add_test(NAME data.bp-reflect_faf
+                 COMMAND ${Python3_EXECUTABLE} -c
+                         "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
+    endif()
+    set_tests_properties(data.bp-reflect_faf PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 600)

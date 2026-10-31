@@ -155,10 +155,9 @@ public:
     /// sim's last two ticks. It shows (and takes) the death flashes and
     /// camera shakes in `events`, and draws `ghost` when placing a structure.
     /// The renderer reads no live sim state.
-    void render(const sim::FrameView& view, sim::WorldEvents& events,
-                const BuildGhost* ghost, lua_State* L,
-                ui::UIControlRegistry* ui_registry = nullptr,
-                const std::unordered_set<u32>* selected_ids = nullptr);
+    void render(const sim::FrameView& view, sim::WorldEvents& events, const BuildGhost* ghost,
+                lua_State* L, ui::UIControlRegistry* ui_registry = nullptr,
+                const std::unordered_set<sim::EntityId>* selected_ids = nullptr);
 
     /// Everything the last render() generated from the world -- mesh
     /// instances and bone poses, overlay, strategic-icon, minimap and HUD
@@ -345,7 +344,8 @@ public:
     void set_formation_ghosts(std::vector<FormationGhost> ghosts) {
         formation_ghosts_ = std::move(ghosts);
     }
-    void set_selection_marks(u32 hovered, std::optional<std::array<sim::Vector3, 4>> drag) {
+    void set_selection_marks(sim::EntityId hovered,
+                             std::optional<std::array<sim::Vector3, 4>> drag) {
         hovered_ = hovered;
         drag_box_ = drag;
     }
@@ -759,12 +759,13 @@ private:
                             const sim::FrameView& view, sim::WorldEvents& events,
                             const BuildGhost* ghost, lua_State* L,
                             ui::UIControlRegistry* ui_registry,
-                            const std::unordered_set<u32>* selected_ids);
+                            const std::unordered_set<sim::EntityId>* selected_ids);
     /// The cartographic minimap's range rings this frame (its view drawn,
     /// so cartographic_view_ set): Moho's range renderer with the minimap's
     /// camera. Its fog, the world's circles, update_fog gives it.
     void update_minimap_overlays(const sim::FrameView& view, const BuildGhost* ghost, lua_State* L,
-                                 const std::unordered_set<u32>* selected_ids, f32 span, u32 fi);
+                                 const std::unordered_set<sim::EntityId>* selected_ids, f32 span,
+                                 u32 fi);
     /// The minimap's rings and fog into its cartographic frame (record()'s
     /// overlays), frame slot `fi`'s.
     void draw_minimap_overlays(VkCommandBuffer cmd, const f32* view_proj, const VkRect2D& area,
@@ -774,11 +775,11 @@ private:
     void set_volume_heights(const map::Heightmap& heights);
     void update_view_units(u32 fi, const Frustum& frustum, const sim::FrameView& view,
                            const BuildGhost* ghost, lua_State* L,
-                           const std::unordered_set<u32>* selected_ids);
+                           const std::unordered_set<sim::EntityId>* selected_ids);
     void update_view_effects(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum,
                              const sim::FrameView& view, sim::WorldEvents& events,
                              const BuildGhost* ghost, lua_State* L,
-                             const std::unordered_set<u32>* selected_ids, bool primary);
+                             const std::unordered_set<sim::EntityId>* selected_ids, bool primary);
     void record_view(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum, f32 ticks,
                      bool after_another);
     void keep_scene_drawn();
@@ -1286,7 +1287,7 @@ private:
     BoundaryRenderer frame_boundary_;
     bool playable_boundary_ = true; ///< ren_PlayableBoundary
     RangeBlueprints range_blueprints_;
-    u32 hovered_ = 0;
+    sim::EntityId hovered_{};
     u32 highlight_command_ = 0;
     bool command_drag_held_ = false;
     std::vector<FormationGhost> formation_ghosts_;

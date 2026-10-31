@@ -5,6 +5,7 @@
 
 #include "blueprints/blueprint_store.hpp"
 #include "core/color.hpp"
+#include "core/game_state.hpp"
 #include "core/localization.hpp"
 #include "platform/executable.hpp"
 #include "lua/user_bindings.hpp"
@@ -32,6 +33,7 @@
 #include "sim/category_expr.hpp"
 #include "sim/lua_bytes.hpp"
 #include "sim/sim_callback_queue.hpp"
+#include "sim/sim_console.hpp"
 #include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/thread_manager.hpp"
@@ -681,10 +683,16 @@ static int camera_MoveToRegion(lua_State* L) {
 
 /// A table of entity ids (strings, as retail passes them, or numbers), or a
 /// single one.
-static std::vector<u32> read_entity_ids(lua_State* L, int idx) {
-    std::vector<u32> ids;
+static std::vector<sim::EntityId> read_entity_ids(lua_State* L, int idx) {
+    std::vector<sim::EntityId> ids;
+    const auto* sim = get_sim(L);
+    if (!sim) {
+        return ids;
+    }
     const auto one = [&](int at) {
-        if (lua_isnumber(L, at)) ids.push_back(sim::to_entity_id(L, at));
+        if (lua_isnumber(L, at)) {
+            ids.push_back(sim::to_entity_id(L, at, sim->entity_registry()));
+        }
     };
     if (!lua_istable(L, idx)) {
         one(idx);
@@ -1371,7 +1379,7 @@ static int l_GetHighlightCommand(lua_State* L) {
         field("y", node.position.y);
         field("z", node.position.z);
         field("commandId", id);
-        if (order.target_id != 0) {
+        if (order.target_id) {
             lua_pushstring(L, "targetId");
             sim::push_entity_id(L, order.target_id);
             lua_rawset(L, -3);
@@ -1417,7 +1425,7 @@ static int l_GetSelectedUnits(lua_State* L) {
     lua_newtable(L);
     int result = lua_gettop(L);
     int idx = 1;
-    for (u32 eid : selected) {
+    for (sim::EntityId eid : selected) {
         auto* entity = sim->entity_registry().find(eid);
         if (entity && entity->is_unit() && !entity->destroyed()) {
             push_unit_for_ui(L, entity);
@@ -1436,10 +1444,10 @@ static int l_GenerateBuildTemplateFromSelection(lua_State* L) {
     auto* ih = get_input_handler(L);
     auto* sim = get_sim(L);
     if (!ih || !sim) return 0;
-    std::vector<u32> ids(ih->selected().begin(), ih->selected().end());
+    std::vector<sim::EntityId> ids(ih->selected().begin(), ih->selected().end());
     std::sort(ids.begin(), ids.end());
     std::vector<renderer::TemplateStructure> structures;
-    for (const u32 id : ids) {
+    for (const sim::EntityId id : ids) {
         auto* e = sim->entity_registry().find(id);
         if (!e || !e->is_unit() || e->destroyed()) continue;
         const auto* u = static_cast<const sim::Unit*>(e);
@@ -1545,6 +1553,8 @@ static int l_ClearBuildTemplates(lua_State* L) {
     return 0;
 }
 
+/// SelectUnits(units): Moho's cfunc_SelectUnitsL, which gives back the live units it was handed;
+/// FAF's exe gives back nothing (FA-Binary-Patches SelecUnitsTableFix).
 static int l_SelectUnits(lua_State* L) {
     auto* ih = get_input_handler(L);
     auto* sim = get_sim(L);
@@ -1552,36 +1562,38 @@ static int l_SelectUnits(lua_State* L) {
         return 0;
     }
 
-    std::unordered_set<u32> new_sel;
+    const bool gives_back = !(sim && sim->faf_exe());
+    if (gives_back) {
+        lua_newtable(L);
+    }
+    const int given = lua_gettop(L);
+    int taken = 0;
+    std::unordered_set<sim::EntityId> new_sel;
     const int n = lua_istable(L, 1) ? luaL_getn(L, 1) : 0; // Lua 5.0: no lua_objlen
     for (int i = 1; i <= n; i++) {
         lua_rawgeti(L, 1, i);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "EntityId");
-            lua_rawget(L, -2);
-            if (lua_isnumber(L, -1)) {
-                auto eid = sim::to_entity_id(L, -1);
-                if (sim) {
-                    auto* entity = sim->entity_registry().find(eid);
-                    if (entity && renderer::selectable(*entity)) {
-                        new_sel.insert(eid);
-                    } else if (entity) {
-                        const auto* carrier =
-                            sim->entity_registry().find(renderer::carrier_of(*entity));
-                        if (carrier && renderer::selectable(*carrier)) {
-                            new_sel.insert(carrier->entity_id());
-                        }
-                    }
-                } else {
-                    new_sel.insert(eid);
-                }
-            }
-            lua_pop(L, 1); // EntityId value
+        const auto* entity = sim ? check_entity(L, lua_gettop(L)) : nullptr;
+        if (!entity || !entity->is_unit() || entity->destroyed() ||
+            static_cast<const sim::Unit*>(entity)->is_dying()) {
+            lua_pop(L, 1);
+            continue;
         }
-        lua_pop(L, 1); // unit table
+        if (renderer::selectable(*entity)) {
+            new_sel.insert(entity->entity_id());
+        } else {
+            const auto* carrier = sim->entity_registry().find(renderer::carrier_of(*entity));
+            if (carrier && renderer::selectable(*carrier)) {
+                new_sel.insert(carrier->entity_id());
+            }
+        }
+        if (gives_back) {
+            lua_rawseti(L, given, ++taken);
+        } else {
+            lua_pop(L, 1);
+        }
     }
     ih->set_selected(new_sel);
-    return 0;
+    return gives_back ? 1 : 0;
 }
 
 /// GetValidAttackingUnits() -> the selected units that can attack: those
@@ -1595,7 +1607,7 @@ static int l_GetValidAttackingUnits(lua_State* L) {
     if (!ih || !sim) return 1;
     const int result = lua_gettop(L);
     int idx = 1;
-    for (u32 eid : ih->selected()) {
+    for (sim::EntityId eid : ih->selected()) {
         auto* entity = sim->entity_registry().find(eid);
         if (!entity || !entity->is_unit() || entity->destroyed()) continue;
         const auto& weapons = static_cast<const sim::Unit*>(entity)->weapons();
@@ -1618,21 +1630,9 @@ static int l_AddSelectUnits(lua_State* L) {
     int n = luaL_getn(L, 1);
     for (int i = 1; i <= n; i++) {
         lua_rawgeti(L, 1, i);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "EntityId");
-            lua_rawget(L, -2);
-            if (lua_isnumber(L, -1)) {
-                auto eid = sim::to_entity_id(L, -1);
-                if (sim) {
-                    auto* entity = sim->entity_registry().find(eid);
-                    if (entity && renderer::selectable(*entity)) {
-                        sel.insert(eid);
-                    }
-                } else {
-                    sel.insert(eid);
-                }
-            }
-            lua_pop(L, 1);
+        const auto* entity = sim ? check_entity(L, lua_gettop(L)) : nullptr;
+        if (entity && renderer::selectable(*entity)) {
+            sel.insert(entity->entity_id());
         }
         lua_pop(L, 1);
     }
@@ -1701,7 +1701,7 @@ static int l_SimCallback(lua_State* L) {
         if (ih) {
             const auto& selected = ih->selected();
             entry.unit_ids.reserve(selected.size());
-            for (u32 eid : selected) {
+            for (sim::EntityId eid : selected) {
                 entry.unit_ids.push_back(eid);
             }
         }
@@ -1745,19 +1745,103 @@ static int l_GetUnitCommandFromCommandCap(lua_State* L) {
 }
 
 /// The selection's unit ids, in id order.
-static std::vector<u32> selected_unit_ids(lua_State* L) {
+static std::vector<sim::EntityId> selected_unit_ids(lua_State* L) {
     auto* ih = get_input_handler(L);
     if (!ih) return {};
-    std::vector<u32> ids(ih->selected().begin(), ih->selected().end());
+    std::vector<sim::EntityId> ids(ih->selected().begin(), ih->selected().end());
     std::sort(ids.begin(), ids.end());
     return ids;
+}
+
+void push_user_command(lua_State* L, const renderer::IssuedCommand& c) {
+    lua_newtable(L);
+    const int command = lua_gettop(L);
+    lua_pushstring(L, "Units");
+    push_units_for_ui(L, c.units);
+    lua_rawset(L, command);
+    lua_pushstring(L, "Blueprint");
+    lua_pushstring(L, c.blueprint.c_str());
+    lua_rawset(L, command);
+    lua_pushstring(L, "Target");
+    lua_newtable(L);
+    lua_pushstring(L, "Type");
+    lua_pushstring(L, !c.targeted ? "None" : (c.target_id ? "Entity" : "Position"));
+    lua_rawset(L, -3);
+    if (c.target_id) {
+        lua_pushstring(L, "EntityId");
+        sim::push_entity_id(L, c.target_id);
+        lua_rawset(L, -3);
+    }
+    lua_pushstring(L, "Position");
+    lua_newtable(L);
+    lua_pushnumber(L, c.position.x);
+    lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, c.position.y);
+    lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, c.position.z);
+    lua_rawseti(L, -2, 3);
+    lua_rawset(L, -3);
+    lua_rawset(L, command);
+    if (!c.lua_params.empty()) {
+        lua_pushstring(L, "LuaParams");
+        if (sim::push_lua_bytes(L, c.lua_params)) {
+            lua_rawset(L, command);
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    lua_pushstring(L, "CommandType");
+    lua_pushstring(L, c.type.c_str());
+    lua_rawset(L, command);
+    lua_pushstring(L, "Clear");
+    lua_pushboolean(L, c.clear ? 1 : 0);
+    lua_rawset(L, command);
+}
+
+void report_command_issued(lua_State* L, const renderer::IssuedCommand& c) {
+    push_user_command(L, c);
+    core::call_ui_callback(L, "/lua/ui/game/commandmode.lua", "OnCommandIssued", 1);
+}
+
+void report_script_order(lua_State* L, const std::string& type,
+                         const std::vector<sim::EntityId>& ids, bool clear, int data,
+                         const std::string& blueprint) {
+    if (!get_sim(L)) {
+        return;
+    }
+    renderer::IssuedCommand c;
+    c.type = type;
+    c.blueprint = blueprint;
+    c.clear = clear;
+    c.units = ids;
+    c.targeted = false;
+    if (data != 0 && !lua_isnoneornil(L, data)) {
+        c.lua_params = sim::lua_to_bytes(L, data).value_or(std::string());
+    }
+    report_command_issued(L, c);
 }
 
 /// IssueCommand(command [, data [, clear]]) -- for the selection: the orders
 /// panel's Stop, Dive and silo builds, the construction panel's enhancements.
 static int l_IssueCommand(lua_State* L) {
-    const std::string name = ui_command_name(luaL_checkstring(L, 1));
-    const bool clear = lua_isboolean(L, 3) ? lua_toboolean(L, 3) != 0 : true;
+    const int argc = lua_gettop(L);
+    if (argc < 1 || argc > 3) {
+        return arg_range_error(L, "IssueCommand(command,[string],[clear])", 1, 3, argc);
+    }
+    if (!get_sim(L)) {
+        spdlog::warn("Attempt to call IssueCommand before world sessions exists.");
+        return 0;
+    }
+    if (!lua_tostring(L, 1)) {
+        return arg_type_error(L, 1, "string");
+    }
+    const std::string name = ui_command_name(lua_tostring(L, 1));
+    // Moho's hands a silo build to the silos, not to ISSUE_Command
+    if (name == "BuildSiloNuke" || name == "BuildSiloTactical") {
+        issue_targetless_order(L, selected_unit_ids(L), name, 0, true, false);
+        return 0;
+    }
+    const bool clear = argc < 3 || arg_boolean(L, 3);
     issue_targetless_order(L, selected_unit_ids(L), name, 2, clear);
     return 0;
 }
@@ -1779,21 +1863,21 @@ static int l_IssueDockCommand(lua_State* L) {
     lua_pop(L, 1);
     if (focus < 0) return 0;
     auto& registry = sim->entity_registry();
-    const auto live_unit = [&](u32 id) -> const sim::Unit* {
+    const auto live_unit = [&](sim::EntityId id) -> const sim::Unit* {
         const sim::Entity* e = registry.find(id);
         return e && !e->destroyed() && e->is_unit() ? static_cast<const sim::Unit*>(e) : nullptr;
     };
 
-    std::vector<u32> docking;
+    std::vector<sim::EntityId> docking;
     f32 cx = 0.0f;
     f32 cz = 0.0f;
-    for (const u32 id : selected_unit_ids(L)) {
+    for (const sim::EntityId id : selected_unit_ids(L)) {
         const sim::Unit* u = live_unit(id);
         if (!u || !u->has_command_cap("RULEUCC_Dock")) continue;
         sim::Vector3 at = u->position();
         if (!clear && !u->command_queue().empty()) {
             const sim::UnitCommand& last = u->command_queue().back();
-            const sim::Unit* target = last.target_id != 0 ? live_unit(last.target_id) : nullptr;
+            const sim::Unit* target = last.target_id ? live_unit(last.target_id) : nullptr;
             at = target ? target->position() : last.target_pos;
         }
         cx += at.x;
@@ -1845,7 +1929,7 @@ static int l_IssueDockCommand(lua_State* L) {
 
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Dock;
-    const auto dock = [&](const std::vector<u32>& ids, const sim::Unit& pad) {
+    const auto dock = [&](const std::vector<sim::EntityId>& ids, const sim::Unit& pad) {
         cmd.target_id = pad.entity_id();
         cmd.target_pos = pad.position();
         issue_player_order(L, ids, cmd, clear);
@@ -1881,7 +1965,7 @@ static int l_IssueDockCommand(lua_State* L) {
         const f32 rounded = std::rint(share);
         i32 quota = static_cast<i32>(rounded);
         if (share > rounded) ++quota;
-        std::vector<u32> ids;
+        std::vector<sim::EntityId> ids;
         while (next < docking.size() && static_cast<i32>(ids.size()) < quota)
             ids.push_back(docking[next++]);
         if (ids.empty()) break;
@@ -1890,24 +1974,69 @@ static int l_IssueDockCommand(lua_State* L) {
     return 0;
 }
 
-/// IssueBlueprintCommand(command, blueprint [, count [, clear]]) -- for the
-/// selection: the construction panel's factory builds and upgrades.
+/// IssueBlueprintCommand(command, blueprint, count [, clear]) -- for the
+/// selection, as Moho's cfunc_IssueBlueprintCommandL: the construction
+/// panel's factory builds and upgrades.
 static int l_IssueBlueprintCommand(lua_State* L) {
-    const std::string name = ui_command_name(luaL_checkstring(L, 1));
-    sim::UnitCommand cmd;
-    cmd.blueprint_id = luaL_checkstring(L, 2);
-    const int count = lua_isnumber(L, 3) ? static_cast<int>(lua_tonumber(L, 3)) : 1;
-    const bool clear = lua_isboolean(L, 4) && lua_toboolean(L, 4) != 0;
+    const int argc = lua_gettop(L);
+    if (argc < 3 || argc > 4) {
+        return arg_range_error(
+            L, "IssueBlueprintCommand(command, blueprintid, count, clear = false)", 3, 4, argc);
+    }
+    auto* sim = get_sim(L);
+    if (!sim) {
+        spdlog::warn("Attempt to call IssueBlueprintCommand before world sessions exists.");
+        return 0;
+    }
+    if (!lua_tostring(L, 1)) {
+        return arg_type_error(L, 1, "string");
+    }
+    const std::string name = ui_command_name(lua_tostring(L, 1));
+    if (!lua_tostring(L, 2)) {
+        return arg_type_error(L, 2, "string");
+    }
+    const auto* store = LuaState::get_blueprint_store(L);
+    const auto* blueprint = store ? store->find(lua_tostring(L, 2)) : nullptr;
+    if (lua_type(L, 3) != LUA_TNUMBER) {
+        return arg_type_error(L, 3, "integer");
+    }
+    const lua_Number count_arg = lua_tonumber(L, 3);
+    const int count =
+        count_arg > -2147483648.0 && count_arg < 2147483648.0 ? static_cast<int>(count_arg) : 0;
+    const bool clear = argc == 4 && arg_boolean(L, 4);
+    if (!blueprint) {
+        return 0;
+    }
     const auto ids = selected_unit_ids(L);
+    if (name == "BuildSiloNuke" || name == "BuildSiloTactical") {
+        issue_targetless_order(L, ids, name, 0, false, false);
+        return 0;
+    }
+    sim::UnitCommand cmd;
+    cmd.blueprint_id = blueprint->id;
     if (name == "BuildFactory") {
         cmd.type = sim::CommandType::BuildFactory;
-        for (int i = 0; i < std::min(count, 1000); ++i)
-            issue_player_order(L, ids, cmd, clear && i == 0);
-    } else if (name == "Upgrade") {
-        cmd.type = sim::CommandType::Upgrade;
-        issue_player_order(L, ids, cmd, clear);
-    } else {
-        spdlog::warn("IssueBlueprintCommand: unsupported order '{}'", name);
+        for (const sim::EntityId id : ids) {
+            const sim::Entity* e = sim->entity_registry().find(id);
+            const auto* unit = e && e->is_unit() ? static_cast<const sim::Unit*>(e) : nullptr;
+            if (!unit || unit->destroyed() || unit->is_dying() || !unit->has_category("FACTORY")) {
+                continue;
+            }
+            for (int i = 0; i < count; ++i) {
+                issue_player_order(L, {id}, cmd, clear);
+                report_script_order(L, name, {id}, clear, 0, cmd.blueprint_id);
+            }
+        }
+        return 0;
+    }
+    for (int i = 0; i < count; ++i) {
+        if (name == "Upgrade") {
+            cmd.type = sim::CommandType::Upgrade;
+            issue_player_order(L, ids, cmd, clear);
+            report_script_order(L, name, ids, clear, 0, cmd.blueprint_id);
+        } else if (!issue_targetless_order(L, ids, name, 0, clear, true, cmd.blueprint_id)) {
+            break;
+        }
     }
     return 0;
 }
@@ -1945,7 +2074,7 @@ static int l_GetRolloverInfo(lua_State* L) {
     sim::Unit* unit = nullptr;
 
     auto* input = get_input_handler(L);
-    if (input && input->hovered() != 0) {
+    if (input && input->hovered()) {
         auto* entity = sim->entity_registry().find(input->hovered());
         if (entity && entity->is_unit() && !entity->destroyed()) {
             unit = static_cast<sim::Unit*>(entity);
@@ -1953,7 +2082,7 @@ static int l_GetRolloverInfo(lua_State* L) {
     }
     if (!unit) {
         if (input && !input->selected().empty()) {
-            u32 first_id = *input->selected().begin();
+            sim::EntityId first_id = *input->selected().begin();
             auto* entity = sim->entity_registry().find(first_id);
             if (entity && entity->is_unit() && !entity->destroyed())
                 unit = static_cast<sim::Unit*>(entity);
@@ -2047,8 +2176,8 @@ static int l_GetRolloverInfo(lua_State* L) {
 
     // focus: what the unit builds; "focusUpgrade" while it upgrades (faf-re
     // cfunc_GetRolloverInfoL)
-    u32 focus_id = unit->build_target_id();
-    if (focus_id != 0) {
+    sim::EntityId focus_id = unit->build_target_id();
+    if (focus_id) {
         auto* focus_entity = sim->entity_registry().find(focus_id);
         if (focus_entity && focus_entity->is_unit() && !focus_entity->destroyed()) {
             auto* focus_unit = static_cast<sim::Unit*>(focus_entity);
@@ -2317,7 +2446,7 @@ void start_command_mode(lua_State* L, const std::vector<std::string>& args) {
     auto* ih = get_input_handler(L);
     bool capable = false;
     if (ih) {
-        for (u32 id : ih->selected()) {
+        for (sim::EntityId id : ih->selected()) {
             auto* e = sim->entity_registry().find(id);
             if (e && e->is_unit() && !e->destroyed() &&
                 static_cast<const sim::Unit*>(e)->has_command_cap(name)) {
@@ -2378,7 +2507,7 @@ void select_units_by_category(lua_State* L, const std::string& expression,
     sim::Vector3 cursor{};
     const bool have_cursor = nearest && cursor_world_pos(L, cursor);
 
-    std::unordered_set<u32> result;
+    std::unordered_set<sim::EntityId> result;
     if (add) result = ih->selected();
     const sim::Unit* nearest_unit = nullptr;
     f32 nearest_distance = std::numeric_limits<f32>::infinity();
@@ -2410,7 +2539,7 @@ void select_units_by_category(lua_State* L, const std::string& expression,
     if (go_to && r && !result.empty()) {
         f32 x0 = std::numeric_limits<f32>::infinity(), z0 = x0;
         f32 x1 = -x0, z1 = -x0;
-        for (u32 id : result) {
+        for (sim::EntityId id : result) {
             if (auto* e = sim->entity_registry().find(id)) {
                 x0 = std::min(x0, e->position().x);
                 z0 = std::min(z0, e->position().z);
@@ -2491,7 +2620,7 @@ void issue_command(lua_State* L, const std::vector<std::string>& args) {
         return;
     }
     if (args.size() < 2) return;
-    const std::vector<u32> ids(ih->selected().begin(), ih->selected().end());
+    const std::vector<sim::EntityId> ids(ih->selected().begin(), ih->selected().end());
     const std::string& order = args[1];
     if (iequal(order, "Stop")) {
         issue_targetless_order(L, ids, "Stop", 0, true);
@@ -2518,10 +2647,10 @@ void print_loc(lua_State* L, const char* token) {
 
 /// The selection's units still there, by id
 std::vector<sim::Unit*> selected_units(sim::SimState& sim, const renderer::InputHandler& ih) {
-    std::vector<u32> ids(ih.selected().begin(), ih.selected().end());
+    std::vector<sim::EntityId> ids(ih.selected().begin(), ih.selected().end());
     std::sort(ids.begin(), ids.end());
     std::vector<sim::Unit*> units;
-    for (const u32 id : ids) {
+    for (const sim::EntityId id : ids) {
         auto* e = sim.entity_registry().find(id);
         if (e && e->is_unit() && !e->destroyed()) units.push_back(static_cast<sim::Unit*>(e));
     }
@@ -2540,7 +2669,7 @@ void expand_current_selection(lua_State* L, const std::vector<std::string>&) {
     }
     std::unordered_set<std::string> blueprints;
     for (const sim::Unit* u : selected_units(*sim, *ih)) blueprints.insert(u->blueprint_id());
-    std::unordered_set<u32> expanded = ih->selected();
+    std::unordered_set<sim::EntityId> expanded = ih->selected();
     static const sim::CategoryName kWall{"WALL"};
     sim->entity_registry().for_each_unit([&](sim::Entity& e) {
         const auto& u = static_cast<const sim::Unit&>(e);
@@ -2656,7 +2785,7 @@ void track_unit(lua_State* L, const std::vector<std::string>& args) {
             camera.target_nothing();
             continue;
         }
-        std::vector<u32> ids;
+        std::vector<sim::EntityId> ids;
         ids.reserve(units.size());
         for (const sim::Unit* u : units) ids.push_back(u->entity_id());
         camera.target_entities(std::move(ids), true, camera.zoom(), 0.0f);
@@ -2759,6 +2888,211 @@ void show_army_stats(lua_State* L, const std::vector<std::string>& args) {
     lua_settop(L, top);
 }
 
+/// Moho's CON_UnparseCommand: `tokens` as one line, a token with whitespace,
+/// `#`, `;` or `"` (or none at all) quoted, its `\` and `"` escaped.
+std::string unparse_console_command(const std::vector<std::string>& tokens) {
+    std::string line;
+    for (const std::string& token : tokens) {
+        if (!line.empty()) line.push_back(' ');
+        bool quote = token.empty();
+        for (const char c : token) {
+            if (c == '#' || c == ';' || c == '"' || std::isspace(static_cast<unsigned char>(c))) {
+                quote = true;
+            }
+        }
+        if (!quote) {
+            line += token;
+            continue;
+        }
+        line.push_back('"');
+        for (const char c : token) {
+            if (c == '\\' || c == '"') line.push_back('\\');
+            line.push_back(c);
+        }
+        line.push_back('"');
+    }
+    return line;
+}
+
+/// Moho's DoSimCommand (0x0088E440): `command`, a sim command's name and its
+/// arguments, to the sim's console through the command stream, with the
+/// cursor's place, the focus army and the selection, so every peer runs it
+/// (Sim::ExecuteDebugCommand). Without a session nothing goes.
+void send_sim_command(lua_State* L, const std::vector<std::string>& command) {
+    auto* queue = get_callback_queue(L);
+    if (!queue || !session_active(L)) {
+        spdlog::info("No session is running");
+        return;
+    }
+    sim::SimCallbackEntry entry;
+    entry.func_name = sim::kDebugCommandCallback;
+    entry.args["Command"] = unparse_console_command(command);
+    sim::Vector3 at{}; // (none without a world view)
+    cursor_world_pos(L, at);
+    entry.args["X"] = static_cast<f64>(at.x);
+    entry.args["Y"] = static_cast<f64>(at.y);
+    entry.args["Z"] = static_cast<f64>(at.z);
+    entry.args["FocusArmy"] = static_cast<f64>(focus_army(L));
+    if (auto* ih = get_input_handler(L)) {
+        for (const sim::EntityId id : ih->selected()) entry.unit_ids.push_back(id);
+    }
+    queue->push(std::move(entry));
+}
+
+/// DoSimCommand command args...
+void do_sim_command(lua_State* L, const std::vector<std::string>& args) {
+    if (args.size() <= 1) {
+        spdlog::info("usage: DoSimCommand command args...");
+        return;
+    }
+    send_sim_command(L, {args.begin() + 1, args.end()});
+}
+
+/// The ground under the screen point (x, y), in the UI's pixels (the world
+/// camera's CameraScreenToSurface); false with no world view.
+bool screen_to_surface(lua_State* L, f32 x, f32 y, sim::Vector3& out) {
+    lua_pushstring(L, "__osc_world_view");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* wv = static_cast<ui::WorldView*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    auto* r = get_renderer(L);
+    if (!wv || !wv->camera() || !r) return false;
+    return renderer::pick_ground_in(r->ui_views(), x, y, wv->terrain(), out.x, out.y, out.z);
+}
+
+/// atoi's answer: the leading digits (after a sign), else 0.
+int parse_int(const std::string& text) {
+    size_t i = 0;
+    while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i]))) ++i;
+    if (i < text.size() && text[i] == '+') {
+        ++i;
+        if (i < text.size() && text[i] == '-') return 0; // "+-5": no number
+    }
+    int value = 0;
+    const char* begin = text.data() + i;
+    const auto [end, error] = std::from_chars(begin, text.data() + text.size(), value);
+    return error == std::errc{} && end != begin ? value : 0;
+}
+
+/// Moho's CON_CreateUnit (0x00897580): CreateUnit <blueprint> [army] [x y], a
+/// complete unit for the army (0-based; the focus army's when not given)
+/// where the cursor points, or under the screen point x, y unless it is the
+/// one the last such command used. A cheat the sim makes (CMDST_CreateUnit);
+/// retail's create-unit dialog sends it.
+void create_unit_command(lua_State* L, const std::vector<std::string>& args) {
+    auto* sim = get_sim(L);
+    auto* queue = get_callback_queue(L);
+    if (!sim || !queue || !session_active(L)) {
+        print_loc(L, "<LOC _No_session>");
+        return;
+    }
+    if (args.size() < 2) return;
+    sim::Vector3 at{};
+    cursor_world_pos(L, at);
+    if (args.size() >= 4) {
+        // (with four tokens Moho reads past them, for 0)
+        static std::pair<f32, f32> last_point{0.0f, 0.0f}; // (Moho's starts at 0, 0)
+        const std::pair<f32, f32> point{static_cast<f32>(parse_int(args[3])),
+                                        static_cast<f32>(args.size() > 4 ? parse_int(args[4]) : 0)};
+        if (point != last_point) {
+            screen_to_surface(L, point.first, point.second, at);
+            last_point = point;
+        }
+    }
+    int army = 0;
+    const auto armies = static_cast<int>(sim->army_count());
+    if (args.size() >= 3) {
+        army = parse_int(args[2]);
+        if (army < 0 || army >= armies) {
+            spdlog::info("Invalid army index ({}) -- must be less than {}", army, armies);
+            return;
+        }
+    } else {
+        army = focus_army(L);
+        if (army < 0) return;
+    }
+    std::string id = args[1];
+    std::transform(id.begin(), id.end(), id.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const auto* store = LuaState::get_blueprint_store(L);
+    const auto* entry = store ? store->find(id) : nullptr;
+    // (Moho plays an error cue)
+    if (!entry || entry->type != blueprints::BlueprintType::Unit) return;
+    sim::SimCallbackEntry cb;
+    cb.func_name = sim::kCreateUnitCallback;
+    cb.args["Blueprint"] = entry->id;
+    cb.args["Army"] = static_cast<f64>(army);
+    cb.args["X"] = static_cast<f64>(at.x);
+    cb.args["Z"] = static_cast<f64>(at.z);
+    cb.args["Heading"] = 0.0;
+    queue->push(std::move(cb));
+}
+
+/// Moho's CON_PopupCreateUnitMenu (0x007B5A40): retail's create-unit dialog,
+/// opened where the cursor is on the screen.
+void popup_create_unit_menu(lua_State* L, const std::vector<std::string>&) {
+    if (!session_active(L)) {
+        print_loc(L, "<LOC _No_session>");
+        return;
+    }
+    f64 x = 0, y = 0;
+    if (auto* r = get_renderer(L)) r->ui_mouse_position(x, y);
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, "/lua/ui/dialogs/createunit.lua");
+    if (!lua_isfunction(L, -2) || lua_pcall(L, 1, 1, 0) != 0 || !lua_istable(L, -1)) {
+        spdlog::warn("failed to load \"/lua/ui/dialogs/createunit.lua\" module");
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushstring(L, "CreateDialog");
+    lua_gettable(L, -2);
+    lua_pushnumber(L, x);
+    lua_pushnumber(L, y);
+    if (lua_pcall(L, 2, 0, 0) != 0) spdlog::warn("PopupCreateUnitMenu: {}", lua_tostring(L, -1));
+    lua_settop(L, top);
+}
+
+/// Moho's CON_TeleportSelectedUnits (0x00833F90): the focus army's selected
+/// units warped to where the cursor points, each a cheat the sim runs
+/// (Sim::WarpEntity), placed as Unit::Warp places it.
+void teleport_selected_units(lua_State* L, const std::vector<std::string>&) {
+    auto* sim = get_sim(L);
+    auto* queue = get_callback_queue(L);
+    auto* ih = get_input_handler(L);
+    if (!sim || !queue || !ih || !session_active(L)) {
+        print_loc(L, "<LOC _No_session>");
+        return;
+    }
+    const int focus = focus_army(L);
+    sim::Vector3 at{};
+    cursor_world_pos(L, at);
+    for (const sim::EntityId id : ih->selected()) {
+        const sim::Entity* e = sim->entity_registry().find(id);
+        if (!e || !e->is_unit() || e->army() != focus) continue;
+        sim::SimCallbackEntry cb;
+        cb.func_name = sim::kWarpEntityCallback;
+        cb.args["Entity"] = static_cast<f64>(id.key());
+        cb.args["X"] = static_cast<f64>(at.x);
+        cb.args["Y"] = static_cast<f64>(at.y);
+        cb.args["Z"] = static_cast<f64>(at.z);
+        queue->push(std::move(cb));
+    }
+}
+
+/// Moho's CON_DestroySelectedUnits (0x00833D60): a DestroySelf order to the
+/// selection, its queues cleared; the sim refuses it without cheats.
+void destroy_selected_units(lua_State* L, const std::vector<std::string>&) {
+    auto* ih = get_input_handler(L);
+    if (!get_sim(L) || !ih || !session_active(L)) {
+        print_loc(L, "<LOC _No_session>");
+        return;
+    }
+    const std::vector<sim::EntityId> ids(ih->selected().begin(), ih->selected().end());
+    issue_targetless_order(L, ids, "DestroySelf", 0, true);
+}
+
 } // namespace
 
 void register_session_console_commands(ui::Console& console) {
@@ -2770,6 +3104,20 @@ void register_session_console_commands(ui::Console& console) {
     console.add("RenameUnit", rename_unit);
     console.add("UI_TrackUnit", track_unit);
     console.add("ShowArmyStats", show_army_stats);
+    console.add("DoSimCommand", do_sim_command);
+    // Each sim command's CConAlias: its name runs "DoSimCommand <name> ...".
+    for (const sim::SimConCommand& command : sim::sim_commands()) {
+        const char* name = command.name;
+        console.add(name, [name](lua_State* L, const std::vector<std::string>& args) {
+            std::vector<std::string> line{name};
+            line.insert(line.end(), args.begin() + 1, args.end());
+            send_sim_command(L, line);
+        });
+    }
+    console.add("CreateUnit", create_unit_command);
+    console.add("PopupCreateUnitMenu", popup_create_unit_menu);
+    console.add("TeleportSelectedUnits", teleport_selected_units);
+    console.add("DestroySelectedUnits", destroy_selected_units);
 }
 
 } // namespace osc::lua

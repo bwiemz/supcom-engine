@@ -26,108 +26,117 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 97; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
-                             // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
-                             // 6: weapons' lead physics;
-                             // 7: unit cap costs, the army's cap exemption, build cap waits;
-                             // 8: the scripts' consumption flag; 9: winged attack runs;
-                             // 10: weapons' AutoInitiateAttackCommand;
-                             // 11: NeedUnpack, orders' begun flag;
-                             // 12: guards' fights and the GuardReturnRadius leash;
-                             // 13: weapons' and aim controllers' YawOnlyOnTarget;
-                             // 14: units' lifebars;
-                             // 15: weapons' ground attacks (AttackGroundTries);
-                             // 16: units' LayerChangeOffsetHeight;
-                             // 17: hull facing (SlavedToBody, AttackAngle);
-                             // 18: no engine veterancy XP;
-                             // 19: platoons' unique names and DisbandOnIdle,
-                             //     collision detectors' bone states;
-                             // 20: aim spots (target points), BelowWaterTargetsOnly;
-                             // 21: units' footprints (footprint classes);
-                             // 22: launch rules (MuzzleVelocityRandom,
-                             //     UseFiringSolutionInsteadOfAimBone, StraightDownOrdinance);
-                             // 23: the occupation grid's occupants;
-                             // 24: projectiles' flight (LeadTarget, zig-zag state,
-                             //     the lost-target aim latch);
-                             // 25: units' creation ticks (build templates' order);
-                             // 26: Moho pathing (the switch, navigators' path state,
-                             //     army path queues, path maps' dirty bits);
-                             // 27: idle aircraft landing (AutoLandTime, the landing);
-                             // 28: hovering aircraft's circling;
-                             // 29: mobile units in the way (moved last tick, path owners);
-                             // 30: formation orders' slots (formation layers);
-                             // 31: jammers' fakes known fake (latched);
-                             // 32: factory builds' counts (IncreaseBuildCountInQueue);
-                             // 33: callbacks' Args as Lua data;
-                             // 34: patrol legs' start;
-                             // 35: reclaims' ticks before their first share;
-                             // 36: silos' preset blocks (GiveNukeSiloAmmo(blocks, true));
-                             // 37: builders' arm on target, and orders waiting for it;
-                             // 38: builds' cleared sites, props being cleared and rebuilt wrecks;
-                             // 39-42: unpublished PR snapshot formats;
-                             // 43: combined batch format: player command ids, formation Move flags,
-                             //     repairing assists, builder tracking and facing, aircraft lift,
-                             //     velocity and spin, motion-scaled animators, prop fall and
-                             //     bounds, raised platforms, alt footprints, ground stance, pending
-                             //     factory assists and sacrifice waits;
-                             // 44: the order given to build callbacks;
-                             // 45: weapons' PrefersPrimaryWeaponTarget, StopOnPrimaryWeaponBusy;
-                             // 46: entities' texture scrollers;
-                             // 47: the heightfield's flattenings (FlattenMapRect);
-                             // 48: units' Elevation, hover lean and wobble;
-                             // 49: aircraft's blueprint Elevation, for RevertElevation;
-                             // 50: FormAttack orders and their slots;
-                             // 51: collision cells' link order (Moho's rect queries);
-                             // 52: the economy's grants (Moho's ProcessArmyEconomy);
-                             // 53: units' grants and ResourceConsumed (the request pipeline);
-                             // 54: mobile builds' prepared tick;
-                             // 55: experimental aircraft made on the ground;
-                             // 56: aim controllers with no arc to their target
-                             // 57: units' order a Warp aborted
-                             // 58: armies' command sources and the cheats option
-                             // 59: path navigators' last repath tick
-                             // 60: no CommonArmy economy pool
-                             // 61: attack orders' target points;
-                             // 62: slaved bones' turn toward their master and max rate;
-                             // 63: the silo a unit's Guard helps;
-                             // 64: navigators' move ended in the last motion step;
-                             // 65: every attack order engages in reach;
-                             // 66: armies' resource banks; units' held storage;
-                             // 67: projectiles' waiting impact and lifetime end tick;
-                             // 68: entities' pending and last transforms; no units' tick position;
-                             // 69: the deletion queue; units' kill cleanup due;
-                             // 70: the entity walk's order, entities' parked state and last step;
-                             //     no collision beam list
-                             // 71: which of each army's fakes it sensed at its last recon tick
-                             // 72: the beat count and a single step due; no resumed pause serial
-                             // 73: no units' crash landing latch
-                             // 74: projectiles an engine weapon fired
-                             // 75: units' NaturalProducer
-                             // 76: no team share option, share banks or resources' overflow
-                             // 77: units' last banked production and reclaim for GetEconData
-                             // 78: stats triggers' category blueprints
-                             // 79: armies' reclaim totals and pending production
-                             // 80: whole-tick requests' grants; economy events' ticks left
-                             // 81: units' consumption requests' grants and spending
-                             // 82: armies' stores and storage as floats
-                             // 83: a navigator's spline gear (backing up, Moho's PPS_4-PPS_7)
-                             // 84: a unit's MaxSteerForce; a navigator's Moho spline
-                             // 85: Moho's entity ids: the registry's id pools
-                             // 86: no units' damage shares
-                             // 87: a unit's shore crossing (LayerTransitionDuration)
-                             // 88: a weapon's NeedPrep
-                             // 89: a unit's terrain type (CurrentTerrainType)
-                             // 90: a weapon's and its aim controller's AimsStraightOnDisable
-                             // 91: a weapon's ReTargetOnMiss: its misses, cooldown, given-up
-                             //     targets and held target; a shot's listening weapon
-                             // 92: a builder's last seen build fraction (OnBuildProgress)
-                             // 93: a projectile's terrain bounces
-                             // 94: a projectile's detonate heights set apart from its
-                             //     blueprint's, and no burst arming
-                             // 95: no entities a projectile was turned away from (it asks
-                             //     again every tick)
-                             // 96: units' lean into a dive (Moho's CalcRollHack)
-                             // 97: aim controllers' reset pose in ticks; weapons' aim reset ticks
+constexpr u32 kVersion = 102; // 2: entities' wanted loops (M216b);
+                              // 3: emitter overrides (M214d);
+                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
+                              // 6: weapons' lead physics;
+                              // 7: unit cap costs, the army's cap exemption, build cap waits;
+                              // 8: the scripts' consumption flag; 9: winged attack runs;
+                              // 10: weapons' AutoInitiateAttackCommand;
+                              // 11: NeedUnpack, orders' begun flag;
+                              // 12: guards' fights and the GuardReturnRadius leash;
+                              // 13: weapons' and aim controllers' YawOnlyOnTarget;
+                              // 14: units' lifebars;
+                              // 15: weapons' ground attacks (AttackGroundTries);
+                              // 16: units' LayerChangeOffsetHeight;
+                              // 17: hull facing (SlavedToBody, AttackAngle);
+                              // 18: no engine veterancy XP;
+                              // 19: platoons' unique names and DisbandOnIdle,
+                              //     collision detectors' bone states;
+                              // 20: aim spots (target points), BelowWaterTargetsOnly;
+                              // 21: units' footprints (footprint classes);
+                              // 22: launch rules (MuzzleVelocityRandom,
+                              //     UseFiringSolutionInsteadOfAimBone, StraightDownOrdinance);
+                              // 23: the occupation grid's occupants;
+                              // 24: projectiles' flight (LeadTarget, zig-zag state,
+                              //     the lost-target aim latch);
+                              // 25: units' creation ticks (build templates' order);
+                              // 26: Moho pathing (the switch, navigators' path state,
+                              //     army path queues, path maps' dirty bits);
+                              // 27: idle aircraft landing (AutoLandTime, the landing);
+                              // 28: hovering aircraft's circling;
+                              // 29: mobile units in the way (moved last tick, path owners);
+                              // 30: formation orders' slots (formation layers);
+                              // 31: jammers' fakes known fake (latched);
+                              // 32: factory builds' counts (IncreaseBuildCountInQueue);
+                              // 33: callbacks' Args as Lua data;
+                              // 34: patrol legs' start;
+                              // 35: reclaims' ticks before their first share;
+                              // 36: silos' preset blocks (GiveNukeSiloAmmo(blocks, true));
+                              // 37: builders' arm on target, and orders waiting for it;
+                              // 38: builds' cleared sites, props being cleared and rebuilt wrecks;
+                              // 39-42: unpublished PR snapshot formats;
+                              // 43: combined batch format: player command ids, formation Move
+                              //     flags, repairing assists, builder tracking and facing, aircraft
+                              //     lift, velocity and spin, motion-scaled animators, prop fall and
+                              //     bounds, raised platforms, alt footprints, ground stance,
+                              //     pending factory assists and sacrifice waits;
+                              // 44: the order given to build callbacks;
+                              // 45: weapons' PrefersPrimaryWeaponTarget, StopOnPrimaryWeaponBusy;
+                              // 46: entities' texture scrollers;
+                              // 47: the heightfield's flattenings (FlattenMapRect);
+                              // 48: units' Elevation, hover lean and wobble;
+                              // 49: aircraft's blueprint Elevation, for RevertElevation;
+                              // 50: FormAttack orders and their slots;
+                              // 51: collision cells' link order (Moho's rect queries);
+                              // 52: the economy's grants (Moho's ProcessArmyEconomy);
+                              // 53: units' grants and ResourceConsumed (the request pipeline);
+                              // 54: mobile builds' prepared tick;
+                              // 55: experimental aircraft made on the ground;
+                              // 56: aim controllers with no arc to their target
+                              // 57: units' order a Warp aborted
+                              // 58: armies' command sources and the cheats option
+                              // 59: path navigators' last repath tick
+                              // 60: no CommonArmy economy pool
+                              // 61: attack orders' target points;
+                              // 62: slaved bones' turn toward their master and max rate;
+                              // 63: the silo a unit's Guard helps;
+                              // 64: navigators' move ended in the last motion step;
+                              // 65: every attack order engages in reach;
+                              // 66: armies' resource banks; units' held storage;
+                              // 67: projectiles' waiting impact and lifetime end tick;
+                              // 68: entities' pending and last transforms; no units' tick position;
+                              // 69: the deletion queue; units' kill cleanup due;
+                              // 70: the entity walk's order, entities' parked state and last step;
+                              //     no collision beam list
+                              // 71: which of each army's fakes it sensed at its last recon tick
+                              // 72: the beat count and a single step due; no resumed pause serial
+                              // 73: no units' crash landing latch
+                              // 74: projectiles an engine weapon fired
+                              // 75: units' NaturalProducer
+                              // 76: no team share option, share banks or resources' overflow
+                              // 77: units' last banked production and reclaim for GetEconData
+                              // 78: stats triggers' category blueprints
+                              // 79: armies' reclaim totals and pending production
+                              // 80: whole-tick requests' grants; economy events' ticks left
+                              // 81: units' consumption requests' grants and spending
+                              // 82: armies' stores and storage as floats
+                              // 83: a navigator's spline gear (backing up, Moho's PPS_4-PPS_7)
+                              // 84: a unit's MaxSteerForce; a navigator's Moho spline
+                              // 85: Moho's entity ids: the registry's id pools
+                              // 86: no units' damage shares
+                              // 87: a unit's shore crossing (LayerTransitionDuration)
+                              // 88: a weapon's NeedPrep
+                              // 89: a unit's terrain type (CurrentTerrainType)
+                              // 90: a weapon's and its aim controller's AimsStraightOnDisable
+                              // 91: a weapon's ReTargetOnMiss: its misses, cooldown, given-up
+                              //     targets and held target; a shot's listening weapon
+                              // 92: a builder's last seen build fraction (OnBuildProgress)
+                              // 93: a projectile's terrain bounces
+                              // 94: a projectile's detonate heights set apart from its
+                              //     blueprint's, and no burst arming
+                              // 95: no entities a projectile was turned away from (it asks
+                              //     again every tick)
+                              // 96: units' lean into a dive (Moho's CalcRollHack)
+                              // 97: aim controllers' reset pose in ticks; weapons' aim reset ticks
+                              // 98: a unit's motion state and its fall's tumble, not the
+                              //     invented crash's fields
+                              // 99: the sim console's variables (NoDamage, AI_RunOpponentAI)
+                              // 100: no projectile collision switch apart from its surface and
+                              //      entity ones (SetCollision sets both)
+                              // 101: brains' BuildStructure reservations
+                              // 102: entity ids as keys with their generation; the id pools'
+                              //      released serials, those still held, and generations
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -155,13 +164,13 @@ std::vector<u32> load_ids(StateReader& r) {
 
 // A map keyed by id, in id order (an unordered one sorted first).
 template <typename Map, typename Save> void save_by_id(StateWriter& w, const Map& map, Save save) {
-    std::vector<u32> ids;
+    std::vector<EntityId> ids;
     ids.reserve(map.size());
     for (const auto& kv : map) ids.push_back(kv.first);
     std::sort(ids.begin(), ids.end());
     w.size(ids.size());
-    for (u32 id : ids) {
-        w.u32v(id);
+    for (const EntityId id : ids) {
+        w.id(id);
         save(map.at(id));
     }
 }
@@ -202,15 +211,21 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
     for (const auto& [bits, pool] : reg.id_pools_) {
         w.u32v(bits);
         w.u32v(pool.next);
+        save_ids(w, std::vector<u32>(pool.released.begin(), pool.released.end()));
+        w.size(pool.held.size());
+        for (const std::vector<u32>& beat : pool.held) {
+            save_ids(w, beat);
+        }
+        save_ids(w, pool.generations);
     }
-    save_ids(w, std::vector<u32>(reg.deletion_queue_.begin(), reg.deletion_queue_.end()));
-    std::vector<u32> walk;
-    for (const u32 id : reg.walk_) {
+    w.ids(std::vector<EntityId>(reg.deletion_queue_.begin(), reg.deletion_queue_.end()));
+    std::vector<EntityId> walk;
+    for (const EntityId id : reg.walk_) {
         if (const Entity* e = reg.find(id); e && e->walk() == Entity::Walk::Stepping) {
             walk.push_back(id);
         }
     }
-    save_ids(w, walk);
+    w.ids(walk);
     // cells_: each entity's link order (its CellLink), and the count of
     // links made (seq_). The rest is rebuilt: width_, height_, shift_ and
     // last_index_ are the map's; units_ and props_ follow from the entities
@@ -228,6 +243,7 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     // What the boot made goes, unannounced: nothing of it was ever the
     // saved game's.
     reg.entities_.clear();
+    reg.live_by_moho_.clear();
     reg.live_.clear();
     reg.live_count_ = 0;
     reg.order_.clear();
@@ -286,8 +302,10 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
         default: return r.fail("an entity of an unknown kind");
         }
         if (!r.ok()) return;
-        const u32 id = e->entity_id();
-        if (id == 0 || reg.entities_.count(id) != 0) return r.fail("an entity id twice");
+        const EntityId id = e->entity_id();
+        if (!id || reg.entities_.contains(id) || reg.live_by_moho_.contains(id.moho())) {
+            return r.fail("an entity id twice");
+        }
         // As register_entity takes one, at its own id
         e->set_registry(&reg);
         e->set_grid_cell(-1, -1);
@@ -297,6 +315,7 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
         reg.live_.insert(e.get());
         Entity& placed = *e;
         reg.entities_[id] = std::move(e);
+        reg.live_by_moho_[id.moho()] = id;
         ++reg.live_count_;
         // As notify_collision_shape_changed, but for the collision cells,
         // which link below, all in their saved order.
@@ -316,10 +335,20 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     for (size_t i = 0; i < pools && r.ok(); ++i) {
         EntityRegistry::IdPool& pool = reg.id_pools_[r.u32v()];
         pool.next = r.u32v();
+        const std::vector<u32> released = load_ids(r);
+        pool.released = std::set<u32>(released.begin(), released.end());
+        pool.held.resize(r.size(4));
+        for (std::vector<u32>& beat : pool.held) {
+            beat = load_ids(r);
+        }
+        if (pool.held.empty() || pool.held.size() > EntityRegistry::kIdHeldBeats) {
+            return r.fail("an id pool's held serials");
+        }
+        pool.generations = load_ids(r);
     }
-    const std::vector<u32> queued = load_ids(r);
+    const std::vector<EntityId> queued = r.ids();
     reg.deletion_queue_.assign(queued.begin(), queued.end());
-    reg.walk_ = load_ids(r);
+    reg.walk_ = r.ids();
     const u64 links = r.u64v();
     if (!r.ok()) return;
     std::vector<Entity*> linked;
@@ -339,7 +368,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     // bounded_props_: made again from the props, in id order, as Moho's load
     save(w, sim.thread_manager_);
     // blueprint_store_: the host's; projectile_info_: a cache; followed_: the entity walk's own
-    save_ids(w, sim.ferry_beacons_);
+    w.ids(sim.ferry_beacons_);
     // checksum_trace_header_: the host's; beat_checksum_, beat_checksum_beat_,
     // beat_checksum_valid_: a memo
     w.size(sim.source_armies_.size());
@@ -465,7 +494,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     }
     w.size(sim.entity_intel_.size());
     for (const auto& [id, intel] : sim.entity_intel_) {
-        w.u32v(id);
+        w.id(id);
         w.i32v(intel.army);
         w.size(intel.sources.size());
         for (const auto& [type, src] : intel.sources) {
@@ -485,6 +514,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     enum8(w, sim.fog_mode_);
     w.f32v(sim.no_rush_seconds_);
     w.f32v(sim.no_rush_radius_);
+    w.b(sim.con_vars_.no_damage);
+    w.b(sim.con_vars_.run_opponent_ai);
     // camera_shake_events_, camera_follow_events_, death_events_,
     // intel_flush_events_, sound_requests_: the renderer's and the audio's,
     // emptied each tick
@@ -531,7 +562,9 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         }
     });
     w.size(sim.blip_objects_.size());
-    for (u32 id : sim.blip_objects_) w.u32v(id);
+    for (const EntityId id : sim.blip_objects_) {
+        w.id(id);
+    }
     const SimRandom& rng = sim.sim_random_;
     w.u8v(static_cast<u8>((sim.moho_pathing_ ? 1 : 0) | (rng.mt_ ? 2 : 0)));
     if (rng.mt_) {
@@ -559,7 +592,7 @@ void StateIO::load(StateReader& r, SimState& sim) {
         }
     });
     load(r, sim.thread_manager_);
-    sim.ferry_beacons_ = load_ids(r);
+    sim.ferry_beacons_ = r.ids();
     sim.beat_checksum_valid_ = false;
     sim.source_armies_.clear();
     const size_t sources = r.size(8);
@@ -610,9 +643,9 @@ void StateIO::load(StateReader& r, SimState& sim) {
         for (const auto& [id, f] : sim.occupied_footprints_)
             sim.pathfinding_grid_->clear_obstacle(f.x, f.z, f.size_x, f.size_z);
     sim.occupied_footprints_.clear();
-    const size_t footprints = r.size(20);
+    const size_t footprints = r.size(24);
     for (size_t i = 0; i < footprints; ++i) {
-        const u32 id = r.u32v();
+        const EntityId id = r.id();
         SimState::Footprint f{};
         f.x = r.f32v();
         f.z = r.f32v();
@@ -627,9 +660,9 @@ void StateIO::load(StateReader& r, SimState& sim) {
                          ? OccupancyGrid(sim.terrain_->map_width(), sim.terrain_->map_height())
                          : OccupancyGrid();
     sim.ground_occupants_.clear();
-    const size_t occupants = r.size(9);
+    const size_t occupants = r.size(13);
     for (size_t i = 0; i < occupants; ++i) {
-        const u32 id = r.u32v();
+        const EntityId id = r.id();
         GroundOccupant g;
         g.caps = r.u8v();
         g.rects.resize(r.size(16));
@@ -658,9 +691,9 @@ void StateIO::load(StateReader& r, SimState& sim) {
         sim.pathfinder_ = std::make_unique<map::Pathfinder>(*sim.pathfinding_grid_);
     sim.stored_to_destroy_.clear();
     sim.painted_intel_.clear();
-    const size_t painted = r.size(4 + 4 + kIntelSources * 21 + 17);
+    const size_t painted = r.size(8 + 4 + kIntelSources * 21 + 17);
     for (size_t i = 0; i < painted && r.ok(); ++i) {
-        PaintedIntel& p = sim.painted_intel_[r.u32v()];
+        PaintedIntel& p = sim.painted_intel_[r.id()];
         p.army = r.i32v();
         for (IntelHandle& h : p.handles) {
             h.radius = r.u32v();
@@ -707,9 +740,9 @@ void StateIO::load(StateReader& r, SimState& sim) {
         v.painted = r.b();
     }
     sim.entity_intel_.clear();
-    const size_t intel = r.size(12);
+    const size_t intel = r.size(16);
     for (size_t i = 0; i < intel && r.ok(); ++i) {
-        auto& e = sim.entity_intel_[r.u32v()];
+        auto& e = sim.entity_intel_[r.id()];
         e.army = r.i32v();
         const size_t n = r.size(9);
         for (size_t k = 0; k < n; ++k) {
@@ -730,6 +763,8 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.fog_mode_ = enum8<FogMode>(r);
     sim.no_rush_seconds_ = r.f32v();
     sim.no_rush_radius_ = r.f32v();
+    sim.con_vars_.no_damage = r.b();
+    sim.con_vars_.run_opponent_ai = r.b();
     sim.camera_shake_events_.clear();
     sim.camera_follow_events_.clear();
     sim.death_events_.clear();
@@ -750,9 +785,9 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.has_playable_rect_ = r.b();
     sim.placement_rules_.clear();
     sim.prev_entity_vis_.clear();
-    const size_t vis = r.size(4 + 4 * SimState::MAX_VIS_ARMIES);
+    const size_t vis = r.size(8 + 4 * SimState::MAX_VIS_ARMIES);
     for (size_t i = 0; i < vis && r.ok(); ++i) {
-        auto& snaps = sim.prev_entity_vis_[r.u32v()];
+        auto& snaps = sim.prev_entity_vis_[r.id()];
         for (SimState::EntityVisSnapshot& s : snaps) {
             s.vision = r.b();
             s.radar = r.b();
@@ -761,9 +796,9 @@ void StateIO::load(StateReader& r, SimState& sim) {
         }
     }
     sim.los_ever_.clear();
-    const size_t los = r.size(8);
+    const size_t los = r.size(12);
     for (size_t i = 0; i < los; ++i) {
-        const u32 id = r.u32v();
+        const EntityId id = r.id();
         sim.los_ever_[id] = r.u32v();
     }
     sim.jam_offsets_.clear();
@@ -781,9 +816,9 @@ void StateIO::load(StateReader& r, SimState& sim) {
         }
     }
     sim.blip_cache_.clear();
-    const size_t blips = r.size(4 + 21 * SimState::MAX_VIS_ARMIES);
+    const size_t blips = r.size(8 + 21 * SimState::MAX_VIS_ARMIES);
     for (size_t i = 0; i < blips && r.ok(); ++i) {
-        auto& snaps = sim.blip_cache_[r.u32v()];
+        auto& snaps = sim.blip_cache_[r.id()];
         for (BlipSnapshot& s : snaps) {
             s.last_known_position = r.vec3();
             s.blueprint_id = r.str();
@@ -792,8 +827,10 @@ void StateIO::load(StateReader& r, SimState& sim) {
         }
     }
     sim.blip_objects_.clear();
-    const size_t blip_objects = r.size(4);
-    for (size_t i = 0; i < blip_objects; ++i) sim.blip_objects_.insert(r.u32v());
+    const size_t blip_objects = r.size(8);
+    for (size_t i = 0; i < blip_objects; ++i) {
+        sim.blip_objects_.insert(r.id());
+    }
     // The grids, from what is painted (the fog of war, the armies and the
     // painted intel all loaded by now)
     sim.intel_grids_.reset();
