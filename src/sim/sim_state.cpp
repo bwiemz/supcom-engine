@@ -1378,12 +1378,7 @@ bool SimState::target_allowed(const Unit& unit, const UnitCommand& command) cons
                 at.z > static_cast<f32>(terrain_->map_height()))) {
         return false;
     }
-    if (!brain || !no_rush_active()) {
-        return true;
-    }
-    const f32 dx = brain->start_position().x - at.x;
-    const f32 dz = brain->start_position().z - at.z;
-    return std::sqrt(dx * dx + dz * dz) <= no_rush_radius_;
+    return !outside_no_rush(unit.army(), at);
 }
 
 bool SimState::repeats_only_order(const Unit& unit, const UnitCommand& order,
@@ -1750,16 +1745,12 @@ void SimState::apply_factory_command(const std::vector<EntityId>& unit_ids,
                                      const UnitCommand& command, bool clear_existing) {
     UnitCommand rally = command;
     rally.factory = false;
-    const bool no_rush = no_rush_active();
     for (const EntityId id : unit_ids) {
         Entity* e = entity_registry_.find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto& unit = static_cast<Unit&>(*e);
-        if (!unit.keeps_rally_orders()) continue;
-        // Moho passes over a factory whose rally point No Rush forbids.
-        if (no_rush) {
-            const Vector3 in_zone = clamp_to_no_rush(unit, rally.target_pos);
-            if (in_zone.x != rally.target_pos.x || in_zone.z != rally.target_pos.z) continue;
+        if (!unit.keeps_rally_orders() || outside_no_rush(unit.army(), rally.target_pos)) {
+            continue;
         }
         if (clear_existing) unit.clear_rally_orders();
         unit.add_rally_order(rally);
@@ -2136,42 +2127,14 @@ void SimState::dispatch_due_commands() {
     });
 }
 
-Vector3 SimState::clamp_to_no_rush(const Unit& unit, const Vector3& target) const {
-    const ArmyBrain* brain = army_at(static_cast<size_t>(unit.army()));
-    if (!brain) return target;
-    const Vector3& c = brain->start_position();
-    f32 dx = target.x - c.x;
-    f32 dz = target.z - c.z;
-    f32 dist_sq = dx * dx + dz * dz;
-    if (dist_sq <= no_rush_radius_ * no_rush_radius_) return target;
-    f32 scale = no_rush_radius_ / std::sqrt(dist_sq);
-    Vector3 clamped = target;
-    clamped.x = c.x + dx * scale;
-    clamped.z = c.z + dz * scale;
-    return clamped;
-}
-
-void SimState::enforce_no_rush() {
-    if (!no_rush_active()) return;
-    PROFILE_ZONE("Sim::no_rush");
-    entity_registry_.for_each_unit([&](Entity& e) {
-        if (e.destroyed() || !e.is_unit()) return;
-        auto* unit = static_cast<Unit*>(&e);
-        const ArmyBrain* brain = army_at(static_cast<size_t>(unit->army()));
-        if (!brain || brain->is_civilian()) return; // wildlife/props aren't confined
-        const Vector3& c = brain->start_position();
-        const Vector3& p = unit->pending_position();
-        f32 dx = p.x - c.x;
-        f32 dz = p.z - c.z;
-        f32 dist_sq = dx * dx + dz * dz;
-        if (dist_sq <= no_rush_radius_ * no_rush_radius_) return;
-        // Pin the unit at the no-rush boundary.
-        f32 scale = no_rush_radius_ / std::sqrt(dist_sq);
-        Vector3 pinned = p;
-        pinned.x = c.x + dx * scale;
-        pinned.z = c.z + dz * scale;
-        unit->set_position(pinned);
-    });
+bool SimState::outside_no_rush(i32 army, const Vector3& at) const {
+    const ArmyBrain* brain = army >= 0 ? army_at(static_cast<size_t>(army)) : nullptr;
+    if (!brain || !no_rush_active()) {
+        return false;
+    }
+    const f32 dx = brain->start_position().x + brain->no_rush_offset().x - at.x;
+    const f32 dz = brain->start_position().z + brain->no_rush_offset().z - at.z;
+    return std::sqrt(dx * dx + dz * dz) > no_rush_radius_;
 }
 
 void SimState::tick() {
@@ -2259,7 +2222,6 @@ void SimState::advance_tick() {
     sweep_ferry_beacons();
 
     // "No Rush": pin units that strayed beyond their confinement radius.
-    enforce_no_rush();
     refollow_attached();
 
     update_visibility();

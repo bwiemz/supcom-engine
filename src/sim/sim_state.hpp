@@ -700,8 +700,9 @@ public:
     void set_fog_of_war(const std::string& mode);
     FogMode fog_mode() const { return fog_mode_; }
 
-    /// "No Rush" rule: for the first `seconds` of game time, units are confined
-    /// within `radius` of their army's start position. seconds <= 0 disables it.
+    /// "No Rush" for the first `seconds` of game time (<= 0: none), each army's
+    /// zone `radius` about its start and its no_rush_offset (Moho's
+    /// CArmyImpl no-rush fields).
     void set_no_rush(f32 seconds, f32 radius);
     f32 no_rush_seconds() const { return no_rush_seconds_; }
     f32 no_rush_radius() const { return no_rush_radius_; }
@@ -709,9 +710,9 @@ public:
         return no_rush_seconds_ > 0.0f &&
                static_cast<f32>(game_time_) < no_rush_seconds_;
     }
-    /// Clamp a Move/Attack target to a unit's no-rush zone when the rule is
-    /// active. Returns the (possibly clamped) position.
-    Vector3 clamp_to_no_rush(const Unit& unit, const Vector3& target) const;
+    /// Whether `at` lies outside army `army`'s No Rush zone while No Rush
+    /// runs (Moho's IsOutsideArmyNoRushRadius).
+    bool outside_no_rush(i32 army, const Vector3& at) const;
 
     /// The army the player plays and watches (SetFocusArmy; -1 an observer):
     /// Moho's sync filter's focus army.
@@ -1146,7 +1147,6 @@ private:
     /// A Stop order given with clearing: the unit drops its orders, and the
     /// one under way (a factory's build, an enhancement), then stops.
     void stop_unit(Unit& unit);
-    void enforce_no_rush();
     /// Moho's CArmyImpl::CleanUpPlatoons, each army's at the start of the
     /// tick: a platoon without a unique name that holds no unit, and a
     /// DisbandOnIdle one whose squads are idle (its units go back to the

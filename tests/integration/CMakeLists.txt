@@ -101,6 +101,7 @@ add_executable(osc_integration
     runner/notify_upgrade_test.cpp
     runner/upgrade_orders_test.cpp
     runner/issue_checks_test.cpp
+    runner/no_rush_test.cpp
     runner/need_unpack_test.cpp
     runner/guard_engage_test.cpp
     runner/rebuilder_guard_test.cpp
@@ -509,6 +510,19 @@ if(Python3_Interpreter_FOUND)
                          "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
     endif()
     set_tests_properties(data.issue-checks_faf PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
+    if(_osc_faf_data)
+        add_test(NAME data.no-rush_faf
+                 COMMAND osc_integration --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP}
+                         --no-rush-test)
+    else()
+        add_test(NAME data.no-rush_faf
+                 COMMAND ${Python3_EXECUTABLE} -c
+                         "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
+    endif()
+    set_tests_properties(data.no-rush_faf PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 600)

@@ -277,6 +277,7 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
         }
     }
     w.vec3(a.start_position_);
+    w.vec3(a.no_rush_offset_);
     w.size(a.build_reservations_.size());
     for (const auto& [cell, reservation] : a.build_reservations_) {
         w.i32v(cell.first);
@@ -372,6 +373,7 @@ void StateIO::load(StateReader& r, ArmyBrain& a, SimState& sim) {
         a.alliances_[army] = enum32<Alliance>(r);
     }
     a.start_position_ = r.vec3();
+    a.no_rush_offset_ = r.vec3();
     a.build_reservations_.clear();
     const size_t reservations = r.size(16);
     for (size_t i = 0; i < reservations; ++i) {
