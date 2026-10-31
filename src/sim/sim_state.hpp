@@ -583,9 +583,14 @@ public:
     void set_issuing_source(u32 source) { issuing_source_ = source; }
     /// Whether `unit` takes `command` as it is issued: Moho checks each unit
     /// of an order and leaves out one that can't carry it out
-    /// (func_ProcessUnitCommand). Checked here for Guard and Reclaim so far.
+    /// (func_ProcessUnitCommand). Checked here for some of its order types.
     bool takes_command(const Unit& unit, const UnitCommand& command,
                        bool clear_existing = false) const;
+    /// As above, for a queue that ends in `last` (null when empty): with the
+    /// orders not yet applied. `rejected`: set when a load is refused because
+    /// the transport can't carry the unit.
+    bool takes_command(const Unit& unit, const UnitCommand& command, bool clear_existing,
+                       const UnitCommand* last, bool* rejected = nullptr) const;
     /// An Attack's target point, drawn as the order is made: one for all its
     /// units (Moho's CAiTarget::UpdateTarget, Unit::PickTargetPoint).
     void pick_target_point(UnitCommand& command);
@@ -695,8 +700,9 @@ public:
     void set_fog_of_war(const std::string& mode);
     FogMode fog_mode() const { return fog_mode_; }
 
-    /// "No Rush" rule: for the first `seconds` of game time, units are confined
-    /// within `radius` of their army's start position. seconds <= 0 disables it.
+    /// "No Rush" for the first `seconds` of game time (<= 0: none), each army's
+    /// zone `radius` about its start and its no_rush_offset (Moho's
+    /// CArmyImpl no-rush fields).
     void set_no_rush(f32 seconds, f32 radius);
     f32 no_rush_seconds() const { return no_rush_seconds_; }
     f32 no_rush_radius() const { return no_rush_radius_; }
@@ -704,9 +710,9 @@ public:
         return no_rush_seconds_ > 0.0f &&
                static_cast<f32>(game_time_) < no_rush_seconds_;
     }
-    /// Clamp a Move/Attack target to a unit's no-rush zone when the rule is
-    /// active. Returns the (possibly clamped) position.
-    Vector3 clamp_to_no_rush(const Unit& unit, const Vector3& target) const;
+    /// Whether `at` lies outside army `army`'s No Rush zone while No Rush
+    /// runs (Moho's IsOutsideArmyNoRushRadius).
+    bool outside_no_rush(i32 army, const Vector3& at) const;
 
     /// The army the player plays and watches (SetFocusArmy; -1 an observer):
     /// Moho's sync filter's focus army.
@@ -728,6 +734,9 @@ public:
     /// `damage_type`: the type OnKilled is given, as Moho's own Unit::Kill
     /// passes one (no instigator, no excess); none: a script's bare Kill().
     void kill_unit(Unit& unit, const char* damage_type = nullptr);
+    /// Whether a KillSelf order takes `unit`: finished, and its script's
+    /// CheckCanBeKilled agrees (Moho's ProcessIssuedUnitCommand).
+    bool takes_kill_self(Unit& unit);
 
     /// Number of alliance-connected "teams" still in the game (non-civilian,
     /// non-defeated armies grouped by their alliance graph). Exposed for tests
@@ -1058,6 +1067,19 @@ public:
                                        const Vector3& destination) const;
 
 private:
+    /// Whether an order's target lies where Moho's ProcessIssuedUnitCommand
+    /// lets the unit's army send it: on the map (STIMap::IsWithin) and in its
+    /// No Rush zone.
+    bool target_allowed(const Unit& unit, const UnitCommand& command) const;
+    /// Whether a cleared `order` to `unit_ids` repeats the unit's only order,
+    /// which Moho's ProcessIssuedUnitCommand then drops.
+    bool repeats_only_order(const Unit& unit, const UnitCommand& order,
+                            const std::vector<EntityId>& unit_ids) const;
+    /// Whether `unit` takes `order` as it is issued to `unit_ids` (Moho's
+    /// UNIT_IssueCommand): a transport that can't carry it hears
+    /// OnTransportReject, and past 500 orders a queued one is not taken.
+    bool issue_takes(Unit& unit, const UnitCommand& order, bool clear_existing,
+                     const std::vector<EntityId>& unit_ids);
     /// `pos` kept to the playable area (clamp_to_playable(pos, army)'s
     /// case for an army that keeps to it).
     Vector3 clamp_to_playable(const Vector3& pos) const {
@@ -1125,7 +1147,6 @@ private:
     /// A Stop order given with clearing: the unit drops its orders, and the
     /// one under way (a factory's build, an enhancement), then stops.
     void stop_unit(Unit& unit);
-    void enforce_no_rush();
     /// Moho's CArmyImpl::CleanUpPlatoons, each army's at the start of the
     /// tick: a platoon without a unique name that holds no unit, and a
     /// DisbandOnIdle one whose squads are idle (its units go back to the

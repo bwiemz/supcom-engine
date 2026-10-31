@@ -1195,7 +1195,8 @@ u32 SimState::route_command(const std::vector<EntityId>& unit_ids, const UnitCom
         auto* unit = static_cast<Unit*>(e);
         if (cmd.type == CommandType::Stop && clear_existing) {
             stop_unit(*unit);
-        } else if (!apply_silo_build(*unit, cmd) && takes_command(*unit, cmd, clear_existing)) {
+        } else if (!apply_silo_build(*unit, cmd) &&
+                   issue_takes(*unit, issued, clear_existing, unit_ids)) {
             if (clear_existing) {
                 SimContext ctx = sim_context();
                 unit->clear_commands(ctx);
@@ -1212,35 +1213,51 @@ u32 SimState::route_command(const std::vector<EntityId>& unit_ids, const UnitCom
 
 namespace {
 
-bool boards(const EntityRegistry& registry, const Unit& unit, EntityId target_id) {
+EntityId ferry_beacon_of(const Unit& unit) {
+    return unit.command_queue().empty() ? EntityId{} : unit.command_queue().front().beacon_id;
+}
+
+enum class Boarding : u8 { Takes, Refuses, Rejects };
+
+Boarding boarding(const EntityRegistry& registry, const Unit& unit, EntityId target_id) {
     const Entity* e = target_id ? registry.find(target_id) : nullptr;
     if (!e || !e->is_unit()) {
-        return true;
+        return Boarding::Takes;
     }
     const auto& target = static_cast<const Unit&>(*e);
     if ((&target != &unit && !unit.has_command_cap("RULEUCC_CallTransport")) ||
         target.layer() == "Seabed") {
-        return false;
+        return Boarding::Refuses;
     }
     if (target.has_category("FERRYBEACON") ||
         (target.has_category("FACTORY") && !target.has_category("AIRSTAGINGPLATFORM") &&
          !target.has_category("TELEPORTATION"))) {
-        return unit.is_mobile() && !unit.has_category("TRANSPORTATION");
+        if (target.has_category("FERRYBEACON") && ferry_beacon_of(unit) == target.entity_id()) {
+            return Boarding::Refuses;
+        }
+        return unit.is_mobile() && !unit.has_category("TRANSPORTATION") ? Boarding::Takes
+                                                                        : Boarding::Refuses;
     }
     if (target.destroyed() || target.is_dying() || target.is_being_built() ||
         (!target.has_command_cap("RULEUCC_Transport") &&
          !target.has_category("PODSTAGINGPLATFORM"))) {
-        return false;
+        return Boarding::Refuses;
     }
     if (&target == &unit) {
-        return true;
+        return Boarding::Takes;
     }
     if (!unit.is_mobile() || unit.has_category("AIR") != target.is_staging_platform() ||
         (unit.has_category("COMMAND") && !target.has_category("CANTRANSPORTCOMMANDER"))) {
-        return false;
+        return Boarding::Rejects;
     }
     const TransportSlots* slots = const_cast<Unit&>(target).transport_slots();
-    return !slots || slots->can_carry_class(unit.transport_class());
+    return !slots || slots->can_carry_class(unit.transport_class()) ? Boarding::Takes
+                                                                    : Boarding::Rejects;
+}
+
+bool has_transport_ai(const Unit& unit) {
+    return unit.has_command_cap("RULEUCC_Transport") || unit.has_category("PODSTAGINGPLATFORM") ||
+           unit.is_staging_platform();
 }
 
 } // namespace
@@ -1255,28 +1272,268 @@ void SimState::pick_target_point(UnitCommand& command) {
     }
 }
 
+namespace {
+
+bool same_id(std::string_view a, std::string_view b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
+        return std::tolower(static_cast<unsigned char>(x)) ==
+               std::tolower(static_cast<unsigned char>(y));
+    });
+}
+
+std::string upgrade_link(lua_State* L, std::string_view bp, const char* link, const char* absent) {
+    const int top = lua_gettop(L);
+    std::string value;
+    if (blueprints::push_blueprint(L, bp)) {
+        lua_pushstring(L, "General");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, link);
+            lua_rawget(L, -2);
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                value.assign(lua_tostring(L, -1), lua_strlen(L, -1));
+            }
+        }
+    }
+    lua_settop(L, top);
+    return value.empty() ? std::string(absent) : value;
+}
+
+bool has_target(const UnitCommand& command) {
+    switch (command.type) {
+    case CommandType::Stop:
+    case CommandType::Dive:
+    case CommandType::BuildFactory:
+    case CommandType::Upgrade:
+    case CommandType::Enhance:
+    case CommandType::SiloBuildNuke:
+    case CommandType::SiloBuildTactical: return false;
+    default:
+        return static_cast<bool>(command.target_id) || command.target_pos.x != 0.0f ||
+               command.target_pos.y != 0.0f || command.target_pos.z != 0.0f;
+    }
+}
+
+const Unit* carrier_of(const EntityRegistry& registry, const Unit& unit) {
+    const Entity* e = unit.transport_id() ? registry.find(unit.transport_id()) : nullptr;
+    return e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
+}
+
+bool takes_upgrade(lua_State* L, const blueprints::BlueprintStore* store, const Unit& unit,
+                   const UnitCommand& command, const UnitCommand* last) {
+    const auto* to = store ? store->find(command.blueprint_id) : nullptr;
+    if (!to || to->type != blueprints::BlueprintType::Unit) {
+        return false;
+    }
+    const std::string& from = unit.blueprint_id();
+    const std::string seed = upgrade_link(L, to->id, "SeedUnit", "");
+    if (!seed.empty()) {
+        if (!same_id(from, seed)) {
+            return false;
+        }
+    } else {
+        const std::string upgrades_to = upgrade_link(L, from, "UpgradesTo", "");
+        if (upgrades_to.empty()) {
+            return false;
+        }
+        const std::string base = upgrade_link(L, to->id, "UpgradesFromBase", "none");
+        if (!same_id(base, "none")) {
+            if (!same_id(from, base) &&
+                !same_id(upgrade_link(L, from, "UpgradesFromBase", "none"), base)) {
+                return false;
+            }
+        } else if (!same_id(upgrades_to, to->id) &&
+                   !same_id(upgrades_to, upgrade_link(L, to->id, "UpgradesFrom", "none"))) {
+            return false;
+        }
+    }
+    return !last || last->type != CommandType::Upgrade || !same_id(last->blueprint_id, to->id);
+}
+
+} // namespace
+
+bool SimState::target_allowed(const Unit& unit, const UnitCommand& command) const {
+    if (!has_target(command)) {
+        return true;
+    }
+    Vector3 at = command.target_pos;
+    if (const Entity* e = command.target_id ? entity_registry_.find(command.target_id) : nullptr;
+        e && !e->destroyed()) {
+        at = e->position();
+    }
+    const ArmyBrain* brain = unit.army() >= 0 ? army_at(static_cast<size_t>(unit.army())) : nullptr;
+    if (brain && brain->use_whole_map()) {
+        if (terrain_ &&
+            (at.x < 0.0f || at.z < 0.0f || at.x >= static_cast<f32>(terrain_->map_width()) ||
+             at.z >= static_cast<f32>(terrain_->map_height()))) {
+            return false;
+        }
+    } else if (has_playable_rect_) {
+        if (at.x < playable_x0_ || at.z < playable_z0_ || at.x > playable_x1_ ||
+            at.z > playable_z1_) {
+            return false;
+        }
+    } else if (terrain_ &&
+               (at.x < 0.0f || at.z < 0.0f || at.x > static_cast<f32>(terrain_->map_width()) ||
+                at.z > static_cast<f32>(terrain_->map_height()))) {
+        return false;
+    }
+    return !outside_no_rush(unit.army(), at);
+}
+
+bool SimState::repeats_only_order(const Unit& unit, const UnitCommand& order,
+                                  const std::vector<EntityId>& unit_ids) const {
+    switch (order.type) {
+    case CommandType::Move:
+    case CommandType::Attack:
+    case CommandType::Patrol:
+    case CommandType::Reclaim:
+    case CommandType::Repair:
+    case CommandType::Capture:
+    case CommandType::TransportLoad:
+    case CommandType::WaitForFerry:
+    case CommandType::Upgrade:
+    case CommandType::Sacrifice:
+    case CommandType::AggressiveMove:
+    case CommandType::Dock: break;
+    default: return false;
+    }
+    const auto& queue = unit.command_queue();
+    if (queue.size() != 1 || queue.front().type != order.type) {
+        return false;
+    }
+    const UnitCommand& current = queue.front();
+    if (order.target_id) {
+        if (order.target_id != current.target_id) {
+            return false;
+        }
+    } else if (has_target(order)) {
+        const f32 dx = order.target_pos.x - current.target_pos.x;
+        const f32 dy = order.target_pos.y - current.target_pos.y;
+        const f32 dz = order.target_pos.z - current.target_pos.z;
+        if (std::sqrt(dx * dx + dy * dy + dz * dz) >= 0.001f) {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    std::vector<EntityId> holders;
+    entity_registry_.for_each_unit([&](const Entity& e) {
+        const auto& q = static_cast<const Unit&>(e).command_queue();
+        if (!e.destroyed() && std::any_of(q.begin(), q.end(), [&](const UnitCommand& c) {
+                return c.command_id == current.command_id;
+            })) {
+            holders.push_back(e.entity_id());
+        }
+    });
+    std::vector<EntityId> ordered = unit_ids;
+    std::sort(holders.begin(), holders.end());
+    std::sort(ordered.begin(), ordered.end());
+    ordered.erase(std::unique(ordered.begin(), ordered.end()), ordered.end());
+    return holders == ordered;
+}
+
+bool SimState::issue_takes(Unit& unit, const UnitCommand& order, bool clear_existing,
+                           const std::vector<EntityId>& unit_ids) {
+    if (clear_existing && repeats_only_order(unit, order, unit_ids)) {
+        return false;
+    }
+    const auto& queue = unit.command_queue();
+    bool rejected = false;
+    if (!takes_command(unit, order, clear_existing, queue.empty() ? nullptr : &queue.back(),
+                       &rejected)) {
+        Entity* transport = rejected ? entity_registry_.find(order.target_id) : nullptr;
+        if (transport && transport->is_unit()) {
+            static_cast<Unit*>(transport)->call_lua_method(L_, "OnTransportReject");
+        }
+        return false;
+    }
+    return clear_existing || queue.size() <= 500;
+}
+
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
                              bool clear_existing) const {
+    const auto& queue = unit.command_queue();
+    return takes_command(unit, command, clear_existing, queue.empty() ? nullptr : &queue.back());
+}
+
+bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool clear_existing,
+                             const UnitCommand* last, bool* rejected) const {
     if (unit.is_being_built() && !unit.takes_orders_unfinished()) {
+        return false;
+    }
+    if (!target_allowed(unit, command)) {
         return false;
     }
     if (clear_existing && command.type != CommandType::Stop && unit.has_unit_state("Enhancing")) {
         return false;
     }
+    const Unit* carrier = carrier_of(entity_registry_, unit);
+    const bool pod = unit.has_category("POD");
+    const bool may_leave = !carrier || pod || carrier->has_category("CARRIER");
     if (command.type == CommandType::Move || command.type == CommandType::Patrol ||
         command.type == CommandType::AggressiveMove) {
-        return unit.motion_type() != "RULEUMT_None";
+        return may_leave && unit.motion_type() != "RULEUMT_None" && has_target(command) &&
+               !std::isnan(command.target_pos.x) && !std::isnan(command.target_pos.y) &&
+               !std::isnan(command.target_pos.z);
+    }
+    if (command.type == CommandType::Dive) {
+        return unit.motion_type() == "RULEUMT_SurfacingSub";
+    }
+    if (command.type == CommandType::Teleport) {
+        return unit.has_command_cap("RULEUCC_Teleport");
+    }
+    if (command.type == CommandType::Overcharge) {
+        return unit.has_command_cap("RULEUCC_Overcharge");
+    }
+    if (command.type == CommandType::Ferry) {
+        return !carrier && unit.has_category("TRANSPORTATION") && has_transport_ai(unit);
+    }
+    if (command.type == CommandType::TransportUnload) {
+        return unit.layer() != "Seabed" && (carrier || has_transport_ai(unit));
     }
     if (command.type == CommandType::BuildMobile || command.type == CommandType::BuildFactory) {
         return unit.has_category("FACTORY") || unit.has_category("ENGINEER") ||
                unit.has_category("NEEDMOBILEBUILD") || unit.has_category("POD");
     }
-    const char* needs = command.type == CommandType::Reclaim   ? "RECLAIM"
-                        : command.type == CommandType::Capture ? "CAPTURE"
-                        : command.type == CommandType::Repair  ? "REPAIR"
-                                                               : nullptr;
-    if (needs && (!unit.has_category(needs) || (unit.transport_id() && unit.has_category("POD")))) {
+    if (command.type == CommandType::Upgrade) {
+        return takes_upgrade(L_, blueprint_store_, unit, command, last);
+    }
+    const char* needs = command.type == CommandType::Reclaim     ? "RECLAIM"
+                        : command.type == CommandType::Capture   ? "CAPTURE"
+                        : command.type == CommandType::Repair    ? "REPAIR"
+                        : command.type == CommandType::Sacrifice ? "REPAIR"
+                                                                 : nullptr;
+    if (needs && (!unit.has_category(needs) || (carrier && !pod))) {
         return false;
+    }
+    const Entity* target_entity =
+        command.target_id ? entity_registry_.find(command.target_id) : nullptr;
+    if (target_entity && target_entity->destroyed()) {
+        target_entity = nullptr;
+    }
+    if (command.type == CommandType::Capture) {
+        if (!target_entity) {
+            return true;
+        }
+        const Unit* target =
+            target_entity->is_unit() ? static_cast<const Unit*>(target_entity) : nullptr;
+        if (!target || !target->capturable() || target->is_dying() || target->is_being_built()) {
+            return false;
+        }
+        const ArmyBrain* owner =
+            target->army() >= 0 ? army_at(static_cast<size_t>(target->army())) : nullptr;
+        return !owner || !owner->is_ally(unit.army());
+    }
+    if (command.type == CommandType::Repair || command.type == CommandType::Sacrifice) {
+        if (!target_entity || target_entity == &unit ||
+            (command.type == CommandType::Sacrifice &&
+             !unit.has_command_cap("RULEUCC_Sacrifice"))) {
+            return false;
+        }
+        const ArmyBrain* own =
+            unit.army() >= 0 ? army_at(static_cast<size_t>(unit.army())) : nullptr;
+        return !own || target_entity->army() < 0 || !own->is_enemy(target_entity->army());
     }
     if (command.type == CommandType::Attack) {
         if (!unit.is_mobile() && std::all_of(unit.weapons().begin(), unit.weapons().end(),
@@ -1296,16 +1553,19 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
     }
     if (command.type == CommandType::TransportLoad || command.type == CommandType::Dock ||
         command.type == CommandType::WaitForFerry) {
-        return !unit.transport_id() && boards(entity_registry_, unit, command.target_id);
+        if (unit.transport_id()) {
+            return false;
+        }
+        const Boarding boards = boarding(entity_registry_, unit, command.target_id);
+        if (rejected) {
+            *rejected = boards == Boarding::Rejects;
+        }
+        return boards == Boarding::Takes;
     }
     if (command.type != CommandType::Guard) return true;
-    // A pod, or a unit a carrier holds, guards nothing; nor does a unit
-    // without the order.
-    const Entity* by = unit.transport_id() ? entity_registry_.find(unit.transport_id()) : nullptr;
-    if (by && by->is_unit() &&
-        (static_cast<const Unit*>(by)->has_category("CARRIER") || unit.has_category("POD")))
+    if (!may_leave || !unit.has_command_cap("RULEUCC_Guard")) {
         return false;
-    if (!unit.has_command_cap("RULEUCC_Guard")) return false;
+    }
     const Entity* e = command.target_id ? entity_registry_.find(command.target_id) : nullptr;
     const Unit* target = e && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
     if (!target) return unit.is_mobile(); // a place to guard: only a mobile unit goes
@@ -1314,6 +1574,9 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
     // unit guarding itself, which a campaign's base manager asks for, left
     // one walking forever.
     if (target == &unit) return false;
+    if (target->has_category("FERRYBEACON") && ferry_beacon_of(unit) == target->entity_id()) {
+        return false;
+    }
     if (unit.has_category("FACTORY") && !target->has_category("FACTORY")) return false;
     return target->guarded_unit_id() != unit.entity_id();
 }
@@ -1437,7 +1700,8 @@ std::map<EntityId, SimState::QueueWithPending> SimState::queues_with_pending() c
             }
             if (cmd.type == CommandType::SiloBuildNuke ||
                 cmd.type == CommandType::SiloBuildTactical ||
-                !takes_command(*unit, cmd, scheduled.clear_existing)) {
+                !takes_command(*unit, cmd, scheduled.clear_existing,
+                               queue.orders.empty() ? nullptr : &queue.orders.back())) {
                 continue;
             }
             if (scheduled.clear_existing) {
@@ -1481,16 +1745,12 @@ void SimState::apply_factory_command(const std::vector<EntityId>& unit_ids,
                                      const UnitCommand& command, bool clear_existing) {
     UnitCommand rally = command;
     rally.factory = false;
-    const bool no_rush = no_rush_active();
     for (const EntityId id : unit_ids) {
         Entity* e = entity_registry_.find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto& unit = static_cast<Unit&>(*e);
-        if (!unit.keeps_rally_orders()) continue;
-        // Moho passes over a factory whose rally point No Rush forbids.
-        if (no_rush) {
-            const Vector3 in_zone = clamp_to_no_rush(unit, rally.target_pos);
-            if (in_zone.x != rally.target_pos.x || in_zone.z != rally.target_pos.z) continue;
+        if (!unit.keeps_rally_orders() || outside_no_rush(unit.army(), rally.target_pos)) {
+            continue;
         }
         if (clear_existing) unit.clear_rally_orders();
         unit.add_rally_order(rally);
@@ -1759,7 +2019,6 @@ void SimState::terminate_command_source(u32 source) {
 
 void SimState::dispatch_due_commands() {
     PROFILE_ZONE("Sim::commands");
-    const bool no_rush = no_rush_active();
     command_scheduler_.dispatch_due(beat_count_, [&](const ScheduledCommand& scheduled) {
         ScheduledCommand sc = scheduled;
         // Its source runs it, as Moho's sim plays a source's part of the
@@ -1851,15 +2110,11 @@ void SimState::dispatch_due_commands() {
                 unit->cancel_enhance(L_);
                 if (unit->destroyed()) continue;
             }
-            // During No Rush, clamp movement/attack goals into the unit's zone
-            // so scheduler-routed orders stop cleanly at the line.
-            if (no_rush && (cmd.type == CommandType::Move ||
-                            cmd.type == CommandType::Attack)) {
-                cmd.target_pos = clamp_to_no_rush(*unit, cmd.target_pos);
-            }
             // Each selected unit independently replaces (fresh order) or
             // appends (queued/shift) — matching the Issue* bindings.
-            if (!takes_command(*unit, cmd, sc.clear_existing)) continue;
+            if (!issue_takes(*unit, base, sc.clear_existing, sc.unit_ids)) {
+                continue;
+            }
             if (sc.clear_existing) {
                 SimContext ctx = sim_context();
                 unit->clear_commands(ctx);
@@ -1872,42 +2127,14 @@ void SimState::dispatch_due_commands() {
     });
 }
 
-Vector3 SimState::clamp_to_no_rush(const Unit& unit, const Vector3& target) const {
-    const ArmyBrain* brain = army_at(static_cast<size_t>(unit.army()));
-    if (!brain) return target;
-    const Vector3& c = brain->start_position();
-    f32 dx = target.x - c.x;
-    f32 dz = target.z - c.z;
-    f32 dist_sq = dx * dx + dz * dz;
-    if (dist_sq <= no_rush_radius_ * no_rush_radius_) return target;
-    f32 scale = no_rush_radius_ / std::sqrt(dist_sq);
-    Vector3 clamped = target;
-    clamped.x = c.x + dx * scale;
-    clamped.z = c.z + dz * scale;
-    return clamped;
-}
-
-void SimState::enforce_no_rush() {
-    if (!no_rush_active()) return;
-    PROFILE_ZONE("Sim::no_rush");
-    entity_registry_.for_each_unit([&](Entity& e) {
-        if (e.destroyed() || !e.is_unit()) return;
-        auto* unit = static_cast<Unit*>(&e);
-        const ArmyBrain* brain = army_at(static_cast<size_t>(unit->army()));
-        if (!brain || brain->is_civilian()) return; // wildlife/props aren't confined
-        const Vector3& c = brain->start_position();
-        const Vector3& p = unit->pending_position();
-        f32 dx = p.x - c.x;
-        f32 dz = p.z - c.z;
-        f32 dist_sq = dx * dx + dz * dz;
-        if (dist_sq <= no_rush_radius_ * no_rush_radius_) return;
-        // Pin the unit at the no-rush boundary.
-        f32 scale = no_rush_radius_ / std::sqrt(dist_sq);
-        Vector3 pinned = p;
-        pinned.x = c.x + dx * scale;
-        pinned.z = c.z + dz * scale;
-        unit->set_position(pinned);
-    });
+bool SimState::outside_no_rush(i32 army, const Vector3& at) const {
+    const ArmyBrain* brain = army >= 0 ? army_at(static_cast<size_t>(army)) : nullptr;
+    if (!brain || !no_rush_active()) {
+        return false;
+    }
+    const f32 dx = brain->start_position().x + brain->no_rush_offset().x - at.x;
+    const f32 dz = brain->start_position().z + brain->no_rush_offset().z - at.z;
+    return std::sqrt(dx * dx + dz * dz) > no_rush_radius_;
 }
 
 void SimState::tick() {
@@ -1995,7 +2222,6 @@ void SimState::advance_tick() {
     sweep_ferry_beacons();
 
     // "No Rush": pin units that strayed beyond their confinement radius.
-    enforce_no_rush();
     refollow_attached();
 
     update_visibility();
@@ -3621,6 +3847,10 @@ void SimState::defeat_army(i32 army) {
     b->set_state(BrainState::Defeat);
     dispose_defeated_army(army);
     spdlog::info("Army {} ({}) defeated (player drop)", army, b->name());
+}
+
+bool SimState::takes_kill_self(Unit& unit) {
+    return !unit.is_being_built() && script_says(L_, unit, "CheckCanBeKilled");
 }
 
 void SimState::kill_unit(Unit& unit, const char* damage_type) {

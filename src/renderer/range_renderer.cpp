@@ -72,7 +72,7 @@ RangeScene collect_range_scene(const RangeOverlays& overlays, const sim::FrameVi
     }
     const sim::ArmyRecord* army = snap->army(focus_army);
     if (snap->no_rush_radius > 0.0f && army && army->valid)
-        scene.no_rush = RangeRing{army->start_x, army->start_z, 0.0f, snap->no_rush_radius};
+        scene.no_rush = RangeRing{army->no_rush_x, army->no_rush_z, 0.0f, snap->no_rush_radius};
     return scene;
 }
 
