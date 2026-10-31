@@ -24,10 +24,9 @@ Certainty tags: **[read]** read from faf-re code; **[probe]** measured on retail
 ## 1. Moho's rule
 
 1. **Registration merges the typed copy back** **[read]**:
-   - FR `sim/Sim.cpp` `RegisterUnitBlueprintFromState` (0x00528B90) calls `InitUnitBlueprintFromLua`.
-   - That function, like `RBlueprint::InitBlueprint` (0x0050DF10), runs `SCR_LuaBuildObject` over the
-     table, then the class's `OnInitBlueprint`, then `SCR_RObjectToLuaMerge` (0x004CF0B0) from the copy
-     back into the table.
+   - FR `sim/Sim.cpp` `RegisterUnitBlueprintFromState` calls `InitUnitBlueprintFromLua`.
+   - That function, like `RBlueprint::InitBlueprint`, runs `SCR_LuaBuildObject` over the table, then
+     the class's `OnInitBlueprint`, then `SCR_RObjectToLuaMerge` from the copy back into the table.
    - The merge happens inside the `RegisterUnitBlueprint` call, so scripts see it as soon as that call
      returns.
 2. **The merge writes reflected fields only** **[read]** (FR `lua/CScrLuaObjectFactory.cpp`):
@@ -38,53 +37,45 @@ Certainty tags: **[read]** read from faf-re code; **[probe]** measured on retail
    - Keys the class doesn't reflect stay as the `.bp` gave them. A weapon's rack timings are one
      example: `RUnitBlueprintWeapon` has no rack fields.
 3. **Defaults come from the class constructors** **[read]**:
-
-   | Class | Address |
-   |---|---|
-   | `RBlueprint` | 0x0050DD60 |
-   | `REntityBlueprint` | 0x00511C30 |
-   | `RUnitBlueprint` (Display, Transport, Defense, Intel) | 0x0051E480 |
-   | `RUnitBlueprintGeneral` | 0x0051EE10 |
-   | `RUnitBlueprintAir` | 0x0051EF00 |
-   | `RUnitBlueprintPhysics` | 0x0051F090 |
-   | `RUnitBlueprintWeapon` | 0x0051F4C0 |
-   | `RUnitBlueprintAI` | 0x0051F7D0 |
-   | `RUnitBlueprintEconomy` | 0x0051F990 |
-   | `RProjectileBlueprintPhysics` | 0x0051B650 |
-
+   - `RBlueprint`, `REntityBlueprint`;
+   - `RUnitBlueprint` (Display, Transport, Defense, Intel), `RUnitBlueprintGeneral`,
+     `RUnitBlueprintAir`, `RUnitBlueprintPhysics`, `RUnitBlueprintWeapon`, `RUnitBlueprintAI`,
+     `RUnitBlueprintEconomy`;
+   - `RProjectileBlueprint` (Display, Economy), `RProjectileBlueprintPhysics`;
+   - `RPropBlueprint`;
+   - `RMeshBlueprint`, `RMeshBlueprintLOD`.
 4. **Some fields are derived** **[read]**:
-   - `REntityBlueprint::OnInitBlueprint` (0x00512060):
-     - An unsized footprint axis is the unit's size rounded up, at least 1.
+   - `REntityBlueprint::OnInitBlueprint`:
+     - An unsized footprint axis is the unit's size rounded up, as a byte (a size of 0 gives 0).
      - A zero inertia tensor is a solid box's tensor for its size.
-   - `RUnitBlueprintPhysics::ComputeDerivedQuantities` (0x0051F260):
+   - `RUnitBlueprintPhysics::ComputeDerivedQuantities`:
      - A moving unit's negative `MaxSpeedReverse` becomes its `MaxSpeed`.
      - A zero `AttackElevation` becomes its `Elevation`.
      - A zero `CatchUpAcc` becomes the larger of `MaxAcceleration` and `MaxBrake`.
-   - `RUnitBlueprint::OnInitBlueprint` (0x0051EA40):
+   - `RUnitBlueprint::OnInitBlueprint`:
      - The `RULEUMT_Air` motion type sets `CanFly`.
      - A flyer's zero `MaxAirspeed` becomes `MaxSpeed`, and a zero `MinAirspeed` becomes `MaxAirspeed`.
      - A zero `StartTurnDistance` becomes `SizeZ` x 3.
      - An unnamed `IconName` becomes the blueprint's id.
-5. **Resource ids are normalized** **[read]**: `RResIdType::SetLexical` (0x004A9430, via
+5. **Resource ids are normalized** **[read]**: `RResIdType::SetLexical` (via
    `gpg::STR_NormalizeFilenameLowerSlash`) lowercases ASCII and turns `\` into `/`.
 
 ## 2. What the engine does
 
 - **`blueprints/moho_reflected_fields.{hpp,cpp}`:**
-  - Three tables of reflected fields (unit, weapon entry, projectile physics). Each row holds the
-    field's section path, type, constructor default and the address that sets it.
-  - A fourth table lists the reflected unit fields left unfilled, each with its reason (section 4).
-  - `apply_unit_reflection` fills only what the table leaves out, then applies rule 4's derivations.
-    It lowercases the resource ids:
+  - Tables of reflected fields: unit, weapon entry, entity, projectile, prop, mesh and mesh LOD.
+    Each row holds the field's section path, type, constructor default and the class whose
+    constructor sets it.
+  - `apply_unit_reflection` writes each field as Moho's typed copy holds it (section 8), then
+    applies rule 4's derivations. It lowercases the resource ids:
     - `General.UpgradesTo`, `UpgradesFrom`, `UpgradesFromBase` and `SeedUnit`;
     - `Display.IconName` and `StrategicIconName`;
     - each weapon's `ProjectileId`.
   - It keeps the engine's existing rule that an empty `UpgradesFrom` or `UpgradesFromBase` reads
     `'none'`.
-- **`blueprints/blueprint_store.cpp` `register_blueprint`** applies the layer to units and
-  projectiles. That is the one path every `RegisterUnitBlueprint` and `RegisterProjectileBlueprint`
-  takes. The UI state's copy is made from the filled table (`copy_lua_tables`), so both Lua states see
-  the same fields.
+- **`blueprints/blueprint_store.cpp` `register_blueprint`** applies the layer to units, projectiles,
+  props and meshes. That is the one path every `Register*Blueprint` takes. The UI state's copy is
+  made from the filled table (`copy_lua_tables`), so both Lua states see the same fields.
 - **`lua/blueprint_bindings.cpp` `l_RegisterUnitBlueprint`** no longer fills anything of its own.
 
 ### Fills removed because Moho doesn't reflect them
@@ -136,7 +127,8 @@ its `Elevation`; units without a size are only in unit tests, which now give the
   - Moho writes back the registered name, or a number for several flags combined.
   - The engine's readers parse the `.bp`'s tables (`read_command_caps`, aibrain's `BuildOnLayerCaps`,
     `range_overlays`'s `ToggleCaps`, `build_placement`). This is stage 4b (section 6).
-  - *Done (2026-10-29) for the three flag enums (section 6); `CollisionShape` stays unfilled.*
+  - *Done (2026-10-29) for the three flag enums (section 6), and (2026-10-30) for `CollisionShape`
+    (section 4).*
 - **`Footprint.OccupancyCaps`, `Footprint.Flags`, `AltFootprint`:** derived from the motion type's
   footprint class; nothing reads them. *Done (2026-10-29) for `OccupancyCaps` and `Flags`, and
   (2026-10-30) for `AltFootprint` (section 5).*
@@ -163,6 +155,9 @@ its `Elevation`; units without a size are only in unit tests, which now give the
 
 The projectile layer fills only `Physics`'s twelve `*Range` spreads, as the engine did before.
 `Projectile::apply_blueprint_physics` would read a filled `MaxSpeed` of 0 over its preset state.
+*Done (2026-10-30): every reflected field of a projectile is filled (section 8). A new projectile's
+preset state is each field's Moho default (`max_speed` 0 is no limit), so the filled ones change
+nothing it computes.*
 
 ## 5. Left as the `.bp` gives it
 
@@ -171,6 +166,7 @@ These parts of the write-back aren't ported:
 - **Present values in a type the scripts can tell apart.**
   - Moho writes a bool back as a bool: a `.bp`'s `ManualFire = 0` reads `false` afterwards.
   - A string that Moho reads as a number reads back as a number.
+  - *Done (2026-10-30), section 8.*
 - **A mobile unit's footprint class.**
   - `ComputeDerivedQuantities` replaces a mobile unit's footprint with its class, and its skirt is at
     least that class (`2026-10-20-moho-blueprint-defaults-design.md` rules 1 and 2).
@@ -223,7 +219,7 @@ numbers (`unitviewDetail.lua`, `DecimalToBinary`); with the `.bp`'s table it fou
   - every derivation in rule 4;
   - resource ids lowercased and slashed;
   - rack timings and `MovementEffects` left nil;
-  - the unfilled fields nil and disjoint from the filled ones;
+  - each table's fields listed once, each with its constructor;
   - projectile spreads;
   - both Lua states;
   - the flag enums written back from tables, strings, numbers and booleans, one flag by its name;
@@ -248,6 +244,38 @@ numbers (`unitviewDetail.lua`, `DecimalToBinary`); with the `.bp`'s table it fou
 
   - After: 0 failed on both.
 - **`tools/moho_probes/blueprints/bp_diff.py`** takes the table file as an optional third argument. It
-  tags each field a `.bp` leaves out as filled, unfilled or neither. A filled field still missing from
+  tags each field a `.bp` leaves out that the table fills. A filled field still missing from
   the engine's side is a bug in the layer, and the script then exits 1. It hasn't been run against a
   new beat-0 log for this change.
+
+## 8. Projectiles, props and meshes; present values typed
+
+*Done (2026-10-30).* `Init{Projectile,Prop,Mesh}BlueprintFromLua` (FR `sim/Sim.cpp`) run the same
+build, `OnInitBlueprint` and merge as a unit's **[read]**. Registration now writes every reflected
+field of all four kinds as Moho's typed copy holds it, present values included:
+
+- **Reading** (`SCR_LuaBuildObject`): a string or number goes to the field's `SetLexical` as
+  `lua_tostring` gives it, a boolean as `"1"` or `"0"`; a field it can't read keeps the constructor's
+  value, and a list or struct given something else than a table is the constructor's (empty).
+  - a float is `atof`'s: an exponent after `e`, `E`, `d` or `D`, no hexadecimal, `inf` or `nan`;
+  - an integer is `ParseLegacyIntegerLexicalBounded`'s: `-`, `0x` hexadecimal (lowercase digits), a
+    leading `0` octal, else decimal; of the capitals only `A` is taken, as the digit -22; it wraps to
+    the field's width (`JammerBlips` 300 reads 44);
+  - a bool is `0`, `false`, `no`, `1`, `true` or `yes`, any case; a string is as given; an enum by
+    its registered names (`MotionType` `'Land'` doesn't read).
+- **Projectiles:** `REntityBlueprint`'s fields and `RProjectileBlueprint`'s (`CollisionShape`
+  `None`, `Display`, `Economy`, every `Physics` field); `Display.MeshBlueprint` completed against
+  `Source` (`RES_CompletePath`) and lowercased.
+- **Props:** `REntityBlueprint`'s fields and `RPropBlueprint`'s (`CollisionShape` `Box`, `Defense`,
+  `ReclaimMassMax`, `ReclaimEnergyMax`), the mesh id completed as a projectile's. An empty reclaim
+  value reads 0, as `apply_prop_defaults` gave it.
+- **Meshes:** `RMeshBlueprint`'s fields and each LOD's (`LODCutoff` 1000). `RMeshBlueprintLOD::Init`
+  completes an LOD's mesh and texture names against `Source`; for one it leaves empty it takes
+  `<Source up to its last _>_lod<i>.scm`, `_albedo.dds`, `_normalsTS.dds`, `_SpecTeam.dds` or
+  `_lookup.dds` where that file exists. `SecondaryName` and `ShaderName` stay as given.
+- **A unit's** `Display.MeshBlueprint` is completed as a projectile's.
+- Probe `bp-typed` (retail, all 3,778 published blueprints, and edge cases written into 21 of them):
+  the engine reads the same but for rounding through floats (Moho's Lua numbers are floats; the
+  bit-exact plan's float step), `BlueprintOrdinal` and the `Audio` sounds.
+- **The mesh cache** now gets a mesh name for every LOD whose file exists. Before, a mesh whose `.bp`
+  named none (2,275 of retail's 2,505) drew its first LOD at every distance.

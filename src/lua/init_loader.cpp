@@ -191,6 +191,7 @@ Result<void> InitLoader::load_blueprints(
     // Store VFS and BlueprintStore pointers for C bindings to access
     state.set_vfs(const_cast<vfs::VirtualFileSystem*>(&vfs));
     state.set_blueprint_store(&store);
+    store.set_file_exists([&vfs](const std::string& path) { return vfs.file_exists(path); });
 
     // Register blueprint-context bindings
     register_blueprint_bindings(state);
