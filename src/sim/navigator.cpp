@@ -340,7 +340,7 @@ void Navigator::navigate(Unit& unit) {
         sidestep_ = false;
         // UseTopSpeed(IsCellInGoal) picks the flag GetVal reads: in the goal, the
         // order's speed through it (CalcAtTopSpeed1); short of it, none left of its
-        // path and not thinking (CalcAtTopSpeed2). CAiNavigatorLand::Execute, 0x005A4280.
+        // path and not thinking (CalcAtTopSpeed2), CAiNavigatorLand::Execute.
         through_target_ = moho_.cell_in_goal(target)
                               ? speed_through_goal_
                               : status_ != Status::WaitingForPath && moho_.last_node_index() < 0;
