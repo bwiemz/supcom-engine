@@ -7658,13 +7658,16 @@ void test_aim(TestContext& ctx) {
             },
             "the tank fires and its turret holds; the tracker and the Othuum's right turret aim",
             80,
+            // Moho's turret stops tracking at a heading step of 0.001
+            // (CAimManipulator::CheckTracking).
             [&] {
-                return lua_true(ctx.lua_state,
-                                "(function() local h = __osc_headings local n = table.getn(h) "
-                                "return __osc_shots[1] ~= nil and h[n] == h[n - 1] and "
-                                "__osc_tracker:GetWeapon(1):GetCurrentTarget() == __osc_far and "
-                                "__osc_othuum:GetWeapon(3):GetCurrentTarget() == __osc_right "
-                                "end)()");
+                return lua_true(
+                    ctx.lua_state,
+                    "(function() local h = __osc_headings local n = table.getn(h) "
+                    "return __osc_shots[1] ~= nil and math.abs(h[n] - h[n - 1]) <= 0.001 and "
+                    "__osc_tracker:GetWeapon(1):GetCurrentTarget() == __osc_far and "
+                    "__osc_othuum:GetWeapon(3):GetCurrentTarget() == __osc_right "
+                    "end)()");
             })) {
         fail++;
     }
