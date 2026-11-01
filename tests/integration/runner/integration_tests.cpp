@@ -11202,22 +11202,30 @@ void test_beam_weapon(TestContext& ctx) {
             return n
         end
     )");
-    lua_check("setup: a Cerberus, a Monkeylord and a zapper, each with a target", R"(
+    lua_check("setup: a Cerberus and a zapper, each with a target", R"(
         -- The Cerberus stands among trees, which its beams pass
         __osc_cerberus = __osc_watch(__osc_spawn('urb2301', 'ARMY_1', 530, 70))
         __osc_block = __osc_spawn('uel0201', 'ARMY_2', 550, 70)
         __osc_block:SetFireState(1)
-        __osc_ml = __osc_watch(__osc_spawn('url0402', 'ARMY_1', 620, 250))
-        __osc_wall = __osc_spawn('ueb1301', 'ARMY_2', 642, 250)
-        __osc_wall:SetCanTakeDamage(false)
-        -- A friendly structure in its line (CollideFriendly = false): passed.
-        __osc_friend = __osc_spawn('ueb1301', 'ARMY_1', 632, 250)
         __osc_zapper = __osc_watch(__osc_spawn('urb4201', 'ARMY_2', 734, 330))
         __osc_zap_target = __osc_spawn('ueb1101', 'ARMY_2', 740, 330)
         __osc_tml = __osc_spawn('urb2108', 'ARMY_1', 620, 330)
         __osc_tml:GiveTacticalSiloAmmo(1)
         IssueTactical({__osc_tml}, __osc_zap_target)
     )");
+    // On a lake's bed its guns are under the water and don't fire (AboveWaterFireOnly).
+    const auto spot = quiet_spot(ctx.sim);
+    lua_check("setup: a Monkeylord on dry ground, with a target",
+              fmt::format(R"(
+        local x, z = {}, {}
+        __osc_ml = __osc_watch(__osc_spawn('url0402', 'ARMY_1', x, z))
+        __osc_wall = __osc_spawn('ueb1301', 'ARMY_2', x + 22, z)
+        __osc_wall:SetCanTakeDamage(false)
+        -- A friendly structure in its line (CollideFriendly = false): passed.
+        __osc_friend = __osc_spawn('ueb1301', 'ARMY_1', x + 12, z)
+    )",
+                          spot ? spot->x : 620.0f, spot ? spot->z : 250.0f)
+                  .c_str());
     tick_until(ctx,
                "the Cerberus kills the tank, the Monkeylord's beam checks 50 times and the "
                "zapper's meets the missile",
@@ -11253,7 +11261,7 @@ void test_beam_weapon(TestContext& ctx) {
             if ticks[k] - ticks[k - 1] ~= 2 then error('checks at ' .. ticks[k - 1] .. ' and ' .. ticks[k]) end
         end
     )");
-    lua_check("Test 4: the beam runs from the muzzle, past a friend, to the face of what it holds",
+    lua_check("Test 4: the beam runs from the muzzle, past a friend, to a face of what it holds",
               R"(
         local i = __osc_ml.__osc_impacts[table.getn(__osc_ml.__osc_impacts)]
         if i.target == __osc_friend then error('it stopped at the friendly structure') end
@@ -11261,10 +11269,13 @@ void test_beam_weapon(TestContext& ctx) {
         local start = i.beam:GetPosition(0)
         local muzzle = __osc_ml:GetPosition('Center_Turret_Muzzle')
         if VDist3(start, muzzle) > 0.01 then error('it starts ' .. VDist3(start, muzzle) .. ' from the muzzle') end
-        local wall = __osc_wall:GetPosition()
-        local face = wall[1] - __osc_wall:GetBlueprint().SizeX / 2
-        if math.abs(i['end'][1] - face) > 0.05 then
-            error('it ends at x ' .. i['end'][1] .. ', the face is at ' .. face)
+        local wall, bp, e = __osc_wall:GetPosition(), __osc_wall:GetBlueprint(), i['end']
+        local gap = math.max(math.abs(e[1] - wall[1]) - bp.SizeX / 2,
+                             math.abs(e[2] - wall[2] - bp.SizeY / 2) - bp.SizeY / 2,
+                             math.abs(e[3] - wall[3]) - bp.SizeZ / 2)
+        if math.abs(gap) > 0.05 then
+            error(string.format('it ends at (%.2f, %.2f, %.2f), %.2f off the face of the box at (%.2f, %.2f, %.2f)',
+                                e[1], e[2], e[3], gap, wall[1], wall[2], wall[3]))
         end
     )");
     lua_check("setup: the structure can be hurt now", R"(
