@@ -3360,7 +3360,12 @@ void test_jammer(TestContext& ctx) {
             enemy:SetPosition({farX, pos[2], farZ})
             LOG('JAMMER TEST: moved enemy to (' .. farX .. ', ' .. farZ .. ')')
 
-            WaitTicks(cycle)
+            -- Until the army's recon tick has lost it
+            for k = 1, 2 * cycle do
+                WaitTicks(1)
+                local b = enemy:GetBlip(myArmy)
+                if not b or b:IsMaybeDead(myArmy) then break end
+            end
 
             -- Test 3: Dead-reckoning position freeze. Moho's RefreshBlips keeps a
             -- blip on its unit until its army's recon tick drops it (ReconBlip::Refresh).
@@ -4760,6 +4765,50 @@ void test_wreck(TestContext& ctx) {
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 3: GetHeading on prop"); }
         else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); }
+    }
+
+    // Test 4: the scenario's ExtraArmies play, civilians, and their WRECKAGE groups lie on the
+    // map as wrecks (ScenarioUtilities' InitializeArmies)
+    {
+        auto r = ctx.lua_state.do_string(R"(
+            local armies = ListArmies()
+            local extra = ScenarioInfo.Configurations.standard.customprops.ExtraArmies
+            local civilians, wrecks, placed = 0, 0, 0
+            for name in string.gfind(extra, '%S+') do
+                local index = nil
+                for i, n in armies do
+                    if n == name then index = i end
+                end
+                if not index then error(name .. ' does not play') end
+                if not ArmyIsCivilian(index) then error(name .. ' is no civilian') end
+                civilians = civilians + 1
+                local group = import('/lua/sim/ScenarioUtilities.lua').FindUnitGroup('WRECKAGE',
+                    Scenario.Armies[name].Units)
+                for _, unit in (group and group.Units or {}) do
+                    if unit.type ~= 'GROUP' then
+                        wrecks = wrecks + 1
+                        local p = unit.Position
+                        local rect = Rect(p[1] - 1, p[3] - 1, p[1] + 1, p[3] + 1)
+                        for _, e in GetReclaimablesInRect(rect) or {} do
+                            if IsProp(e) then
+                                placed = placed + 1
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+            if civilians == 0 or wrecks == 0 or placed ~= wrecks then
+                error('civilians ' .. civilians .. ', wrecks ' .. placed .. ' of ' .. wrecks)
+            end
+        )");
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] Test 4: the scenario's civilians play, their wrecks on the map");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 4: {}", r.error().message);
+        }
     }
 
     spdlog::info("Wreck test: {}/{} passed", pass, pass + fail);
@@ -7443,9 +7492,10 @@ void test_targeting(TestContext& ctx) {
     }
     if (auto* seabed = unit_of("__osc_seabed_id")) seabed->set_layer("Seabed");
 
-    // Weapons take what ARMY_1's ReconTick (one tick in 8 here) has a blip of,
-    // on their next check (the tanks' every 5 ticks).
-    tick_for(ctx, 13);
+    // Weapons take what ARMY_1's ReconTick (one tick in as many as there are
+    // armies) has a blip of, on their next check (the tanks' every 5 ticks).
+    const int recon_cycle = static_cast<int>(ctx.sim.army_count());
+    tick_for(ctx, recon_cycle + 5);
     lua_check("Test 1: a farther TECH1 MOBILE unit beats a nearer structure", R"(
         if __osc_target(__osc_tank) ~= __osc_foe then error('target is not the enemy tank') end
     )");
@@ -7494,7 +7544,7 @@ void test_targeting(TestContext& ctx) {
         IssueAttack({__osc_tank}, __osc_foe)
     )");
 
-    tick_for(ctx, 7);
+    tick_for(ctx, recon_cycle - 1);
     lua_check("Test 8: an ally turned enemy becomes a target", R"(
         if __osc_target(__osc_ally_tank) ~= __osc_ally_pgen then error('no target') end
     )");
@@ -11201,7 +11251,8 @@ void test_beam_weapon(TestContext& ctx) {
         __osc_block = __osc_spawn('uel0201', 'ARMY_2', 550, 70)
         __osc_block:SetFireState(1)
         __osc_ml = __osc_watch(__osc_spawn('url0402', 'ARMY_1', 620, 250))
-        __osc_wall = __osc_spawn('ueb1301', 'ARMY_2', 642, 250)
+        -- No TargetBones: aimed at its middle, not at a bone above its hull
+        __osc_wall = __osc_spawn('ueb1303', 'ARMY_2', 642, 250)
         __osc_wall:SetCanTakeDamage(false)
         -- A friendly structure in its line (CollideFriendly = false): passed.
         __osc_friend = __osc_spawn('ueb1301', 'ARMY_1', 632, 250)

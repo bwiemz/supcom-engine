@@ -28,6 +28,8 @@ struct ScenarioMetadata {
     std::string save_path;         // from ScenarioInfo.save
     std::string script_path;       // from ScenarioInfo.script
     std::vector<std::string> armies;
+    /// Configurations.standard.customprops.ExtraArmies, split at spaces.
+    std::vector<std::string> extra_armies;
 };
 
 class ScenarioLoader {

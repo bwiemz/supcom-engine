@@ -207,6 +207,15 @@ std::optional<int> App::boot_game() {
                 for (size_t a = 0; a < sim_state->army_count(); ++a)
                     game_setup.ai_armies.push_back(static_cast<int>(a));
             }
+            // Retail's StartCommandLineSession: a skirmish's civilians, an operation's none
+            if (!opt.replay_to_play && !opt.save_to_load) {
+                game_setup.civilians = scenario_meta.type != "campaign";
+            }
+            if (game_setup.civilians) {
+                for (const std::string& name : scenario_meta.extra_armies) {
+                    sim_state->add_army(name, name).set_civilian(true);
+                }
+            }
             // A campaign operation, as retail's SetupCampaignSession starts
             // one (M209): the first army the player's, every other the AI's
             // (personality ""), and the campaign's options. Its script ends

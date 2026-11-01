@@ -7,6 +7,7 @@
 #include "sim/game_setup.hpp"
 
 #include <algorithm>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -125,10 +126,9 @@ public:
                          index) != ai_army_indices_.end();
     }
 
-    /// A civilian army, by its name.
-    static bool is_civilian_army(const std::string& name) {
-        return name.find("CIVILIAN") != std::string::npos ||
-               name.find("NEUTRAL") != std::string::npos;
+    /// A civilian army (ArmySetup's Civilian), as the launch made its brain.
+    bool is_civilian_army(const std::string& name) const {
+        return civilian_armies_.count(name) > 0;
     }
     /// A player plays it (ArmySetup's Human): neither a civilian nor an AI's.
     bool is_human_army(int index, const std::string& name) const {
@@ -155,6 +155,7 @@ private:
     bool session_active_ = false;
     std::vector<int> ai_army_indices_;
     std::vector<ArmySlotConfig> army_slot_configs_;
+    std::set<std::string> civilian_armies_;
     GameOptionsConfig game_options_;
     std::string ai_personality_ = "adaptive";
     double cheat_mult_ = 2.0;

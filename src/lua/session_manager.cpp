@@ -183,8 +183,17 @@ void read_player_slots(lua_State* L, int options, sim::GameSetup& setup) {
     std::vector<double> taken;
     lua_pushnil(L);
     while (lua_next(L, options) != 0) {
-        if (lua_type(L, -2) == LUA_TNUMBER && lua_istable(L, -1))
-            taken.push_back(lua_tonumber(L, -2));
+        if (lua_type(L, -2) == LUA_TNUMBER && lua_istable(L, -1)) {
+            lua_pushstring(L, "Civilian");
+            lua_rawget(L, -2);
+            const bool civilian = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+            if (civilian) {
+                setup.civilians = true;
+            } else {
+                taken.push_back(lua_tonumber(L, -2));
+            }
+        }
         lua_pop(L, 1);
     }
     std::sort(taken.begin(), taken.end());
@@ -234,6 +243,21 @@ void read_player_slots(lua_State* L, int options, sim::GameSetup& setup) {
     }
 }
 
+/// Moho's CLobby::LaunchGame: CivilianAlliance a string, but "none".
+bool lobby_adds_civilians(const GameOptionsConfig& options) {
+    for (const auto& [key, value] : options.values) {
+        if (key == "CivilianAlliance") {
+            const std::string_view text = value.string_value;
+            return value.type == GameOptionValue::Type::String &&
+                   !std::equal(text.begin(), text.end(), std::string_view("none").begin(),
+                               std::string_view("none").end(), [](char a, char b) {
+                                   return std::tolower(static_cast<unsigned char>(a)) == b;
+                               });
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 sim::GameSetup read_session_config(lua_State* L, int table_idx) {
@@ -246,7 +270,10 @@ sim::GameSetup read_session_config(lua_State* L, int table_idx) {
 
     lua_pushstring(L, "PlayerOptions");
     lua_rawget(L, table_idx);
-    if (lua_istable(L, -1)) read_player_slots(L, lua_gettop(L), setup);
+    if (lua_istable(L, -1)) {
+        read_player_slots(L, lua_gettop(L), setup);
+        setup.civilians = lobby_adds_civilians(setup.options);
+    }
     lua_settop(L, top);
 
     // A single-player launch's session (SinglePlayerLaunch.lua's, as Moho's
@@ -394,8 +421,14 @@ Result<void> SessionManager::start_session(LuaState& state,
     // The game's armies: the sim's, as the launch named them (a lobby's
     // slots taken, or the scenario's first); the scenario's without any
     std::vector<std::string> armies;
-    for (size_t i = 0; i < sim.army_count(); ++i)
-        if (const auto* brain = sim.army_at(i)) armies.push_back(brain->name());
+    for (size_t i = 0; i < sim.army_count(); ++i) {
+        if (const auto* brain = sim.army_at(i)) {
+            armies.push_back(brain->name());
+            if (brain->is_civilian()) {
+                civilian_armies_.insert(brain->name());
+            }
+        }
+    }
     if (armies.empty()) armies = meta.armies;
 
     // An operation (the campaign's, the tutorial): Moho spawns nothing for
@@ -707,9 +740,10 @@ void SessionManager::setup_army_info(lua_State* L, const std::vector<std::string
         lua_pushnumber(L, cfg ? cfg->faction : 1);
         lua_rawset(L, -3);
 
-        // Team — default to FFA (each army own team)
+        // Team — default to FFA (each army own team); a civilian's
+        // GetDefaultPlayerOptions' 1 (Moho's LaunchGame)
         lua_pushstring(L, "Team");
-        lua_pushnumber(L, cfg ? cfg->team : static_cast<int>(i) + 1);
+        lua_pushnumber(L, cfg ? cfg->team : is_civilian ? 1 : static_cast<int>(i) + 1);
         lua_rawset(L, -3);
 
         // AIPersonality — configurable for AI armies, empty for human/civilian
@@ -725,9 +759,9 @@ void SessionManager::setup_army_info(lua_State* L, const std::vector<std::string
 
         // StartSpot (needed by some Lua code)
         lua_pushstring(L, "StartSpot");
-        lua_pushnumber(L, cfg && cfg->start_spot > 0
-                              ? cfg->start_spot
-                              : static_cast<int>(i) + 1);
+        lua_pushnumber(L, cfg && cfg->start_spot > 0 ? cfg->start_spot
+                          : is_civilian              ? 1
+                                                     : static_cast<int>(i) + 1);
         lua_rawset(L, -3);
 
         lua_rawset(L, setup_idx); // ArmySetup[army_name] = entry

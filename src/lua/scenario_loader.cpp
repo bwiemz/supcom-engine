@@ -86,6 +86,33 @@ std::vector<std::string> extract_armies(lua_State* L, int scenario_idx) {
     return armies;
 }
 
+std::vector<std::string> extract_extra_armies(lua_State* L, int scenario_idx) {
+    std::vector<std::string> armies;
+    const int top = lua_gettop(L);
+    lua_pushvalue(L, scenario_idx);
+    for (const char* key : {"Configurations", "standard", "customprops", "ExtraArmies"}) {
+        if (!lua_istable(L, -1)) {
+            lua_settop(L, top);
+            return armies;
+        }
+        lua_pushstring(L, key);
+        lua_gettable(L, -2);
+    }
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        const std::string text = lua_tostring(L, -1);
+        size_t at = 0;
+        while (at < text.size()) {
+            const size_t end = std::min(text.find(' ', at), text.size());
+            if (end > at) {
+                armies.push_back(text.substr(at, end - at));
+            }
+            at = end + 1;
+        }
+    }
+    lua_settop(L, top);
+    return armies;
+}
+
 /// /lua/TerrainTypes.lua's Blocking flags by TypeCode (Moho's
 /// STIMap::LoadTerrainTypes): retail's Dirt09 and Lava01. None without FA's
 /// scripts.
@@ -217,6 +244,7 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
 
     // Extract army names
     meta.armies = extract_armies(L, si_idx);
+    meta.extra_armies = extract_extra_armies(L, si_idx);
 
     lua_pop(L, 1); // ScenarioInfo
 

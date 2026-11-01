@@ -337,6 +337,7 @@ TEST_CASE("A replay carries the game's setup", "[replay]") {
     r.setup.mods = std::string("\x05\x01\x00\x00\x00mods", 9); // any bytes
     r.setup.moho_random = true;
     r.setup.moho_pathing = true;
+    r.setup.civilians = true;
     r.checksum_from = 1;
     r.checksums = {0xdeadbeef, 0x12345678};
 
@@ -363,6 +364,7 @@ TEST_CASE("A replay carries the game's setup", "[replay]") {
     CHECK(out.setup.mods == r.setup.mods); // the game's mods (version 10)
     CHECK(out.setup.moho_random);
     CHECK(out.setup.moho_pathing); // the game's pathing (version 16)
+    CHECK(out.setup.civilians);    // its civilians (version 19)
     CHECK(out.checksums == r.checksums);
 
     // Cut short anywhere, it is refused whole.
@@ -409,6 +411,7 @@ TEST_CASE("A version 8 replay's armies keep their own places", "[replay]") {
     CHECK(out.setup.slots[0].slot == 0);
     CHECK(out.setup.mods.empty()); // before version 10: none
     CHECK_FALSE(out.setup.moho_pathing); // before version 16: none
+    CHECK_FALSE(out.setup.civilians);    // before version 19: none
     CHECK(osc::sim::session_army_names(out.setup, {"ARMY_1", "ARMY_2"}) ==
           std::vector<std::string>{"ARMY_1"});
 }

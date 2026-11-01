@@ -99,6 +99,7 @@ void write_game_setup(ByteWriter& w, const GameSetup& s) {
     w.u8v(s.tutorial ? 1 : 0);
     w.u8v(s.moho_random ? 1 : 0);
     w.u8v(s.moho_pathing ? 1 : 0);
+    w.u8v(s.civilians ? 1 : 0);
 }
 
 bool read_game_setup(ByteReader& r, GameSetup& s, u32 version) {
@@ -166,6 +167,9 @@ bool read_game_setup(ByteReader& r, GameSetup& s, u32 version) {
     }
     if (version >= 16) { // before: none, so the game's own switch decides
         s.moho_pathing = r.u8v() != 0;
+    }
+    if (version >= 19) {
+        s.civilians = r.u8v() != 0;
     }
     return r.ok();
 }
