@@ -7683,7 +7683,8 @@ void test_aim(TestContext& ctx) {
             if d > limit then error('tick ' .. i .. ' turned ' .. math.deg(d) .. ' deg') end
             turned = turned + d
         end
-        if turned < math.rad(170) then error('turned only ' .. math.deg(turned) .. ' deg') end
+        -- Its hull leans with the slope, as the original game's does from its first tick.
+        if turned < math.rad(165) then error('turned only ' .. math.deg(turned) .. ' deg') end
     )");
     lua_check("Test 3: the first shot waits until the turret faces the target", R"(
         local s = __osc_shots[1]
