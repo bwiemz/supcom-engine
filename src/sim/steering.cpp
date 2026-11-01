@@ -363,14 +363,20 @@ bool ignores_structures(const Unit& u) {
     return (u.footprint().flags & blueprints::kFootprintIgnoreStructures) != 0;
 }
 
-/// COGrid::ForAllEntitiesIterator's units for a sphere, as CollectCollisionCandidates asks
-/// it: those whose collision shape the sphere meets, and above a radius of 3 any whose bounds
-/// touch the box 0.707 of the radius about its centre (0x00721FB0).
-std::vector<Entity*> units_meeting_sphere(const SimState& sim, const Vector3& c, f32 r) {
+/// COGrid::ForAllEntitiesIterator's units for a sphere, in its cells' order, as
+/// CollectCollisionCandidates asks it: those whose collision shape the sphere meets, and above a
+/// radius of 3 any whose bounds touch the box 0.707 of the radius about its centre.
+std::vector<Entity*> units_meeting_sphere(SimState& sim, const Vector3& c, f32 r) {
     constexpr f32 kReach = 32.0f; // past any unit's shape from its centre
     const f32 inner = r * 0.70700002f;
+    CollisionCells& cells = sim.entity_registry().collision_cells();
+    const std::vector<Entity*> gathered =
+        cells.initialized()
+            ? cells.gather(CollisionCells::box_rect(c.x - r, c.z - r, c.x + r, c.z + r), true,
+                           false)
+            : sim.entity_registry().units_in_radius(c.x, c.z, r + kReach);
     std::vector<Entity*> out;
-    for (Entity* e : sim.entity_registry().units_in_radius(c.x, c.z, r + kReach)) {
+    for (Entity* e : gathered) {
         const CollisionShape& shape = e->collision_shape();
         Vector3 lo, hi;
         bool meets = false;

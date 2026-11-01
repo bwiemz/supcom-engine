@@ -334,24 +334,18 @@ void Navigator::navigate(Unit& unit) {
                                << " #" << EntityRegistry::moho_id(unit.entity_id()) << '\n';
         }
         moho_waypoint_cell_ = target;
-        // CAiSteeringImpl::DriveToNextWaypoint: a waypoint the unit is at (Unit::IsAtPosition)
-        // sets no motion target.
-        if (target != moho_.current()) {
-            waypoint_refresh_ = true;
-            waypoints_.assign(1, Vector3{moho_.target_x(), pos.y, moho_.target_z()});
-            waypoint_index_ = 0;
-            sidestep_ = false;
-            // UseTopSpeed(IsCellInGoal) picks the flag GetVal reads: in the goal, the
-            // order's speed through it (CalcAtTopSpeed1); short of it, none left of its
-            // path and not thinking (CalcAtTopSpeed2). CAiNavigatorLand::Execute, 0x005A4280.
-            through_target_ = moho_.cell_in_goal(target) ? speed_through_goal_
-                                                         : status_ != Status::WaitingForPath &&
-                                                               moho_.last_node_index() < 0;
-        } else {
-            // At it, the steering still takes it for its destination (mDestination), what a
-            // path asked afresh after a push makes for.
-            set_steer_destination(Vector3{moho_.target_x(), pos.y, moho_.target_z()});
-        }
+        // CAiSteeringImpl::DriveToNextWaypoint takes it after this tick's spline: its
+        // destination, but no motion target when the unit is at it (Unit::IsAtPosition).
+        waypoint_refresh_ = true;
+        waypoints_.assign(1, Vector3{moho_.target_x(), pos.y, moho_.target_z()});
+        waypoint_index_ = 0;
+        sidestep_ = false;
+        // UseTopSpeed(IsCellInGoal) picks the flag GetVal reads: in the goal, the
+        // order's speed through it (CalcAtTopSpeed1); short of it, none left of its
+        // path and not thinking (CalcAtTopSpeed2), CAiNavigatorLand::Execute.
+        through_target_ = moho_.cell_in_goal(target)
+                              ? speed_through_goal_
+                              : status_ != Status::WaitingForPath && moho_.last_node_index() < 0;
     }
     status_ = st == State::HasPath ? Status::Moving : Status::WaitingForPath;
 }

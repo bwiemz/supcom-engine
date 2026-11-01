@@ -1123,8 +1123,7 @@ private:
     /// makes way for a moving one, otherwise the smaller gives more, and a
     /// held one (SetImmobile) doesn't move. Submerged units meet only each
     /// other. A push never takes a unit where its layer can't go.
-    /// With `submerged_only`, the submerged ones alone (as with Moho pathing).
-    void separate_ground_units(bool submerged_only = false);
+    void separate_ground_units();
     void update_visibility();
     /// This tick's look at the decals (CDecalBuffer::CleanupTick): one army
     /// in turn may come to see those it didn't.

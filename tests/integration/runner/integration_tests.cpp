@@ -9640,6 +9640,11 @@ void test_crowd(TestContext& ctx) {
         end
         __osc_spot = {620, GetTerrainHeight(620, 110), 110}
         IssueMove(__osc_group, __osc_spot)
+        ForkThread(function()
+            while GetGameTick() < 141 do WaitTicks(1) end
+            __osc_at141 = {}
+            for i, u in __osc_group do __osc_at141[i] = u:GetPosition() end
+        end)
         __osc_idle = __osc_spawn('uel0201', 'ARMY_1', 680, 100, 0)
         __osc_mover = __osc_spawn('uel0201', 'ARMY_1', 680, 90, 0)
         __osc_through = {680, GetTerrainHeight(680, 112), 112}
@@ -9684,11 +9689,23 @@ void test_crowd(TestContext& ctx) {
             for j = i + 1, n do
                 local q = __osc_group[j]:GetPosition()
                 local apart = math.sqrt((p[1] - q[1]) ^ 2 + (p[3] - q[3]) ^ 2)
-                -- A Striker is 0.9 long: two apart by less than 0.8 overlap. With Moho
-                -- pathing its motion meets boxes, 0.7 wide: side by side, retail's
-                -- Strikers (crowdgap probe) come within 0.76 of each other.
-                local least = __osc_moho_pathing and 0.7 or 0.8
+                -- A Striker is 0.9 long: two apart by less than 0.8 overlap. Retail's six
+                -- end 0.22 to 1.2 apart, by the tick they are made (crowd probe).
+                local least = __osc_moho_pathing and 0.1 or 0.8
                 if apart < least then error('tanks ' .. i .. ' and ' .. j .. ' are ' .. apart .. ' apart') end
+            end
+        end
+    )");
+    lua_check("Test 1b: with Moho pathing the six are where retail's are on tick 141", R"(
+        if not __osc_moho_pathing then return end
+        -- Retail's crowd probe of this scene, made before the first tick.
+        local retail = {{619.497925, 110.537132}, {619.379944, 110.254128},
+                        {619.223389, 109.115509}, {620.140015, 109.685783},
+                        {620.58197, 111.389557}, {621.444092, 110.464668}}
+        for i, at in retail do
+            local p = __osc_at141[i]
+            if math.abs(p[1] - at[1]) > 0.01 or math.abs(p[3] - at[2]) > 0.01 then
+                error('tank ' .. i .. ' at ' .. p[1] .. ',' .. p[3])
             end
         end
     )");
@@ -9697,10 +9714,11 @@ void test_crowd(TestContext& ctx) {
             if u:IsMoving() then error('tank ' .. i .. ' is still trying to reach it') end
         end
     )");
-    // Retail's last of the six goes idle 215 ticks after the order (crowd probe's /synclog).
+    // Retail's last of the six goes idle 179 to 291 ticks after the order, by the tick they are
+    // made (crowd probe).
     if (idle) {
-        check(*idle <= 250, fmt::format("Test 2b: the last of the six goes idle {} ticks after the "
-                                        "order, within 250",
+        check(*idle <= 300, fmt::format("Test 2b: the last of the six goes idle {} ticks after the "
+                                        "order, within 300",
                                         *idle));
     }
     tick_until(ctx, "the mover and the passer arrive and stop", 250,
@@ -9729,7 +9747,7 @@ void test_crowd(TestContext& ctx) {
         end
         if __osc_passer:GetPosition()[3] < 110 then error('the passing tank never got by') end
     )");
-    lua_check("Test 5: submarines keep apart below the surface", R"(
+    lua_check("Test 5: submarines dive; with Moho pathing they stay where they were made", R"(
         if not __osc_sea then error('no deep water on the map') end
         local a, b = __osc_subs[1]:GetPosition(), __osc_subs[2]:GetPosition()
         local surface = GetSurfaceHeight(__osc_sea[1], __osc_sea[2])
@@ -9737,7 +9755,11 @@ void test_crowd(TestContext& ctx) {
             error('a submarine is at ' .. a[2] .. ' / ' .. b[2] .. ', the surface ' .. surface)
         end
         local apart = math.sqrt((a[1] - b[1]) ^ 2 + (a[3] - b[3]) ^ 2)
-        if apart < 0.3 then error('they stayed ' .. apart .. ' apart') end
+        if __osc_moho_pathing then
+            if apart > 0.2 then error('they were pushed ' .. apart .. ' apart') end
+        elseif apart < 0.3 then
+            error('they stayed ' .. apart .. ' apart')
+        end
     )");
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 6: no script errors");
