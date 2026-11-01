@@ -185,6 +185,62 @@ TEST_CASE("A Stop at the head leaves the orders after it", "[routing]") {
     CHECK(unit_of(sim, id)->command_queue().front().type == CommandType::Move);
 }
 
+TEST_CASE("A blocked command queue starts none of its orders", "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto id = spawn_unit(sim);
+    Unit& u = *unit_of(sim, id);
+    u.set_block_command_queue(true);
+    UnitCommand stop;
+    stop.type = CommandType::Stop;
+    sim.route_command({id}, stop, false);
+    sim.route_command({id}, move_to(100.0f, 0.0f), false);
+    sim.tick();
+    REQUIRE(u.command_queue().size() == 2);
+    CHECK(u.command_queue().front().type == CommandType::Stop);
+    CHECK_FALSE(u.command_queue().front().begun);
+
+    u.set_block_command_queue(false);
+    sim.tick();
+    REQUIRE(u.command_queue().size() == 1);
+    CHECK(u.command_queue().front().begun);
+}
+
+TEST_CASE("An order under way goes on while the queue is blocked", "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto id = spawn_unit(sim);
+    Unit& u = *unit_of(sim, id);
+    sim.route_command({id}, move_to(100.0f, 0.0f), true);
+    sim.tick();
+    REQUIRE(u.command_queue().front().begun);
+    u.set_block_command_queue(true);
+    const osc::f32 x = u.position().x;
+    sim.tick();
+    sim.tick();
+    CHECK(u.position().x > x);
+}
+
+TEST_CASE("A factory's next unit of an order waits while its queue is blocked", "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto id = spawn_unit(sim);
+    Unit& u = *unit_of(sim, id);
+    UnitCommand build;
+    build.type = CommandType::BuildFactory;
+    build.blueprint_id = "x";
+    build.count = 2;
+    build.max_count = 2;
+    build.begun = true;
+    build.rolloff_wait = 1;
+    u.push_command(build, false);
+    u.set_block_command_queue(true);
+    sim.tick();
+    REQUIRE(u.command_queue().size() == 1);
+    CHECK(u.command_queue().front().count == 1);
+    CHECK_FALSE(u.command_queue().front().begun);
+}
+
 TEST_CASE("route_command Stop goes to the sink for a networked human", "[routing]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);

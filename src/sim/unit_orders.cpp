@@ -357,8 +357,9 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         // allocated until the beat ends, see EntityRegistry::collect_garbage).
         if (destroyed() || !in_registry()) return false;
         if (!command_queue_.front().begun) {
-            // Moho's IAiCommandDispatchImpl::Execute, on UNITSTATE_Attached.
-            if (parent_entity_id() && is_mobile()) {
+            // Moho's IAiCommandDispatchImpl::Execute, on UNITSTATE_Attached or
+            // UNITSTATE_BlockCommandQueue.
+            if ((parent_entity_id() && is_mobile()) || block_command_queue_) {
                 return true;
             }
             // Its scripts may change the queue, or kill the unit: look again.
@@ -1143,6 +1144,7 @@ OrderStep Unit::end_factory_build_order(UnitCommand& cmd) {
         --cmd.count;
         cmd.rolloff_wait = 0;
         cmd.task_wait = 0;
+        cmd.begun = false;
         return OrderStep::Next;
     }
     if (repeat_queue_) {
