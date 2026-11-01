@@ -266,6 +266,10 @@ struct UnitCommand {
     /// Where the unit stood as its patrol leg began (Moho's patrol task
     /// builds its search box then). Runtime state.
     Vector3 patrol_from;
+    /// A patrol leg's task runs, and whether it has set out (Moho's
+    /// CUnitPatrolTask mTickCounter and mMoving). Runtime state.
+    i32 patrol_runs = 0;
+    bool patrol_moving = false;
     /// Unit::begin_order has run for it: the order has started (a patrol's
     /// leg, until it goes round). Runtime state.
     bool begun = false;
