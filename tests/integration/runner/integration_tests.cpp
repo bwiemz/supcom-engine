@@ -1,5 +1,6 @@
 #include "core/test_status.hpp"
 #include "integration_tests.hpp"
+#include "intel_probe.hpp"
 #include "render_probe.hpp"
 #include "tick_until.hpp"
 
@@ -215,6 +216,21 @@ void test_move(TestContext& ctx) {
     }
 }
 
+namespace {
+
+/// Two units put 20 apart on dry ground, where they can fire: a mobile unit
+/// put over water sinks to its bed, as the original game's does.
+void face_off(TestContext& ctx, osc::sim::Entity& a, osc::sim::Entity& b) {
+    const auto spot = quiet_spot(ctx.sim);
+    const f32 x = spot ? spot->x : 256.0f;
+    const f32 z = spot ? spot->z : 256.0f;
+    const auto* terrain = ctx.sim.terrain();
+    a.set_position({x, terrain ? terrain->get_terrain_height(x, z) : 25.0f, z});
+    b.set_position({x + 20, terrain ? terrain->get_terrain_height(x + 20, z) : 25.0f, z});
+}
+
+} // namespace
+
 // Fire test: teleport two enemy units close and let them fight
 void test_fire(TestContext& ctx) {
     spdlog::info("=== FIRE TEST: Weapon combat ===");
@@ -223,20 +239,17 @@ void test_fire(TestContext& ctx) {
     auto* e2 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 1));
     if (e1 && e2 && !e1->destroyed() && !e2->destroyed() &&
         e1->is_unit() && e2->is_unit()) {
-        e1->set_position({256, 25, 256});
-        e2->set_position({276, 25, 256}); // 20 units apart
+        face_off(ctx, *e1, *e2);
 
         auto* u1 = static_cast<osc::sim::Unit*>(e1);
         auto* u2 = static_cast<osc::sim::Unit*>(e2);
 
-        spdlog::info("Entity #1 (army {}) at (256,25,256), "
+        spdlog::info("Entity #1 (army {}) put on dry ground, "
                      "health={}/{}, weapons={}",
-                     e1->army(), e1->health(), e1->max_health(),
-                     u1->weapon_count());
-        spdlog::info("Entity #2 (army {}) at (276,25,256), "
+                     e1->army(), e1->health(), e1->max_health(), u1->weapon_count());
+        spdlog::info("Entity #2 (army {}) 20 east of it, "
                      "health={}/{}, weapons={}",
-                     e2->army(), e2->health(), e2->max_health(),
-                     u2->weapon_count());
+                     e2->army(), e2->health(), e2->max_health(), u2->weapon_count());
 
         // Log weapon details for entity #1
         for (int wi = 0; wi < u1->weapon_count(); wi++) {
@@ -6916,8 +6929,7 @@ void test_projectile(TestContext& ctx) {
     bool can_fire = e1 && e2 && !e1->destroyed() && !e2->destroyed() &&
                     e1->is_unit() && e2->is_unit();
     if (can_fire) {
-        e1->set_position({256, 25, 256});
-        e2->set_position({276, 25, 256}); // 20 units apart
+        face_off(ctx, *e1, *e2);
 
         tick_until(ctx, "a commander fires at the other", 60, [&] {
             bool fired = false;
