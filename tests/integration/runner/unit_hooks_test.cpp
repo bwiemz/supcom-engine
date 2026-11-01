@@ -201,6 +201,8 @@ void test_unit_hooks(TestContext& ctx) {
     // its share of the costs retail's OnWorkBegin put on the unit (which
     // gives the energy cost for both). Over one tick the work rises by its
     // own rate plus the step.
+    tick_until(ctx, "Test 7: the commander takes orders", 100,
+               "not GetEntityById(__osc_test_acu_id(1)):IsUnitState('BlockCommandQueue')");
     if (!check("Test 7 setup", R"(
         __hooks_acu = GetEntityById(__osc_test_acu_id(1))
         IssueEnhancement({__hooks_acu}, 'AdvancedEngineering')
