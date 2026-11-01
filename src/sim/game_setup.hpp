@@ -106,8 +106,8 @@ struct GameSetup {
     bool tutorial = false;
     /// The sim draws from Moho's MT19937 stream (--moho-random).
     bool moho_random = false;
-    /// Ground units path as Moho's do, by footprint class (--moho-pathing).
-    bool moho_pathing = false;
+    /// Ground units path as Moho's do, by footprint class (off: --grid-pathing).
+    bool moho_pathing = true;
 };
 
 /// The game's armies, by name, in order: a lobby's (`setup.slots`) each

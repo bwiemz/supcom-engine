@@ -1240,7 +1240,7 @@ private:
     UnitBlockers unit_blockers_{*this};
     DebugCanvas debug_canvas_;           // see debug_canvas
     std::vector<DebugLine> debug_lines_; // see debug_canvas
-    bool moho_pathing_ = false;
+    bool moho_pathing_ = true;
     bool faf_exe_ = false; // see faf_exe
     bool run_opponent_ai_ = true;                 // see run_opponent_ai
     SimConVars con_vars_;                         // see con_vars

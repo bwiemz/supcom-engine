@@ -58,7 +58,7 @@ def run(args: list[str]) -> subprocess.CompletedProcess[str]:
 def load_args(game_args: list[str]) -> list[str]:
     """The game args a load keeps: the game's data (--init, --fa-path,
     --faf-data), the run's length and the player's scripted orders. The
-    map, armies, seed and switches (--moho-pathing, --moho-random) come
+    map, armies, seed and switches (--grid-pathing, --moho-random) come
     from the save."""
     kept: list[str] = []
     i = 0
