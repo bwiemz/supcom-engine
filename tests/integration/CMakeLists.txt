@@ -186,7 +186,7 @@ endforeach()
 # default), again with it: each holds its expectations both ways until the
 # flag is the default.
 foreach(mode drive-test steer-test crowd-test weapon-test range-test factory-rally-test
-             shore-test choke-test crowdgap-test)
+             shore-test choke-test crowdgap-test ferry-test)
     add_test(NAME data.moho.${mode}
              COMMAND osc_integration --map ${OSC_TEST_MAP} --${mode} --moho-pathing)
     # crowd-test's six Strikers end 0.18 apart under the test runner, though retail's

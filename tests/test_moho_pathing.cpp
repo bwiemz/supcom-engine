@@ -3,6 +3,7 @@
 // follows the cells (faf-re CAiNavigatorLand, CAiPathNavigator), driving at
 // each target and refused ground it won't fit.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
@@ -158,6 +159,39 @@ struct World {
 };
 
 } // namespace
+
+TEST_CASE("With Moho pathing a tank carried off its move runs its spline out aboard, and is set "
+          "down where it is dropped",
+          "[moho_pathing]") {
+    World w(true);
+    Unit& carrier = *w.make("bigtank", 40.5f, 40.5f);
+    Unit& tank = *w.make("tank", 20.5f, 20.5f);
+    carrier.set_transport_capacity(1);
+    carrier.set_immobile(true);
+    World::move(tank, 60.5f, 20.5f);
+    for (int i = 0; i < 10; ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(tank.navigator().has_motion_node());
+    tank.attach_to_transport(&carrier, w.sim.entity_registry(), w.state.raw());
+    carrier.set_position({80.5f, 30.0f, 80.5f});
+    carrier.place_now();
+    for (int i = 0; i < 30; ++i) {
+        w.sim.tick();
+    }
+    CHECK_FALSE(tank.navigator().has_spline());
+    CHECK_FALSE(tank.navigator().has_motion_node());
+    osc::sim::UnitCommand unload;
+    unload.type = osc::sim::CommandType::TransportUnload;
+    unload.target_pos = carrier.position();
+    carrier.push_command(unload, true);
+    for (int i = 0; i < 3; ++i) {
+        w.sim.tick();
+    }
+    REQUIRE_FALSE(tank.transport_id());
+    CHECK(tank.position().x == Catch::Approx(80.5f).margin(1.0f));
+    CHECK(tank.position().z == Catch::Approx(80.5f).margin(1.0f));
+}
 
 TEST_CASE("With Moho pathing a tank's move asks its army, follows the cells and stops in its "
           "goal cell",

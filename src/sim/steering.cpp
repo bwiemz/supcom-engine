@@ -61,6 +61,12 @@ bool steers(const Unit& u) {
            u.max_speed() > 0 && !u.transport_id() && !u.parent_entity_id();
 }
 
+/// CAiSteeringImpl::Execute runs for a carried unit too; its attached motion doesn't move it.
+bool steers_moho(const Unit& u) {
+    return !u.destroyed() && !u.is_dying() && !u.is_being_built() && !u.is_air_unit() &&
+           u.max_speed() > 0;
+}
+
 bool can_fly(const Unit& u) {
     return u.motion_type() == "RULEUMT_Air";
 }
@@ -870,7 +876,9 @@ void steer_units(SimState& sim, const std::vector<EntityId>& ids) {
         auto& u = static_cast<Unit&>(*e);
         Navigator& nav = u.navigator();
         if (sim.moho_pathing() && (nav.moho_active() || nav.has_spline())) {
-            if (steers(u)) steer_moho(sim, u);
+            if (steers_moho(u)) {
+                steer_moho(sim, u);
+            }
             continue;
         }
         // Moho's steering ticks every unit, a still one too (CAiSteeringImpl::OnTick): one
