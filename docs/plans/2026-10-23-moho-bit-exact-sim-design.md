@@ -137,6 +137,11 @@ Retail FA 3599 (Steam) against the engine on `feat/moho-entity-ids`, rebased on 
 - **`crowd-test`'s scene:** retail's closest pair is 0.936. The engine's is 0.873 in the game (it
   parts from retail at tick 94) and 0.18 under `osc_integration`'s runner, so `data.moho.crowd-test`
   is a `retail-gap` until that difference is found.
+  *Done (2026-11-01):* the runner's scene is the game's made before the first tick. The engine parted
+  at tick 94 on the order `CheckCollisions` meets its candidates in (the collision cells'), and at 133
+  on when a waypoint the unit stands at becomes its steering's destination. Made on ticks 0, 1, 10,
+  70 and 80, the six now follow retail within 0.01 to +142, the end, +123, +141 and +123, and the
+  test, its checks taken from retail's runs, is in the gate.
 
 The rules this round matched, from faf-re:
 
