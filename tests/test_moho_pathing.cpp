@@ -99,6 +99,9 @@ struct World {
                  " Defense = {MaxHealth = 100}, Footprint = {SizeX = 3, SizeZ = 3},"
                  " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 4, MaxAcceleration = 4,"
                  "  MaxBrake = 4, TurnRate = 180, TurnRadius = 0}}",
+                 "{BlueprintId = 'pgen', Categories = {'STRUCTURE'}, Defense = {MaxHealth = 100},"
+                 " SizeX = 1, SizeY = 1, SizeZ = 1, Footprint = {SizeX = 2, SizeZ = 2},"
+                 " Physics = {MotionType = 'RULEUMT_None'}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
@@ -111,7 +114,7 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"tank", "bigtank"}) {
+        for (const char* id : {"tank", "bigtank", "pgen"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -191,6 +194,29 @@ TEST_CASE("With Moho pathing a tank carried off its move runs its spline out abo
     REQUIRE_FALSE(tank.transport_id());
     CHECK(tank.position().x == Catch::Approx(80.5f).margin(1.0f));
     CHECK(tank.position().z == Catch::Approx(80.5f).margin(1.0f));
+}
+
+TEST_CASE("With Moho pathing a unit put above the ground drops onto it only if its motion type "
+          "moves it and it isn't immobile",
+          "[moho_pathing]") {
+    const auto [bp, motion, immobile, drops] = GENERATE(
+        table<const char*, const char*, bool, bool>({{"tank", "RULEUMT_Land", false, true},
+                                                     {"tank", "RULEUMT_Land", true, false},
+                                                     {"pgen", "RULEUMT_None", false, false},
+                                                     {"tank", "RULEUMT_Special", false, false}}));
+    World w(true);
+    Unit& u = *w.make(bp, 20.5f, 20.5f);
+    u.set_motion_type(motion);
+    u.set_immobile(immobile);
+    const osc::sim::Vector3 p = u.position();
+    u.set_position({p.x, p.y + 3.0f, p.z});
+    u.note_snap();
+    u.place_now();
+    for (int i = 0; i < 3; ++i) {
+        w.sim.tick();
+    }
+    INFO(bp << " " << motion << " immobile " << immobile);
+    CHECK(u.position().y == Catch::Approx(drops ? 10.0f : 13.0f));
 }
 
 TEST_CASE("With Moho pathing a tank's move asks its army, follows the cells and stops in its "

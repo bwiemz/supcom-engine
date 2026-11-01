@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "lua/lua_state.hpp"
@@ -64,9 +65,9 @@ struct Scene {
         lua_setglobal(L, "unit");
     }
 
-    int calls_after(u32 first_tick, u32 ticks) {
+    int calls_after(u32 first_tick, u32 ticks, bool moho = false) {
         for (u32 t = first_tick; t < first_tick + ticks; ++t) {
-            collide_with_props(*unit, registry, lua.raw(), t, false);
+            collide_with_props(*unit, registry, lua.raw(), t, moho);
         }
         lua_State* L = lua.raw();
         lua_getglobal(L, "calls");
@@ -116,6 +117,17 @@ TEST_CASE("Only a unit over 0.2 in SizeX by SizeZ, and moving, runs into props",
     Scene still(1, 1);
     still.unit->set_velocity({0.009f, 0, 0});
     CHECK(still.calls_after(0, 10) == 0);
+}
+
+TEST_CASE("With Moho pathing a unit made on a prop runs into it only if its motion type moves it",
+          "[collision][lua]") {
+    const auto [motion, calls] = GENERATE(table<const char*, int>(
+        {{"RULEUMT_Land", 1}, {"RULEUMT_None", 0}, {"RULEUMT_Special", 0}}));
+    Scene scene(1, 1);
+    scene.unit->set_velocity({0, 0, 0});
+    scene.unit->set_motion_type(motion);
+    INFO(motion);
+    CHECK(scene.calls_after(0, 5, true) == calls);
 }
 
 TEST_CASE("The prop grid finds a prop where it stands, after it moves, until it goes",

@@ -544,7 +544,7 @@ void resolve_moho(SimState& sim, Unit& owner) {
 /// Sim::DoCollisionsFor (FAF 0x00597CD0): the units its box overlaps are pushed apart,
 /// the push shared by their masses.
 void collide_moho_units(SimState& sim, Unit& owner) {
-    if (owner.is_air_unit() || owner.layer() == "Sub" || owner.is_dying() ||
+    if (!owner.has_motion() || owner.is_air_unit() || owner.layer() == "Sub" || owner.is_dying() ||
         owner.is_being_built() || owner.parent_entity_id() || can_fly(owner) || owner.pushed() ||
         owner.is_naval() || owner.destroyed()) {
         return;

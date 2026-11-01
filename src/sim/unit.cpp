@@ -3401,7 +3401,7 @@ void Unit::add_impulse(const Vector3& impulse, bool moving) {
 
 bool Unit::coast_moho(const map::Terrain* terrain) {
     target_speed_ = 0;
-    if (immobile_ || parent_entity_id()) {
+    if (immobile_ || parent_entity_id() || !has_motion()) {
         ground_speed_ = 0;
         motion_velocity_ = {};
         return false;
