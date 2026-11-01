@@ -13924,6 +13924,9 @@ void test_right_click(TestContext& ctx) {
         __osc_pad = CreateUnitHPR('ueb5202', 'ARMY_1', x, y, z, 0, 0, 0)
         x, y, z = at(30, -20)
         __osc_enemy = CreateUnitHPR('uel0201', 'ARMY_2', x, y, z, 0, 0, 0)
+        -- The tank sent to attack it and it fight; the last click needs both.
+        __osc_enemy:SetCanTakeDamage(false)
+        __osc_enemy:SetFireState(1)
         IssueBuildMobile({__osc_eng}, {__osc_x + 12, 0, __osc_z - 12}, 'ueb1101', {})
     )"))
         return;
