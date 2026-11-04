@@ -61,6 +61,12 @@ bool steers(const Unit& u) {
            u.max_speed() > 0 && !u.transport_id() && !u.parent_entity_id();
 }
 
+/// CAiSteeringImpl::Execute runs for a carried unit too; its attached motion doesn't move it.
+bool steers_moho(const Unit& u) {
+    return !u.destroyed() && !u.is_dying() && !u.is_being_built() && !u.is_air_unit() &&
+           u.max_speed() > 0;
+}
+
 bool can_fly(const Unit& u) {
     return u.motion_type() == "RULEUMT_Air";
 }
@@ -357,14 +363,20 @@ bool ignores_structures(const Unit& u) {
     return (u.footprint().flags & blueprints::kFootprintIgnoreStructures) != 0;
 }
 
-/// COGrid::ForAllEntitiesIterator's units for a sphere, as CollectCollisionCandidates asks
-/// it: those whose collision shape the sphere meets, and above a radius of 3 any whose bounds
-/// touch the box 0.707 of the radius about its centre (0x00721FB0).
-std::vector<Entity*> units_meeting_sphere(const SimState& sim, const Vector3& c, f32 r) {
+/// COGrid::ForAllEntitiesIterator's units for a sphere, in its cells' order, as
+/// CollectCollisionCandidates asks it: those whose collision shape the sphere meets, and above a
+/// radius of 3 any whose bounds touch the box 0.707 of the radius about its centre.
+std::vector<Entity*> units_meeting_sphere(SimState& sim, const Vector3& c, f32 r) {
     constexpr f32 kReach = 32.0f; // past any unit's shape from its centre
     const f32 inner = r * 0.70700002f;
+    CollisionCells& cells = sim.entity_registry().collision_cells();
+    const std::vector<Entity*> gathered =
+        cells.initialized()
+            ? cells.gather(CollisionCells::box_rect(c.x - r, c.z - r, c.x + r, c.z + r), true,
+                           false)
+            : sim.entity_registry().units_in_radius(c.x, c.z, r + kReach);
     std::vector<Entity*> out;
-    for (Entity* e : sim.entity_registry().units_in_radius(c.x, c.z, r + kReach)) {
+    for (Entity* e : gathered) {
         const CollisionShape& shape = e->collision_shape();
         Vector3 lo, hi;
         bool meets = false;
@@ -869,8 +881,10 @@ void steer_units(SimState& sim, const std::vector<EntityId>& ids) {
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto& u = static_cast<Unit&>(*e);
         Navigator& nav = u.navigator();
-        if (sim.moho_pathing() && nav.moho_active()) {
-            if (steers(u)) steer_moho(sim, u);
+        if (sim.moho_pathing() && (nav.moho_active() || nav.has_spline())) {
+            if (steers_moho(u)) {
+                steer_moho(sim, u);
+            }
             continue;
         }
         // Moho's steering ticks every unit, a still one too (CAiSteeringImpl::OnTick): one
@@ -900,6 +914,19 @@ void steer_stop(SimState& sim, Unit& u) {
     const bool remaining = !nav.spline().empty();
     nav.spline_stop();
     if (remaining) check_moho(sim, u);
+}
+
+void steer_no_waypoints(SimState& sim, Unit& u) {
+    Navigator& nav = u.navigator();
+    if (!nav.has_spline()) {
+        return;
+    }
+    nav.clear_collision();
+    if (!u.is_dying() && !u.is_being_built() && !u.destroyed()) {
+        nav.spline_brake(u, 3);
+    }
+    check_moho(sim, u);
+    nav.advance_motion_node();
 }
 
 void steer_ground_units(SimState& sim) {

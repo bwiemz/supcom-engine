@@ -490,17 +490,16 @@ OrderStep Unit::order_destroy_self(SimContext& ctx) {
 }
 
 OrderStep Unit::order_stop(lua_State* L) {
-    navigator_.abort_move();
+    abort_move();
     command_queue_.pop_front();
     run_stop(L);
     return OrderStep::Next;
 }
 
 OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
-    // Its move aborted by a Warp as it ran: Moho's move task hears it as a
-    // failure and the order ends, the unit coasting to a stop
-    if (warp_aborted_command_ != 0 && cmd.command_id == warp_aborted_command_) {
-        warp_aborted_command_ = 0;
+    // Moho's move task hears AINAVEVENT_Aborted as a failure: the order ends.
+    if (aborted_command_ != 0 && cmd.command_id == aborted_command_) {
+        aborted_command_ = 0;
         command_queue_.pop_front();
         if (is_air_unit() &&
             (command_queue_.empty() || instant_order(command_queue_.front().type))) {
@@ -588,7 +587,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
             const f32 az = position().z - anchor.z;
             if (ax * ax + ay * ay + az * az > guard_return_radius_ * guard_return_radius_) {
                 if (cmd.engaged) end_attack_run(*this);
-                navigator_.abort_move();
+                abort_move();
                 command_queue_.pop_front();
                 return OrderStep::Next;
             }
@@ -700,7 +699,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
         if (can_fly()) {
             close_in();
         } else {
-            navigator_.abort_move();
+            abort_move();
         }
         // In reach, every 9 ticks it asks to face its target AttackAngle off
         // the bow (Moho's attack task, Complete: SetFacing, return 10).
@@ -749,12 +748,12 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, SimContext& ctx) {
                        static_cast<i64>(weapon->shots_at_target) >= weapon->attack_ground_tries;
     const bool form_attack_unarmed = !weapon && cmd.form_attack && !has_category("DIRECTFIRE");
     if (form_attack_unarmed && command_queue_.size() < 2) {
-        navigator_.abort_move();
+        abort_move();
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     if (command_queue_.size() >= 2 && (spent || form_attack_unarmed)) {
-        navigator_.abort_move();
+        abort_move();
         auto finished = std::move(cmd); // cmd is the element pop_front destroys
         finished.begun = false;
         finished.engaged = false;
@@ -822,7 +821,7 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, SimContext& ctx) {
         }
         cmd.has_slot = false; // the formation dropped, as on a unit
         if (!can_fly()) {
-            navigator_.abort_move();
+            abort_move();
             return OrderStep::Hold;
         }
     }
@@ -968,7 +967,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             command_queue_.pop_front();
             return OrderStep::Next;
         }
-        navigator_.abort_move();
+        abort_move();
         {
             const Vector3 site{cmd.target_pos.x, cmd.target_pos.y + 0.5f, cmd.target_pos.z};
             aim_builder_arms(&site, L);
@@ -1159,83 +1158,123 @@ OrderStep Unit::end_factory_build_order(UnitCommand& cmd) {
 }
 
 OrderStep Unit::order_patrol(UnitCommand& cmd, SimContext& ctx) {
+    const auto drive = [&] {
+        if (navigator_.status() == Navigator::Status::WaitingForPath) {
+            set_path_goal(cmd.target_pos, ctx);
+        }
+        nav_update(cmd.speed_cap);
+        return OrderStep::Hold;
+    };
     // Moho's CUnitPatrolTask::Execute, every 6 ticks (it returns 7).
     if (cmd.patrol_scan > 0) {
         --cmd.patrol_scan;
-    } else {
-        cmd.patrol_scan = 5;
-        // Moho's patrol task returns 7 with its new task above it, which so
-        // starts 6 ticks on; done, it hands straight back to the patrol's Execute.
-        // An aircraft goes at once: nothing here flies it while it would wait.
-        const auto break_off = [&](UnitCommand order) {
-            order.command_id = cmd.command_id;
-            order.from_patrol = true;
-            order.patrol_scan = is_air_unit() ? 0 : 5;
-            cmd.patrol_scan = 0;
-            navigator_.abort_move();
-            command_queue_.push_front(
-                std::move(order)); // cmd stays valid: a deque keeps references
-            return OrderStep::Hold;
-        };
-        if (Unit* pad = find_platform(ctx)) {
-            // As Moho's patrol task does (TransportResetReservation): a
-            // carrier's landing points go round again from the first, so two
-            // patrols breaking off to one carrier moments apart can share a
-            // point.
-            pad->reset_storage_reservation();
-            UnitCommand refuel;
-            refuel.type = CommandType::Dock;
-            refuel.target_id = pad->entity_id();
-            refuel.target_pos = pad->position();
-            return break_off(std::move(refuel));
-        }
-        if (Entity* enemy = find_patrol_target(cmd, ctx)) {
-            UnitCommand attack;
-            attack.type = CommandType::Attack;
-            attack.target_id = enemy->entity_id();
-            attack.target_pos = enemy->position();
-            ctx.sim->pick_target_point(attack);
-            // Moho's patrol task keeps where it broke off (GuardedPos): the
-            // fight's leash runs from there.
-            attack.leash_anchor_pos = position();
-            return break_off(std::move(attack));
-        }
-        if (Entity* work = find_patrol_work(cmd, ctx)) {
-            UnitCommand order;
-            order.target_id = work->entity_id();
-            order.target_pos = work->position();
-            if (work->is_unit() && ctx.sim->is_ally(army(), work->army())) {
-                order.type = CommandType::Repair;
-            } else {
-                order.type = CommandType::Reclaim;
-                cmd.patrol_claimed.push_back(work->entity_id());
-            }
-            return break_off(std::move(order));
-        }
+        return drive();
     }
-    if ((!navigator_.is_moving() && !navigator_.ended()) ||
-        navigator_.goal().x != cmd.target_pos.x || navigator_.goal().z != cmd.target_pos.z) {
-        set_path_goal(cmd.target_pos, ctx);
+    cmd.patrol_scan = 5;
+    ++cmd.patrol_runs;
+    // Moho's patrol task returns 7 with its new task above it, which so
+    // starts 6 ticks on; done, it hands straight back to the patrol's Execute.
+    // An aircraft goes at once: nothing here flies it while it would wait.
+    const auto break_off = [&](UnitCommand order) {
+        order.command_id = cmd.command_id;
+        order.from_patrol = true;
+        order.patrol_scan = is_air_unit() ? 0 : 5;
+        cmd.patrol_scan = 0;
+        cmd.patrol_moving = false;
+        // Of the tasks a patrol hands its unit to, the reclaim task alone aborts the move.
+        if (order.type == CommandType::Reclaim) {
+            abort_move();
+        }
+        command_queue_.push_front(std::move(order)); // cmd stays valid: a deque keeps references
+        return OrderStep::Hold;
+    };
+    if (Unit* pad = find_platform(ctx)) {
+        // As Moho's patrol task does (TransportResetReservation): a
+        // carrier's landing points go round again from the first, so two
+        // patrols breaking off to one carrier moments apart can share a
+        // point.
+        pad->reset_storage_reservation();
+        UnitCommand refuel;
+        refuel.type = CommandType::Dock;
+        refuel.target_id = pad->entity_id();
+        refuel.target_pos = pad->position();
+        return break_off(std::move(refuel));
     }
-    if (!nav_update(cmd.speed_cap)) {
-        // An attack-move is one leg: Moho's dispatch removes the order when
-        // its patrol task is done.
+    if (Entity* enemy = find_patrol_target(cmd, ctx)) {
+        UnitCommand attack;
+        attack.type = CommandType::Attack;
+        attack.target_id = enemy->entity_id();
+        attack.target_pos = enemy->position();
+        ctx.sim->pick_target_point(attack);
+        // Moho's patrol task keeps where it broke off (GuardedPos): the
+        // fight's leash runs from there.
+        attack.leash_anchor_pos = position();
+        return break_off(std::move(attack));
+    }
+    if (Entity* work = find_patrol_work(cmd, ctx)) {
+        UnitCommand order;
+        order.target_id = work->entity_id();
+        order.target_pos = work->position();
+        if (work->is_unit() && ctx.sim->is_ally(army(), work->army())) {
+            order.type = CommandType::Repair;
+        } else {
+            order.type = CommandType::Reclaim;
+            cmd.patrol_claimed.push_back(work->entity_id());
+        }
+        return break_off(std::move(order));
+    }
+    if (cmd.patrol_moving && cmd.patrol_runs > 3 && patrol_leg_reached(cmd, ctx.registry)) {
+        // ~CUnitPatrolTask aborts the move of a unit that moved this tick (AbortMove).
+        const Vector3& now = position();
+        const Vector3& before = last_position();
+        if (now.x != before.x || now.y != before.y || now.z != before.z) {
+            abort_move();
+        }
+        // Moho's dispatch removes an attack-move whose patrol task is done.
         if (cmd.type == CommandType::AggressiveMove) {
             command_queue_.pop_front();
             return OrderStep::Next;
         }
-        // Reached patrol point — cycle to back of queue (moved out first:
-        // cmd is the element pop_front destroys). The next leg starts next
-        // tick: a patrol whose points it already stands on would otherwise
-        // go round them for ever within this one.
-        auto finished = std::move(cmd);
+        // A patrol's leg goes to the back while another order follows it, else
+        // the patrol ends; either way the next order starts next tick.
+        auto finished = std::move(cmd); // cmd is the element pop_front destroys
         finished.patrol_claimed.clear();
         finished.begun = false; // Moho makes each leg a new patrol task
+        finished.patrol_scan = 0;
+        finished.patrol_runs = 0;
+        finished.patrol_moving = false;
         command_queue_.pop_front();
-        command_queue_.push_back(std::move(finished));
+        if (!command_queue_.empty()) {
+            command_queue_.push_back(std::move(finished));
+        }
         return OrderStep::Hold;
     }
+    if (navigator_.busy() && cmd.patrol_moving) {
+        return drive();
+    }
+    update_speed_through();
+    set_path_goal(cmd.target_pos, ctx);
+    cmd.patrol_moving = true;
+    nav_update(cmd.speed_cap);
     return OrderStep::Hold;
+}
+
+bool Unit::patrol_leg_reached(const UnitCommand& cmd, const EntityRegistry& registry) const {
+    // Moho's PatrolGoalCoversUnitOrigin (faf-re CUnitPatrolTask.cpp).
+    const blueprints::Footprint& fp = footprint();
+    const auto cell = [](f32 at, u8 size) {
+        return static_cast<i32>(std::lrint(at - static_cast<f32>(size) * 0.5f));
+    };
+    // Moho's mFormationTopSpeed: a flier's air speed over its load.
+    const f32 top =
+        can_fly() ? max_airspeed() * speed_mult() / transport_load_factor(registry) : nav_speed();
+    const i32 grow = static_cast<i32>(std::ceil(top));
+    const i32 goal_x = cell(cmd.target_pos.x, fp.size_x);
+    const i32 goal_z = cell(cmd.target_pos.z, fp.size_z);
+    const i32 x = cell(position().x, fp.size_x);
+    const i32 z = cell(position().z, fp.size_z);
+    return goal_x - grow <= x && x <= goal_x + 1 + grow && goal_z - grow <= z &&
+           z <= goal_z + 1 + grow;
 }
 
 OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
@@ -1294,7 +1333,7 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Next;
         }
     }
-    navigator_.abort_move();
+    abort_move();
 
     // Start reclaim if not already reclaiming this target
     if (reclaim_target_id_ != cmd.target_id) {
@@ -1442,7 +1481,7 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
             return OrderStep::Next;
         }
     }
-    navigator_.abort_move();
+    abort_move();
 
     if (under_construction) {
         if (is_repairing()) stop_repairing(L, registry);
@@ -1587,7 +1626,7 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Next;
         }
     }
-    navigator_.abort_move();
+    abort_move();
 
     // Start capture if not already capturing this target
     if (capture_target_id_ != cmd.target_id) {
@@ -1739,7 +1778,7 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
     attack.leash_anchor_id = guarded ? guarded->entity_id() : EntityId();
     attack.leash_anchor_pos = ref;
     cmd.guard_returning = true;
-    navigator_.abort_move();
+    abort_move();
     command_queue_.push_front(std::move(attack)); // cmd stays valid: a deque keeps references
     return OrderStep::Next;
 }
@@ -1834,7 +1873,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         }
         const f32 limit = helping && skirt ? 2 * max_build_distance_ : max_build_distance_;
         if (work_gap(*this, work.position(), extent) <= limit) {
-            navigator_.abort_move();
+            abort_move();
             return true;
         }
         if (effective_speed() > 0) {
@@ -2507,7 +2546,7 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
             if (destroyed() || !in_registry()) return OrderStep::Gone;
             pickup_phase_ = PickupPhase::Flying;
         } else {
-            navigator_.abort_move();
+            abort_move();
             pickup_center_ = position();
             pickup_phase_ = PickupPhase::Waiting;
         }
@@ -2522,7 +2561,7 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
         if (nav_update()) {
             return OrderStep::Hold;
         }
-        navigator_.abort_move();
+        abort_move();
         pickup_phase_ = PickupPhase::Landing;
     }
     // Over the centre, it comes down to its hover height; only then is it at
@@ -2743,7 +2782,7 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, SimContext& ctx) {
         walk_to({bone_at.x, position().y, bone_at.z});
         return OrderStep::Hold;
     }
-    navigator_.abort_move();
+    abort_move();
     ground_speed_ = 0;
     beam_from_ = position();
     beam_from_orientation_ = orientation();
@@ -2789,7 +2828,7 @@ OrderStep Unit::order_transport_unload(UnitCommand& cmd, SimContext& ctx) {
         nav_update();
         return OrderStep::Hold;
     }
-    navigator_.abort_move();
+    abort_move();
     set_unit_state("TransportUnloading", true);
 
     // Over the drop: down to its hover height, then its cargo is set down
@@ -2923,7 +2962,7 @@ OrderStep Unit::order_launch(UnitCommand& cmd, SimContext& ctx) {
         }
         nav_update();
     } else {
-        navigator_.abort_move();
+        abort_move();
         if (overcharge && !cmd.started) {
             cmd.started = true;
             overcharge_armed_ = true;
@@ -3267,7 +3306,7 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, SimContext& ctx) {
             ferry_fly(ctx, drop);
             return OrderStep::Hold;
         }
-        navigator_.abort_move();
+        abort_move();
         ferry_leg_set_ = false;
         if (!unload_step(ctx, {})) {
             return OrderStep::Hold;
@@ -3317,7 +3356,7 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, SimContext& ctx) {
             const f32 ldx = ferry->position().x - position().x;
             const f32 ldz = ferry->position().z - position().z;
             if (ldx * ldx + ldz * ldz <= load_range * load_range) {
-                navigator_.abort_move();
+                abort_move();
                 set_unit_state("WaitForFerry", false);
                 attach_to_transport(ferry, registry, L);
                 command_queue_.pop_front();
@@ -3336,7 +3375,7 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, SimContext& ctx) {
     const f32 bdx = beacon->position().x - position().x;
     const f32 bdz = beacon->position().z - position().z;
     if (has_unit_state("WaitForFerry") || bdx * bdx + bdz * bdz <= wait_range * wait_range) {
-        navigator_.abort_move();
+        abort_move();
         set_unit_state("WaitForFerry", true);
         return OrderStep::Hold;
     }

@@ -627,8 +627,8 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
                 a.enemies |= 1u << j;
             }
         }
-        a.start_x = brain->start_position().x;
-        a.start_z = brain->start_position().z;
+        a.no_rush_x = brain->start_position().x + brain->no_rush_offset().x;
+        a.no_rush_z = brain->start_position().z + brain->no_rush_offset().z;
     }
 
     {

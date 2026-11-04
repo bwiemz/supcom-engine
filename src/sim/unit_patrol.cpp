@@ -83,15 +83,6 @@ bool off_map(const SimState& sim, const Vector3& p, f32 margin) {
             p.z < sim.playable_z0() + margin || p.z > sim.playable_z1() - margin);
 }
 
-bool outside_no_rush(const SimState& sim, const ArmyBrain* brain, const Vector3& p) {
-    if (!brain || !sim.no_rush_active()) {
-        return false;
-    }
-    const f32 dx = brain->start_position().x - p.x;
-    const f32 dz = brain->start_position().z - p.z;
-    return std::sqrt(dx * dx + dz * dz) > sim.no_rush_radius();
-}
-
 bool nearly_full(const ResourceState& r) {
     return r.stored > r.max_storage * 0.75;
 }
@@ -275,7 +266,7 @@ Entity* Unit::find_patrol_work(const UnitCommand& cmd, SimContext& ctx) {
                 weight = 2.0f;
             }
         }
-        if (off_map(*sim, e->position(), 1.0f) || outside_no_rush(*sim, brain, e->position())) {
+        if (off_map(*sim, e->position(), 1.0f) || sim->outside_no_rush(army(), e->position())) {
             return;
         }
         const f32 dx = position().x - e->position().x;

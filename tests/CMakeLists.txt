@@ -88,6 +88,8 @@ add_executable(osc_tests
     test_user_unit.cpp
     test_verify_script_command.cpp
     test_command_issued.cpp
+    test_upgrade_orders.cpp
+    test_issue_checks.cpp
     test_faf_bindings.cpp
     test_engine_stats.cpp
     test_army_stats_sync.cpp

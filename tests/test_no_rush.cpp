@@ -1,5 +1,4 @@
-// No Rush option tests: units are confined near their army start for the
-// no-rush period, via both the scheduler (goal clamp) and a per-tick pin.
+// No Rush: while it runs, an army's orders keep to its zone.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -67,7 +66,7 @@ TEST_CASE("No Rush is inactive by default and after its window", "[norush]") {
     CHECK_FALSE(sim.no_rush_active());
 }
 
-TEST_CASE("No Rush pins a straying unit at the boundary", "[norush]") {
+TEST_CASE("No Rush holds no unit at its zone's edge", "[norush]") {
     const Vector3 origin{0.0f, 0.0f, 0.0f};
     LuaGuard g;
     SimState sim(g.L, nullptr);
@@ -77,16 +76,17 @@ TEST_CASE("No Rush pins a straying unit at the boundary", "[norush]") {
 
     EntityId id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 10.0f);
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
-    // Direct order (as an AI would issue) toward a far target.
     u->push_command(move_to(1000.0f, 0.0f), true);
-
-    tick_until([&] { sim.tick(); }, "the unit reaches the boundary", 150,
-               [&] { return dist_xz(u->position(), origin) >= 49.5f; });
-    for (int i = 0; i < 40; ++i) sim.tick();
-    CHECK(dist_xz(u->position(), origin) <= 50.5f);
+    tick_until([&] { sim.tick(); }, "the unit walks out of the zone", 200,
+               [&] { return dist_xz(u->position(), origin) > 60.0f; });
+    EntityId outside = spawn_mover(sim, 0, {90.0f, 0.0f, 0.0f}, 10.0f);
+    for (int i = 0; i < 20; ++i) {
+        sim.tick();
+    }
+    CHECK(sim.entity_registry().find(outside)->position().x == 90.0f);
 }
 
-TEST_CASE("No Rush clamps a scheduled move goal to the zone", "[norush]") {
+TEST_CASE("No Rush refuses a scheduled move out of the zone, and takes one in it", "[norush]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     sim.add_army("ARMY_1", "ARMY_1");
@@ -95,70 +95,56 @@ TEST_CASE("No Rush clamps a scheduled move goal to the zone", "[norush]") {
 
     EntityId id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 10.0f);
     sim.schedule_command(0, {id}, move_to(500.0f, 0.0f), true);
-    sim.tick(); // dispatch clamps the goal
-
+    sim.tick();
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
+    CHECK(u->command_queue().empty());
+
+    sim.schedule_command(0, {id}, move_to(40.0f, 0.0f), true);
+    sim.tick();
     REQUIRE_FALSE(u->command_queue().empty());
-    // Goal clamped onto the radius circle (x ~= 50).
-    CHECK(u->command_queue().front().target_pos.x <= 50.1f);
-    CHECK(u->command_queue().front().target_pos.x >= 49.9f);
+    CHECK(u->command_queue().front().target_pos.x == 40.0f);
 }
 
-TEST_CASE("Units confined during No Rush are freed once it expires", "[norush]") {
-    const Vector3 origin{0.0f, 0.0f, 0.0f};
-    LuaGuard g;
-    SimState sim(g.L, nullptr);
-    sim.add_army("ARMY_1", "ARMY_1");
-    sim.get_army(0)->set_start_position({0.0f, 0.0f, 0.0f});
-    sim.set_no_rush(1.0f, 50.0f); // 1 second window
-
-    EntityId id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 20.0f);
-    auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
-    u->push_command(move_to(1000.0f, 0.0f), true);
-
-    for (int i = 0; i < 8; ++i) sim.tick();     // inside the window
-    CHECK(dist_xz(u->position(), origin) <= 50.5f);
-
-    tick_until([&] { sim.tick(); }, "the unit leaves the zone once the window expires", 120,
-               [&] { return dist_xz(u->position(), origin) > 50.5f; });
-}
-
-TEST_CASE("No Rush confines each army to its own start", "[norush]") {
-    const Vector3 base2{200.0f, 0.0f, 0.0f};
-    LuaGuard g;
-    SimState sim(g.L, nullptr);
-    sim.set_victory_condition("sandbox");
-    sim.add_army("ARMY_1", "ARMY_1");
-    sim.add_army("ARMY_2", "ARMY_2");
-    sim.get_army(0)->set_start_position({0.0f, 0.0f, 0.0f});
-    sim.get_army(1)->set_start_position({200.0f, 0.0f, 0.0f});
-    sim.set_no_rush(100.0f, 50.0f);
-
-    EntityId id = spawn_mover(sim, 1, {200.0f, 0.0f, 0.0f}, 10.0f);
-    auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
-    u->push_command(move_to(0.0f, 0.0f), true); // head toward the other base
-
-    tick_until([&] { sim.tick(); }, "the unit reaches its own boundary", 150,
-               [&] { return dist_xz(u->position(), base2) >= 49.5f; });
-    for (int i = 0; i < 40; ++i) {
-        sim.tick();
+TEST_CASE("Each army's No Rush zone is about its start and the map's offset", "[norush]") {
+    struct Case {
+        const char* what;
+        int army;
+        Vector3 to;
+        bool taken;
+    };
+    const Case cases[] = {
+        {"near its start, far from the centre", 0, {0.0f, 0.0f, -45.0f}, false},
+        {"far from its start, near the centre", 0, {15.0f, 0.0f, 85.0f}, true},
+        {"just in", 0, {63.0f, 0.0f, 40.0f}, true},
+        {"just out", 0, {67.0f, 0.0f, 40.0f}, false},
+        {"the other army's, at its own start", 1, {200.0f, 0.0f, 0.0f}, true},
+        {"the other army's, at the first's centre", 1, {15.0f, 0.0f, 40.0f}, false},
+    };
+    for (const Case& c : cases) {
+        LuaGuard g;
+        SimState sim(g.L, nullptr);
+        sim.set_victory_condition("sandbox");
+        sim.add_army("ARMY_1", "ARMY_1");
+        sim.add_army("ARMY_2", "ARMY_2");
+        sim.get_army(0)->set_start_position({0.0f, 0.0f, 0.0f});
+        sim.get_army(0)->set_no_rush_offset({15.0f, 0.0f, 40.0f});
+        sim.get_army(1)->set_start_position({200.0f, 0.0f, 0.0f});
+        sim.set_no_rush(100.0f, 50.0f);
+        const Vector3 at = c.army == 0 ? Vector3{15.0f, 0.0f, 40.0f} : Vector3{200.0f, 0.0f, 0.0f};
+        EntityId id = spawn_mover(sim, c.army, at, 10.0f);
+        INFO(c.what);
+        CHECK((sim.route_command({id}, move_to(c.to.x, c.to.z), true) != 0) == c.taken);
     }
-    CHECK(dist_xz(u->position(), base2) <= 50.5f);
-    CHECK(u->position().x >= 149.5f); // never crossed toward the enemy base
 }
 
-TEST_CASE("Civilian units are exempt from No Rush", "[norush]") {
-    const Vector3 origin{0.0f, 0.0f, 0.0f};
+TEST_CASE("An order out of the zone is taken once No Rush ends", "[norush]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
-    sim.add_army("CIVILIAN", "CIVILIAN"); // civilian army 0
+    sim.add_army("ARMY_1", "ARMY_1");
     sim.get_army(0)->set_start_position({0.0f, 0.0f, 0.0f});
-    sim.set_no_rush(100.0f, 50.0f);
-
-    EntityId id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 20.0f);
-    auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
-    u->push_command(move_to(1000.0f, 0.0f), true);
-
-    tick_until([&] { sim.tick(); }, "the civilian unit leaves the zone", 120,
-               [&] { return dist_xz(u->position(), origin) > 50.5f; });
+    sim.set_no_rush(1.0f, 50.0f);
+    EntityId id = spawn_mover(sim, 0, {0.0f, 0.0f, 0.0f}, 10.0f);
+    CHECK(sim.route_command({id}, move_to(500.0f, 0.0f), true) == 0);
+    tick_until([&] { sim.tick(); }, "No Rush ends", 30, [&] { return !sim.no_rush_active(); });
+    CHECK(sim.route_command({id}, move_to(500.0f, 0.0f), true) != 0);
 }

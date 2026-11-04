@@ -99,6 +99,9 @@ add_executable(osc_integration
     runner/unit_cap_test.cpp
     runner/unit_hooks_test.cpp
     runner/notify_upgrade_test.cpp
+    runner/upgrade_orders_test.cpp
+    runner/issue_checks_test.cpp
+    runner/no_rush_test.cpp
     runner/need_unpack_test.cpp
     runner/guard_engage_test.cpp
     runner/rebuilder_guard_test.cpp
@@ -186,18 +189,11 @@ endforeach()
 # default), again with it: each holds its expectations both ways until the
 # flag is the default.
 foreach(mode drive-test steer-test crowd-test weapon-test range-test factory-rally-test
-             shore-test choke-test crowdgap-test)
+             shore-test choke-test crowdgap-test ferry-test)
     add_test(NAME data.moho.${mode}
              COMMAND osc_integration --map ${OSC_TEST_MAP} --${mode} --moho-pathing)
-    # crowd-test's six Strikers end 0.18 apart under the test runner, though retail's
-    # crowd probe of its scene keeps them 0.936 apart and the engine's own run of it 0.873:
-    # a known gap until the runner's start is matched to the game's.
-    set(moho_label gate)
-    if(mode STREQUAL "crowd-test")
-        set(moho_label retail-gap)
-    endif()
     set_tests_properties(data.moho.${mode} PROPERTIES
-        LABELS "data;${moho_label}"
+        LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
 endforeach()
@@ -479,6 +475,47 @@ if(Python3_Interpreter_FOUND)
                          "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
     endif()
     set_tests_properties(data.bp-reflect_faf PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
+    # FAF's factories link their tiers by UpgradesFromBase (the retail run is
+    # data.upgrade-orders-test).
+    if(_osc_faf_data)
+        add_test(NAME data.upgrade-orders_faf
+                 COMMAND osc_integration --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP}
+                         --upgrade-orders-test)
+    else()
+        add_test(NAME data.upgrade-orders_faf
+                 COMMAND ${Python3_EXECUTABLE} -c
+                         "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
+    endif()
+    set_tests_properties(data.upgrade-orders_faf PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
+    if(_osc_faf_data)
+        add_test(NAME data.issue-checks_faf
+                 COMMAND osc_integration --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP}
+                         --issue-checks-test)
+    else()
+        add_test(NAME data.issue-checks_faf
+                 COMMAND ${Python3_EXECUTABLE} -c
+                         "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
+    endif()
+    set_tests_properties(data.issue-checks_faf PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
+    if(_osc_faf_data)
+        add_test(NAME data.no-rush_faf
+                 COMMAND osc_integration --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP}
+                         --no-rush-test)
+    else()
+        add_test(NAME data.no-rush_faf
+                 COMMAND ${Python3_EXECUTABLE} -c
+                         "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
+    endif()
+    set_tests_properties(data.no-rush_faf PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 600)

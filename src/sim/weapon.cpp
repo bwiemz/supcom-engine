@@ -106,10 +106,12 @@ bool is_weapon_targetable(const Unit& owner, const Entity& target, const SimStat
 }
 
 /// Whether `owner`'s army knows `target` (SimState::weapons_know): a unit
-/// it senses, or a structure it has seen. A projectile is a weapon's to see.
+/// it senses, or a structure it has seen, and in its No Rush zone while
+/// that runs (Moho's UpdateBlipsInRange). A projectile is a weapon's to see.
 bool known_to_army(const Unit& owner, const Entity& target, const SimState* sim) {
     if (!sim || !target.is_unit() || owner.army() < 0) return true;
-    return sim->weapons_know(static_cast<const Unit&>(target), static_cast<u32>(owner.army()));
+    return sim->weapons_know(static_cast<const Unit&>(target), static_cast<u32>(owner.army())) &&
+           !sim->outside_no_rush(owner.army(), target.position());
 }
 
 bool is_underwater(const std::string& layer) {

@@ -793,6 +793,7 @@ TEST_CASE("capture_world records what the renderer draws a unit with", "[interp]
     u.add_weapon(std::move(gun));
     u.set_script_bit(3, true);
     sim.army_at(0)->set_start_position({100, 0, 200});
+    sim.army_at(0)->set_no_rush_offset({15, 0, 40});
     sim.set_no_rush(300, 60);
 
     WorldSnapshot snap;
@@ -843,8 +844,8 @@ TEST_CASE("capture_world records what the renderer draws a unit with", "[interp]
     CHECK(reach[0].min_radius == 3.0f);
     CHECK(reach[0].max_radius == 26.0f);
     CHECK(r->script_bits == 8);
-    CHECK(snap.armies[0].start_x == 100.0f);
-    CHECK(snap.armies[0].start_z == 200.0f);
+    CHECK(snap.armies[0].no_rush_x == 115.0f);
+    CHECK(snap.armies[0].no_rush_z == 240.0f);
     CHECK(snap.no_rush_radius == 60.0f);
 
     REQUIRE(snap.armies.size() == 2);

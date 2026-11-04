@@ -63,35 +63,6 @@ BlueprintStore::~BlueprintStore() {
     }
 }
 
-namespace {
-
-/// Moho reads a prop's reclaim values as numbers, so an empty string (162
-/// of retail's prop blueprints write ReclaimEnergyMax = '', and the default
-/// wreck too) is 0. Prop.lua's GetReclaimCosts does arithmetic with them.
-void apply_prop_defaults(lua_State* L, int bp) {
-    lua_pushstring(L, "Economy");
-    lua_rawget(L, bp);
-    if (lua_istable(L, -1)) {
-        const int economy = lua_gettop(L);
-        for (const char* field : {"ReclaimMassMax", "ReclaimEnergyMax", "ReclaimTime",
-                                  "ReclaimMassTimeMultiplier", "ReclaimEnergyTimeMultiplier"}) {
-            lua_pushstring(L, field);
-            lua_rawget(L, economy);
-            const int type = lua_type(L, -1);
-            // A string that reads as a number (lua_tonumber) keeps its value.
-            const lua_Number value = type == LUA_TSTRING ? lua_tonumber(L, -1) : 0;
-            lua_pop(L, 1);
-            if (type != LUA_TSTRING) continue;
-            lua_pushstring(L, field);
-            lua_pushnumber(L, value);
-            lua_rawset(L, economy);
-        }
-    }
-    lua_pop(L, 1);
-}
-
-} // namespace
-
 void BlueprintStore::register_blueprint(lua_State* L, BlueprintType type,
                                           int stack_index) {
     // Read BlueprintId from the table.
@@ -131,12 +102,15 @@ void BlueprintStore::register_blueprint(lua_State* L, BlueprintType type,
     std::transform(id.begin(), id.end(), id.begin(),
                    [](unsigned char c) { return std::tolower(c); });
 
-    if (type == BlueprintType::Unit || type == BlueprintType::Prop ||
-        type == BlueprintType::Projectile) {
-        const int bp = stack_index > 0 ? stack_index : lua_gettop(L) + stack_index + 1;
-        if (type == BlueprintType::Unit) apply_unit_reflection(L, bp, footprint_classes_);
-        else if (type == BlueprintType::Prop) apply_prop_defaults(L, bp);
-        else apply_projectile_reflection(L, bp);
+    const int bp = stack_index > 0 ? stack_index : lua_gettop(L) + stack_index + 1;
+    if (type == BlueprintType::Unit) {
+        apply_unit_reflection(L, bp, footprint_classes_);
+    } else if (type == BlueprintType::Prop) {
+        apply_prop_reflection(L, bp);
+    } else if (type == BlueprintType::Projectile) {
+        apply_projectile_reflection(L, bp);
+    } else if (type == BlueprintType::Mesh) {
+        apply_mesh_reflection(L, bp, file_exists_);
     }
 
     // Create a Lua registry reference for the table

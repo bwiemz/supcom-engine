@@ -538,7 +538,6 @@ void SimState::retarget_command(const SimCallbackEntry& cb,
         mean.x += o.command->target_pos.x / static_cast<f32>(orders.size());
         mean.z += o.command->target_pos.z / static_cast<f32>(orders.size());
     }
-    const bool no_rush = no_rush_active();
     for (const auto& o : orders) {
         UnitCommand* c = o.command;
         Vector3 to = point;
@@ -547,9 +546,6 @@ void SimState::retarget_command(const SimCallbackEntry& cb,
             to.z = c->target_pos.z + point.z - mean.z;
         }
         to = clamp_to_playable(to, o.unit->army());
-        if (no_rush && (c->type == CommandType::Move || c->type == CommandType::Attack)) {
-            to = clamp_to_no_rush(*o.unit, to);
-        }
         to.y = terrain() ? terrain()->get_surface_height(to.x, to.z) : 0.0f;
         c->target_pos = to;
         forget_target(*c);

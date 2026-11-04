@@ -231,9 +231,9 @@ TEST_CASE("clear_local_command_sink returns to single-player behavior",
 
 TEST_CASE("A Guard order leaves out the units Moho's issue does", "[routing][guard]") {
     // func_ProcessUnitCommand: never the unit itself, a factory only a
-    // factory, never a unit guarding it, not without the order, not from a
-    // carrier's hold; a place, only a mobile unit. A campaign base manager's
-    // factory told to guard itself had FAF's roll-off loop walk forever.
+    // factory, never a unit guarding it, not without the order; a place, only
+    // a mobile unit. A campaign base manager's factory told to guard itself
+    // had FAF's roll-off loop walk forever.
     LuaGuard g;
     SimState sim(g.L, nullptr);
     const auto make = [&](const char* category, bool mobile, bool guards = true) {
@@ -278,11 +278,6 @@ TEST_CASE("A Guard order leaves out the units Moho's issue does", "[routing][gua
     // A place (no target unit): only a mobile unit goes.
     CHECK(sim.route_command({tank}, guard({}), false) != 0);
     CHECK(sim.route_command({other_factory}, guard({}), true) == 0);
-    // In a carrier's hold, nothing.
-    const osc::sim::EntityId carrier = make("CARRIER", true);
-    const osc::sim::EntityId plane = make("AIR", true);
-    unit_of(sim, plane)->set_transport_id(carrier);
-    CHECK(sim.route_command({plane}, guard(tank), false) == 0);
 }
 
 TEST_CASE("A reclaim, capture, repair or build goes only to a unit of its category", "[routing]") {
@@ -322,10 +317,6 @@ TEST_CASE("A reclaim, capture, repair or build goes only to a unit of its catego
 
     const osc::sim::EntityId drone = make({"POD", "RECLAIM", "CAPTURE", "REPAIR"});
     CHECK(sim.route_command({drone}, order(CommandType::Capture), false) != 0);
-    unit_of(sim, drone)->set_transport_id(tank);
-    CHECK(sim.route_command({drone}, order(CommandType::Capture), false) == 0);
-    CHECK(sim.route_command({drone}, order(CommandType::Reclaim), false) == 0);
-    CHECK(sim.route_command({drone}, order(CommandType::Repair), false) == 0);
 }
 
 TEST_CASE("An enhancing unit takes no order that clears its queue but Stop", "[routing]") {

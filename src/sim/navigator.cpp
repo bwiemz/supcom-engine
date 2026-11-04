@@ -114,10 +114,10 @@ void Navigator::set_goal(const Vector3& pos) {
     status_ = Status::Moving;
 }
 
-void Navigator::abort_move() {
+void Navigator::abort_move(bool keep_spline) {
     ended_ = false;
     air_hold_set_ = false;
-    reset_moho();
+    reset_moho(keep_spline);
     status_ = Status::Idle;
     waypoints_.clear();
     waypoint_index_ = 0;
@@ -185,14 +185,16 @@ void Navigator::hold(int ticks, EntityId for_id) {
 
 bool Navigator::update(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
     if (unit.is_air_unit()) return slide(unit, max_speed, dt, terrain);
-    if (moho_pending_ || moho_active_) {
+    if (moho_pending_ || moho_active_ || motion_node_set_) {
         return drive_moho(unit, max_speed, dt, terrain);
     }
     return drive(unit, max_speed, dt, terrain);
 }
 
-void Navigator::reset_moho() {
-    spline_stop();
+void Navigator::reset_moho(bool keep_spline) {
+    if (!keep_spline) {
+        spline_stop();
+    }
     steer_dest_set_ = false;
     waypoint_refresh_ = false;
     moho_.reset();
@@ -332,30 +334,24 @@ void Navigator::navigate(Unit& unit) {
                                << " #" << EntityRegistry::moho_id(unit.entity_id()) << '\n';
         }
         moho_waypoint_cell_ = target;
-        // CAiSteeringImpl::DriveToNextWaypoint: a waypoint the unit is at (Unit::IsAtPosition)
-        // sets no motion target.
-        if (target != moho_.current()) {
-            waypoint_refresh_ = true;
-            waypoints_.assign(1, Vector3{moho_.target_x(), pos.y, moho_.target_z()});
-            waypoint_index_ = 0;
-            sidestep_ = false;
-            // UseTopSpeed(IsCellInGoal) picks the flag GetVal reads: in the goal, the
-            // order's speed through it (CalcAtTopSpeed1); short of it, none left of its
-            // path and not thinking (CalcAtTopSpeed2). CAiNavigatorLand::Execute, 0x005A4280.
-            through_target_ = moho_.cell_in_goal(target) ? speed_through_goal_
-                                                         : status_ != Status::WaitingForPath &&
-                                                               moho_.last_node_index() < 0;
-        } else {
-            // At it, the steering still takes it for its destination (mDestination), what a
-            // path asked afresh after a push makes for.
-            set_steer_destination(Vector3{moho_.target_x(), pos.y, moho_.target_z()});
-        }
+        // CAiSteeringImpl::DriveToNextWaypoint takes it after this tick's spline: its
+        // destination, but no motion target when the unit is at it (Unit::IsAtPosition).
+        waypoint_refresh_ = true;
+        waypoints_.assign(1, Vector3{moho_.target_x(), pos.y, moho_.target_z()});
+        waypoint_index_ = 0;
+        sidestep_ = false;
+        // UseTopSpeed(IsCellInGoal) picks the flag GetVal reads: in the goal, the
+        // order's speed through it (CalcAtTopSpeed1); short of it, none left of its
+        // path and not thinking (CalcAtTopSpeed2), CAiNavigatorLand::Execute.
+        through_target_ = moho_.cell_in_goal(target)
+                              ? speed_through_goal_
+                              : status_ != Status::WaitingForPath && moho_.last_node_index() < 0;
     }
     status_ = st == State::HasPath ? Status::Moving : Status::WaitingForPath;
 }
 
 bool Navigator::drive_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
-    if (!moho_active_ || waypoints_.empty()) {
+    if ((!moho_active_ || waypoints_.empty()) && !motion_node_set_) {
         return true;
     }
     const Status was = status_;

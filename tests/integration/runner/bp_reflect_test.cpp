@@ -1,5 +1,5 @@
-// --bp-reflect-test: a unit blueprint's flag enums and footprint as
-// Moho writes them back (docs/plans/2026-10-23-moho-blueprint-reflection-design.md).
+// --bp-reflect-test: blueprints as Moho writes them back
+// (docs/plans/2026-10-23-moho-blueprint-reflection-design.md).
 
 #include "bp_reflect_test.hpp"
 
@@ -72,6 +72,48 @@ constexpr const char* kRetailValues = R"(
         if got ~= w[4] then
             wrong = wrong .. w[1] .. '.' .. w[2] .. '.' .. w[3] .. ' ' .. type(got) .. ' '
                 .. tostring(got) .. ' (' .. tostring(w[4]) .. ') '
+        end
+    end
+    return wrong == '' and 'ok' or wrong
+)";
+
+/// The original game's projectile, prop and mesh blueprints and a value given
+/// as another type (retail probe bp-typed, 2026-10-30): each that differs, or
+/// 'ok'.
+constexpr const char* kRetailOthers = R"(
+    local shell = '/projectiles/tdfgauss01/tdfgauss01_proj.bp'
+    local pine = '/env/evergreen/props/trees/pine06_v2_prop.bp'
+    local tank = '/units/uel0201/uel0201_mesh'
+    local trees = '/env/evergreen/props/trees/'
+    local want = {
+        {shell, 'Physics.Lifetime', 15}, {shell, 'Physics.UseGravity', true},
+        {shell, 'Physics.BounceVelDamp', 0.5}, {shell, 'CollisionShape', 'None'},
+        {shell, 'Economy.BuildTime', 10}, {shell, 'Footprint.SizeX', 1},
+        {pine, 'CollisionShape', 'Box'}, {pine, 'LifeBarRender', false},
+        {pine, 'SelectionYOffset', 0.5},
+        {tank, 'LODs.1.MeshName', '/units/uel0201/uel0201_lod0.scm'},
+        {tank, 'LODs.1.AlbedoName', '/units/uel0201/uel0201_albedo.dds'},
+        {tank, 'LODs.1.SpecularName', '/units/uel0201/uel0201_SpecTeam.dds'},
+        {tank, 'LODs.2.MeshName', '/units/uel0201/uel0201_lod1.scm'},
+        {tank, 'LODs.2.AlbedoName', '/units/uel0201/uel0201_lod1_albedo.dds'},
+        {tank, 'StraddleWater', false},
+        {trees .. 'pine06_v2_mesh', 'LODs.1.AlbedoName', trees .. 'Pine06_V2_albedo.dds'},
+        {trees .. 'pine06_v2_mesh', 'LODs.3.NormalsName', trees .. 'pine06_v2_normalsTS.dds'},
+        {'uab2305', 'Weapon.1.ManualFire', true},
+    }
+    local wrong = ''
+    for _, w in want do
+        local got = __blueprints[w[1]]
+        for key in string.gfind(w[2], '[^.]+') do
+            if type(got) == 'table' then
+                got = got[tonumber(key) or key]
+            else
+                got = nil
+            end
+        end
+        if got ~= w[3] then
+            wrong = wrong .. w[1] .. ' ' .. w[2] .. ' ' .. type(got) .. ' ' .. tostring(got) ..
+                ' (' .. tostring(w[3]) .. ') '
         end
     end
     return wrong == '' and 'ok' or wrong
@@ -162,6 +204,11 @@ void test_bp_reflect(TestContext& ui, TestContext& sim, const std::function<void
             t.check(got == "ok", fmt::format("Test 1: the {} state reads the original game's flag "
                                              "enums and footprints: {}",
                                              state, got));
+            const std::string others = answer(*ctx, kRetailOthers);
+            t.check(others == "ok",
+                    fmt::format("Test 2: the {} state reads the original game's projectile, prop "
+                                "and mesh blueprints and a boolean given as 1: {}",
+                                state, others));
         }
         return;
     }
@@ -177,12 +224,12 @@ void test_bp_reflect(TestContext& ui, TestContext& sim, const std::function<void
     }
     const auto [units, wrong, missing] = counts;
     t.check(read && units >= 100 && wrong == 0 && missing == 0,
-            fmt::format("Test 2: FAF's unit view finds each unit's abilities by its CommandCaps "
+            fmt::format("Test 3: FAF's unit view finds each unit's abilities by its CommandCaps "
                         "(units, wrong, abilities never found, first wrong, counts): {}",
                         abilities));
     const std::string formation = answer(sim, kFafFormation);
     t.check(formation == "Land: 1=3 6=1 Naval: 4=2 ",
-            fmt::format("Test 3: FAF's formations size units by their footprint classes: '{}'",
+            fmt::format("Test 4: FAF's formations size units by their footprint classes: '{}'",
                         formation));
     play(1);
 }

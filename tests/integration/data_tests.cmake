@@ -41,10 +41,10 @@ set(OSC_DATA_TESTS_GATE
     gameui-test impact-test influence-test issue-handles-test
     enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test guard-engage-test rebuilder-guard-test mobile-build-start-test build-site-join-test assist-beam-test drown-test layer-transition-test spawn-layer-test warp-test
     feedback-render-test focus-army-test command-sources-test footfall-test full-smoke-test ghost-render-test mesh-texture-test hull-facing-test
-    input-test intel-field-test intel-overlay-test intel-test interp-test itemlist-render-test
+    input-test intel-field-test intel-overlay-test intel-test interp-test issue-checks-test itemlist-render-test
     economy-overlay-test jammer-blip-test jammer-test keyboard-test keymap-test
     layercap-test lighting-test los-test map-parse-test wave-test material-test bloom-test build-shader-test effect-mesh-test dispatch-matrix-test skinning-test prop-material-test clipped-shadow-test shadow-map-test lowstub-test manip-test massstub-test massstub2-test missile-test
-    lod-test massstub3-test massstub4-test medstub-test meshless-test move-test naval-depth-test need-unpack-test normal-test notify-upgrade-test
+    lod-test massstub3-test massstub4-test medstub-test meshless-test move-test naval-depth-test need-unpack-test no-rush-test normal-test notify-upgrade-test
     onframe-test particle-render-test path-test phase2-test phase3-test placement-layers-test pod-rebuild-test phase4-test phase5-test
     patrol-test persist-test platoon-test prebuilt-test profile-test projectile-test prop-test range-render-test range-test reclaim-test refract-render-test
     runtime-decal-test terrain-normal-render-test
@@ -54,7 +54,7 @@ set(OSC_DATA_TESTS_GATE
     teamcolor-test
     terrain-normal-test terrain-tex-test text-test threat-test trail-render-test
     tiled-render-test toggle-test transport-drop-test transport-pickup-test transport-silo-test transport-slots-test transport-test ui-test
-    uiboot-test uirender-test unit-cap-test unit-hooks-test unit-intel-test unitsound-test upgrade-test vet-adj-render-test
+    uiboot-test uirender-test unit-cap-test unit-hooks-test unit-intel-test unitsound-test upgrade-orders-test upgrade-test vet-adj-render-test
     vet-test vfx-render-test victory-test viz-render-test water-reflection-test water-render-test weapon-test world-views-test wreck-test
 
     yaw-only-test

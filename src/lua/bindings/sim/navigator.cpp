@@ -135,8 +135,9 @@ static int nav_SetGoal(lua_State* L) {
 static int nav_AbortMove(lua_State* L) {
     auto* unit = check_nav_unit(L);
     if (!unit || unit->destroyed()) return 0;
-    auto* nav = check_navigator(L);
-    if (nav) nav->abort_move();
+    if (check_navigator(L)) {
+        unit->abort_move();
+    }
     return 0;
 }
 

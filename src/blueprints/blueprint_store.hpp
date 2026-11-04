@@ -3,6 +3,7 @@
 #include "blueprints/footprint.hpp"
 #include "core/types.hpp"
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -104,10 +105,17 @@ public:
         footprint_classes_.push_back(std::move(fp));
     }
 
+    /// Whether a game file exists: a mesh blueprint's LODs fall back to the
+    /// files named after its source.
+    void set_file_exists(std::function<bool(const std::string&)> exists) {
+        file_exists_ = std::move(exists);
+    }
+
 private:
     lua_State* L_;
     std::unordered_map<std::string, BlueprintEntry> blueprints_;
     std::vector<NamedFootprint> footprint_classes_;
+    std::function<bool(const std::string&)> file_exists_;
 };
 
 /// Push the table of blueprint `id` from the Lua state's blueprints and

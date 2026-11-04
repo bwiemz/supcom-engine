@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 102; // 2: entities' wanted loops (M216b);
+constexpr u32 kVersion = 103; // 2: entities' wanted loops (M216b);
                               // 3: emitter overrides (M214d);
                               // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                               // 6: weapons' lead physics;
@@ -137,6 +137,7 @@ constexpr u32 kVersion = 102; // 2: entities' wanted loops (M216b);
                               // 101: brains' BuildStructure reservations
                               // 102: entity ids as keys with their generation; the id pools'
                               //      released serials, those still held, and generations
+                              // 103: a patrol leg's task runs and whether it has set out
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
