@@ -2212,6 +2212,7 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
         stop_repairing(L, registry);
         return false;
     }
+    set_unit_state("Repairing", true);
 
     return true;
 }
