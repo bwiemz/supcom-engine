@@ -10,7 +10,7 @@ Nothing here patches the game's scripts. The hooks wrap two functions to start t
 
 ```sh
 opensupcom --init tools/moho_probes/init_probes.lua --map /maps/SCMP_009/SCMP_009_scenario.lua \
-    --ticks 1800 [--moho-pathing] --user-dir <scratch>
+    --ticks 1800 [--grid-pathing] --user-dir <scratch>
 grep PROBE opensupcom.log
 ```
 

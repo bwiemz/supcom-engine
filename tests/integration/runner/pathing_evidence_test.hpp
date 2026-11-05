@@ -16,4 +16,8 @@ void test_choke(TestContext& ctx);
 /// beyond it all arrive, as in retail FA.
 void test_crowdgap(TestContext& ctx);
 
+/// --ship-shore-test: ships sent at points on X1MP_012's shores stay on the
+/// water.
+void test_ship_shore(TestContext& ctx);
+
 } // namespace osc::test

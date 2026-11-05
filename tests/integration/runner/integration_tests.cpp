@@ -1,5 +1,6 @@
 #include "core/test_status.hpp"
 #include "integration_tests.hpp"
+#include "intel_probe.hpp"
 #include "render_probe.hpp"
 #include "tick_until.hpp"
 
@@ -215,6 +216,21 @@ void test_move(TestContext& ctx) {
     }
 }
 
+namespace {
+
+/// Two units put 20 apart on dry ground, where they can fire: a mobile unit
+/// put over water sinks to its bed, as the original game's does.
+void face_off(TestContext& ctx, osc::sim::Entity& a, osc::sim::Entity& b) {
+    const auto spot = quiet_spot(ctx.sim);
+    const f32 x = spot ? spot->x : 256.0f;
+    const f32 z = spot ? spot->z : 256.0f;
+    const auto* terrain = ctx.sim.terrain();
+    a.set_position({x, terrain ? terrain->get_terrain_height(x, z) : 25.0f, z});
+    b.set_position({x + 20, terrain ? terrain->get_terrain_height(x + 20, z) : 25.0f, z});
+}
+
+} // namespace
+
 // Fire test: teleport two enemy units close and let them fight
 void test_fire(TestContext& ctx) {
     spdlog::info("=== FIRE TEST: Weapon combat ===");
@@ -223,20 +239,17 @@ void test_fire(TestContext& ctx) {
     auto* e2 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 1));
     if (e1 && e2 && !e1->destroyed() && !e2->destroyed() &&
         e1->is_unit() && e2->is_unit()) {
-        e1->set_position({256, 25, 256});
-        e2->set_position({276, 25, 256}); // 20 units apart
+        face_off(ctx, *e1, *e2);
 
         auto* u1 = static_cast<osc::sim::Unit*>(e1);
         auto* u2 = static_cast<osc::sim::Unit*>(e2);
 
-        spdlog::info("Entity #1 (army {}) at (256,25,256), "
+        spdlog::info("Entity #1 (army {}) put on dry ground, "
                      "health={}/{}, weapons={}",
-                     e1->army(), e1->health(), e1->max_health(),
-                     u1->weapon_count());
-        spdlog::info("Entity #2 (army {}) at (276,25,256), "
+                     e1->army(), e1->health(), e1->max_health(), u1->weapon_count());
+        spdlog::info("Entity #2 (army {}) 20 east of it, "
                      "health={}/{}, weapons={}",
-                     e2->army(), e2->health(), e2->max_health(),
-                     u2->weapon_count());
+                     e2->army(), e2->health(), e2->max_health(), u2->weapon_count());
 
         // Log weapon details for entity #1
         for (int wi = 0; wi < u1->weapon_count(); wi++) {
@@ -6916,8 +6929,7 @@ void test_projectile(TestContext& ctx) {
     bool can_fire = e1 && e2 && !e1->destroyed() && !e2->destroyed() &&
                     e1->is_unit() && e2->is_unit();
     if (can_fire) {
-        e1->set_position({256, 25, 256});
-        e2->set_position({276, 25, 256}); // 20 units apart
+        face_off(ctx, *e1, *e2);
 
         tick_until(ctx, "a commander fires at the other", 60, [&] {
             bool fired = false;
@@ -7655,13 +7667,16 @@ void test_aim(TestContext& ctx) {
             },
             "the tank fires and its turret holds; the tracker and the Othuum's right turret aim",
             80,
+            // Moho's turret stops tracking at a heading step of 0.001
+            // (CAimManipulator::CheckTracking).
             [&] {
-                return lua_true(ctx.lua_state,
-                                "(function() local h = __osc_headings local n = table.getn(h) "
-                                "return __osc_shots[1] ~= nil and h[n] == h[n - 1] and "
-                                "__osc_tracker:GetWeapon(1):GetCurrentTarget() == __osc_far and "
-                                "__osc_othuum:GetWeapon(3):GetCurrentTarget() == __osc_right "
-                                "end)()");
+                return lua_true(
+                    ctx.lua_state,
+                    "(function() local h = __osc_headings local n = table.getn(h) "
+                    "return __osc_shots[1] ~= nil and math.abs(h[n] - h[n - 1]) <= 0.001 and "
+                    "__osc_tracker:GetWeapon(1):GetCurrentTarget() == __osc_far and "
+                    "__osc_othuum:GetWeapon(3):GetCurrentTarget() == __osc_right "
+                    "end)()");
             })) {
         fail++;
     }
@@ -7680,7 +7695,8 @@ void test_aim(TestContext& ctx) {
             if d > limit then error('tick ' .. i .. ' turned ' .. math.deg(d) .. ' deg') end
             turned = turned + d
         end
-        if turned < math.rad(170) then error('turned only ' .. math.deg(turned) .. ' deg') end
+        -- Its hull leans with the slope, as the original game's does from its first tick.
+        if turned < math.rad(165) then error('turned only ' .. math.deg(turned) .. ' deg') end
     )");
     lua_check("Test 3: the first shot waits until the turret faces the target", R"(
         local s = __osc_shots[1]
@@ -11195,22 +11211,30 @@ void test_beam_weapon(TestContext& ctx) {
             return n
         end
     )");
-    lua_check("setup: a Cerberus, a Monkeylord and a zapper, each with a target", R"(
+    lua_check("setup: a Cerberus and a zapper, each with a target", R"(
         -- The Cerberus stands among trees, which its beams pass
         __osc_cerberus = __osc_watch(__osc_spawn('urb2301', 'ARMY_1', 530, 70))
         __osc_block = __osc_spawn('uel0201', 'ARMY_2', 550, 70)
         __osc_block:SetFireState(1)
-        __osc_ml = __osc_watch(__osc_spawn('url0402', 'ARMY_1', 620, 250))
-        __osc_wall = __osc_spawn('ueb1301', 'ARMY_2', 642, 250)
-        __osc_wall:SetCanTakeDamage(false)
-        -- A friendly structure in its line (CollideFriendly = false): passed.
-        __osc_friend = __osc_spawn('ueb1301', 'ARMY_1', 632, 250)
         __osc_zapper = __osc_watch(__osc_spawn('urb4201', 'ARMY_2', 734, 330))
         __osc_zap_target = __osc_spawn('ueb1101', 'ARMY_2', 740, 330)
         __osc_tml = __osc_spawn('urb2108', 'ARMY_1', 620, 330)
         __osc_tml:GiveTacticalSiloAmmo(1)
         IssueTactical({__osc_tml}, __osc_zap_target)
     )");
+    // On a lake's bed its guns are under the water and don't fire (AboveWaterFireOnly).
+    const auto spot = quiet_spot(ctx.sim);
+    lua_check("setup: a Monkeylord on dry ground, with a target",
+              fmt::format(R"(
+        local x, z = {}, {}
+        __osc_ml = __osc_watch(__osc_spawn('url0402', 'ARMY_1', x, z))
+        __osc_wall = __osc_spawn('ueb1301', 'ARMY_2', x + 22, z)
+        __osc_wall:SetCanTakeDamage(false)
+        -- A friendly structure in its line (CollideFriendly = false): passed.
+        __osc_friend = __osc_spawn('ueb1301', 'ARMY_1', x + 12, z)
+    )",
+                          spot ? spot->x : 620.0f, spot ? spot->z : 250.0f)
+                  .c_str());
     tick_until(ctx,
                "the Cerberus kills the tank, the Monkeylord's beam checks 50 times and the "
                "zapper's meets the missile",
@@ -11246,7 +11270,7 @@ void test_beam_weapon(TestContext& ctx) {
             if ticks[k] - ticks[k - 1] ~= 2 then error('checks at ' .. ticks[k - 1] .. ' and ' .. ticks[k]) end
         end
     )");
-    lua_check("Test 4: the beam runs from the muzzle, past a friend, to the face of what it holds",
+    lua_check("Test 4: the beam runs from the muzzle, past a friend, to a face of what it holds",
               R"(
         local i = __osc_ml.__osc_impacts[table.getn(__osc_ml.__osc_impacts)]
         if i.target == __osc_friend then error('it stopped at the friendly structure') end
@@ -11254,10 +11278,13 @@ void test_beam_weapon(TestContext& ctx) {
         local start = i.beam:GetPosition(0)
         local muzzle = __osc_ml:GetPosition('Center_Turret_Muzzle')
         if VDist3(start, muzzle) > 0.01 then error('it starts ' .. VDist3(start, muzzle) .. ' from the muzzle') end
-        local wall = __osc_wall:GetPosition()
-        local face = wall[1] - __osc_wall:GetBlueprint().SizeX / 2
-        if math.abs(i['end'][1] - face) > 0.05 then
-            error('it ends at x ' .. i['end'][1] .. ', the face is at ' .. face)
+        local wall, bp, e = __osc_wall:GetPosition(), __osc_wall:GetBlueprint(), i['end']
+        local gap = math.max(math.abs(e[1] - wall[1]) - bp.SizeX / 2,
+                             math.abs(e[2] - wall[2] - bp.SizeY / 2) - bp.SizeY / 2,
+                             math.abs(e[3] - wall[3]) - bp.SizeZ / 2)
+        if math.abs(gap) > 0.05 then
+            error(string.format('it ends at (%.2f, %.2f, %.2f), %.2f off the face of the box at (%.2f, %.2f, %.2f)',
+                                e[1], e[2], e[3], gap, wall[1], wall[2], wall[3]))
         end
     )");
     lua_check("setup: the structure can be hurt now", R"(
@@ -13920,6 +13947,9 @@ void test_right_click(TestContext& ctx) {
         __osc_pad = CreateUnitHPR('ueb5202', 'ARMY_1', x, y, z, 0, 0, 0)
         x, y, z = at(30, -20)
         __osc_enemy = CreateUnitHPR('uel0201', 'ARMY_2', x, y, z, 0, 0, 0)
+        -- The tank sent to attack it and it fight; the last click needs both.
+        __osc_enemy:SetCanTakeDamage(false)
+        __osc_enemy:SetFireState(1)
         IssueBuildMobile({__osc_eng}, {__osc_x + 12, 0, __osc_z - 12}, 'ueb1101', {})
     )"))
         return;

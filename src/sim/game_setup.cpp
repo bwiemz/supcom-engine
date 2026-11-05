@@ -164,8 +164,10 @@ bool read_game_setup(ByteReader& r, GameSetup& s, u32 version) {
     if (version >= 14) {
         s.moho_random = r.u8v() != 0;
     }
-    if (version >= 16) { // before: none, so the game's own switch decides
+    if (version >= 16) { // before: none, played on the grid
         s.moho_pathing = r.u8v() != 0;
+    } else {
+        s.moho_pathing = false;
     }
     return r.ok();
 }

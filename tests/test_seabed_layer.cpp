@@ -4,6 +4,7 @@
 // (at its surface), each from where the ground is under the water's surface
 // plus the blueprint's LayerChangeOffsetHeight.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "map/heightmap.hpp"
@@ -131,15 +132,16 @@ TEST_CASE("Hover and floating units ride the water's surface on the Water layer"
     CHECK(hover->layer() == "Land");
 }
 
-TEST_CASE("A unit standing still keeps its layer", "[seabed]") {
+TEST_CASE("A unit put down in a lake stands on its bed, on the seabed layer", "[seabed]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     lake(sim);
-    // Put down in the lake (a script's Warp), still: Moho looks again only
-    // once it moves.
+    // The original game's Warp onto a lake's bed leaves an amphibious tank on
+    // the seabed layer at once, standing as moving.
     Unit* u = mover(sim, "RULEUMT_Amphibious", 30.0f, 64.0f);
     ticks(sim, 5);
-    CHECK(u->layer() == "Land");
+    CHECK(u->layer() == "Seabed");
+    CHECK(u->position().y == Catch::Approx(0.0f).margin(0.01));
     u->push_command(move_to({28.0f, 0.0f, 64.0f}), true);
     ticks(sim, 5);
     CHECK(u->layer() == "Seabed");

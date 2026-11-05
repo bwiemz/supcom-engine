@@ -159,9 +159,14 @@ sim::EntityId spawn_unit(TestContext& ctx, const char* global, const char* bp, c
     // Moho stands a unit made by script on its spawn height (the ground, the
     // water's surface: IUnit::CalcSpawnElevation). A scene that lifts one does
     // so on purpose (a rig for what it draws), so the lift goes on after; an
-    // aircraft keeps its flying height, as it always did.
+    // aircraft keeps its flying height, as it always did. A mobile one is made
+    // immobile, as only that keeps the original game's off the ground.
     if (sim::Entity* e = id && lift != 0.0f ? ctx.sim.entity_registry().find(id) : nullptr;
         e && e->is_unit() && static_cast<sim::Unit*>(e)->layer() != "Air") {
+        auto* u = static_cast<sim::Unit*>(e);
+        if (u->is_mobile()) {
+            run_lua(ctx, fmt::format("{}:SetImmobile(true)\n", global));
+        }
         sim::Vector3 p = e->position();
         p.y = ctx.sim.terrain()->get_terrain_height(at.x, at.z) + lift;
         e->set_position(p);

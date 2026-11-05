@@ -380,4 +380,66 @@ void test_crowdgap(TestContext& ctx) {
     spdlog::info("=== CROWDGAP TEST: {} passed, {} failed ===", t.pass, t.fail);
 }
 
+void test_ship_shore(TestContext& ctx) {
+    spdlog::info("=== SHIP SHORE TEST: ships sent at X1MP_012's shores stay on the water ===");
+    Tally t;
+    const int failures_before = osc::test_status::failure_count();
+
+    // Where a game on the grid's pathing ran ships aground, each sent there the way it came.
+    make_peace(ctx, t);
+    lua_check(ctx, t, "setup: the ships, each sent at the shore", R"(
+        __osc_water = GetSurfaceHeight(2000, 3640)
+        __osc_ships = {}
+        for _, run in {{'frigate west', 'ues0103', 2013.0, 3606.8, 2033.0, 3665.8, false},
+                       {'torpedo boat west', 'xes0102', 1967.7, 3569.9, 2033.0, 3665.8, true},
+                       {'frigate east', 'ues0103', 2115.9, 3606.5, 2139.0, 3653.2, false},
+                       {'shield boat east', 'xes0205', 2076.4, 3590.8, 2139.0, 3653.2, false}} do
+            local name, bp, x, z, gx, gz, patrol = run[1], run[2], run[3], run[4], run[5], run[6], run[7]
+            local unit = CreateUnitHPR(bp, 'ARMY_1', x, GetSurfaceHeight(x, z), z, 0,
+                                       math.atan2(gx - x, gz - z), 0)
+            if patrol then
+                IssuePatrol({unit}, {gx, GetTerrainHeight(gx, gz), gz})
+            else
+                IssueMove({unit}, {gx, GetTerrainHeight(gx, gz), gz})
+            end
+            __osc_ships[name] = {unit = unit, layers = {}, worst = -100}
+        end
+        function __osc_ship_sample(tick)
+            for name, s in __osc_ships do
+                if s.unit:IsDead() then
+                    s.dead = s.dead or tick
+                else
+                    local p = s.unit:GetPosition()
+                    local layer = s.unit:GetCurrentLayer()
+                    if not s.layers[layer] then
+                        s.layers[layer] = tick
+                        LOG(string.format('ship-shore-test: %s on the %s layer at tick %d, at (%.1f, %.1f)',
+                                          name, layer, tick, p[1], p[3]))
+                    end
+                    s.worst = math.max(s.worst, GetTerrainHeight(p[1], p[3]) - __osc_water)
+                end
+            end
+        end
+    )");
+    run_sampled(ctx, t, 600, "__osc_ship_sample");
+    lua_check(ctx, t, "Test 1: every ship stays on the water layer, and alive", R"(
+        for name, s in __osc_ships do
+            LOG(string.format('ship-shore-test: %s: ground under it at most %.2f against the water',
+                              name, s.worst))
+            for layer, tick in s.layers do
+                if layer ~= 'Water' then error(name .. ' went onto the ' .. layer .. ' layer at tick ' .. tick) end
+            end
+            if s.dead then error(name .. ' died at tick ' .. s.dead) end
+        end
+    )");
+    lua_check(ctx, t, "Test 2: no ship's centre comes over ground above the water", R"(
+        for name, s in __osc_ships do
+            if s.worst >= 0 then error(string.format('%s came %.2f over the water', name, s.worst)) end
+        end
+    )");
+    t.check(osc::test_status::failure_count() - t.fail == failures_before,
+            "Test 3: no script errors");
+    spdlog::info("=== SHIP SHORE TEST: {} passed, {} failed ===", t.pass, t.fail);
+}
+
 } // namespace osc::test

@@ -1141,6 +1141,8 @@ public:
     /// Moho's Unit::IsMobile: a blueprint that moves (a structure's
     /// MotionType is RULEUMT_None).
     bool is_mobile() const { return !motion_type_.empty() && motion_type_ != "RULEUMT_None"; }
+    /// Moho makes a CUnitMotion only for RULEUMT_Land to RULEUMT_AmphibiousFloating.
+    bool has_motion() const { return is_mobile() && motion_type_ != "RULEUMT_Special"; }
     bool is_naval() const {
         return motion_type_ == "RULEUMT_Water" || motion_type_ == "RULEUMT_SurfacingSub";
     }

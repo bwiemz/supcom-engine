@@ -8,8 +8,8 @@ of a saved game offscreen at 1920x1080 and times its frames on the CPU and the
 GPU, with what they drew (src/app/render_bench.cpp, M223b). This plays the
 pinned scenarios with them and compares the reports:
 
-  Scenarios: early, late (the sim), early-moho, late-moho (the same with
-  --moho-pathing), early-mt, late-mt (with --moho-random); render-battle, render-late,
+  Scenarios: early, late (the sim; late with --grid-pathing for now), late-moho
+  (late with Moho's pathing), early-mt, late-mt (with --moho-random); render-battle, render-late,
   render-strategic (the renderer: the pinned game saved at a tick, made once
   per machine beside the baselines, then the scene's camera path over it).
 
@@ -77,11 +77,11 @@ SCENARIOS: dict[str, list[str]] = {
         "4242",
     ],
 }
-# The same games with Moho's pathing by footprint class (--moho-pathing, off
-# by default until it is accepted): their reports also count the searches.
-SCENARIOS["early-moho"] = [*SCENARIOS["early"], "--moho-pathing"]
-SCENARIOS["late-moho"] = [*SCENARIOS["late"], "--moho-pathing"]
-# ... and with Moho's random stream (--moho-random).
+# The late game with Moho's pathing, which the late scenario leaves out for now
+# (--grid-pathing): its report also counts the searches.
+SCENARIOS["late-moho"] = list(SCENARIOS["late"])
+SCENARIOS["late"] = [*SCENARIOS["late"], "--grid-pathing"]
+# The same games with Moho's random stream (--moho-random).
 SCENARIOS["early-mt"] = [*SCENARIOS["early"], "--moho-random"]
 SCENARIOS["late-mt"] = [*SCENARIOS["late"], "--moho-random"]
 TIMEOUT_SECONDS = 3600
