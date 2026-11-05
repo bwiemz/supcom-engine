@@ -294,7 +294,8 @@ static std::unique_ptr<sim::Weapon> read_weapon(lua_State* L, int we, i32 index)
           std::pair{"YawOnlyOnTarget", &weapon->yaw_only_on_target},
           std::pair{"AimsStraightOnDisable", &weapon->aims_straight_on_disable},
           std::pair{"CannotAttackGround", &weapon->cannot_attack_ground},
-          std::pair{"SlavedToBody", &weapon->slaved_to_body}}) {
+          std::pair{"SlavedToBody", &weapon->slaved_to_body},
+          std::pair{"Turreted", &weapon->turreted}}) {
         lua_pushstring(L, field);
         lua_gettable(L, we);
         if (lua_isboolean(L, -1)) {

@@ -866,6 +866,8 @@ public:
     /// attack whose target is gone -- may take an attack order of its
     /// weapons' own choosing.
     bool auto_initiate_allowed(const EntityRegistry& registry) const;
+    /// Whether Moho's FindBestEnemy skips `enemy` whatever the weapon.
+    bool passes_over(const Unit& enemy, const SimState* sim, const EntityRegistry& registry) const;
     /// A weapon with AutoInitiateAttackCommand picked `target`: the unit
     /// attacks it once its weapons are done this tick (the first pick wins).
     void request_auto_attack(EntityId target) {

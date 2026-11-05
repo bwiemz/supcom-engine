@@ -166,6 +166,7 @@ struct Phases {
 
     Weapon& arm(Unit& u, const char* script) {
         auto gun = std::make_unique<Weapon>();
+        gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
         gun->max_range = 30.0f;
         gun->damage = 10.0f;
         gun->target_check_period = 1;

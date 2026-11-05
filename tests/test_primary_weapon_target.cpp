@@ -52,6 +52,7 @@ Unit* unit(SimState& sim, int army, f32 x, f32 z) {
 
 Weapon& arm(Unit& u, f32 range) {
     auto w = std::make_unique<Weapon>();
+    w->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     w->max_range = range;
     w->damage = 10.0f;
     w->always_recheck_target = false;

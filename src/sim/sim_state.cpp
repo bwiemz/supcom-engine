@@ -3154,6 +3154,13 @@ bool SimState::weapons_know(const Unit& u, u32 army) const {
     return !u.is_mobile() && ever_in_sight(u.entity_id(), army);
 }
 
+bool SimState::los_ever(const Unit& u, u32 army) const {
+    if (!intel_grids_ || !intel_grids_->fog_of_war() || army >= MAX_VIS_ARMIES) {
+        return true;
+    }
+    return ever_in_sight(u.entity_id(), army);
+}
+
 u8 SimState::recon_of(const Entity& e, const Vector3& pos, u32 viewer) const {
     return recon_detect(e, pos, viewer, intel_sharers(viewer));
 }

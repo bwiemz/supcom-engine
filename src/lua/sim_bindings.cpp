@@ -2745,17 +2745,14 @@ static int l_CreateAimController(lua_State* L) {
         manip->set_yaw_only_on_target(weapon->yaw_only_on_target);
         manip->set_aims_straight_on_disable(weapon->aims_straight_on_disable);
     }
-    // arg 3 = yawBone
-    if (lua_gettop(L) >= 3) {
-        manip->set_yaw_bone(manip_resolve_bone(unit, L, 3));
-    }
-    // arg 4 = pitchBone
-    if (lua_gettop(L) >= 4) {
-        manip->set_pitch_bone(manip_resolve_bone(unit, L, 4));
-    }
-    // arg 5 = muzzleBone
-    if (lua_gettop(L) >= 5) {
-        manip->set_muzzle_bone(manip_resolve_bone(unit, L, 5));
+    const i32 yaw_bone = lua_gettop(L) >= 3 ? manip_resolve_bone(unit, L, 3) : -1;
+    const i32 pitch_bone = lua_gettop(L) >= 4 ? manip_resolve_bone(unit, L, 4) : -1;
+    const i32 muzzle_bone = lua_gettop(L) >= 5 ? manip_resolve_bone(unit, L, 5) : -1;
+    manip->set_yaw_bone(yaw_bone);
+    manip->set_pitch_bone(pitch_bone);
+    manip->set_muzzle_bone(muzzle_bone);
+    if (weapon) {
+        weapon->aim_bone = muzzle_bone >= 0 ? muzzle_bone : pitch_bone >= 0 ? pitch_bone : yaw_bone;
     }
 
     auto* raw = unit->add_manipulator(std::move(manip));

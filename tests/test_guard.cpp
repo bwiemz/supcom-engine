@@ -45,7 +45,7 @@ struct LuaGuard {
 };
 
 void flat(SimState& sim) {
-    std::vector<osc::u16> heights(129 * 129, 1000);
+    std::vector<osc::u16> heights(129 * 129, 0);
     osc::map::Heightmap hm(128, 128, 1.0f / 128.0f, std::move(heights));
     sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
     sim.build_pathfinding_grid();
@@ -74,6 +74,7 @@ Unit* walker(SimState& sim, int army, f32 x, f32 z, f32 speed = 5.0f) {
 Unit* armed(SimState& sim, int army, f32 x, f32 z) {
     Unit* u = walker(sim, army, x, z);
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 5.0f;
     u->add_weapon(std::move(gun));
     u->set_guard_scan_radius(20.0f);

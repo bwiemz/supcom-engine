@@ -283,6 +283,7 @@ TEST_CASE("a beam passes what has no OnCollisionCheckWeapon or fails it", "[coll
     };
     const EntityId shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->lua_table_ref = script("return {}");
     static_cast<Unit*>(reg.find(shooter))->add_weapon(std::move(gun));
     // A tree: retail's props have no OnCollisionCheckWeapon

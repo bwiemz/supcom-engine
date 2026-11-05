@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <string_view>
 #include <spdlog/spdlog.h>
 
@@ -150,6 +151,48 @@ const std::unordered_set<std::string>& target_categories(const Entity& target) {
     return kNone;
 }
 
+bool ground_meets(const map::Heightmap& ground, const Vector3& from, const Vector3& to) {
+    const f32 dx = to.x - from.x;
+    const f32 dy = to.y - from.y;
+    const f32 dz = to.z - from.z;
+    const f32 length = std::sqrt(dz * dz + dy * dy + dx * dx);
+    if (!(length > 0.0f)) {
+        return false;
+    }
+    return ground
+        .intersect(from.x, from.y, from.z, dx / length, dy / length, dz / length, 0.0f, length)
+        .has_value();
+}
+
+/// Moho's AI_TestForTerrainBlockage.
+bool ground_hides(const Unit& owner, const Vector3& target, Weapon::Arc arc,
+                  const map::Heightmap& ground) {
+    if (owner.is_air_unit()) {
+        return false;
+    }
+    Vector3 top = owner.position();
+    top.y += owner.size_z() * 2.0f;
+    Vector3 at = target;
+    at.y += 0.25f;
+    if (arc == Weapon::Arc::None) {
+        return ground_meets(ground, top, at);
+    }
+    const Vector3 quarter{(at.x - top.x) * 0.25f, (at.y - top.y) * 0.25f, (at.z - top.z) * 0.25f};
+    const f32 quarter_distance =
+        std::sqrt(quarter.z * quarter.z + quarter.y * quarter.y + quarter.x * quarter.x);
+    const f32 scale = arc == Weapon::Arc::Low ? 0.5f : 2.0f;
+    Vector3 from = top;
+    for (const f32 rise : {0.707f, 0.293f, -0.293f, -0.707f}) {
+        const Vector3 to{from.x + quarter.x, rise * quarter_distance * scale + (from.y + quarter.y),
+                         from.z + quarter.z};
+        if (ground_meets(ground, from, to)) {
+            return true;
+        }
+        from = to;
+    }
+    return false;
+}
+
 /// Whether `proj` has room for another shooter under its DesiredShooterCap.
 /// Its list of shooters is pruned first of weapons that have let it go.
 bool shooter_room(Projectile& proj, const EntityRegistry& registry) {
@@ -168,20 +211,6 @@ bool shooter_room(Projectile& proj, const EntityRegistry& registry) {
                        }),
         shooters.end());
     return shooters.size() < cap;
-}
-
-/// The entities within `reach` of (x, z) a weapon may pick from, in id
-/// order. One that shoots units takes the grid of units alone, which a
-/// map's props and the projectiles in flight aren't in; one that shoots
-/// projectiles takes every entity (can_pick keeps the projectiles).
-std::vector<EntityId> target_candidates(const EntityRegistry& registry, bool projectiles, f32 x,
-                                        f32 z, f32 reach) {
-    if (projectiles) return registry.collect_in_radius(x, z, reach);
-    const std::vector<Entity*> units = registry.units_in_radius(x, z, reach);
-    std::vector<EntityId> ids;
-    ids.reserve(units.size());
-    for (const Entity* unit : units) ids.push_back(unit->entity_id());
-    return ids;
 }
 
 const Weapon* primary_weapon(const Unit& owner) {
@@ -298,12 +327,13 @@ bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry,
     // A script callback earlier this tick may have destroyed the target.
     const std::optional<Vector3> at = target_point(registry);
     if (!at) return false;
-    // Tracked from farther (TrackingRadius), fired at only within MaxRadius,
-    // and only once the fire control is on target.
-    if (!in_firing_range(owner, *at)) return false;
-    // Only within its heading arc (Moho's fire task: the solution is
-    // Available), a slaved weapon's target behind it, or a ground target.
-    if (!in_heading_arc(owner, *at)) return false;
+    // Moho's fire task fires only with an Available solution (TargetIsTooClose), and
+    // only once the fire control is on target.
+    const f32 dx = at->x - owner.position().x;
+    const f32 dz = at->z - owner.position().z;
+    if (solution_status(owner, *at, dx * dx + dz * dz) != Solution::Available) {
+        return false;
+    }
     if (const AimManipulator* aim = fire_control(owner);
         aim && !(aim->enabled() && aim->on_target()))
         return false;
@@ -703,6 +733,127 @@ int Weapon::priority_of(const Entity& target) const {
     return -1;
 }
 
+Weapon::Solution Weapon::solution_status(const Unit& owner, const Vector3& at, f32 dist2) const {
+    if (dist2 > max_range * max_range) {
+        return Solution::OutsideMaxRange;
+    }
+    if (dist2 <= min_range * min_range) {
+        return Solution::InsideMinRange;
+    }
+    if (max_height_diff > 0 && std::fabs(at.y - owner.position().y) > max_height_diff) {
+        return Solution::OutsideMaxRange;
+    }
+    if (heading_arc_range < 180.0f) {
+        const Vector3 from = aim_bone >= 0 ? owner.bone_world_position(aim_bone) : owner.position();
+        const Vector3 forward = quat_rotate(owner.orientation(), Vector3{0.0f, 0.0f, 1.0f});
+        constexpr f32 kDegToRad = 3.14159265358979f / 180.0f;
+        f32 off = osc::dmath::atan2(at.x - from.x, at.z - from.z) -
+                  osc::dmath::atan2(forward.x, forward.z) - heading_arc_center * kDegToRad;
+        while (off > 3.14159265f) {
+            off -= 6.28318531f;
+        }
+        while (off < -3.14159265f) {
+            off += 6.28318531f;
+        }
+        if (std::fabs(off) > heading_arc_range * kDegToRad) {
+            return Solution::NoSolution;
+        }
+    }
+    return Solution::Available;
+}
+
+Entity* Weapon::find_best_enemy(const Unit& owner, const std::vector<Entity*>& candidates,
+                                f32 range, bool use_3d, const SimState* sim,
+                                const EntityRegistry& registry) const {
+    if (owner.army() < 0) {
+        return nullptr;
+    }
+    const Vector3 at = owner.position();
+    const Vector3 forward = aim_bone >= 0 ? owner.bone_world_forward(aim_bone)
+                                          : quat_rotate(owner.orientation(), Vector3{0, 0, 1});
+    const Entity* current = target_entity_id ? registry.find(target_entity_id) : nullptr;
+    constexpr u32 kNoCategory = 9999;
+    Entity* best = nullptr;
+    f32 best_distance = std::numeric_limits<f32>::infinity();
+    Solution best_solution = Solution::OutsideMaxRange;
+    u32 best_category = kNoCategory;
+    for (Entity* e : candidates) {
+        if (!e || e->destroyed() || !e->is_unit()) {
+            continue;
+        }
+        const auto& enemy = static_cast<const Unit&>(*e);
+        if (enemy.is_dying() || !known_to_army(owner, enemy, sim)) {
+            continue;
+        }
+        const Vector3& pos = enemy.position();
+        const f32 dx = at.x - pos.x;
+        const f32 dz = at.z - pos.z;
+        const f32 dist2 = dx * dx + dz * dz;
+        if (dist2 > range * range) {
+            continue;
+        }
+        if (sim ? !sim->is_enemy(owner.army(), enemy.army()) : enemy.army() == owner.army()) {
+            continue;
+        }
+        if (owner.passes_over(enemy, sim, registry) || blacklisted(enemy.entity_id()) ||
+            enemy.do_not_target() || !is_weapon_targetable(owner, enemy, sim) ||
+            !can_attack(enemy, sim)) {
+            continue;
+        }
+        const Solution status = solution_status(owner, pos, dist2);
+        if ((status == Solution::InsideMinRange || status == Solution::NoSolution) &&
+            !(owner.is_mobile() && (auto_initiate_attack_command || slaved_to_body))) {
+            continue;
+        }
+        if (sim && sim->terrain() && sim->con_vars().weapon_terrain_blockage_test &&
+            ground_hides(owner, pos, ballistic_arc, sim->terrain()->heightmap())) {
+            continue;
+        }
+        if (owner.need_unpack() && status != Solution::Available) {
+            continue;
+        }
+        f32 used = dist2;
+        if (use_3d) {
+            Vector3 to{dx, at.y - pos.y, dz};
+            const f32 length = std::sqrt(to.x * to.x + to.y * to.y + to.z * to.z);
+            to = length > 0.0f ? Vector3{to.x / length, to.y / length, to.z / length} : Vector3{};
+            used = to.y * forward.y + to.z * forward.z + to.x * forward.x;
+        }
+        if (status != Solution::Available && !auto_initiate_attack_command) {
+            used = use_3d ? used + 4.0f : used * 4.0f;
+        }
+        const bool seen = !sim || sim->los_ever(enemy, static_cast<u32>(owner.army()));
+        const auto& categories = enemy.categories();
+        u32 closest_seen = kNoCategory;
+        for (u32 i = 0; i < target_priorities.size(); ++i) {
+            if (i > best_category || (status > best_solution && best)) {
+                break;
+            }
+            if (!target_priorities[i].matches(categories)) {
+                continue;
+            }
+            if (seen) {
+                closest_seen = i;
+            }
+            bool take = false;
+            if (best_category > closest_seen) {
+                take = true;
+            } else if (current) {
+                take = !(current == best || (!(best_distance > used) && current != e));
+            } else {
+                take = best_distance > used;
+            }
+            if (take) {
+                best_distance = used;
+                best = e;
+                best_solution = status;
+                best_category = closest_seen;
+            }
+        }
+    }
+    return best;
+}
+
 void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimState* sim) {
     if (unpack_search_paused(owner)) return;
     const auto& queue = owner.command_queue();
@@ -785,69 +936,77 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     if (owner.need_unpack() && head == CommandType::Attack) return;
 
     // Otherwise look for targets every TargetCheckInterval: when there is
-    // none, or, with AlwaysRecheckTarget, for one of a better priority.
+    // none, or, with AlwaysRecheckTarget, again.
     if (target_check_clock > 0) {
         --target_check_clock;
         return;
     }
     target_check_clock = target_check_period > 0 ? target_check_period - 1 : 0;
-    int current_priority = -1;
     if (target_entity_id) {
         const Entity& target = *registry.find(target_entity_id);
         if (!can_target(owner, target, sim) ||
             (always_recheck_target && !known_to_army(owner, target, sim))) {
             target_entity_id = EntityId();
-        } else {
-            if (!always_recheck_target) return;
-            current_priority = priority_of(target);
+        } else if (!always_recheck_target) {
+            return;
         }
     }
 
-    // Best: the earliest priority, then the nearest, then the lowest id
-    // (candidates come in id order, so ties keep the first).
-    EntityId best_id{};
-    int best_priority = 0;
-    bool best_in_arc = false;
-    f32 best_dist2 = 0;
     const f32 reach = max_range * std::max(1.0f, tracking_radius);
-    static const CategoryName kBenign{"BENIGN"};
-    for (const EntityId id : target_candidates(registry, targets_projectiles, owner.position().x,
-                                               owner.position().z, reach)) {
-        Entity* e = registry.find(id);
-        if (!e || !can_target(owner, *e, sim)) continue;
-        if (e->is_unit() && static_cast<const Unit&>(*e).has_category(kBenign)) {
-            continue;
+    EntityId best_id{};
+    if (targets_projectiles) {
+        const Entity* current = target_entity_id ? registry.find(target_entity_id) : nullptr;
+        const int current_priority = current ? priority_of(*current) : -1;
+        // Best: the earliest priority, then the nearest, then the lowest id
+        // (candidates come in id order, so ties keep the first).
+        int best_priority = 0;
+        bool best_in_arc = false;
+        f32 best_dist2 = 0;
+        for (const EntityId id :
+             registry.collect_in_radius(owner.position().x, owner.position().z, reach)) {
+            Entity* e = registry.find(id);
+            if (!e || !can_target(owner, *e, sim) || blacklisted(id)) {
+                continue;
+            }
+            // A missile already held by as many weapons as it wants shooting at
+            // it (a nuke's DesiredShooterCap is 1) is left to them.
+            if (!shooter_room(static_cast<Projectile&>(*e), registry)) {
+                continue;
+            }
+            const int priority = priority_of(*e);
+            if (priority < 0) {
+                continue;
+            }
+            const f32 dx = e->position().x - owner.position().x;
+            const f32 dz = e->position().z - owner.position().z;
+            const f32 dist2 = dx * dx + dz * dz;
+            const bool in_arc = in_heading_arc(owner, e->position());
+            const bool better_arc = in_arc && !best_in_arc;
+            if (!best_id || priority < best_priority ||
+                (priority == best_priority &&
+                 (better_arc || (in_arc == best_in_arc && dist2 < best_dist2)))) {
+                best_id = id;
+                best_priority = priority;
+                best_in_arc = in_arc;
+                best_dist2 = dist2;
+            }
         }
-        if (blacklisted(id)) continue;
-        if (!known_to_army(owner, *e, sim)) continue;
-        // A missile already held by as many weapons as it wants shooting at
-        // it (a nuke's DesiredShooterCap is 1) is left to them.
-        if (e->is_projectile() && !shooter_room(static_cast<Projectile&>(*e), registry)) continue;
-        const int priority = priority_of(*e);
-        if (priority < 0) continue;
-        const f32 dx = e->position().x - owner.position().x;
-        const f32 dz = e->position().z - owner.position().z;
-        const f32 dist2 = dx * dx + dz * dz;
-        // Within a priority, one in its heading arc beats one out of it (a
-        // slaved weapon's; Moho's FindBestEnemy penalises NoSolution).
-        const bool in_arc = in_heading_arc(owner, e->position());
-        const bool better_arc = in_arc && !best_in_arc;
-        if (!best_id || priority < best_priority ||
-            (priority == best_priority &&
-             (better_arc || (in_arc == best_in_arc && dist2 < best_dist2)))) {
-            best_id = id;
-            best_priority = priority;
-            best_in_arc = in_arc;
-            best_dist2 = dist2;
+        // A recheck changes target only for a better priority.
+        if (current_priority >= 0 && (!best_id || best_priority >= current_priority)) {
+            return;
         }
-    }
-    // A recheck changes target only for a better priority.
-    if (current_priority >= 0 && (!best_id || best_priority >= current_priority)) {
-        return;
+    } else if (const Entity* best = find_best_enemy(
+                   owner, registry.units_in_radius(owner.position().x, owner.position().z, reach),
+                   reach, turreted || slaved_to_body, sim, registry)) {
+        best_id = best->entity_id();
     }
     if (!best_id) {
         // Moho's acquire task, finding no enemy, clears the target ReTargetOnMiss gave up
+        target_entity_id = EntityId();
         target_held = false;
+        return;
+    }
+    if (best_id == target_entity_id) {
         return;
     }
     target_entity_id = best_id;

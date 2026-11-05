@@ -1039,6 +1039,8 @@ public:
     /// or `u` is a structure it has seen. With
     /// the fog off every unit is known.
     bool weapons_know(const Unit& u, u32 army) const;
+    /// RECON_LOSEver of army `army`'s blip of `u`: every unit's with the fog off.
+    bool los_ever(const Unit& u, u32 army) const;
 
     /// FlushIntelInRect(x0, z0, x1, z1): every army forgets its blips of
     /// units within the rect (edges in), as Moho's

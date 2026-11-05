@@ -67,6 +67,7 @@ struct Scene {
         gun = unit(sim, 0, 64.0f, 64.0f, "RULEUMT_None");
         enemy = unit(sim, 1, 74.0f, 64.0f, enemy_motion);
         auto w = std::make_unique<Weapon>();
+        w->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
         w->max_range = 20.0f;
         w->damage = 10.0f;
         gun->add_weapon(std::move(w));
