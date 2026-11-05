@@ -74,6 +74,14 @@ void test_no_rush(TestContext& ctx) {
         IssueFactoryRallyPoint({__nr.fIn}, __nr.rallyIn)
         IssueBuildFactory({__nr.fOut}, 'uel0105', 1)
         IssueBuildFactory({__nr.fIn}, 'uel0105', 1)
+        __nr.made = {}
+        for name, f in {out = __nr.fOut, inside = __nr.fIn} do
+            local base, made = f.OnStopBuild, name
+            f.OnStopBuild = function(self, unit, order)
+                __nr.made[made] = unit
+                return base(self, unit, order)
+            end
+        end
 
         __nr.ward = make('uel0105', cx - 10, cz - 30)
         __nr.guard = make('uel0201', cx, cz - 30)
@@ -149,18 +157,17 @@ void test_no_rush(TestContext& ctx) {
             {"__nr.foeIn:IsDead() or __nr.foeIn:GetHealth() < __nr.foeIn:GetMaxHealth()", "true"},
             {"__nr.foeOut:GetHealth() == __nr.foeOut:GetMaxHealth()", "true"},
         });
-    check_all(
-        "a factory's rally point",
-        {
-            {"(function() for _, u in GetArmyBrain('ARMY_1'):GetListOfUnits(categories.uel0105, "
-             "false) do if u ~= __nr.ward and __nr.dist(u, __nr.fOut:GetPosition()[1], "
-             "__nr.fOut:GetPosition()[3]) < 15 then return 'near' end end return 'none' end)()",
-             "near"},
-            {"(function() for _, u in GetArmyBrain('ARMY_1'):GetListOfUnits(categories.uel0105, "
-             "false) do if u ~= __nr.ward and __nr.dist(u, __nr.rallyIn[1], __nr.rallyIn[3]) < 6 "
-             "then return 'there' end end return 'none' end)()",
-             "there"},
-        });
+    tick_until(ctx, "the engineer sent to its factory's rally point stops", 600,
+               "__nr.made.inside and table.getn(__nr.made.inside:GetCommandQueue() or {}) == 0");
+    check_all("a factory's rally point",
+              {
+                  {"__nr.made.out and __nr.dist(__nr.made.out, __nr.fOut:GetPosition()[1], "
+                   "__nr.fOut:GetPosition()[3]) < 15",
+                   "true"},
+                  {"__nr.made.inside and __nr.dist(__nr.made.inside, __nr.rallyIn[1], "
+                   "__nr.rallyIn[3]) < 6",
+                   "true"},
+              });
     ctx.sim.set_no_rush(0.0f, 0.0f);
     spdlog::info("no-rush-test: {} passed, {} failed", t.pass, t.fail);
 }

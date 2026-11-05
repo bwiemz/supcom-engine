@@ -5139,7 +5139,8 @@ static int l_IssueFactoryRallyPoint(lua_State* L) {
         L, 1,
         [](sim::Unit* u, void* c) {
             auto& r = *static_cast<Rally*>(c);
-            if (!u->keeps_rally_orders() || !u->has_command_cap("RULEUCC_Move")) {
+            if (!u->keeps_rally_orders() || !u->has_command_cap("RULEUCC_Move") ||
+                (r.sim && r.sim->outside_no_rush(u->army(), r.move.target_pos))) {
                 return;
             }
             // One command id for them all, taken only if a factory gets it.
