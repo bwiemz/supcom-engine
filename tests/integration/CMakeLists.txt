@@ -192,6 +192,12 @@ set_tests_properties(data.terrain-glow-test PROPERTIES
     LABELS "data;gate"
     SKIP_RETURN_CODE 77
     TIMEOUT 900)
+add_test(NAME data.ship-shore-test
+         COMMAND osc_integration --map /maps/X1MP_012/X1MP_012_scenario.lua --ship-shore-test)
+set_tests_properties(data.ship-shore-test PROPERTIES
+    LABELS "data;gate"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 900)
 # M209: FA's campaign, its first operation
 add_test(NAME data.campaign-test
          COMMAND osc_integration --map /maps/X1CA_001/X1CA_001_scenario.lua --campaign-test)

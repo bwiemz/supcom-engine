@@ -215,6 +215,7 @@ constexpr Mode kModesBefore[] = {
     {"--shore-test", test_shore, false},
     {"--choke-test", test_choke, false},
     {"--crowdgap-test", test_crowdgap, false},
+    {"--ship-shore-test", test_ship_shore, false},
     {"--formation-test", test_formation, false},
     {"--missile-test", test_missile, false},
     {"--defence-test", test_defence, false},
@@ -466,6 +467,7 @@ void IntegrationModes::print_usage() const {
               << "  --shore-test       Hover, amphibious and land units across a bay\n"
               << "  --choke-test       A crowd through a wall's gap; a big unit over it\n"
               << "  --crowdgap-test    Twenty through a wall's gap to twenty places\n"
+              << "  --ship-shore-test  Ships at X1MP_012's shores stay on the water\n"
               << "  --formation-test   Groups move in formation\n"
               << "  --missile-test     Silos build missiles; launchers fire them\n"
               << "  --defence-test     Anti-missile weapons shoot missiles down\n"
