@@ -625,6 +625,7 @@ if(Python3_Interpreter_FOUND)
                      $<TARGET_FILE:opensupcom> 29741)
     set_tests_properties(data.lan_game PROPERTIES
         LABELS "data;gate"
+        RESOURCE_LOCK lan_game
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
     # M218e: the joiner leaves at tick 120; the host drops it by the
@@ -635,6 +636,7 @@ if(Python3_Interpreter_FOUND)
                      $<TARGET_FILE:opensupcom> 29742 -- --lan-game-quit-at 120)
     set_tests_properties(data.lan_game_quit PROPERTIES
         LABELS "data;gate"
+        RESOURCE_LOCK lan_game
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
     # Each side focuses its own army; the joiner self-destructs its commander
@@ -645,6 +647,7 @@ if(Python3_Interpreter_FOUND)
                      $<TARGET_FILE:opensupcom> 29743 -- --lan-game-self-destruct-at 10)
     set_tests_properties(data.lan_game_self_destruct PROPERTIES
         LABELS "data;gate"
+        RESOURCE_LOCK lan_game
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
     # OE-128: a network game saved and resumed together. A first lobby game
@@ -656,6 +659,7 @@ if(Python3_Interpreter_FOUND)
                      $<TARGET_FILE:opensupcom> 29763)
     set_tests_properties(data.lan_game_resume PROPERTIES
         LABELS "data;gate"
+        RESOURCE_LOCK lan_game
         SKIP_RETURN_CODE 77
         TIMEOUT 1200)
 
