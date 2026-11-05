@@ -389,6 +389,7 @@ TEST_CASE("An aim controller holds a lost target's pose for its weapon's ticks, 
         unit.set_bone_data(&bd);
         unit.init_animated_bones();
         auto gun = std::make_unique<Weapon>();
+        gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
         gun->weapon_index = 0;
         gun->aim_reset_ticks = 5;
         unit.add_weapon(std::move(gun));

@@ -179,6 +179,7 @@ struct World {
     /// A gun of reach `range` that holds its fire (no scripts to fire it).
     static void arm(Unit& u, f32 range) {
         auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
         gun->max_range = range;
         gun->damage = 10.0f;
         u.add_weapon(std::move(gun));

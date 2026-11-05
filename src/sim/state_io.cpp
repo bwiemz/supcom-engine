@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 103; // 2: entities' wanted loops (M216b);
+constexpr u32 kVersion = 104; // 2: entities' wanted loops (M216b);
                               // 3: emitter overrides (M214d);
                               // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                               // 6: weapons' lead physics;
@@ -138,6 +138,7 @@ constexpr u32 kVersion = 103; // 2: entities' wanted loops (M216b);
                               // 102: entity ids as keys with their generation; the id pools'
                               //      released serials, those still held, and generations
                               // 103: a patrol leg's task runs and whether it has set out
+                              // 104: weapons' Turreted and aim bone; WeaponTerrainBlockageTest
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -517,6 +518,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.f32v(sim.no_rush_radius_);
     w.b(sim.con_vars_.no_damage);
     w.b(sim.con_vars_.run_opponent_ai);
+    w.b(sim.con_vars_.weapon_terrain_blockage_test);
     // camera_shake_events_, camera_follow_events_, death_events_,
     // intel_flush_events_, sound_requests_: the renderer's and the audio's,
     // emptied each tick
@@ -766,6 +768,7 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.no_rush_radius_ = r.f32v();
     sim.con_vars_.no_damage = r.b();
     sim.con_vars_.run_opponent_ai = r.b();
+    sim.con_vars_.weapon_terrain_blockage_test = r.b();
     sim.camera_shake_events_.clear();
     sim.camera_follow_events_.clear();
     sim.death_events_.clear();

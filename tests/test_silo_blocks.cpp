@@ -39,6 +39,7 @@ struct SiloSim {
         auto u = std::make_unique<Unit>();
         u->set_build_rate(1500.0f);
         auto launcher = std::make_unique<osc::sim::Weapon>();
+        launcher->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
         launcher->counted_projectile = true;
         launcher->nuke_weapon = true;
         launcher->max_projectile_storage = 5;

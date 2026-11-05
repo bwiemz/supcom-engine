@@ -90,13 +90,21 @@ void test_hull_facing(TestContext& ctx) {
         IssueClearCommands({__osc_summit})
         __osc_summit:Destroy()
         __osc_frigate:Destroy()
-        -- Dry, level ground: 200 east of the sea's edge, searched.
+        -- Dry, level ground, out of reach of every army's commander, searched.
+        local function apart(px, pz)
+            for _, brain in ArmyBrains do
+                local sx, sz = brain:GetArmyStartPos()
+                if math.abs(sx - px) < 100 and math.abs(sz - pz) < 100 then return false end
+            end
+            return true
+        end
         local x, z
         for tz = 150, 850, 25 do
             for tx = 150, 850, 25 do
                 if not x and GetTerrainHeight(tx, tz) > GetSurfaceHeight(tx, tz) - 0.01
                     and GetTerrainHeight(tx + 40, tz) > GetSurfaceHeight(tx + 40, tz) - 0.01
-                    and math.abs(GetTerrainHeight(tx + 40, tz) - GetTerrainHeight(tx, tz)) < 3 then
+                    and math.abs(GetTerrainHeight(tx + 40, tz) - GetTerrainHeight(tx, tz)) < 3
+                    and apart(tx, tz) and apart(tx + 40, tz) then
                     x, z = tx, tz
                 end
             end

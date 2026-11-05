@@ -196,6 +196,11 @@ void run_opponent_ai(SimConContext& ctx) {
     bool_var("AI_RunOpponentAI", ctx.sim.con_vars().run_opponent_ai, ctx.args);
 }
 
+void weapon_terrain_blockage_test(SimConContext& ctx) {
+    bool_var("WeaponTerrainBlockageTest", ctx.sim.con_vars().weapon_terrain_blockage_test,
+             ctx.args);
+}
+
 /// BlingBling (0x0064BBE0): the focus army's extra storage 10000 more of
 /// each, and as much again as its whole storage now holds put in it.
 void bling_bling(SimConContext& ctx) {
@@ -422,6 +427,7 @@ const std::vector<SimConCommand>& sim_commands() {
         {"ScenarioMethod", false, scenario_method},
         {"SimLog", false, sim_log},
         {"SimWarn", false, sim_warn},
+        {"WeaponTerrainBlockageTest", false, weapon_terrain_blockage_test},
         {"ZeroExtraStorage", false, zero_extra_storage},
     };
     return kCommands;

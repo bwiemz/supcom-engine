@@ -57,6 +57,7 @@ Unit* unit_at(SimState& sim, osc::i32 army, f32 x, f32 y, f32 z) {
 /// `target` (no muzzle bone: its muzzle is the unit's position).
 bool fires(SimState& sim, Unit& owner, const Unit& target, bool above_water_only) {
     auto gun = std::make_unique<Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 40.0f;
     gun->above_water_fire_only = above_water_only;
     gun->set_target_entity(target.entity_id());

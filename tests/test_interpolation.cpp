@@ -787,6 +787,7 @@ TEST_CASE("capture_world records what the renderer draws a unit with", "[interp]
     u.push_command(attack, false);
     // Its second blueprint weapon, its reach changed (ChangeMaxRadius)
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->weapon_index = 1;
     gun->min_range = 3;
     gun->max_range = 26;

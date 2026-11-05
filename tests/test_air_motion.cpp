@@ -418,6 +418,7 @@ TEST_CASE("An aircraft breaking off its patrol to attack flies on at its speed, 
     World w(true);
     Unit& a = w.make("uea0102", 30.0f, 128.0f);
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 25.0f;
     gun->damage = 10.0f;
     a.add_weapon(std::move(gun));
@@ -452,6 +453,7 @@ TEST_CASE("An aircraft whose ground attack goes round the queue flies on through
         World w;
         Unit& a = w.make(id, 30.0f, 128.0f);
         auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
         gun->max_range = 20.0f;
         gun->damage = 10.0f;
         a.add_weapon(std::move(gun));
@@ -536,6 +538,7 @@ TEST_CASE("An aircraft's weapon takes its ordered target only once the attack en
     World w(true);
     Unit& a = w.make("uea0102", 30.0f, 128.0f);
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 25.0f;
     gun->damage = 10.0f;
     a.add_weapon(std::move(gun));
@@ -566,6 +569,7 @@ TEST_CASE("An idle aircraft whose weapon picks a target flies its attack run tha
     World w(true);
     Unit& a = w.make("uea0102", 30.0f, 128.0f);
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 25.0f;
     gun->damage = 10.0f;
     gun->target_check_period = 1;
@@ -591,6 +595,7 @@ TEST_CASE("An attack that engages makes the weapons drop their target, then take
     lua_State* L = w.state.raw();
     Unit& a = w.make("uea0102", 30.0f, 128.0f);
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 25.0f;
     gun->damage = 10.0f;
     REQUIRE(w.state
@@ -650,6 +655,7 @@ TEST_CASE("An aircraft whose move hands over to its next order as it runs dry fl
     const auto start = [&](World& w) -> Unit& {
         Unit& a = w.make(id, 30.0f, 128.0f);
         auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
         gun->max_range = 25.0f;
         gun->damage = 10.0f;
         a.add_weapon(std::move(gun));

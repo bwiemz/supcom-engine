@@ -1350,6 +1350,7 @@ TEST_CASE("A double-click on a wall selects its like only on FAF's data", "[sele
 TEST_CASE("UserUnit:CanAttackTarget holds a structure to its weapon's reach", "[userunit]") {
     UiWorld w;
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 10.0f;
     gun->fire_target_layer_caps = osc::sim::parse_layer_caps("Land");
     w.unit().add_weapon(std::move(gun));

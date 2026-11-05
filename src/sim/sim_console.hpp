@@ -27,6 +27,9 @@ struct SimConVars {
     /// AI_RunOpponentAI: whether the opponent AI runs (CAiBrain::IsOpponentAIRunning,
     /// with /noai). Moho lets any player set it, cheats or not.
     bool run_opponent_ai = true;
+    /// WeaponTerrainBlockageTest: a weapon passes over an enemy the ground hides from it
+    /// (CAiAttackerImpl::FindBestEnemy).
+    bool weapon_terrain_blockage_test = true;
 };
 
 /// What a sim command runs with: its tokens (the name first), where the cursor

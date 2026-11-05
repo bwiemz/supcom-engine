@@ -108,6 +108,10 @@ public:
     /// its heading arc on a mobile unit, and fires once it is in it.
     bool slaved_to_body = false;
     f32 slaved_arc_range = 1.0f;           // SlavedToBodyArcRange (degrees; Moho's default 1)
+    bool turreted = false;                 // Turreted
+    /// Moho's UnitWeapon::mBone: its aim controller's muzzle bone, else its pitch, else its yaw
+    /// bone (CreateAimController); -1 without one.
+    i32 aim_bone = -1;
     std::string projectile_bp_id;          // ChangeProjectileBlueprint
     std::string fire_control_label;   // SetFireControl: whose OnTarget gates firing
     bool need_compute_bomb_drop = false; // NeedToComputeBombDrop
@@ -265,6 +269,14 @@ public:
     /// `at` is within its HeadingArcRange about HeadingArcCenter from the
     /// unit's facing (always, with a range of 180 or more).
     bool in_heading_arc(const Unit& owner, const Vector3& at) const;
+    /// Moho's ESolutionStatus, in its order.
+    enum class Solution : u8 { Available, InsideMinRange, NoSolution, OutsideMaxRange };
+    /// Moho's UnitWeapon::TargetSolutionStatusGun for a target at `at`, `dist2` from its unit.
+    Solution solution_status(const Unit& owner, const Vector3& at, f32 dist2) const;
+    /// Moho's CAiAttackerImpl::FindBestEnemy: of `candidates`, the enemy within `range` of its unit
+    /// it takes on first, or null.
+    Entity* find_best_enemy(const Unit& owner, const std::vector<Entity*>& candidates, f32 range,
+                            bool use_3d, const SimState* sim, const EntityRegistry& registry) const;
     /// The target is within MaxRadius (it may be tracked from farther) and
     /// outside MinRadius, horizontally.
     bool in_firing_range(const Unit& owner, const Entity& target) const;
