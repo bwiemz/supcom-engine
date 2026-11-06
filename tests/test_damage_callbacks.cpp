@@ -97,7 +97,7 @@ TEST_CASE("A unit hears OnDamageBy with its attacker's army before OnDamage", "[
     CHECK(w.check("assert(heard_as_text() == '" + expected + "', heard_as_text())"));
 }
 
-TEST_CASE("A blast reaches the units before the shield it meets and the shield takes what it "
+TEST_CASE("A blast deals a shield it meets what passes it, as it does the units, then what it "
           "absorbs",
           "[damage]") {
     const bool ring = GENERATE(false, true);
@@ -114,8 +114,8 @@ TEST_CASE("A blast reaches the units before the shield it meets and the shield t
     )"));
     REQUIRE(w.check(ring ? "DamageRing(attacker, {112, 0, 100}, 0.1, 5, 100, 'Normal', false)"
                          : "DamageArea(attacker, {112, 0, 100}, 5, 100, 'Normal', false)"));
-    const char* expected =
-        ring ? "outside by 1, outside 100" : "outside by 1, outside 100, shield 30";
+    const char* expected = ring ? "shield 70, outside by 1, outside 100"
+                                : "shield 70, outside by 1, outside 100, shield 30";
     CHECK(w.check(std::string("assert(heard_as_text() == '") + expected + "', heard_as_text())"));
 }
 

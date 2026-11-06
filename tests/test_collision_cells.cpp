@@ -59,12 +59,13 @@ EntityId add_prop(EntityRegistry& reg, const Vector3& at, const CollisionShape& 
 }
 
 /// The ids a gather over the world rectangle finds, in its order.
-std::vector<EntityId> gather(EntityRegistry& reg, f32 x0, f32 z0, f32 x1, f32 z1,
-                             bool props = true) {
+std::vector<EntityId> gather(EntityRegistry& reg, f32 x0, f32 z0, f32 x1, f32 z1, bool props = true,
+                             bool others = false) {
     std::vector<EntityId> ids;
-    for (const Entity* e :
-         reg.collision_cells().gather(CollisionCells::query_rect(x0, z0, x1, z1), true, props))
+    for (const Entity* e : reg.collision_cells().gather(CollisionCells::query_rect(x0, z0, x1, z1),
+                                                        true, props, others)) {
         ids.push_back(e->entity_id());
+    }
     return ids;
 }
 
@@ -127,6 +128,21 @@ TEST_CASE("a gather goes cell by cell along each row, units then props, the last
     const EntityId wide = add_unit(reg, {12, 0, 10}, box(3, 0.5f));
     CHECK(gather(reg, 8, 8, 16, 16) ==
           std::vector<EntityId>{wide, second, first, prop, along, next_row});
+}
+
+TEST_CASE("the other entities come after a cell's props, and only when asked",
+          "[collision_cells]") {
+    EntityRegistry reg;
+    reg.init_spatial_grid(512, 512);
+    auto shot = std::make_unique<Entity>();
+    shot->set_position({10, 0, 10});
+    shot->set_default_collision_shape(sphere(0.3f));
+    const EntityId other = reg.register_entity(std::move(shot));
+    const EntityId prop = add_prop(reg, {10.5f, 0, 10.5f}, box(0.5f, 0.5f));
+    const EntityId unit = add_unit(reg, {11, 0, 11}, box(0.5f, 0.5f));
+    const EntityId along = add_unit(reg, {14, 0, 10}, box(0.5f, 0.5f));
+    CHECK(gather(reg, 8, 8, 16, 16, true, true) == std::vector<EntityId>{unit, prop, other, along});
+    CHECK(gather(reg, 8, 8, 16, 16) == std::vector<EntityId>{unit, prop, along});
 }
 
 TEST_CASE("a move relinks as it is committed, and only if its cells changed", "[collision_cells]") {
