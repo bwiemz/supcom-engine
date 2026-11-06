@@ -54,6 +54,25 @@ struct DamageWorld {
         UNSCOPED_INFO((r.ok() ? std::string() : r.error().message));
         return r.ok();
     }
+
+    void register_boxed_crate() {
+        sim.entity_registry().init_spatial_grid(512, 512);
+        lua_State* L = state.raw();
+        REQUIRE(
+            state
+                .do_string("return {BlueprintId = 'crate', Categories = {'LAND'},"
+                           " Defense = {MaxHealth = 100}, SizeX = 0.5, SizeY = 0.5, SizeZ = 0.5}")
+                .ok());
+        store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+        lua_pop(L, 1);
+        store.expose_to_lua(L);
+        lua_pushstring(L, "__osc_unit_script_classes");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        lua_pushstring(L, "crate");
+        lua_getglobal(L, "Tank");
+        lua_rawset(L, -3);
+        lua_pop(L, 1);
+    }
 };
 
 } // namespace
@@ -78,4 +97,43 @@ TEST_CASE("Damage passes over a dying unit and DamageArea still reaches it", "[d
         CHECK(w.run(dying ? "assert(point == 0, point)" : "assert(point == 1, point)"));
         CHECK(w.run("assert(area == 1, area)"));
     }
+}
+
+TEST_CASE("A blast reaches units in its collision cells' order, not by id", "[damage]") {
+    DamageWorld w;
+    w.register_boxed_crate();
+    REQUIRE(w.run(R"(
+        order = {}
+        Tank.OnDamage = function(self) table.insert(order, self.tag) end
+        local function crate(tag, x, z)
+            local u = CreateUnit('crate', 2, x, 0, z)
+            u.tag = tag
+        end
+        crate('below', 10, 14)
+        crate('first', 10, 10)
+        crate('second', 10.5, 10.5)
+        crate('along', 14, 10)
+        DamageArea(nil, {12, 0, 12}, 6, 1, 'Normal', true, true)
+        area = table.concat(order, ' ')
+        order = {}
+        DamageRing(nil, {12, 0, 12}, 0.1, 6, 1, 'Normal', true, true)
+        ring = table.concat(order, ' ')
+    )"));
+    CHECK(w.run("assert(area == 'second first along below', area)"));
+    CHECK(w.run("assert(ring == area, ring)"));
+}
+
+TEST_CASE("A blast calls OnDamage on a destroyed unit and on one that can't take damage",
+          "[damage]") {
+    DamageWorld w;
+    w.register_boxed_crate();
+    REQUIRE(w.run(R"(
+        guarded = CreateUnit('crate', 2, 10, 0, 10)
+        guarded:SetCanTakeDamage(false)
+        gone = CreateUnit('crate', 2, 11, 0, 10)
+        moho.entity_methods.Destroy(gone)
+        DamageArea(nil, {10.5, 0, 10}, 3, 1, 'Normal', true, true)
+    )"));
+    CHECK(w.run("assert(guarded.hits == 1, tostring(guarded.hits))"));
+    CHECK(w.run("assert(gone.hits == 1, tostring(gone.hits))"));
 }

@@ -9119,7 +9119,206 @@ void test_area(TestContext& ctx) {
         if lost.big ~= 0 then error('0.8 above its roof it lost ' .. lost.big) end
     )");
 
-    check(osc::test_status::failure_count() - fail == failures_before, "Test 11: no script errors");
+    // The order retail gives this scene (Moho's GatherUnmarkedEntities).
+    lua_check("Test 11: a blast and a ring reach what stands in them in the cells' order", R"(
+        local cx, cz = 652, 416
+        for _, e in GetReclaimablesInRect(Rect(cx - 16, cz - 16, cx + 20, cz + 20)) or {} do
+            if IsProp(e) then e:Destroy() end
+        end
+        local order = {}
+        local function watch(e, tag)
+            rawset(e, 'OnDamage', function() table.insert(order, tag) end)
+            return e
+        end
+        local function prop(tag, dx, dz)
+            local x, z = cx + dx, cz + dz
+            watch(CreatePropHPR('/env/evergreen/props/trees/pine06_v1_prop.bp', x,
+                                GetTerrainHeight(x, z), z, 0, 0, 0), tag)
+        end
+        local function unit(tag, dx, dz)
+            local u = watch(__osc_spawn('uel0105', 'ARMY_2', cx + dx, cz + dz), tag)
+            u:SetCanTakeDamage(true)
+            return u
+        end
+        prop('p1', 1, 1)
+        unit('u1', 2, 2)
+        prop('p2', 3, 1)
+        prop('p3', 5, 1)
+        prop('p4', 1, 5)
+        unit('u2', 6, 6)
+        prop('p5', 7, 7)
+        prop('p6', 2.5, 3)
+        local holder = unit('u3', 6, 2)
+        local function shot(tag, dx, dz)
+            local p = holder:CreateProjectile('/projectiles/tdfgauss01/tdfgauss01_proj.bp',
+                                              0, 1, 0, 0, 0, 1)
+            p:SetVelocity(0)
+            p:SetBallisticAcceleration(0)
+            p:SetCollisionShape('Sphere', 0, 0, 0, 0.3)
+            Warp(p, __osc_at(cx + dx, cz + dz, 1))
+            watch(p, tag)
+        end
+        shot('j1', 6.5, 2.5)
+        shot('j2', 1.5, 1.5)
+        local at = __osc_at(cx + 4, cz + 4, 0.5)
+        DamageArea(nil, at, 7, 1, 'Normal', true, true)
+        local area = table.concat(order, ' ')
+        order = {}
+        DamageRing(nil, at, 0.1, 7, 1, 'Normal', true, true)
+        local ring = table.concat(order, ' ')
+        local retail = 'u1 p6 p2 p1 j2 u3 p3 j1 p4 u2 p5'
+        if area ~= retail then error('the blast reached ' .. area) end
+        if ring ~= retail then error('the ring reached ' .. ring) end
+    )");
+
+    lua_check("setup: two shields over tanks", R"(
+        __osc_dealt = {}
+        local function shielded(x, z)
+            for _, e in GetReclaimablesInRect(Rect(x - 20, z - 20, x + 20, z + 20)) or {} do
+                if IsProp(e) then e:Destroy() end
+            end
+            local function watch(u, tag)
+                local on = u.OnDamage
+                rawset(u, 'OnDamage', function(self, instigator, amount, vector, kind)
+                    table.insert(__osc_dealt, string.format('%s=%g', tag, amount))
+                    return on(self, instigator, amount, vector, kind)
+                end)
+                return u
+            end
+            local y = GetTerrainHeight(x, z) + 0.5
+            local s = {at = function(dx) return {x + dx, y, z} end, watch = watch}
+            s.gen = watch(__osc_spawn('ueb4202', 'ARMY_2', x, z), 'g')
+            watch(__osc_spawn('uel0201', 'ARMY_2', x + 5, z), 't')
+            return s
+        end
+        __osc_over = {area = shielded(776, 164), ring = shielded(888, 404)}
+    )");
+    if (!tick_until(ctx, "both shields are up", 40, [&] {
+            return lua_true(ctx.lua_state, "__osc_over.area.gen.MyShield and "
+                                           "__osc_over.area.gen.MyShield:IsOn() and "
+                                           "__osc_over.ring.gen.MyShield and "
+                                           "__osc_over.ring.gen.MyShield:IsOn()");
+        })) {
+        fail++;
+    }
+    for (int i = 0; i < 2; ++i) {
+        ctx.sim.tick();
+    }
+    lua_check("Test 12: a shield takes a blast inside it and what passes it, as retail deals them",
+              R"(
+        local function dealt(s, blast)
+            if not s.shield then
+                s.shield = s.watch(s.gen.MyShield, 'S')
+            end
+            __osc_dealt = {}
+            blast(s)
+            return table.concat(__osc_dealt, ' ')
+        end
+        local area, ring = __osc_over.area, __osc_over.ring
+        local got = {
+            dealt(area, function(s) DamageArea(nil, s.at(4), 4, 25, 'Normal', true, true) end),
+            dealt(area, function(s) DamageArea(nil, s.at(13), 10, 100, 'Normal', true, true) end),
+            dealt(area, function(s)
+                s.shield:SetHealth(s.shield, 30)
+                DamageArea(nil, s.at(13), 10, 100, 'Normal', true, true)
+            end),
+            dealt(ring, function(s) DamageRing(nil, s.at(4), 0.1, 4, 25, 'Normal', true, true) end),
+            dealt(ring, function(s) DamageRing(nil, s.at(13), 0.1, 10, 100, 'Normal', true, true) end),
+            dealt(ring, function(s)
+                s.shield:SetHealth(s.shield, 30)
+                DamageRing(nil, s.at(13), 0.1, 10, 100, 'Normal', true, true)
+            end),
+        }
+        local retail = {'g=25 S=25 t=25', 'S=100', 'S=70 t=70 S=30', 'g=25 t=25', '', 'S=70 t=70'}
+        for i, want in retail do
+            if got[i] ~= want then error('blast ' .. i .. ' dealt ' .. got[i] .. ', not ' .. want) end
+        end
+    )");
+
+    lua_check("setup: blasts' scenes clear of props", R"(
+        for _, p in {{128, 616}, {152, 688}, {248, 856}, {288, 856}, {328, 928}} do
+            local x, z = p[1], p[2]
+            for _, e in GetReclaimablesInRect(Rect(x - 20, z - 20, x + 20, z + 20)) or {} do
+                if IsProp(e) then e:Destroy() end
+            end
+        end
+    )");
+    lua_check("Test 13: past a radius of 3, DamageArea reaches what its box puts in the cube of "
+              "0.707 the radius",
+              R"(
+        local holder = __osc_spawn('uel0105', 'ARMY_2', 338, 938)
+        local hit = {}
+        local function origin(x, z, up) return {x + 2, GetTerrainHeight(x + 2, z + 2) + up, z + 2} end
+        local function shot(tag, o, dx, dy, dz)
+            local q = holder:CreateProjectile('/projectiles/tdfgauss01/tdfgauss01_proj.bp',
+                                              0, 1, 0, 0, 0, 1)
+            q:SetVelocity(0)
+            q:SetBallisticAcceleration(0)
+            q:SetCollisionShape('Sphere', 0, 0, 0, 0.3)
+            Warp(q, {o[1] + dx, o[2] + dy, o[3] + dz})
+            rawset(q, 'OnDamage', function() table.insert(hit, tag) end)
+        end
+        local oa, ob = origin(128, 616, 5), origin(152, 688, 3)
+        local oc, od = origin(248, 856, 3.5), origin(288, 856, 5)
+        shot('a1', oa, 3.9, -3.9, 3.9)
+        shot('a2', oa, 4.7, -4.2, 4.7)
+        shot('a3', oa, 5.5, 0, 0)
+        shot('a4', oa, -3.9, -3.9, -3.9)
+        shot('b1', ob, 1.95, -1.95, 1.95)
+        shot('c1', oc, 2.3, -2.3, 2.3)
+        shot('d1', od, 3.9, -3.9, 3.9)
+        shot('d2', od, 5.5, 0, 0)
+        local function reached(blast)
+            hit = {}
+            blast()
+            return table.concat(hit, ' ')
+        end
+        local got = {
+            reached(function() DamageArea(nil, oa, 6, 1, 'Normal', true, true) end),
+            reached(function() DamageArea(nil, ob, 3, 1, 'Normal', true, true) end),
+            reached(function() DamageArea(nil, oc, 3.5, 1, 'Normal', true, true) end),
+            reached(function() DamageRing(nil, od, 0.1, 6, 1, 'Normal', true, true) end),
+        }
+        local retail = {'a4 a3 a1', '', 'c1', 'd2'}
+        for i, want in retail do
+            if got[i] ~= want then error('blast ' .. i .. ' reached ' .. got[i] .. ', not ' .. want) end
+        end
+    )");
+    lua_check("Test 14: a blast deals the dead, the destroyed and the unhurtable; their scripts "
+              "decide",
+              R"(
+        local log = {}
+        local function unit(tag, dx)
+            local u = __osc_spawn('uel0105', 'ARMY_2', 328 + dx, 928)
+            local on, killed = u.OnDamage, u.OnKilled
+            rawset(u, 'OnDamage', function(self, instigator, amount, vector, kind)
+                table.insert(log, tag .. ':dmg')
+                return on(self, instigator, amount, vector, kind)
+            end)
+            rawset(u, 'OnKilled', function(self, instigator, kind, overkill)
+                table.insert(log, tag .. ':killed')
+                return killed(self, instigator, kind, overkill)
+            end)
+            return u
+        end
+        local function at(u)
+            local p = u:GetPosition()
+            return {p[1], p[2] + 0.5, p[3]}
+        end
+        local k, d, c = unit('k', 0), unit('d', 10), unit('c', 20)
+        local kat, dat = at(k), at(d)
+        DamageArea(nil, kat, 2, 100000, 'Normal', true, true)
+        DamageArea(nil, kat, 2, 1, 'Normal', true, true)
+        d:Destroy()
+        DamageArea(nil, dat, 2, 1, 'Normal', true, true)
+        c:SetCanTakeDamage(false)
+        DamageArea(nil, at(c), 2, 50, 'Normal', true, true)
+        local got = table.concat(log, ' ') .. ' | ' .. c:GetHealth()
+        local retail = 'k:dmg k:killed k:dmg d:dmg c:dmg | ' .. c:GetMaxHealth()
+        if got ~= retail then error('dealt ' .. got .. ', not ' .. retail) end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 15: no script errors");
     spdlog::info("Area test: {}/{} passed", pass, pass + fail);
 }
 

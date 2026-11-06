@@ -1578,6 +1578,17 @@ static f32 shield_absorption(lua_State* L, const sim::Entity& shield, const Blas
     return std::max(absorbed, 0.0f);
 }
 
+/// Moho's AxisAlignedBoundsOverlapEntityBounds: a NaN bound passes.
+static bool box_meets_cube(const sim::Entity& e, const sim::Vector3& c, f32 half) {
+    const auto bounds = sim::collision_bounds(e);
+    if (!bounds) {
+        return false;
+    }
+    const auto& [lo, hi] = *bounds;
+    return !(c.x - half > hi.x) && !(lo.x > c.x + half) && !(c.y - half > hi.y) &&
+           !(lo.y > c.y + half) && !(c.z - half > hi.z) && !(lo.z > c.z + half);
+}
+
 static bool no_splash(const sim::Entity& e) {
     static const sim::CategoryName kNoSplash{"NOSPLASHDAMAGE"};
     if (e.is_unit()) {
@@ -1591,14 +1602,13 @@ static bool no_splash(const sim::Entity& e) {
 
 /// Moho's DamageArea and DamageRing, as FAF's Lua copy of it
 /// (/lua/sim/DamageArea.lua) and retail's shields describe it:
-/// - It reaches the units and props whose positions lie within the
-///   radius, measured in three dimensions, all taking the full amount, and
-///   the projectiles whose collision shapes it touches.
+/// - It reaches what its radius touches by collision shape, all taking the
+///   full amount.
 /// - Allies are spared unless damageFriendly, and the instigator unless
 ///   damageSelf; NOSPLASHDAMAGE ones always.
 /// - A shield the blast meets from outside, if it absorbs anything, takes what
-///   it absorbs after the units (a ring's, nothing), and the units under it
-///   take only what its OnGetDamageAbsorption leaves.
+///   it absorbs after the units (a ring's, nothing), and what is under it
+///   takes only what its OnGetDamageAbsorption leaves.
 static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
     auto& registry = sim.entity_registry();
     const sim::Entity* instigator = extract_entity(L, 1);
@@ -1623,51 +1633,74 @@ static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
     std::vector<Cover> covers;
     for (const sim::EntityId id : near) {
         const sim::Entity* e = registry.find(id);
-        if (!e || e->destroyed() || !e->is_shield() || e->lua_table_ref() < 0 || spared(*e))
+        if (!e || !e->is_shield() || e->lua_table_ref() < 0 || spared(*e)) {
             continue;
+        }
         const f32 d =
             sim::shape_distance(e->collision_shape(), e->position(), e->orientation(), blast.at);
         if (d < -kShieldSurface || d > blast.outer) continue; // inside it, or out of reach
         covers.push_back({id, 0, e->collision_shape(), e->position(), e->orientation()});
     }
-    for (auto& c : covers)
-        if (const sim::Entity* e = registry.find(c.id); e && !e->destroyed())
+    for (auto& c : covers) {
+        if (const sim::Entity* e = registry.find(c.id)) {
             c.absorbed = shield_absorption(L, *e, blast);
+        }
+    }
     std::erase_if(covers, [](const Cover& c) { return c.absorbed <= 0; });
 
     // What stands in it, and what reaches each past the shields over it. A
     // blast reaches what its radius touches: the distance is to a unit's or
     // prop's shape, not its position (its feet), or a beam ending on a
     // Galactic Colossus's hull, or a shell on a tall structure's roof, would
-    // miss them. One with no shape is measured from its position.
-    std::vector<sim::EntityId> candidates =
-        registry.collect_in_radius(blast.at.x, blast.at.z, blast.outer);
-    candidates.insert(candidates.end(), near.begin(), near.end());
-    std::sort(candidates.begin(), candidates.end());
-    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+    // miss them. They come in the order of Moho's GatherUnmarkedEntities.
+    std::vector<sim::EntityId> candidates;
+    if (auto& cells = registry.collision_cells(); cells.initialized()) {
+        const auto box =
+            sim::CollisionCells::box_rect(blast.at.x - blast.outer, blast.at.z - blast.outer,
+                                          blast.at.x + blast.outer, blast.at.z + blast.outer);
+        for (const sim::Entity* e : cells.gather(box, true, true, true)) {
+            candidates.push_back(e->entity_id());
+        }
+    } else {
+        candidates = registry.collect_in_radius(blast.at.x, blast.at.z, blast.outer);
+        candidates.insert(candidates.end(), near.begin(), near.end());
+        std::sort(candidates.begin(), candidates.end());
+        candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+    }
+    // Moho's COGrid::ForAllEntitiesIterator, which DamageArea gathers with: past a radius of 3,
+    // whatever's box meets the cube of 0.707 the radius round the centre is reached untested.
+    const f32 cube = !blast.ring && blast.outer > 3.0f ? blast.outer * 0.70700002f : 0.0f;
     std::vector<std::pair<sim::EntityId, f32>> hits;
     for (const sim::EntityId id : candidates) {
         const sim::Entity* e = registry.find(id);
-        if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
-        if (!e->is_unit() && !e->is_prop() && !e->is_projectile()) continue;
-        if (e->is_unit() && !static_cast<const sim::Unit*>(e)->can_take_damage()) continue;
-        if (e->is_projectile() && e->collision_shape().type == sim::CollisionShapeType::NONE) {
+        if (!e || e->lua_table_ref() < 0) {
+            continue;
+        }
+        if (!e->is_unit() && !e->is_prop() &&
+            e->collision_shape().type == sim::CollisionShapeType::NONE) {
             continue;
         }
         if (no_splash(*e)) {
             continue;
         }
-        f32 d = 0;
-        if (e->collision_shape().type != sim::CollisionShapeType::NONE) {
-            d = std::max(0.0f, sim::shape_distance(e->collision_shape(), e->position(),
-                                                   e->orientation(), blast.at));
-        } else {
-            const f32 dx = e->position().x - blast.at.x;
-            const f32 dy = e->position().y - blast.at.y;
-            const f32 dz = e->position().z - blast.at.z;
-            d = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (!(cube > 0 && box_meets_cube(*e, blast.at, cube))) {
+            f32 d = 0;
+            if (e->collision_shape().type != sim::CollisionShapeType::NONE) {
+                d = std::max(0.0f, sim::shape_distance(e->collision_shape(), e->position(),
+                                                       e->orientation(), blast.at));
+            } else {
+                const f32 dx = e->position().x - blast.at.x;
+                const f32 dy = e->position().y - blast.at.y;
+                const f32 dz = e->position().z - blast.at.z;
+                d = std::sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            if (d > blast.outer || d < blast.inner) {
+                continue;
+            }
         }
-        if (d > blast.outer || d < blast.inner || spared(*e)) continue;
+        if (spared(*e)) {
+            continue;
+        }
         f32 amount = blast.amount;
         for (const auto& c : covers)
             if (sim::shape_distance(c.shape, c.position, c.orientation, e->position()) < 0)
@@ -1682,7 +1715,7 @@ static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
     };
     for (const auto& [id, amount] : hits) {
         const sim::Entity* e = registry.find(id);
-        if (!e || e->destroyed() || e->lua_table_ref() < 0) {
+        if (!e || e->lua_table_ref() < 0) {
             continue;
         }
         const sim::Vector3 v = from_centre(*e);
@@ -1693,7 +1726,7 @@ static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
     }
     for (const auto& c : covers) {
         const sim::Entity* e = registry.find(c.id);
-        if (!e || e->destroyed() || e->lua_table_ref() < 0) {
+        if (!e || e->lua_table_ref() < 0) {
             continue;
         }
         const sim::Vector3 v = from_centre(*e);
