@@ -28,6 +28,7 @@ class Camera;       // forward
 class ReconView;    // forward
 class UserPlayableRect; // forward
 class TextureCache; // forward
+class GpuUploads;
 
 /// Per-instance data for cube fallback (old format).
 struct CubeInstance {
@@ -112,8 +113,7 @@ inline MeshTechnique drawn_technique(const MeshDrawGroup& group) {
 class UnitRenderer {
 public:
     /// Upload static cube mesh to GPU.
-    void build(VkDevice device, VmaAllocator allocator,
-               VkCommandPool cmd_pool, VkQueue queue);
+    void build(VmaAllocator allocator, GpuUploads& uploads);
 
     /// The game's colour tables, which pick each army's lookup row.
     void set_game_colors(sim::GameColors colors) { game_colors_ = std::move(colors); }

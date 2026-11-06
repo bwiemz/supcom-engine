@@ -3,6 +3,7 @@
 
 #include "core/utf8.hpp"
 #include "renderer/font_cache.hpp"
+#include "renderer/gpu_uploads.hpp"
 #include "ui/font_metrics_provider.hpp"
 #include "vfs/directory_mount.hpp"
 #include "vfs/virtual_file_system.hpp"
@@ -79,9 +80,9 @@ TEST_CASE("FontCache: a space advances by the font's own width", "[font]") {
     osc::vfs::VirtualFileSystem vfs;
     vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
 
+    osc::renderer::GpuUploads uploads;
     osc::renderer::FontCache cache;
-    cache.init(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE,
-               VK_NULL_HANDLE, VK_NULL_HANDLE, &vfs);
+    cache.init(VK_NULL_HANDLE, VK_NULL_HANDLE, uploads, VK_NULL_HANDLE, VK_NULL_HANDLE, &vfs);
     const auto* atlas = cache.get("Arial", 12);
     REQUIRE(atlas);
 
@@ -184,9 +185,9 @@ TEST_CASE("A font's atlas holds its accented Latin and Cyrillic letters, and tex
     osc::vfs::VirtualFileSystem vfs;
     vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
 
+    osc::renderer::GpuUploads uploads;
     osc::renderer::FontCache cache;
-    cache.init(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE,
-               VK_NULL_HANDLE, &vfs);
+    cache.init(VK_NULL_HANDLE, VK_NULL_HANDLE, uploads, VK_NULL_HANDLE, VK_NULL_HANDLE, &vfs);
     const auto* atlas = cache.get("Arial", 20);
     REQUIRE(atlas);
     for (osc::u32 cp : {0xDFu, 0x141u, 0x10Cu}) {
@@ -217,9 +218,9 @@ TEST_CASE("A face the game's files lack is drawn as Arial", "[font]") {
     osc::vfs::VirtualFileSystem vfs;
     vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
 
+    osc::renderer::GpuUploads uploads;
     osc::renderer::FontCache cache;
-    cache.init(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE,
-               VK_NULL_HANDLE, &vfs);
+    cache.init(VK_NULL_HANDLE, VK_NULL_HANDLE, uploads, VK_NULL_HANDLE, VK_NULL_HANDLE, &vfs);
     const auto* calibri = cache.get("Calibri", 14);
     REQUIRE(calibri);
     const auto* arial = cache.get("Arial", 14);
@@ -247,9 +248,9 @@ TEST_CASE("Text laid out for the HUD stands on its font's baseline", "[font]") {
     osc::vfs::VirtualFileSystem vfs;
     vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
 
+    osc::renderer::GpuUploads uploads;
     osc::renderer::FontCache cache;
-    cache.init(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE,
-               VK_NULL_HANDLE, &vfs);
+    cache.init(VK_NULL_HANDLE, VK_NULL_HANDLE, uploads, VK_NULL_HANDLE, VK_NULL_HANDLE, &vfs);
     const auto* atlas = cache.get("Arial", 13);
     REQUIRE(atlas);
     const float top = 40.0f;

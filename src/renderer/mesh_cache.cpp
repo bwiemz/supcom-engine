@@ -1,5 +1,6 @@
 #include "renderer/mesh_cache.hpp"
 #include "renderer/cartographic_technique.hpp"
+#include "renderer/gpu_uploads.hpp"
 #include "renderer/minimap_meshes.hpp"
 #include "sim/scm_parser.hpp"
 #include "blueprints/blueprint_store.hpp"
@@ -87,14 +88,11 @@ static void to_lower(std::string& s) {
                    [](unsigned char c) { return std::tolower(c); });
 }
 
-void MeshCache::init(VkDevice device, VmaAllocator allocator,
-                     VkCommandPool cmd_pool, VkQueue queue,
-                     vfs::VirtualFileSystem* vfs,
-                     blueprints::BlueprintStore* store) {
+void MeshCache::init(VkDevice device, VmaAllocator allocator, GpuUploads& uploads,
+                     vfs::VirtualFileSystem* vfs, blueprints::BlueprintStore* store) {
     device_ = device;
     allocator_ = allocator;
-    cmd_pool_ = cmd_pool;
-    queue_ = queue;
+    uploads_ = &uploads;
     vfs_ = vfs;
     store_ = store;
 }
@@ -227,24 +225,20 @@ GPUMesh MeshCache::upload_scm_mesh(const std::string& mesh_path,
         }
     }
 
-    auto vert_buf = upload_buffer(
-        device_, allocator_, cmd_pool_, queue_,
-        mesh->vertices.data(),
-        mesh->vertices.size() * sizeof(sim::SCMMesh::Vertex),
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    auto vert_buf = uploads_->buffer(mesh->vertices.data(),
+                                     mesh->vertices.size() * sizeof(sim::SCMMesh::Vertex),
+                                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 
     if (!vert_buf.buffer) {
         spdlog::warn("MeshCache: vertex upload failed for '{}'", mesh_path);
         return result;
     }
 
-    auto idx_buf = upload_buffer(
-        device_, allocator_, cmd_pool_, queue_,
-        mesh->indices.data(),
-        mesh->indices.size() * sizeof(u32),
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    auto idx_buf = uploads_->buffer(mesh->indices.data(), mesh->indices.size() * sizeof(u32),
+                                    VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
     if (!idx_buf.buffer) {
+        uploads_->finish();
         vmaDestroyBuffer(allocator_, vert_buf.buffer, vert_buf.allocation);
         spdlog::warn("MeshCache: index upload failed for '{}'", mesh_path);
         return result;
@@ -837,6 +831,9 @@ f32 MeshCache::resolve_uniform_scale(const std::string& bp_id,
 // ---------------------------------------------------------------------------
 
 void MeshCache::destroy(VkDevice device, VmaAllocator allocator) {
+    if (uploads_) {
+        uploads_->finish();
+    }
     for (auto& [id, lod_set] : lod_cache_) {
         for (auto& entry : lod_set.lods) {
             if (entry.mesh.vertex_buf.buffer)

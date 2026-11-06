@@ -8,6 +8,7 @@
 #include "renderer/vk_cmd.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/scene_views.hpp"
+#include "renderer/gpu_uploads.hpp"
 #include "renderer/mesh_cache.hpp"
 #include "renderer/terrain_mesh.hpp"
 #include "renderer/terrain_time.hpp"
@@ -195,6 +196,7 @@ public:
     /// Access texture cache (for MapPreview uploads).
     TextureCache& texture_cache() { return texture_cache_; }
     const FontCache& font_cache() const { return font_cache_; }
+    FontCache& font_cache() { return font_cache_; }
 
     /// Returns true if the window close was requested.
     bool should_close() const;
@@ -1100,6 +1102,7 @@ private:
     /// The waves' system clock: the frames' steps summed, so a test's fixed
     /// step runs it as it runs the particles (M213c).
     f64 wave_clock_ = 0.0;
+    GpuUploads uploads_;
     MeshCache mesh_cache_;
     TextureCache texture_cache_;
     FontCache font_cache_;

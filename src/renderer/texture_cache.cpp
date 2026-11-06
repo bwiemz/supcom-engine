@@ -1,6 +1,7 @@
 #include "renderer/texture_cache.hpp"
 #include "renderer/vk_cmd.hpp"
 #include "renderer/dds_parser.hpp"
+#include "renderer/gpu_uploads.hpp"
 #include "vfs/virtual_file_system.hpp"
 
 #include <spdlog/spdlog.h>
@@ -10,394 +11,43 @@
 
 namespace osc::renderer {
 
-void TextureCache::init(VkDevice device, VmaAllocator allocator,
-                        VkCommandPool cmd_pool, VkQueue queue,
+void TextureCache::init(VkDevice device, VmaAllocator allocator, GpuUploads& uploads,
                         VkDescriptorSetLayout ds_layout, VkSampler sampler,
                         vfs::VirtualFileSystem* vfs) {
     device_ = device;
     allocator_ = allocator;
-    cmd_pool_ = cmd_pool;
-    queue_ = queue;
+    uploads_ = &uploads;
     ds_layout_ = ds_layout;
     sampler_ = sampler;
     vfs_ = vfs;
 
     if (!create_descriptor_pool()) return;
 
-    create_fallback();
-    create_specteam_fallback();
-    create_normal_fallback();
-    create_cube_fallback();
-}
-
-void TextureCache::create_fallback() {
-    // 1x1 white pixel (R8G8B8A8_UNORM)
-    u8 white[] = {255, 255, 255, 255};
-
-    // Staging buffer
-    VkBufferCreateInfo staging_ci{};
-    staging_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    staging_ci.size = 4;
-    staging_ci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-
-    VmaAllocationCreateInfo staging_alloc{};
-    staging_alloc.usage = VMA_MEMORY_USAGE_CPU_ONLY;
-
-    AllocatedBuffer staging{};
-    vmaCreateBuffer(allocator_, &staging_ci, &staging_alloc,
-                    &staging.buffer, &staging.allocation, nullptr);
-
-    void* mapped = nullptr;
-    vmaMapMemory(allocator_, staging.allocation, &mapped);
-    std::memcpy(mapped, white, 4);
-    vmaUnmapMemory(allocator_, staging.allocation);
-
-    // Create 1x1 image
-    VkImageCreateInfo img_ci{};
-    img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    img_ci.imageType = VK_IMAGE_TYPE_2D;
-    img_ci.format = VK_FORMAT_R8G8B8A8_UNORM;
-    img_ci.extent = {1, 1, 1};
-    img_ci.mipLevels = 1;
-    img_ci.arrayLayers = 1;
-    img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
-    img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
-    img_ci.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    img_ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-    VmaAllocationCreateInfo img_alloc{};
-    img_alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-
-    vmaCreateImage(allocator_, &img_ci, &img_alloc,
-                   &fallback_.image.image, &fallback_.image.allocation, nullptr);
-
-    // One-shot command: transition + copy + transition
-    VkCommandBufferAllocateInfo cmd_ai{};
-    cmd_ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmd_ai.commandPool = cmd_pool_;
-    cmd_ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmd_ai.commandBufferCount = 1;
-
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device_, &cmd_ai, &cmd);
-
-    VkCommandBufferBeginInfo begin_info{};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin_info);
-
-    // Transition UNDEFINED -> TRANSFER_DST
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = fallback_.image.image;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.layerCount = 1;
-    barrier.srcAccessMask = 0;
-    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    // Copy staging -> image
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent = {1, 1, 1};
-    vkCmdCopyBufferToImage(cmd, staging.buffer, fallback_.image.image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-    // Transition TRANSFER_DST -> SHADER_READ_ONLY
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd;
-    vkQueueSubmit(queue_, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(queue_);
-
-    vkFreeCommandBuffers(device_, cmd_pool_, 1, &cmd);
-    vmaDestroyBuffer(allocator_, staging.buffer, staging.allocation);
-
-    // Image view
-    VkImageViewCreateInfo view_ci{};
-    view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    view_ci.image = fallback_.image.image;
-    view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    view_ci.format = VK_FORMAT_R8G8B8A8_UNORM;
-    view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    view_ci.subresourceRange.levelCount = 1;
-    view_ci.subresourceRange.layerCount = 1;
-    vkCreateImageView(device_, &view_ci, nullptr, &fallback_.image.view);
-
-    // Descriptor set
-    fallback_.descriptor_set = allocate_and_write_descriptor(fallback_.image.view);
-
-    spdlog::debug("TextureCache: fallback 1x1 white created");
-}
-
-void TextureCache::create_specteam_fallback() {
+    fallback_ = pixel_texture({255, 255, 255, 255});
     // 1x1 transparent black pixel (alpha=0 means "no team color here")
-    u8 black[] = {0, 0, 0, 0};
-
-    VkBufferCreateInfo staging_ci{};
-    staging_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    staging_ci.size = 4;
-    staging_ci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-
-    VmaAllocationCreateInfo staging_alloc{};
-    staging_alloc.usage = VMA_MEMORY_USAGE_CPU_ONLY;
-
-    AllocatedBuffer staging{};
-    if (vmaCreateBuffer(allocator_, &staging_ci, &staging_alloc,
-                        &staging.buffer, &staging.allocation, nullptr) != VK_SUCCESS) {
-        spdlog::error("TextureCache: specteam fallback staging alloc failed");
-        return;
-    }
-
-    void* mapped = nullptr;
-    vmaMapMemory(allocator_, staging.allocation, &mapped);
-    std::memcpy(mapped, black, 4);
-    vmaUnmapMemory(allocator_, staging.allocation);
-
-    VkImageCreateInfo img_ci{};
-    img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    img_ci.imageType = VK_IMAGE_TYPE_2D;
-    img_ci.format = VK_FORMAT_R8G8B8A8_UNORM;
-    img_ci.extent = {1, 1, 1};
-    img_ci.mipLevels = 1;
-    img_ci.arrayLayers = 1;
-    img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
-    img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
-    img_ci.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    img_ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-    VmaAllocationCreateInfo img_alloc{};
-    img_alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-
-    if (vmaCreateImage(allocator_, &img_ci, &img_alloc,
-                       &specteam_fallback_.image.image,
-                       &specteam_fallback_.image.allocation, nullptr) != VK_SUCCESS) {
-        vmaDestroyBuffer(allocator_, staging.buffer, staging.allocation);
-        spdlog::error("TextureCache: specteam fallback image alloc failed");
-        return;
-    }
-
-    VkCommandBufferAllocateInfo cmd_ai{};
-    cmd_ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmd_ai.commandPool = cmd_pool_;
-    cmd_ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmd_ai.commandBufferCount = 1;
-
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device_, &cmd_ai, &cmd);
-
-    VkCommandBufferBeginInfo begin_info{};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin_info);
-
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = specteam_fallback_.image.image;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.layerCount = 1;
-    barrier.srcAccessMask = 0;
-    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent = {1, 1, 1};
-    vkCmdCopyBufferToImage(cmd, staging.buffer, specteam_fallback_.image.image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd;
-    vkQueueSubmit(queue_, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(queue_);
-
-    vkFreeCommandBuffers(device_, cmd_pool_, 1, &cmd);
-    vmaDestroyBuffer(allocator_, staging.buffer, staging.allocation);
-
-    VkImageViewCreateInfo view_ci{};
-    view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    view_ci.image = specteam_fallback_.image.image;
-    view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    view_ci.format = VK_FORMAT_R8G8B8A8_UNORM;
-    view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    view_ci.subresourceRange.levelCount = 1;
-    view_ci.subresourceRange.layerCount = 1;
-    vkCreateImageView(device_, &view_ci, nullptr,
-                      &specteam_fallback_.image.view);
-
-    specteam_fallback_.descriptor_set =
-        allocate_and_write_descriptor(specteam_fallback_.image.view);
-
-    spdlog::debug("TextureCache: specteam fallback 1x1 transparent created");
-}
-
-void TextureCache::create_normal_fallback() {
+    specteam_fallback_ = pixel_texture({0, 0, 0, 0});
     // 1x1 flat-normal pixel, (0,0,1) in tangent space in both of FA's
     // encodings: RGB (terrain strata: x=R, y=G, z=B) and DXT5nm (meshes:
     // x=G, y=A, z derived).
-    u8 flat_normal[] = {128, 128, 255, 128};
+    normal_fallback_ = pixel_texture({128, 128, 255, 128});
+    create_cube_fallback();
+}
 
-    VkBufferCreateInfo staging_ci{};
-    staging_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    staging_ci.size = 4;
-    staging_ci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-
-    VmaAllocationCreateInfo staging_alloc{};
-    staging_alloc.usage = VMA_MEMORY_USAGE_CPU_ONLY;
-
-    AllocatedBuffer staging{};
-    if (vmaCreateBuffer(allocator_, &staging_ci, &staging_alloc,
-                        &staging.buffer, &staging.allocation, nullptr) != VK_SUCCESS) {
-        spdlog::error("TextureCache: normal fallback staging alloc failed");
-        return;
+GPUTexture TextureCache::pixel_texture(const std::array<u8, 4>& rgba) {
+    DDSTexture dds;
+    dds.format = VK_FORMAT_R8G8B8A8_UNORM;
+    dds.width = 1;
+    dds.height = 1;
+    dds.mip_count = 1;
+    dds.mips.push_back({reinterpret_cast<const char*>(rgba.data()), 1, 1, 4});
+    GPUTexture texture;
+    texture.image = upload_dds(dds);
+    if (texture.image.view) {
+        texture.descriptor_set = allocate_and_write_descriptor(texture.image.view);
+        texture.width = 1;
+        texture.height = 1;
     }
-
-    void* mapped = nullptr;
-    if (vmaMapMemory(allocator_, staging.allocation, &mapped) != VK_SUCCESS) {
-        vmaDestroyBuffer(allocator_, staging.buffer, staging.allocation);
-        spdlog::error("TextureCache: normal fallback memory map failed");
-        return;
-    }
-    std::memcpy(mapped, flat_normal, 4);
-    vmaUnmapMemory(allocator_, staging.allocation);
-
-    VkImageCreateInfo img_ci{};
-    img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    img_ci.imageType = VK_IMAGE_TYPE_2D;
-    img_ci.format = VK_FORMAT_R8G8B8A8_UNORM;
-    img_ci.extent = {1, 1, 1};
-    img_ci.mipLevels = 1;
-    img_ci.arrayLayers = 1;
-    img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
-    img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
-    img_ci.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    img_ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-    VmaAllocationCreateInfo img_alloc{};
-    img_alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-
-    if (vmaCreateImage(allocator_, &img_ci, &img_alloc,
-                       &normal_fallback_.image.image,
-                       &normal_fallback_.image.allocation, nullptr) != VK_SUCCESS) {
-        vmaDestroyBuffer(allocator_, staging.buffer, staging.allocation);
-        spdlog::error("TextureCache: normal fallback image alloc failed");
-        return;
-    }
-
-    VkCommandBufferAllocateInfo cmd_ai{};
-    cmd_ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmd_ai.commandPool = cmd_pool_;
-    cmd_ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmd_ai.commandBufferCount = 1;
-
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device_, &cmd_ai, &cmd);
-
-    VkCommandBufferBeginInfo begin_info{};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin_info);
-
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = normal_fallback_.image.image;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.layerCount = 1;
-    barrier.srcAccessMask = 0;
-    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent = {1, 1, 1};
-    vkCmdCopyBufferToImage(cmd, staging.buffer, normal_fallback_.image.image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd;
-    vkQueueSubmit(queue_, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(queue_);
-
-    vkFreeCommandBuffers(device_, cmd_pool_, 1, &cmd);
-    vmaDestroyBuffer(allocator_, staging.buffer, staging.allocation);
-
-    VkImageViewCreateInfo view_ci{};
-    view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    view_ci.image = normal_fallback_.image.image;
-    view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    view_ci.format = VK_FORMAT_R8G8B8A8_UNORM;
-    view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    view_ci.subresourceRange.levelCount = 1;
-    view_ci.subresourceRange.layerCount = 1;
-    vkCreateImageView(device_, &view_ci, nullptr,
-                      &normal_fallback_.image.view);
-
-    normal_fallback_.descriptor_set =
-        allocate_and_write_descriptor(normal_fallback_.image.view);
-
-    spdlog::debug("TextureCache: normal fallback 1x1 flat-normal created");
+    return texture;
 }
 
 AllocatedImage TextureCache::upload_dds(const DDSTexture& dds) {
@@ -407,33 +57,6 @@ AllocatedImage TextureCache::upload_dds(const DDSTexture& dds) {
     VkDeviceSize total_size = 0;
     for (auto& mip : dds.mips)
         total_size += mip.size;
-
-    // Staging buffer
-    VkBufferCreateInfo staging_ci{};
-    staging_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    staging_ci.size = total_size;
-    staging_ci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-
-    VmaAllocationCreateInfo staging_alloc{};
-    staging_alloc.usage = VMA_MEMORY_USAGE_CPU_ONLY;
-
-    AllocatedBuffer staging{};
-    if (vmaCreateBuffer(allocator_, &staging_ci, &staging_alloc,
-                        &staging.buffer, &staging.allocation,
-                        nullptr) != VK_SUCCESS) {
-        spdlog::warn("TextureCache: staging buffer creation failed");
-        return {};
-    }
-
-    // Copy all mip data into staging buffer contiguously
-    void* mapped = nullptr;
-    vmaMapMemory(allocator_, staging.allocation, &mapped);
-    size_t offset = 0;
-    for (auto& mip : dds.mips) {
-        std::memcpy(static_cast<char*>(mapped) + offset, mip.data, mip.size);
-        offset += mip.size;
-    }
-    vmaUnmapMemory(allocator_, staging.allocation);
 
     // Create VkImage
     VkImageCreateInfo img_ci{};
@@ -456,24 +79,21 @@ AllocatedImage TextureCache::upload_dds(const DDSTexture& dds) {
                        &result.image, &result.allocation,
                        nullptr) != VK_SUCCESS) {
         spdlog::warn("TextureCache: image creation failed");
-        vmaDestroyBuffer(allocator_, staging.buffer, staging.allocation);
         return {};
     }
 
-    // One-shot command buffer
-    VkCommandBufferAllocateInfo cmd_ai{};
-    cmd_ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmd_ai.commandPool = cmd_pool_;
-    cmd_ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmd_ai.commandBufferCount = 1;
-
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device_, &cmd_ai, &cmd);
-
-    VkCommandBufferBeginInfo begin_info{};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin_info);
+    const GpuUploads::Staging staging = uploads_->stage(total_size);
+    VkCommandBuffer cmd = staging.buffer ? uploads_->commands() : VK_NULL_HANDLE;
+    if (!cmd) {
+        spdlog::warn("TextureCache: staging buffer creation failed");
+        vmaDestroyImage(allocator_, result.image, result.allocation);
+        return {};
+    }
+    size_t offset = 0;
+    for (const auto& mip : dds.mips) {
+        std::memcpy(static_cast<char*>(staging.mapped) + offset, mip.data, mip.size);
+        offset += mip.size;
+    }
 
     // Transition entire image UNDEFINED -> TRANSFER_DST
     VkImageMemoryBarrier barrier{};
@@ -523,21 +143,8 @@ AllocatedImage TextureCache::upload_dds(const DDSTexture& dds) {
     barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd;
-    vkQueueSubmit(queue_, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(queue_);
-
-    vkFreeCommandBuffers(device_, cmd_pool_, 1, &cmd);
-    vmaDestroyBuffer(allocator_, staging.buffer, staging.allocation);
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                         0, nullptr, 0, nullptr, 1, &barrier);
 
     // Image view (all mip levels)
     VkImageViewCreateInfo view_ci{};
@@ -558,8 +165,7 @@ AllocatedImage TextureCache::upload_dds(const DDSTexture& dds) {
     if (vkCreateImageView(device_, &view_ci, nullptr, &result.view) !=
         VK_SUCCESS) {
         spdlog::warn("TextureCache: image view creation failed");
-        vmaDestroyImage(allocator_, result.image, result.allocation);
-        result = {};
+        drop(result);
     }
 
     return result;
@@ -654,8 +260,7 @@ const GPUTexture* TextureCache::get_raw(const std::string& key,
 
     auto ds = allocate_and_write_descriptor(image.view);
     if (ds == VK_NULL_HANDLE) {
-        vkDestroyImageView(device_, image.view, nullptr);
-        vmaDestroyImage(allocator_, image.image, image.allocation);
+        drop(image);
         failed_.insert(key);
         return nullptr;
     }
@@ -688,128 +293,19 @@ const GPUTexture* TextureCache::upload_pixels(const std::string& key, VkFormat f
     auto it = cache_.find(key);
     if (it != cache_.end()) return it->second.get();
 
-    const VkDeviceSize tex_size = static_cast<VkDeviceSize>(width) * height * texel_bytes;
-
-    // Staging buffer
-    VkBufferCreateInfo staging_ci{};
-    staging_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    staging_ci.size = tex_size;
-    staging_ci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-
-    VmaAllocationCreateInfo staging_alloc{};
-    staging_alloc.usage = VMA_MEMORY_USAGE_CPU_ONLY;
-
-    AllocatedBuffer staging{};
-    if (vmaCreateBuffer(allocator_, &staging_ci, &staging_alloc,
-                        &staging.buffer, &staging.allocation, nullptr) != VK_SUCCESS) {
-        return nullptr;
-    }
-
-    void* mapped = nullptr;
-    vmaMapMemory(allocator_, staging.allocation, &mapped);
-    std::memcpy(mapped, pixels, tex_size);
-    vmaUnmapMemory(allocator_, staging.allocation);
-
-    // Create image
-    VkImageCreateInfo img_ci{};
-    img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    img_ci.imageType = VK_IMAGE_TYPE_2D;
-    img_ci.format = format;
-    img_ci.extent = {width, height, 1};
-    img_ci.mipLevels = 1;
-    img_ci.arrayLayers = 1;
-    img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
-    img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
-    img_ci.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    img_ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-    VmaAllocationCreateInfo img_alloc{};
-    img_alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-
-    AllocatedImage image{};
-    if (vmaCreateImage(allocator_, &img_ci, &img_alloc,
-                       &image.image, &image.allocation, nullptr) != VK_SUCCESS) {
-        vmaDestroyBuffer(allocator_, staging.buffer, staging.allocation);
-        return nullptr;
-    }
-
-    // One-shot command: transition + copy + transition
-    VkCommandBufferAllocateInfo cmd_ai{};
-    cmd_ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmd_ai.commandPool = cmd_pool_;
-    cmd_ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmd_ai.commandBufferCount = 1;
-
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device_, &cmd_ai, &cmd);
-
-    VkCommandBufferBeginInfo begin_info{};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin_info);
-
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = image.image;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.layerCount = 1;
-    barrier.srcAccessMask = 0;
-    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent = {width, height, 1};
-    vkCmdCopyBufferToImage(cmd, staging.buffer, image.image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd;
-    vkQueueSubmit(queue_, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(queue_);
-    vkFreeCommandBuffers(device_, cmd_pool_, 1, &cmd);
-    vmaDestroyBuffer(allocator_, staging.buffer, staging.allocation);
-
-    // Create image view
-    VkImageViewCreateInfo view_ci{};
-    view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    view_ci.image = image.image;
-    view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    view_ci.format = format;
-    view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    view_ci.subresourceRange.levelCount = 1;
-    view_ci.subresourceRange.layerCount = 1;
-    if (vkCreateImageView(device_, &view_ci, nullptr, &image.view) != VK_SUCCESS) {
-        vmaDestroyImage(allocator_, image.image, image.allocation);
-        return nullptr;
-    }
+    DDSTexture dds;
+    dds.format = format;
+    dds.width = width;
+    dds.height = height;
+    dds.mip_count = 1;
+    dds.mips.push_back(
+        {static_cast<const char*>(pixels), width, height, width * height * texel_bytes});
+    AllocatedImage image = upload_dds(dds);
+    if (!image.image) return nullptr;
 
     auto ds = allocate_and_write_descriptor(image.view);
     if (ds == VK_NULL_HANDLE) {
-        vkDestroyImageView(device_, image.view, nullptr);
-        vmaDestroyImage(allocator_, image.image, image.allocation);
+        drop(image);
         return nullptr;
     }
 
@@ -848,8 +344,7 @@ const GPUTexture* TextureCache::finalize_load(const std::string& path,
 
     auto ds = allocate_and_write_descriptor(image.view);
     if (ds == VK_NULL_HANDLE) {
-        vkDestroyImageView(device_, image.view, nullptr);
-        vmaDestroyImage(allocator_, image.image, image.allocation);
+        drop(image);
         failed_.insert(path);
         return nullptr;
     }
@@ -974,10 +469,19 @@ void TextureCache::evict(const std::string& key) {
     failed_.erase(key);
     const auto it = cache_.find(key);
     if (it == cache_.end()) return;
-    if (it->second->image.view) vkDestroyImageView(device_, it->second->image.view, nullptr);
-    if (it->second->image.image)
-        vmaDestroyImage(allocator_, it->second->image.image, it->second->image.allocation);
+    drop(it->second->image);
     cache_.erase(it);
+}
+
+void TextureCache::drop(AllocatedImage& image) {
+    uploads_->finish();
+    if (image.view) {
+        vkDestroyImageView(device_, image.view, nullptr);
+    }
+    if (image.image) {
+        vmaDestroyImage(allocator_, image.image, image.allocation);
+    }
+    image = {};
 }
 
 VkImageView TextureCache::get_cube_blocking(const std::string& vfs_path) {
@@ -1021,6 +525,9 @@ void TextureCache::destroy(VkDevice device, VmaAllocator allocator) {
         al.future.wait();
     async_loads_.clear();
     pending_.clear();
+    if (uploads_) {
+        uploads_->finish();
+    }
 
     for (auto& [path, gpu] : cache_) {
         if (gpu->image.view)

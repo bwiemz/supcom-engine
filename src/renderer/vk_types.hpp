@@ -19,13 +19,6 @@ struct AllocatedImage {
     VkImageView view = VK_NULL_HANDLE;
 };
 
-/// Upload data via staging buffer → device-local buffer.
-/// Returns a null buffer on failure.
-AllocatedBuffer upload_buffer(VkDevice device, VmaAllocator allocator,
-                              VkCommandPool cmd_pool, VkQueue queue,
-                              const void* data, VkDeviceSize size,
-                              VkBufferUsageFlags usage);
-
 /// LIFO cleanup queue — objects are destroyed in reverse insertion order.
 class DeletionQueue {
 public:
