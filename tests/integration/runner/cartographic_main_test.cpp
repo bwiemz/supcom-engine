@@ -418,6 +418,7 @@ void test_cartographic_main(TestContext& ctx) {
     (void)ctx.lua_state.do_string("MapBorderAdd('/meshes/game/map-border_squ_uef_mesh')\n");
     (void)ctx.lua_state.do_string(set_cartographic("__osc_cm_main", true));
     (void)scene();
+    shots.redraw_until_loaded();
     {
         std::ostringstream dump;
         r.dump_frame(dump);

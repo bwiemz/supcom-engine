@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -128,7 +129,7 @@ public:
 
     /// Pre-load GPU meshes for these blueprints (sim::world_blueprints).
     void preload_meshes(const std::vector<std::string>& bp_ids, MeshCache& mesh_cache,
-                        lua_State* L);
+                        TextureCache* tex_cache, lua_State* L);
 
     /// Update per-frame instance data from the world as `view` draws it
     /// (between the last two ticks).
@@ -221,6 +222,9 @@ private:
 
     /// A group's textures, from its mesh's files (fallbacks without them).
     void bind_mesh_textures(MeshDrawGroup& grp, TextureCache* tex_cache) const;
+    bool textures_ready(const GPUMesh& mesh, TextureCache& tex_cache);
+    void prefetch(const std::string& id, MeshCache& mesh_cache, TextureCache& tex_cache,
+                  lua_State* L);
 
     /// Make `buffer` hold `need` elements of `size` bytes, growing it to
     /// grown_capacity(), which drops what it held. False if it can't hold
@@ -258,8 +262,11 @@ private:
         u32 mesh_changes = 0;
         f32 reach = -1.0f; ///< below 0: not read
         std::string blueprint_id;
+        const GPUMesh* last_drawn = nullptr;
+        f32 last_drawn_scale = 0.0f;
     };
     std::unordered_map<sim::EntityId, CachedReach> reaches_;
+    std::unordered_set<const GPUMesh*> ready_;
 
     sim::GameColors game_colors_;
     const ReconView* recon_ = nullptr;

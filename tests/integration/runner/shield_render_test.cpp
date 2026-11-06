@@ -281,6 +281,7 @@ void test_shield_render(TestContext& ctx) {
     {
         run_lua(ctx, "__osc_sh_uef.MyShield:OnDamage(nil, 4500, Vector(1, 0, 0), 'Normal')\n");
         tick(2);
+        shots.redraw_until_loaded();
         keep("impact", shots.grab());
         const f32 health = shield->max_health() > 0 ? shield->health() / shield->max_health() : 0;
         const renderer::MeshInstance* inst = instance_of(r, MeshTechnique::ShieldUEF);
@@ -428,6 +429,7 @@ void test_shield_render(TestContext& ctx) {
                        return e && e->mesh_override().find("personalshield") != std::string::npos;
                    });
         shots.recapture();
+        shots.redraw_until_loaded();
         const ImageRGBA8 shielded = shots.grab();
         keep("scu", shielded);
         const u32 scu_worn = instances_of(r, MeshTechnique::SeraphimPersonalShield);

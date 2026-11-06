@@ -11,6 +11,12 @@
 
 namespace osc::renderer {
 
+namespace {
+
+constexpr const char* kFailsToLoad = "/textures/engine/b_fails_to_load.dds";
+
+} // namespace
+
 void TextureCache::init(VkDevice device, VmaAllocator allocator, GpuUploads& uploads,
                         VkDescriptorSetLayout ds_layout, VkSampler sampler,
                         vfs::VirtualFileSystem* vfs) {
@@ -31,6 +37,7 @@ void TextureCache::init(VkDevice device, VmaAllocator allocator, GpuUploads& upl
     // x=G, y=A, z derived).
     normal_fallback_ = pixel_texture({128, 128, 255, 128});
     create_cube_fallback();
+    (void)get_blocking(kFailsToLoad);
 }
 
 GPUTexture TextureCache::pixel_texture(const std::array<u8, 4>& rgba) {
@@ -363,6 +370,16 @@ const GPUTexture* TextureCache::finalize_load(const std::string& path,
     return raw;
 }
 
+const GPUTexture* TextureCache::drawable(const std::string& vfs_path) {
+    if (vfs_path.empty()) {
+        return nullptr;
+    }
+    if (const GPUTexture* texture = get(vfs_path)) {
+        return texture;
+    }
+    return failed_.count(vfs_path) > 0 ? get(kFailsToLoad) : nullptr;
+}
+
 const GPUTexture* TextureCache::get(const std::string& vfs_path) {
     if (device_ == VK_NULL_HANDLE) return nullptr;
 
@@ -438,11 +455,8 @@ void TextureCache::wait_reads() const {
     }
 }
 
-void TextureCache::flush_uploads(u32 max_per_frame) {
-    u32 processed = 0;
-
-    for (auto it = async_loads_.begin();
-         it != async_loads_.end() && processed < max_per_frame; ) {
+void TextureCache::flush_uploads() {
+    for (auto it = async_loads_.begin(); it != async_loads_.end();) {
         // Check if the future is ready (non-blocking)
         auto status = it->future.wait_for(std::chrono::seconds(0));
         if (status != std::future_status::ready) {
@@ -461,7 +475,6 @@ void TextureCache::flush_uploads(u32 max_per_frame) {
         } else {
             finalize_load(path, *file_data);
         }
-        processed++;
     }
 }
 

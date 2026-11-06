@@ -1766,7 +1766,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         // (init_ui_caches) have no mesh cache, and every game launched from
         // one drew its units as cubes. The meshes it has loaded stay.
         mesh_cache_.init(device_, allocator_, uploads_, vfs, store);
-        unit_renderer_.preload_meshes(preload, mesh_cache_, L);
+        unit_renderer_.preload_meshes(preload, mesh_cache_, &texture_cache_, L);
         // Their strategic icons, as Moho loads a blueprint's with it (M215c).
         strategic_icon_renderer_.preload(preload, texture_cache_, L);
     }
@@ -2221,7 +2221,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events, cons
     }
 
     // Finalize any async texture loads that completed this frame
-    texture_cache_.flush_uploads(4);
+    texture_cache_.flush_uploads();
 
     // View-projection matrix (computed early for frustum culling)
     use_view(views.front());
@@ -3232,7 +3232,7 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     ui_renderer_.set_frame_index(fi);
 
     // Flush pending texture uploads BEFORE starting the command buffer
-    texture_cache_.flush_uploads(4);
+    texture_cache_.flush_uploads();
 
     // The frame's step, as render() takes it (fixed for scripted runs and
     // captures).
@@ -4228,9 +4228,12 @@ void Renderer::record_decals(VkCommandBuffer cmd, u32 fi, DecalTechnique techniq
             vkCmdBindIndexBuffer(cmd, indices, 0, VK_INDEX_TYPE_UINT32);
             bound_runtime = d.runtime;
         }
-        const GPUTexture* albedo = texture_cache_.get(*d.albedo);
+        const GPUTexture* albedo = texture_cache_.drawable(*d.albedo);
         if (!albedo) continue; // still loading
-        const GPUTexture* spec = d.spec->empty() ? nullptr : texture_cache_.get(*d.spec);
+        const GPUTexture* spec = texture_cache_.drawable(*d.spec);
+        if (!spec && texture_cache_.pending(*d.spec)) {
+            continue;
+        }
         const std::array<VkDescriptorSet, 3> own = {
             albedo->descriptor_set, spec ? spec->descriptor_set : no_spec, decal_mask_ds_};
         vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, decal_layout_, 2,

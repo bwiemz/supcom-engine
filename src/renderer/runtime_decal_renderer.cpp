@@ -187,7 +187,7 @@ void RuntimeDecalRenderer::gather(const TerrainMesh& mesh, TextureCache& texture
         g.mid_z = (min_z + max_z) * 0.5f;
         g.radius = 0.5f * std::hypot(max_x - min_x, max_z - min_z);
         // Moho loads a decal's textures as it is added (SetName).
-        if (!textures.get_blocking(d.info.texture_path)) continue;
+        (void)textures.get_blocking(d.info.texture_path);
         if (!d.info.texture2_path.empty()) (void)textures.get_blocking(d.info.texture2_path);
         g.first_index = static_cast<u32>(indices_.size());
         mesh.collect_indices(min_x, min_z, max_x, max_z, indices_);
@@ -268,8 +268,11 @@ void RuntimeDecalRenderer::build_splats(const map::Terrain& terrain,
         if (++budget >= kMaxSplats) break;
         const f32 alpha =
             decal_lod_alpha(s.info.cut_off_lod, s.info.near_cut_off_lod, distance) * s.alpha;
-        const GPUTexture* texture = textures.get_blocking(s.info.texture_path);
-        if (!texture) continue;
+        (void)textures.get_blocking(s.info.texture_path);
+        const GPUTexture* texture = textures.drawable(s.info.texture_path);
+        if (!texture) {
+            continue;
+        }
 
         std::array<SplatVertex, 4> quad{};
         for (size_t c = 0; c < 4; ++c)
