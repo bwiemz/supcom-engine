@@ -73,6 +73,7 @@ Unit* tank(SimState& sim, f32 x, f32 z, f32 range = 10.0f, f32 speed = 5.0f) {
     drive.max_accel = 50.0f;
     u->set_drive(drive);
     auto gun = std::make_unique<Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = range;
     gun->damage = 10.0f;
     u->add_weapon(std::move(gun));

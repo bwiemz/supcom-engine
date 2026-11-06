@@ -123,66 +123,27 @@ bool Unit::target_exempt(const Unit& enemy, const EntityRegistry& registry) cons
     return capturing;
 }
 
+bool Unit::passes_over(const Unit& enemy, const SimState* sim,
+                       const EntityRegistry& registry) const {
+    static const CategoryName kBenign{"BENIGN"};
+    if (enemy.has_category(kBenign)) {
+        return true;
+    }
+    const bool air = enemy.is_air_unit();
+    if ((enemy.parent_entity_id() && (air || enemy.is_being_built())) ||
+        (air && enemy.is_being_built()) || (!air && sim && off_map(*sim, enemy.position(), 0))) {
+        return true;
+    }
+    return target_exempt(enemy, registry);
+}
+
 Entity* Unit::best_enemy(const std::vector<Entity*>& candidates, f32 range, SimContext& ctx) {
-    const SimState* sim = ctx.sim;
-    if (!sim || is_being_built() || army() < 0) {
+    if (!ctx.sim || is_being_built()) {
         return nullptr;
     }
     const Weapon* weapon = scan_weapon();
-    if (!weapon) {
-        return nullptr;
-    }
-    static const CategoryName kBenign{"BENIGN"};
-    Entity* best = nullptr;
-    int best_priority = 0;
-    f32 best_dist2 = 0;
-    for (Entity* e : candidates) {
-        if (!e || e->destroyed() || !e->is_unit()) {
-            continue;
-        }
-        const auto& enemy = static_cast<const Unit&>(*e);
-        if (enemy.is_dying() || !sim->is_enemy(army(), enemy.army())) {
-            continue;
-        }
-        const f32 dx = enemy.position().x - position().x;
-        const f32 dz = enemy.position().z - position().z;
-        const f32 dist2 = dx * dx + dz * dz;
-        if (dist2 > range * range) {
-            continue;
-        }
-        if (!sim->recon_flags(enemy.entity_id(), static_cast<u32>(army())).any() ||
-            enemy.has_category(kBenign)) {
-            continue;
-        }
-        const bool air = enemy.is_air_unit();
-        if ((enemy.parent_entity_id() && (air || enemy.is_being_built())) ||
-            (air && enemy.is_being_built()) || (!air && off_map(*sim, enemy.position(), 0))) {
-            continue;
-        }
-        if (target_exempt(enemy, ctx.registry)) {
-            continue;
-        }
-        if (!weapon->can_pick(*this, enemy, sim)) {
-            continue;
-        }
-        // A unit that unpacks to fire takes on only what it can hit from
-        // where it stands (FindBestEnemy: a NeedUnpack unit's candidate needs
-        // an Available firing solution).
-        if (need_unpack_ && !weapon->can_target(*this, enemy, sim)) {
-            continue;
-        }
-        const int priority = weapon->priority_of(enemy);
-        if (priority < 0) {
-            continue;
-        }
-        if (!best || priority < best_priority ||
-            (priority == best_priority && dist2 < best_dist2)) {
-            best = e;
-            best_priority = priority;
-            best_dist2 = dist2;
-        }
-    }
-    return best;
+    return weapon ? weapon->find_best_enemy(*this, candidates, range, false, ctx.sim, ctx.registry)
+                  : nullptr;
 }
 
 Entity* Unit::find_patrol_target(const UnitCommand& cmd, SimContext& ctx) {

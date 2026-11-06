@@ -49,7 +49,7 @@ struct LuaGuard {
 };
 
 void flat(SimState& sim) {
-    std::vector<osc::u16> heights(129 * 129, 1000);
+    std::vector<osc::u16> heights(129 * 129, 0);
     osc::map::Heightmap hm(128, 128, 1.0f / 128.0f, std::move(heights));
     sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
     sim.build_pathfinding_grid();
@@ -367,6 +367,7 @@ TEST_CASE("A patrol breaks off to attack an enemy within its GuardScanRadius of 
     two_armies(sim);
     Unit* tank = walker(sim, 10.0f, 10.0f);
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 5.0f;
     tank->add_weapon(std::move(gun));
     tank->set_guard_scan_radius(20.0f);
@@ -392,6 +393,7 @@ TEST_CASE("A NeedUnpack patrol breaks off only for an enemy it can hit from wher
     two_armies(sim);
     Unit* tank = walker(sim, 10.0f, 10.0f);
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 5.0f;
     tank->add_weapon(std::move(gun));
     tank->set_guard_scan_radius(20.0f);
@@ -414,6 +416,7 @@ TEST_CASE("A patrol's chase ends at GuardReturnRadius from where it broke off", 
     two_armies(sim);
     Unit* tank = walker(sim, 10.0f, 10.0f);
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 5.0f;
     tank->add_weapon(std::move(gun));
     tank->set_guard_scan_radius(20.0f);
@@ -459,6 +462,7 @@ TEST_CASE("A patrol goes for an enemy ahead on its route only within its GuardSc
     two_armies(sim);
     Unit* tank = walker(sim, 10.0f, 10.0f);
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 5.0f;
     tank->add_weapon(std::move(gun));
     still(sim, 1, 90.0f, 10.0f);
@@ -735,6 +739,7 @@ TEST_CASE("An attack-move goes for an enemy near its route, then ends where it a
     two_armies(sim);
     Unit* tank = walker(sim, 10.0f, 10.0f);
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 5.0f;
     tank->add_weapon(std::move(gun));
     tank->set_guard_scan_radius(20.0f);
@@ -1026,6 +1031,7 @@ TEST_CASE("A right click attacks only an enemy a selected weapon can hit", "[att
     tank->add_command_cap("RULEUCC_Attack");
     tank->add_command_cap("RULEUCC_Move");
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 20.0f;
     gun->fire_target_layer_caps = osc::sim::parse_layer_caps("Land|Water");
     tank->add_weapon(std::move(gun));
@@ -1058,6 +1064,7 @@ TEST_CASE("A right click attacks only an enemy a selected weapon can hit", "[att
     flak->set_motion_type("RULEUMT_Land");
     flak->add_command_cap("RULEUCC_Attack");
     auto aa = std::make_unique<osc::sim::Weapon>();
+    aa->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     aa->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
     flak->add_weapon(std::move(aa));
     input.set_selected({tank->entity_id(), flak->entity_id()});
@@ -1075,6 +1082,7 @@ TEST_CASE("A right click gives the whole selection one order", "[attack][capture
     tank->add_command_cap("RULEUCC_Attack");
     tank->add_command_cap("RULEUCC_Move");
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 20.0f;
     gun->fire_target_layer_caps = osc::sim::parse_layer_caps("Land|Water");
     tank->add_weapon(std::move(gun));
@@ -1087,6 +1095,7 @@ TEST_CASE("A right click gives the whole selection one order", "[attack][capture
     flak->set_motion_type("RULEUMT_Land");
     flak->add_command_cap("RULEUCC_Attack");
     auto aa = std::make_unique<osc::sim::Weapon>();
+    aa->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     aa->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
     flak->add_weapon(std::move(aa));
     const Unit* enemy = still(sim, 1, 40.0f, 10.0f);
@@ -1256,6 +1265,7 @@ TEST_CASE("A unit with no weapon takes an attack order and drops it when it come
     Unit* tank = walker(sim, 12.0f, 10.0f);
     tank->set_motion_type("RULEUMT_Land");
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 5.0f;
     tank->add_weapon(std::move(gun));
     const Unit* enemy = still(sim, 1, 40.0f, 10.0f);
@@ -1348,6 +1358,7 @@ struct FormAttackWorld {
         u->set_motion_type("RULEUMT_Land");
         u->add_command_cap("RULEUCC_Attack");
         auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
         gun->max_range = range;
         u->add_weapon(std::move(gun));
         // Its script object, which a formation's script is handed
@@ -1856,6 +1867,7 @@ TEST_CASE("The cursor passes through an UNTARGETABLE unit unless SELECTABLE or F
     tank->add_command_cap("RULEUCC_Attack");
     tank->add_command_cap("RULEUCC_Move");
     auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->fire_target_layer_caps = osc::sim::parse_layer_caps("Land|Water");
     tank->add_weapon(std::move(gun));
     Unit* drone = still(sim, 1, 40.0f, 10.0f);
@@ -1883,6 +1895,7 @@ TEST_CASE("An attack on a dying unit gives way to the next order at once; on a l
         two_armies(sim);
         Unit* tank = walker(sim, 10.0f, 10.0f);
         auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
         gun->max_range = 5.0f;
         tank->add_weapon(std::move(gun));
         Unit* first = still(sim, 1, 60.0f, 10.0f);
@@ -1915,6 +1928,7 @@ TEST_CASE("A lone attack on a dying unit ends within its reach of it; on a livin
         two_armies(sim);
         Unit* tank = walker(sim, 10.0f, 10.0f);
         auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
         gun->max_range = 5.0f;
         tank->add_weapon(std::move(gun));
         Unit* enemy = still(sim, 1, 40.0f, 10.0f);

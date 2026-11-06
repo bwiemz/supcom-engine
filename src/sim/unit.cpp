@@ -66,10 +66,6 @@ Weapon* Unit::get_weapon(i32 index) {
 }
 
 void Unit::push_command(const UnitCommand& cmd, bool clear_existing) {
-    // Note: block_command_queue_ is a UI-only flag in FA's original engine.
-    // Issue*() C++ functions always bypass it; only the player input handler
-    // respects it.  We store the flag for IsUnitState queries but do NOT
-    // block push_command here.
     if (clear_existing) {
         command_queue_.clear();
         abort_move();
@@ -2212,6 +2208,7 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
         stop_repairing(L, registry);
         return false;
     }
+    set_unit_state("Repairing", true);
 
     return true;
 }

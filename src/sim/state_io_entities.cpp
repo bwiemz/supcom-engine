@@ -647,6 +647,8 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.f32v(wp.heading_arc_range);
     w.b(wp.slaved_to_body);
     w.f32v(wp.slaved_arc_range);
+    w.b(wp.turreted);
+    w.i32v(wp.aim_bone);
     w.str(wp.projectile_bp_id);
     w.str(wp.fire_control_label);
     w.b(wp.need_compute_bomb_drop);
@@ -744,6 +746,8 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.heading_arc_range = r.f32v();
     wp.slaved_to_body = r.b();
     wp.slaved_arc_range = r.f32v();
+    wp.turreted = r.b();
+    wp.aim_bone = r.i32v();
     wp.projectile_bp_id = r.str();
     wp.fire_control_label = r.str();
     wp.need_compute_bomb_drop = r.b();

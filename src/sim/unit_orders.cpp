@@ -357,8 +357,9 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         // allocated until the beat ends, see EntityRegistry::collect_garbage).
         if (destroyed() || !in_registry()) return false;
         if (!command_queue_.front().begun) {
-            // Moho's IAiCommandDispatchImpl::Execute, on UNITSTATE_Attached.
-            if (parent_entity_id() && is_mobile()) {
+            // Moho's IAiCommandDispatchImpl::Execute, on UNITSTATE_Attached or
+            // UNITSTATE_BlockCommandQueue.
+            if ((parent_entity_id() && is_mobile()) || block_command_queue_) {
                 return true;
             }
             // Its scripts may change the queue, or kill the unit: look again.
@@ -1143,6 +1144,7 @@ OrderStep Unit::end_factory_build_order(UnitCommand& cmd) {
         --cmd.count;
         cmd.rolloff_wait = 0;
         cmd.task_wait = 0;
+        cmd.begun = false;
         return OrderStep::Next;
     }
     if (repeat_queue_) {
@@ -1439,8 +1441,9 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
     }
     // Already at full health? Done. (One under construction is built first.)
     const bool under_construction = static_cast<const Unit&>(*rtarget).is_being_built();
-    if (!under_construction && rtarget->health() >= rtarget->max_health() &&
-        !static_cast<Unit*>(rtarget)->shield_needs_repair(registry, L)) {
+    if ((!under_construction && rtarget->health() >= rtarget->max_health() &&
+         !static_cast<Unit*>(rtarget)->shield_needs_repair(registry, L)) ||
+        !static_cast<const Unit&>(*rtarget).holds_for_repair()) {
         let_go();
         command_queue_.pop_front();
         return OrderStep::Next;
@@ -1560,6 +1563,9 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
         call_build_callback(ctx.L, "OnStartBuild", registry.find(tid), "Repair");
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
+        }
+        if (build_repairs_ && build_target_id_ == tid) {
+            set_unit_state("Repairing", true);
         }
     }
     // It builds alongside any builder; whoever completes it finishes it
@@ -1918,9 +1924,13 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     if (repairs && target_unit->is_being_built()) {
         if (is_repairing()) stop_repairing(L, registry);
         if (is_reclaiming()) stop_reclaiming(L, &registry);
-        if (within_reach(*target_unit, true, build_target_id_ == cmd.target_id))
+        if (within_reach(*target_unit, true, build_target_id_ == cmd.target_id) &&
+            target_unit->holds_for_repair()) {
             return order_repair_construction(cmd, dt, ctx, econ_eff, *target_unit, task_waits);
-        if (is_building()) stop_assisting(L, &registry);
+        }
+        if (is_building()) {
+            stop_assisting(L, &registry);
+        }
         return guard_follow(*target_unit, true, winged_goal, ctx);
     }
 
@@ -1962,8 +1972,12 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 cmd.prepared = walking;
             }
         }
-        if (walking || !within_reach(reach, true, helping)) {
-            if (is_building()) stop_assisting(ctx.L, &ctx.registry);
+        const bool holds = !guarded_build->is_unit() ||
+                           static_cast<const Unit&>(*guarded_build).holds_for_repair();
+        if (walking || !within_reach(reach, true, helping) || !holds) {
+            if (is_building()) {
+                stop_assisting(ctx.L, &ctx.registry);
+            }
         } else {
             if (build_target_id_ != target_build_id) {
                 // Switch to new assist target
@@ -2002,6 +2016,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                                         build_order_.c_str());
                     if (destroyed() || !in_registry()) {
                         return OrderStep::Gone;
+                    }
+                    if (build_repairs_ && build_target_id_ == target_build_id) {
+                        set_unit_state("Repairing", true);
                     }
                 }
             }
@@ -2072,7 +2089,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             cmd.patrol_scan = 0;
             task_waits = true;
         }
-        if (within_reach(*target_unit, true, false)) {
+        if (within_reach(*target_unit, true, false) && target_unit->holds_for_repair()) {
             // Moho's repair task on it, begun unpaused: focus, OnStartBuild,
             // Repairing, and the silo's progress for its own (faf-re
             // CUnitRepairTask, CBuildTaskHelper)
@@ -2090,6 +2107,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                     call_build_callback(ctx.L, "OnStartBuild", target_unit, "Repair");
                     if (destroyed() || !in_registry()) {
                         return OrderStep::Gone;
+                    }
+                    if (silo_assist_id_ == cmd.target_id) {
+                        set_unit_state("Repairing", true);
                     }
                     if (target_unit->destroyed() || !target_unit->silo_building()) {
                         return OrderStep::Hold;
@@ -2122,7 +2142,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
         // Auto-repair: if target is damaged
-        if (repairs && needs_repair()) {
+        if (repairs && needs_repair() && target_unit->holds_for_repair()) {
             working = true;
             if (!within_reach(*target_unit, true, repair_target_id_ == cmd.target_id)) {
                 if (is_repairing()) stop_repairing(L, registry);

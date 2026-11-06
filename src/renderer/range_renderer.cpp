@@ -50,12 +50,9 @@ RangeScene collect_range_scene(const RangeOverlays& overlays, const sim::FrameVi
             if (selected->count(e.id) != 0)
                 if (auto unit = own(e)) scene.selected.push_back(*unit);
     }
-    // CameraImpl's units in view, for the active filters and for a selected
-    // sensor's coverage: the focus army's whose bounds the view holds (here
-    // a sphere round the footprint)
-    const bool sensor_selected =
-        std::any_of(scene.selected.begin(), scene.selected.end(), has_intel);
-    if (!overlays.filters().empty() || sensor_selected) {
+    // CameraImpl's units in view, for the active filters: the focus army's
+    // whose bounds the view holds (here a sphere round the footprint)
+    if (!overlays.filters().empty()) {
         for (const sim::EntityRecord& e : view.entities()) {
             if (e.is_being_built) continue;
             auto unit = own(e);

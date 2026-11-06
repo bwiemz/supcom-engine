@@ -866,6 +866,8 @@ public:
     /// attack whose target is gone -- may take an attack order of its
     /// weapons' own choosing.
     bool auto_initiate_allowed(const EntityRegistry& registry) const;
+    /// Whether Moho's FindBestEnemy skips `enemy` whatever the weapon.
+    bool passes_over(const Unit& enemy, const SimState* sim, const EntityRegistry& registry) const;
     /// A weapon with AutoInitiateAttackCommand picked `target`: the unit
     /// attacks it once its weapons are done this tick (the first pick wins).
     void request_auto_attack(EntityId target) {
@@ -1170,6 +1172,13 @@ public:
     bool moved_last_tick() const {
         return position().x != last_position().x || position().y != last_position().y ||
                position().z != last_position().z;
+    }
+    /// Whether a repair of it can go on this tick (Moho's CUnitRepairTask::Execute).
+    bool holds_for_repair() const {
+        if (!can_fly() || is_being_built()) {
+            return !moved_last_tick();
+        }
+        return !is_air_unit();
     }
     /// Moho's CAnimationManipulator motion scaling (CreateAnimator(unit, true)).
     f32 anim_motion_scale(f32 dt) const;

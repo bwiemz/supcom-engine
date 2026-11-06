@@ -55,6 +55,7 @@ std::vector<osc::sim::EntityId> setup(SimState& sim) {
         u->set_max_speed(4.0f);
         u->set_position({static_cast<osc::f32>(i * 200), 0.0f, 0.0f});
         auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
         gun->max_range = 20.0f;
         u->add_weapon(std::move(gun));
         ids.push_back(sim.entity_registry().register_entity(std::move(u)));

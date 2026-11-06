@@ -7457,7 +7457,14 @@ void test_targeting(TestContext& ctx) {
         local h, t = __osc_high:GetPosition(), __osc_high_tank:GetPosition()
         if h[2] - t[2] < 7 then error('the target sank back to ' .. h[2] - t[2]) end
         if __osc_target(__osc_high_tank) ~= __osc_high then error('not in range') end
-        __osc_high_tank:GetWeapon(1):ChangeMaxHeightDiff(4)
+        local w = __osc_high_tank:GetWeapon(1)
+        w.__osc_shots = 0
+        local fire = w.CreateProjectileAtMuzzle
+        w.CreateProjectileAtMuzzle = function(self, muzzle)
+            self.__osc_shots = self.__osc_shots + 1
+            return fire(self, muzzle)
+        end
+        w:ChangeMaxHeightDiff(4)
     )");
     lua_check("Test 4: TargetRestrictOnlyAllow keeps a TMD off tanks", R"(
         if __osc_tmd:GetWeapon(1):WeaponHasTarget() then error('the TMD targets a tank') end
@@ -7491,8 +7498,10 @@ void test_targeting(TestContext& ctx) {
     lua_check("Test 8: an ally turned enemy becomes a target", R"(
         if __osc_target(__osc_ally_tank) ~= __osc_ally_pgen then error('no target') end
     )");
-    lua_check("Test 9: MaxHeightDiff drops a target too high above", R"(
-        if __osc_high_tank:GetWeapon(1):WeaponHasTarget() then error('still targeted') end
+    lua_check("Test 9: a target too high above for MaxHeightDiff is kept, and not fired at", R"(
+        local w = __osc_high_tank:GetWeapon(1)
+        if __osc_target(__osc_high_tank) ~= __osc_high then error('the target was dropped') end
+        if w.__osc_shots > 0 then error(w.__osc_shots .. ' shots') end
     )");
     lua_check("Test 10: AlwaysRecheckTarget moves to a higher priority (a T1 tank)", R"(
         if __osc_target(__osc_loyalist, 2) ~= __osc_intruder then error('it kept the structure') end

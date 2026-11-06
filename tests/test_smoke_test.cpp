@@ -749,6 +749,7 @@ TEST_CASE("Weapons do not auto-target cloaked units without omni", "[cloak]") {
     owner->set_army(0);
     owner->set_position({0.0f, 0.0f, 0.0f});
     auto weapon = std::make_unique<osc::sim::Weapon>();
+    weapon->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     weapon->max_range = 100.0f;
     weapon->damage = 10.0f;
     weapon->target_check_period = 1; // exercise the next scheduled target check
@@ -784,6 +785,7 @@ TEST_CASE("Weapons do not auto-target BENIGN units but take them on an attack or
     owner->set_army(0);
     owner->set_position({0.0f, 0.0f, 0.0f});
     auto weapon = std::make_unique<osc::sim::Weapon>();
+    weapon->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     weapon->max_range = 100.0f;
     weapon->damage = 10.0f;
     weapon->target_check_period = 1;

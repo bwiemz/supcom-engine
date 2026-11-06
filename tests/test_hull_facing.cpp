@@ -76,6 +76,7 @@ Unit* hull(SimState& sim, f32 x, f32 z, const std::string& motion = "RULEUMT_Lan
     drive.turn_rate = 90.0f * kDeg;
     u->set_drive(drive);
     auto gun = std::make_unique<Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 40.0f;
     u->add_weapon(std::move(gun));
     auto* raw = u.get();
@@ -172,6 +173,7 @@ TEST_CASE("The first slaved weapon with a target decides", "[hull-facing]") {
     flat(sim);
     Unit* u = hull(sim, 64.0f, 40.0f);
     auto second = std::make_unique<Weapon>();
+    second->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     second->max_range = 40.0f;
     second->slaved_to_body = true;
     u->add_weapon(std::move(second));

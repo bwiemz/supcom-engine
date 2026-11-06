@@ -35,6 +35,15 @@ int set_unit_state(lua_State* L) {
     return 0;
 }
 
+int is_repairing(lua_State* L) {
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, 1);
+    auto* unit = static_cast<Unit*>(static_cast<osc::sim::Entity*>(lua_touserdata(L, -1)));
+    lua_pop(L, 1);
+    lua_pushboolean(L, unit->has_unit_state("Repairing") ? 1 : 0);
+    return 1;
+}
+
 struct AssistSim {
     lua_State* L = lua_open();
     SimState sim{L, nullptr};
@@ -119,6 +128,19 @@ struct AssistSim {
             end
         )";
         REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "faf") == 0);
+        REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+    }
+
+    void records_repairing() {
+        lua_register(L, "IsRepairing", is_repairing);
+        const std::string code = R"(
+            local start = Builder.OnStartBuild
+            Builder.OnStartBuild = function(self, unit, order)
+                table.insert(log, self.name .. ' repairing ' .. tostring(IsRepairing(self)))
+                start(self, unit, order)
+            end
+        )";
+        REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "rec") == 0);
         REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
     }
 
@@ -556,6 +578,104 @@ TEST_CASE("A repairer's focus is the unit it repairs, and nothing once it is don
     eng->push_command(order(CommandType::Stop, *w.site, 3), true);
     w.sim.tick();
     CHECK_FALSE(eng->focus_id());
+}
+
+TEST_CASE("A repairer is Repairing once its OnStartBuild has run, not during it",
+          "[build][assist][repair]") {
+    SECTION("a damaged unit") {
+        AssistSim w;
+        w.records_repairing();
+        w.site->set_is_being_built(false);
+        w.site->set_fraction_complete(1.0f);
+        w.site->set_health(50.0f);
+        Unit* eng = w.engineer("eng", 16.0f);
+        eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+        tick_until([&] { w.sim.tick(); }, "the repair starts", 10,
+                   [&] { return eng->is_repairing(); });
+        const std::string log = w.log();
+        CHECK(log.find("eng repairing false,eng start Repair") != std::string::npos);
+        CHECK(log.find("repairing true") == std::string::npos);
+        CHECK(eng->has_unit_state("Repairing"));
+    }
+    SECTION("a unit under construction, and a guard's help with it") {
+        AssistSim w;
+        w.records_repairing();
+        Unit* eng = w.engineer("eng", 16.0f);
+        Unit* helper = w.engineer("helper", 14.0f);
+        eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+        helper->push_command(order(CommandType::Guard, *eng, 2), true);
+        tick_until([&] { w.sim.tick(); }, "the repair and its help start", 10,
+                   [&] { return eng->is_building() && helper->is_building(); });
+        const std::string log = w.log();
+        CHECK(log.find("eng repairing false,eng start Repair") != std::string::npos);
+        CHECK(log.find("helper repairing false,helper start Repair") != std::string::npos);
+        CHECK(log.find("repairing true") == std::string::npos);
+        CHECK(eng->has_unit_state("Repairing"));
+        CHECK(helper->has_unit_state("Repairing"));
+    }
+}
+
+TEST_CASE("A repair ends once its target moves, or once an aircraft is in the air",
+          "[build][assist][repair]") {
+    struct Case {
+        const char* what;
+        bool flies;
+        const char* layer;
+        bool being_built;
+        bool moves;
+        bool goes_on;
+    };
+    for (const Case& c : {
+             Case{"a tank that moves", false, "Land", false, true, false},
+             Case{"a tank that stays", false, "Land", false, false, true},
+             Case{"an aircraft in the air", true, "Air", false, false, false},
+             Case{"a landed aircraft that moves", true, "Land", false, true, true},
+             Case{"an unfinished unit that moves", false, "Land", true, true, false},
+             Case{"an unfinished aircraft in the air", true, "Air", true, false, true},
+         }) {
+        CAPTURE(c.what);
+        AssistSim w;
+        w.site->set_is_being_built(c.being_built);
+        w.site->set_fraction_complete(c.being_built ? 0.1f : 1.0f);
+        w.site->set_health(c.being_built ? 10.0f : 50.0f);
+        Unit* eng = w.engineer("eng", 16.0f);
+        eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+        const auto working = [&] { return eng->is_repairing() || eng->is_building(); };
+        tick_until([&] { w.sim.tick(); }, "the repair starts", 10, working);
+        if (c.flies) {
+            w.site->set_motion_type("RULEUMT_Air");
+        }
+        w.site->set_layer(c.layer);
+        if (c.moves) {
+            w.site->set_position({20.5f, 0.0f, 20.0f});
+        }
+        w.sim.tick();
+        w.sim.tick();
+        CHECK(working() == c.goes_on);
+        CHECK(eng->command_queue().empty() != c.goes_on);
+    }
+}
+
+TEST_CASE("A guard repairs what it guards only while it stands still", "[build][assist][repair]") {
+    AssistSim w;
+    w.site->set_is_being_built(false);
+    w.site->set_fraction_complete(1.0f);
+    w.site->set_health(50.0f);
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Guard, *w.site, 1), true);
+    tick_until([&] { w.sim.tick(); }, "the guard repairs", 20, [&] { return eng->is_repairing(); });
+    for (int i = 1; i <= 5; ++i) {
+        w.site->set_position({20.0f + 0.1f * static_cast<osc::f32>(i), 0.0f, 20.0f});
+        w.sim.tick();
+    }
+    const osc::f32 hp = w.site->health();
+    w.sim.tick();
+    CHECK_FALSE(eng->is_repairing());
+    CHECK(w.site->health() == hp);
+    REQUIRE_FALSE(eng->command_queue().empty());
+    CHECK(eng->command_queue().front().type == CommandType::Guard);
+    tick_until([&] { w.sim.tick(); }, "the guard repairs again once it stands", 20,
+               [&] { return eng->is_repairing(); });
 }
 
 TEST_CASE("A helper with no build rate takes up the build it guards and adds no work",
