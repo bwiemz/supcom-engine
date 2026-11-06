@@ -87,6 +87,9 @@ void test_runtime_decal(TestContext& ctx) {
     write_dds(dir / "grey.dds", 1, flat(128, 128, 128, 255));
     write_dds(dir / "spec_r.dds", 1, flat(255, 0, 0, 0));
     write_dds(dir / "blue.dds", 1, flat(0, 0, 255, 255));
+    for (int k = 0; k < 4; ++k) {
+        write_dds(dir / fmt::format("glint{}.dds", k), 1, flat(255, 0, 0, 0));
+    }
     ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
     const auto tex = [](const char* name) { return fmt::format("'{}/{}'", kRoot, name); };
 
@@ -535,6 +538,47 @@ void test_runtime_decal(TestContext& ctx) {
                 fmt::format("Test 14: a decal draws ({:.2f}, {:.2f}, {:.2f}) in the frame that "
                             "loads its texture, which waits {} times for an upload",
                             c[0], c[1], c[2], waits));
+    }
+
+    {
+        std::vector<map::StratumInfo> strata(10);
+        for (auto& st : strata) {
+            st.albedo_scale = st.normal_scale = 4.0f;
+        }
+        strata[0].albedo_path = "/env/evergreen2/layers/eg_gravel005_albedo.dds";
+        ground->set_strata(std::move(strata), {}, {});
+        forget();
+        ctx.sim.tick();
+        const Rgb under = pixel_at(r, shoot(fill), {32, 0, 32});
+        lua(fmt::format("CreateDecal({{32, 0, 32}}, 0, {}, {}, 'Albedo', 8, 8, 1000, 0, 1)",
+                        tex("red.dds"), tex("glint0.dds")));
+        while (ctx.sim.tick_count() % 8 != 2) {
+            ctx.sim.tick();
+        }
+        const Rgb first = pixel_at(r, next_tick(), {32, 0, 32});
+        shots.redraw_until_loaded();
+        const Rgb loaded = pixel_at(r, shots.grab(), {32, 0, 32});
+        t.check(apart(first, under) < 0.05f && redness(loaded) > 0.5f,
+                fmt::format("Test 15: a decal whose specular frame is loading is not drawn ({:.3f} "
+                            "from the ground), then is ({:.2f} red)",
+                            apart(first, under), redness(loaded)));
+    }
+
+    {
+        forget();
+        ctx.sim.tick();
+        const ImageRGBA8 plain = shoot(fill);
+        lua(fmt::format("CreateDecal({{32, 0, 32}}, 0, {}, '', 'Albedo', 8, 8, 1000, 0, 1)",
+                        tex("missing.dds")));
+        lua(fmt::format("CreateSplat({{32, 0, 44}}, 0, {}, 8, 8, 1000, 0, 1)",
+                        tex("missing_splat.dds")));
+        const ImageRGBA8 img = shoot(fill);
+        const f32 decal = apart(pixel_at(r, img, {32, 0, 32}), pixel_at(r, plain, {32, 0, 32}));
+        const f32 splat = apart(pixel_at(r, img, {32, 0, 44}), pixel_at(r, plain, {32, 0, 44}));
+        t.check(decal > 0.1f && splat > 0.1f,
+                fmt::format("Test 16: a decal and a splat of missing textures draw "
+                            "b_fails_to_load.dds ({:.3f} and {:.3f} from the ground)",
+                            decal, splat));
     }
 
     spdlog::info("Runtime decal test: {}/{} passed", t.pass, t.pass + t.fail);

@@ -28,14 +28,10 @@ struct CubeVertex {
     f32 nx, ny, nz;
 };
 
-/// A texture a mesh names (its LOD's LookupName or SecondaryName), or
-/// transparent black while it loads or if it names none.
-static VkDescriptorSet named_descriptor(const std::string& path, TextureCache* tex_cache) {
-    if (!tex_cache) return VK_NULL_HANDLE;
-    if (!path.empty()) {
-        if (auto* tex = tex_cache->get(path)) return tex->descriptor_set;
-    }
-    return tex_cache->specteam_fallback_descriptor();
+static VkDescriptorSet texture_set(const std::string& path, VkDescriptorSet stand_in,
+                                   TextureCache& tex_cache) {
+    const GPUTexture* texture = tex_cache.drawable(path);
+    return texture ? texture->descriptor_set : stand_in;
 }
 
 /// Resolve army color for an entity: a unit's army's. Moho gives any other
@@ -253,8 +249,8 @@ void UnitRenderer::build(VmaAllocator allocator, GpuUploads& uploads) {
     }
 }
 
-void UnitRenderer::preload_meshes(const std::vector<std::string>& bp_ids,
-                                   MeshCache& mesh_cache, lua_State* L) {
+void UnitRenderer::preload_meshes(const std::vector<std::string>& bp_ids, MeshCache& mesh_cache,
+                                  TextureCache* tex_cache, lua_State* L) {
     u32 loaded = 0, failed = 0;
     for (auto& id : bp_ids) {
         if (mesh_cache.get(id, L))
@@ -262,9 +258,45 @@ void UnitRenderer::preload_meshes(const std::vector<std::string>& bp_ids,
         else
             failed++;
     }
+    if (tex_cache) {
+        for (const auto& id : bp_ids) {
+            prefetch(id, mesh_cache, *tex_cache, L);
+        }
+        tex_cache->wait_reads();
+        tex_cache->flush_uploads();
+    }
 
     spdlog::info("MeshCache: preloaded {} unique blueprints ({} loaded, {} failed)",
                  bp_ids.size(), loaded, failed);
+}
+
+bool UnitRenderer::textures_ready(const GPUMesh& mesh, TextureCache& tex_cache) {
+    if (ready_.count(&mesh) > 0) {
+        return true;
+    }
+    bool ready = true;
+    for (const std::string* path : {&mesh.texture_path, &mesh.specteam_path, &mesh.normal_path,
+                                    &mesh.lookup_path, &mesh.secondary_path}) {
+        if (!path->empty() && !tex_cache.get(*path) && tex_cache.pending(*path)) {
+            ready = false;
+        }
+    }
+    if (ready) {
+        ready_.insert(&mesh);
+    }
+    return ready;
+}
+
+void UnitRenderer::prefetch(const std::string& id, MeshCache& mesh_cache, TextureCache& tex_cache,
+                            lua_State* L) {
+    if (id.empty() || !mesh_cache.get(id, L)) {
+        return;
+    }
+    if (const LODSet* set = mesh_cache.get_lod_set(id)) {
+        for (const LODEntry& lod : set->lods) {
+            (void)textures_ready(lod.mesh, tex_cache);
+        }
+    }
 }
 
 static bool sorts_before(const MeshDrawGroup& a, const MeshDrawGroup& b) {
@@ -324,23 +356,32 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         if (script_mesh && entity.mesh_override.empty()) return;
         // A mesh no LOD of which takes the metric shows nothing
         // (Mesh::ComputeLOD).
-        const auto reach = [&] {
-            CachedReach& cached = reaches_[entity.id];
-            if (cached.reach < 0.0f || cached.mesh_changes != entity.mesh_changes ||
-                cached.blueprint_id != entity.blueprint_id) {
-                // The mesh get_lod finds: the override's, else the blueprint's
-                f32 r = entity.mesh_override.empty()
-                            ? 0.0f
-                            : mesh_cache.lod_reach(entity.mesh_override, L);
-                if (r <= 0.0f && !script_mesh && !entity.blueprint_id.empty()) {
-                    r = mesh_cache.lod_reach(entity.blueprint_id, L);
-                }
-                cached = {entity.mesh_changes, r, entity.blueprint_id};
+        CachedReach& cached = reaches_[entity.id];
+        if (cached.reach < 0.0f || cached.mesh_changes != entity.mesh_changes ||
+            cached.blueprint_id != entity.blueprint_id) {
+            f32 r =
+                entity.mesh_override.empty() ? 0.0f : mesh_cache.lod_reach(entity.mesh_override, L);
+            if (r <= 0.0f && !script_mesh && !entity.blueprint_id.empty()) {
+                r = mesh_cache.lod_reach(entity.blueprint_id, L);
             }
-            return cached.reach;
-        };
+            if (cached.blueprint_id != entity.blueprint_id) {
+                cached.last_drawn = nullptr;
+            }
+            cached.mesh_changes = entity.mesh_changes;
+            cached.reach = r;
+            cached.blueprint_id = entity.blueprint_id;
+            // Seen or not, as UserEntity::CreateMeshInstance loads it.
+            if (tex_cache) {
+                prefetch(entity.mesh_override, mesh_cache, *tex_cache, L);
+                if (!script_mesh) {
+                    prefetch(entity.blueprint_id, mesh_cache, *tex_cache, L);
+                }
+            }
+        }
         // At a fixed metric, first, before anything else is looked up
-        if (lod_metric && reach() < *lod_metric) return;
+        if (lod_metric && cached.reach < *lod_metric) {
+            return;
+        }
         // Outside the playable rect when the scripts last synced it.
         if (playable_rect_ && playable_rect_->hides(entity.id)) return;
         // What its script hides from the player (SetVizTo...('Never')).
@@ -391,8 +432,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         f32 metric = lod_metric.value_or(0.0f);
         if (camera && !lod_metric) {
             metric = renderer::lod_metric(pos, eye, forward, camera->fov());
-            const f32 shows_to = reach();
-            if (shows_to > 0.0f && shows_to < metric) return;
+            if (cached.reach > 0.0f && cached.reach < metric) {
+                return;
+            }
         }
 
         // Try mesh lookup (mesh_override from SetMesh takes priority). An
@@ -411,6 +453,17 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         if (!gpu && !script_mesh && !entity.blueprint_id.empty()) {
             gpu = mesh_cache.get_lod(entity.blueprint_id, metric, L);
             if (gpu) mesh_scale = gpu->uniform_scale;
+        }
+        if (gpu && tex_cache && !textures_ready(*gpu, *tex_cache)) {
+            if (!cached.last_drawn) {
+                return;
+            }
+            gpu = cached.last_drawn;
+            mesh_scale = cached.last_drawn_scale;
+        }
+        if (gpu) {
+            cached.last_drawn = gpu;
+            cached.last_drawn_scale = mesh_scale;
         }
 
         if (gpu) {
@@ -608,47 +661,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
                     bone_offset += safe_count * group_bones;
                 }
 
-                // Resolve texture descriptors for this group
-                if (tex_cache && gpu && !gpu->texture_path.empty()) {
-                    auto* tex = tex_cache->get(gpu->texture_path);
-                    if (tex) {
-                        group.texture_ds = tex->descriptor_set;
-                    } else {
-                        group.texture_ds = tex_cache->fallback_descriptor();
-                    }
-                } else if (tex_cache) {
-                    group.texture_ds = tex_cache->fallback_descriptor();
-                }
-
-                // Resolve SpecTeam texture (team color mask)
-                if (tex_cache && gpu && !gpu->specteam_path.empty()) {
-                    auto* spec = tex_cache->get(gpu->specteam_path);
-                    if (spec) {
-                        group.specteam_ds = spec->descriptor_set;
-                    } else {
-                        group.specteam_ds = tex_cache->specteam_fallback_descriptor();
-                    }
-                } else if (tex_cache) {
-                    group.specteam_ds = tex_cache->specteam_fallback_descriptor();
-                }
-
-                // Resolve normal map texture
-                if (tex_cache && gpu && !gpu->normal_path.empty()) {
-                    auto* norm = tex_cache->get(gpu->normal_path);
-                    if (norm) {
-                        group.normal_ds = norm->descriptor_set;
-                    } else {
-                        group.normal_ds = tex_cache->normal_fallback_descriptor();
-                    }
-                } else if (tex_cache) {
-                    group.normal_ds = tex_cache->normal_fallback_descriptor();
-                }
-
-                group.lookup_ds =
-                    named_descriptor(gpu ? gpu->lookup_path : std::string(), tex_cache);
-                group.secondary_ds =
-                    named_descriptor(gpu ? gpu->secondary_path : std::string(), tex_cache);
-
+                bind_mesh_textures(group, tex_cache);
                 mesh_groups_.push_back(group);
 
                 offset += count;
@@ -664,6 +677,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
 bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r, f32 g, f32 b,
                                 TextureCache* tex_cache, f32 heading) {
     if (!mesh || !meshes_[fi_].mapped) return false;
+    if (tex_cache && !textures_ready(*mesh, *tex_cache)) {
+        return false;
+    }
 
     // Count total instances already used (update() left room for one more)
     u32 total = 0;
@@ -721,32 +737,24 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r,
 }
 
 void UnitRenderer::bind_mesh_textures(MeshDrawGroup& grp, TextureCache* tex_cache) const {
-    const GPUMesh* mesh = grp.mesh;
-    if (tex_cache && !mesh->texture_path.empty()) {
-        auto* tex = tex_cache->get(mesh->texture_path);
-        grp.texture_ds = tex ? tex->descriptor_set : tex_cache->fallback_descriptor();
-    } else if (tex_cache) {
-        grp.texture_ds = tex_cache->fallback_descriptor();
+    if (!tex_cache) {
+        return;
     }
-    if (tex_cache && !mesh->specteam_path.empty()) {
-        auto* spec = tex_cache->get(mesh->specteam_path);
-        grp.specteam_ds = spec ? spec->descriptor_set : tex_cache->specteam_fallback_descriptor();
-    } else if (tex_cache) {
-        grp.specteam_ds = tex_cache->specteam_fallback_descriptor();
-    }
-    if (tex_cache && !mesh->normal_path.empty()) {
-        auto* norm = tex_cache->get(mesh->normal_path);
-        grp.normal_ds = norm ? norm->descriptor_set : tex_cache->normal_fallback_descriptor();
-    } else if (tex_cache) {
-        grp.normal_ds = tex_cache->normal_fallback_descriptor();
-    }
-    grp.lookup_ds = named_descriptor(mesh->lookup_path, tex_cache);
-    grp.secondary_ds = named_descriptor(mesh->secondary_path, tex_cache);
+    const GPUMesh& mesh = *grp.mesh;
+    TextureCache& tex = *tex_cache;
+    grp.texture_ds = texture_set(mesh.texture_path, tex.fallback_descriptor(), tex);
+    grp.specteam_ds = texture_set(mesh.specteam_path, tex.specteam_fallback_descriptor(), tex);
+    grp.normal_ds = texture_set(mesh.normal_path, tex.normal_fallback_descriptor(), tex);
+    grp.lookup_ds = texture_set(mesh.lookup_path, tex.specteam_fallback_descriptor(), tex);
+    grp.secondary_ds = texture_set(mesh.secondary_path, tex.specteam_fallback_descriptor(), tex);
 }
 
 bool UnitRenderer::inject_mesh(const GPUMesh* mesh, const MeshInstance& instance,
                                TextureCache* tex_cache) {
     if (!mesh || !meshes_[fi_].mapped) return false;
+    if (tex_cache && !textures_ready(*mesh, *tex_cache)) {
+        return false;
+    }
     u32 total = 0;
     for (auto& g : mesh_groups_) total += g.instance_count;
     if (total >= meshes_[fi_].capacity) return false;
@@ -794,6 +802,7 @@ void UnitRenderer::destroy(VkDevice device, VmaAllocator allocator) {
     cube_instance_count_ = 0;
     mesh_groups_.clear();
     reaches_.clear(); // the next map's entities
+    ready_.clear();
 }
 
 void UnitRenderer::dump(std::ostream& out) const {

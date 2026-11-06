@@ -43,6 +43,8 @@ public:
     /// On first miss, starts an async VFS read; call flush_uploads() each
     /// frame to finalize completed loads.
     const GPUTexture* get(const std::string& vfs_path);
+    /// CD3DDeviceResources::GetTexture's fallback: b_fails_to_load.dds for an unloadable file.
+    const GPUTexture* drawable(const std::string& vfs_path);
 
     /// Synchronous load — blocks until the texture is ready.
     /// Use for one-time init (terrain textures in build_scene).
@@ -56,12 +58,12 @@ public:
     /// Always synchronous (data already in memory).
     const GPUTexture* get_raw(const std::string& key, const std::vector<char>& raw_dds);
 
-    /// Process completed async texture loads (up to max_per_frame).
     /// Call once per frame from the render loop.
-    void flush_uploads(u32 max_per_frame = 4);
+    void flush_uploads();
 
     /// Textures requested but not yet loaded.
     std::size_t loading() const { return pending_.size(); }
+    bool pending(const std::string& vfs_path) const { return pending_.count(vfs_path) > 0; }
     /// Waits for the files of the textures loading, for flush_uploads().
     void wait_reads() const;
 

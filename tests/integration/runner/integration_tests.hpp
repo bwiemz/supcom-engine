@@ -98,6 +98,8 @@ void test_strata(TestContext& ctx);
 void test_meshless(TestContext& ctx);
 /// --lod-test, in lod_test.cpp.
 void test_lod(TestContext& ctx);
+/// --mesh-load-test, in mesh_load_test.cpp.
+void test_mesh_load(TestContext& ctx);
 /// --scroll-render-test, in scroll_render_test.cpp.
 void test_scroll_render(TestContext& ctx);
 /// --camera-test (M217a), in camera_test.cpp.
