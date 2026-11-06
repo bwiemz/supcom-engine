@@ -12,6 +12,8 @@ class Terrain;
 
 namespace osc::renderer {
 
+class GpuUploads;
+
 struct TerrainVertex {
     f32 x, y, z;    // position
     f32 nx, ny, nz; // normal
@@ -21,8 +23,7 @@ struct TerrainVertex {
 class TerrainMesh {
 public:
     /// Generate mesh from terrain heightmap (every DECIMATE-th sample).
-    void build(const osc::map::Terrain& terrain, VkDevice device,
-               VmaAllocator allocator, VkCommandPool cmd_pool, VkQueue queue);
+    void build(const osc::map::Terrain& terrain, GpuUploads& uploads);
 
     void destroy(VkDevice device, VmaAllocator allocator);
 

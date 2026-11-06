@@ -1,4 +1,5 @@
 #include "renderer/unit_renderer.hpp"
+#include "renderer/gpu_uploads.hpp"
 #include "renderer/army_colors.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/command_feedback.hpp"
@@ -201,8 +202,7 @@ static void build_model_matrix(f32* out, const sim::Vector3& pos,
     out[15] = 1.0f;
 }
 
-void UnitRenderer::build(VkDevice device, VmaAllocator allocator,
-                         VkCommandPool cmd_pool, VkQueue queue) {
+void UnitRenderer::build(VmaAllocator allocator, GpuUploads& uploads) {
     // Unit cube: centered at origin, 1x1x1
     static const CubeVertex cube_verts[] = {
         // Front (+Z)
@@ -234,12 +234,9 @@ void UnitRenderer::build(VkDevice device, VmaAllocator allocator,
         20,21,22, 22,23,20, // bottom
     };
 
-    cube_verts_ = upload_buffer(device, allocator, cmd_pool, queue,
-                                cube_verts, sizeof(cube_verts),
-                                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    cube_indices_ = upload_buffer(device, allocator, cmd_pool, queue,
-                                  cube_indices, sizeof(cube_indices),
-                                  VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    cube_verts_ = uploads.buffer(cube_verts, sizeof(cube_verts), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    cube_indices_ =
+        uploads.buffer(cube_indices, sizeof(cube_indices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
     // The per-frame instance buffers and bone SSBO (persistently mapped),
     // which update() grows as a frame needs.

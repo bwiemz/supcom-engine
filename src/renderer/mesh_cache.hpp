@@ -25,6 +25,8 @@ class BlueprintStore;
 
 namespace osc::renderer {
 
+class GpuUploads;
+
 /// GPU-resident mesh data for a single blueprint.
 /// Which of FA's mesh.fx techniques draws a mesh (its LOD's ShaderName).
 enum class MeshTechnique : u32 {
@@ -282,10 +284,8 @@ void remap_vertex_bones(sim::SCMMesh& mesh, const std::vector<u8>& remap);
 /// Supports multiple LOD levels per blueprint with distance-based selection.
 class MeshCache {
 public:
-    void init(VkDevice device, VmaAllocator allocator,
-              VkCommandPool cmd_pool, VkQueue queue,
-              vfs::VirtualFileSystem* vfs,
-              blueprints::BlueprintStore* store);
+    void init(VkDevice device, VmaAllocator allocator, GpuUploads& uploads,
+              vfs::VirtualFileSystem* vfs, blueprints::BlueprintStore* store);
 
     /// Get or lazily load GPU mesh for a blueprint ID (highest detail LOD).
     /// Returns nullptr if mesh unavailable (caller falls back to cube).
@@ -392,8 +392,7 @@ private:
 
     VkDevice device_ = VK_NULL_HANDLE;
     VmaAllocator allocator_ = VK_NULL_HANDLE;
-    VkCommandPool cmd_pool_ = VK_NULL_HANDLE;
-    VkQueue queue_ = VK_NULL_HANDLE;
+    GpuUploads* uploads_ = nullptr;
     vfs::VirtualFileSystem* vfs_ = nullptr;
     blueprints::BlueprintStore* store_ = nullptr;
 };

@@ -25,7 +25,6 @@ add_library(osc_renderer STATIC
     shader_utils.cpp
     shield_shaders.cpp
     pipeline_builder.cpp
-    vk_utils.cpp
     ui_renderer.cpp
     movie_textures.cpp
     font_cache.cpp
@@ -69,6 +68,7 @@ add_library(osc_renderer STATIC
     particle_renderer.cpp
     profile_overlay.cpp
     vk_cmd.cpp
+    gpu_uploads.cpp
     gpu_queries.cpp
 )
 add_library(osc::renderer ALIAS osc_renderer)

@@ -235,6 +235,7 @@ add_executable(osc_tests
     test_video_decoder.cpp
     test_vulkan_layer.cpp
     test_window_system.cpp
+    test_gpu_uploads.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE

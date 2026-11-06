@@ -156,6 +156,16 @@ void test_ghost_render(TestContext& ctx) {
                         fill_at ? static_cast<int>(*fill_at) : -1, under.pixels, under.r, under.g,
                         under.b));
 
+    renderer::BuildGhost fresh = ghost;
+    fresh.blueprint_id = "ueb2101";
+    shots.redraw(nullptr, &fresh);
+    const u32 waits = r.last_command_counts().upload_waits;
+    const u32 placed = r.mesh_draws(renderer::MeshTechnique::UnitPlace);
+    t.check(placed == 1 && waits == 0,
+            fmt::format("Test 6: a structure never drawn before draws in the frame that loads "
+                        "its mesh ({} UnitPlace draws), which waits {} times for an upload",
+                        placed, waits));
+
     spdlog::info("Ghost test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

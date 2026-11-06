@@ -458,6 +458,7 @@ void Renderer::create_command_objects() {
     cmd_ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cmd_ai.commandBufferCount = FRAMES_IN_FLIGHT;
     vkAllocateCommandBuffers(device_, &cmd_ai, cmd_buf_);
+    uploads_.init(device_, allocator_, cmd_pool_, graphics_queue_);
 
     // Sync objects (one set per frame in flight)
     VkFenceCreateInfo fence_ci{};
@@ -1600,6 +1601,7 @@ void Renderer::inject_map_border(lua_State* L, const std::vector<std::string>& m
 
 void Renderer::clear_scene() {
     clear_dispatch();
+    uploads_.finish();
     vkDeviceWaitIdle(device_);
     feedback_blips_.clear();         // the old world's order marks
     range_blueprints_.clear();       // read again from the next UI state
@@ -1740,8 +1742,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // The light camera fits the terrain in view (M210c).
     height_bounds_ = std::make_unique<HeightBounds>(*ground_);
 
-    terrain_mesh_.build(*terrain, device_, allocator_, cmd_pool_,
-                        graphics_queue_);
+    terrain_mesh_.build(*terrain, uploads_);
     // The map's light (M210a).
     lighting_ = terrain->lighting();
     terrain_xp_ = terrain->environment().terrain_shader == "TTerrainXP";
@@ -1749,22 +1750,22 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     terrain_time_.reset();
     upload_lighting();
 
-    unit_renderer_.build(device_, allocator_, cmd_pool_, graphics_queue_);
-    minimap_units_.build(device_, allocator_, cmd_pool_, graphics_queue_);
+    unit_renderer_.build(allocator_, uploads_);
+    minimap_units_.build(allocator_, uploads_);
 
     // Initialize mesh cache, texture cache, and preload meshes
     if (vfs && store) {
         if (!caches_initialized_) {
-            texture_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
-                                texture_ds_layout_, texture_sampler_, vfs);
-            font_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
-                             texture_ds_layout_, texture_sampler_, vfs);
+            texture_cache_.init(device_, allocator_, uploads_, texture_ds_layout_, texture_sampler_,
+                                vfs);
+            font_cache_.init(device_, allocator_, uploads_, texture_ds_layout_, texture_sampler_,
+                             vfs);
             caches_initialized_ = true;
         }
         // Every scene's, not only the first's: a front end's caches
         // (init_ui_caches) have no mesh cache, and every game launched from
         // one drew its units as cubes. The meshes it has loaded stay.
-        mesh_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_, vfs, store);
+        mesh_cache_.init(device_, allocator_, uploads_, vfs, store);
         unit_renderer_.preload_meshes(preload, mesh_cache_, L);
         // Their strategic icons, as Moho loads a blueprint's with it (M215c).
         strategic_icon_renderer_.preload(preload, texture_cache_, L);
@@ -1929,9 +1930,8 @@ void Renderer::load_map_decals(const map::Terrain& terrain) {
             stored_decals_.push_back(std::move(sd));
         }
         if (!indices.empty())
-            decal_indices_ =
-                upload_buffer(device_, allocator_, cmd_pool_, graphics_queue_, indices.data(),
-                              indices.size() * sizeof(u32), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+            decal_indices_ = uploads_.buffer(indices.data(), indices.size() * sizeof(u32),
+                                             VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
         spdlog::info("Decals: {} lit, over {} of the terrain's indices", stored_decals_.size(),
                      indices.size());
     }
@@ -3232,7 +3232,6 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     ui_renderer_.set_frame_index(fi);
 
     // Flush pending texture uploads BEFORE starting the command buffer
-    // (flush_uploads uses its own one-shot command buffers with vkQueueWaitIdle)
     texture_cache_.flush_uploads(4);
 
     // The frame's step, as render() takes it (fixed for scripted runs and
@@ -4105,6 +4104,7 @@ void Renderer::submit_and_present(u32 fi, u32 image_index, bool world, bool capt
     submit.pCommandBuffers = &cmd_buf_[fi];
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &render_finished_[image_index];
+    uploads_.submit();
     VK_CHECK(vkQueueSubmit(graphics_queue_, 1, &submit, render_fence_[fi]));
     if (world) {
         last_command_counts_ = take_command_counts();
@@ -4275,10 +4275,8 @@ u32 Renderer::mesh_instance_count() const {
 void Renderer::init_ui_caches(vfs::VirtualFileSystem* vfs) {
     if (vfs) vfs_ = vfs;
     if (caches_initialized_ || !vfs) return;
-    texture_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
-                        texture_ds_layout_, texture_sampler_, vfs);
-    font_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
-                     texture_ds_layout_, texture_sampler_, vfs);
+    texture_cache_.init(device_, allocator_, uploads_, texture_ds_layout_, texture_sampler_, vfs);
+    font_cache_.init(device_, allocator_, uploads_, texture_ds_layout_, texture_sampler_, vfs);
     caches_initialized_ = true;
     spdlog::info("UI caches initialized (texture + font)");
 }
@@ -5073,6 +5071,7 @@ Renderer::capture_cartographic(const map::Terrain& terrain, const CartographicRe
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &cmd;
+    uploads_.submit();
     vkQueueSubmit(graphics_queue_, 1, &submit, VK_NULL_HANDLE);
     vkQueueWaitIdle(graphics_queue_);
     vkFreeCommandBuffers(device_, cmd_pool_, 1, &cmd);
@@ -5197,6 +5196,7 @@ void Renderer::recreate_swapchain() {
 void Renderer::shutdown() {
     if (!initialized_) return;
 
+    uploads_.finish();
     vkDeviceWaitIdle(device_);
 
     // Terrain texture pool first (references image views owned by texture_cache_)
@@ -5242,6 +5242,7 @@ void Renderer::shutdown() {
     font_cache_.destroy(device_, allocator_);
     mesh_cache_.destroy(device_, allocator_);
     texture_cache_.destroy(device_, allocator_);
+    uploads_.destroy();
 
     // Bone SSBO infrastructure
     if (bone_ds_pool_)

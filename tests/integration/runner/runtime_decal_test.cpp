@@ -86,6 +86,7 @@ void test_runtime_decal(TestContext& ctx) {
     write_dds(dir / "red_half.dds", 1, flat(255, 0, 0, 128));
     write_dds(dir / "grey.dds", 1, flat(128, 128, 128, 255));
     write_dds(dir / "spec_r.dds", 1, flat(255, 0, 0, 0));
+    write_dds(dir / "blue.dds", 1, flat(0, 0, 255, 255));
     ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
     const auto tex = [](const char* name) { return fmt::format("'{}/{}'", kRoot, name); };
 
@@ -520,6 +521,20 @@ void test_runtime_decal(TestContext& ctx) {
         t.check(high > 0.5f && low < 0.1f,
                 fmt::format("Test 13: a red upper stratum: {:.2f} red at High, {:.2f} at Low", high,
                             low));
+    }
+
+    // Test 14: a decal whose texture no frame has loaded yet.
+    {
+        forget();
+        (void)shoot(fill);
+        lua(fmt::format("CreateDecal({{32, 0, 32}}, 0, {}, '', 'Albedo', 8, 8, 1000, 0, 1)",
+                        tex("blue.dds")));
+        const Rgb c = pixel_at(r, next_tick(), {32, 0, 32});
+        const u32 waits = r.last_command_counts().upload_waits;
+        t.check(c[2] - std::max(c[0], c[1]) > 0.5f && waits == 0,
+                fmt::format("Test 14: a decal draws ({:.2f}, {:.2f}, {:.2f}) in the frame that "
+                            "loads its texture, which waits {} times for an upload",
+                            c[0], c[1], c[2], waits));
     }
 
     spdlog::info("Runtime decal test: {}/{} passed", t.pass, t.pass + t.fail);
