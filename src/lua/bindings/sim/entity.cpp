@@ -226,7 +226,24 @@ static int entity_GetPosition(lua_State* L) {
         push_vector3(L, bone_world_position(e, idx));
         return 1;
     }
-    push_vector3(L, e->position());
+    const sim::Vector3& p = e->position();
+    if (e->lua_position_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_position_ref());
+        if (lua_istable(L, -1)) {
+            lua_pushnumber(L, p.x);
+            lua_rawseti(L, -2, 1);
+            lua_pushnumber(L, p.y);
+            lua_rawseti(L, -2, 2);
+            lua_pushnumber(L, p.z);
+            lua_rawseti(L, -2, 3);
+            return 1;
+        }
+        lua_pop(L, 1);
+        luaL_unref(L, LUA_REGISTRYINDEX, e->lua_position_ref());
+    }
+    push_vector3(L, p);
+    lua_pushvalue(L, -1);
+    e->set_lua_position_ref(luaL_ref(L, LUA_REGISTRYINDEX));
     return 1;
 }
 

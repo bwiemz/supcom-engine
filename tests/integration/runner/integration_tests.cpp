@@ -6532,6 +6532,50 @@ void test_prop(TestContext& ctx) {
         local up_y = 1 - 2 * (q[1] * q[1] + q[3] * q[3])
         if math.abs(up_y) > 0.05 then error('still standing: up.y ' .. up_y) end
     )");
+    // Retail's UnitTeleport01 lowers its GetPosition table 2 below the ground; the decal's
+    // GetPosition refills it, so the second blast goes off at the effect's height.
+    lua_check("Test 14: a warp-in effect goes off beside two trees", R"(
+        local a = GetEntityById(__osc_test_acu_id(1)):GetPosition()
+        local function flat(x, z)
+            local h = GetTerrainHeight(x, z)
+            for dx = -12, 12, 2 do
+                for dz = -12, 12, 2 do
+                    if math.abs(GetTerrainHeight(x + dx, z + dz) - h) > 0.1
+                        or GetSurfaceHeight(x + dx, z + dz) > h + 0.01 then
+                        return false
+                    end
+                end
+            end
+            return true
+        end
+        local x, z
+        for r = 30, 300, 10 do
+            for k = 0, 23 do
+                local cx = math.floor(a[1] + r * math.cos(k * math.pi / 12)) + 0.5
+                local cz = math.floor(a[3] + r * math.sin(k * math.pi / 12)) + 0.5
+                if not x and flat(cx, cz) then
+                    x, z = cx, cz
+                end
+            end
+        end
+        if not x then error('no flat ground within 300 of the commander') end
+        local tree = '/env/evergreen/props/trees/pine06_v1_prop.bp'
+        __osc_warp_near = CreatePropHPR(tree, x + 10.95, GetTerrainHeight(x + 10.95, z), z, 0, 0, 0)
+        __osc_warp_far = CreatePropHPR(tree, x - 11.3, GetTerrainHeight(x - 11.3, z), z, 0, 0, 0)
+        local u = CreateUnitHPR('uel0105', 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        u:CreateProjectile('/effects/entities/UnitTeleport01/UnitTeleport01_proj.bp', 0, 1.35, 0, nil, nil, nil)
+            :SetCollision(false)
+    )");
+    for (int i = 0; i < 40; ++i) ctx.sim.tick();
+    lua_check("Test 14b: its second blast fells the tree 10.95 away, not the one 11.3 away", R"(
+        if not __osc_warp_near:BeenDestroyed() then
+            error('the tree 10.95 away stands, health ' .. __osc_warp_near:GetHealth())
+        end
+        if __osc_warp_far:BeenDestroyed() then error('the tree 11.3 away went too') end
+        if __osc_warp_far:GetHealth() ~= 49 then
+            error('the tree 11.3 away has health ' .. __osc_warp_far:GetHealth() .. ', not the outer ring\'s 49')
+        end
+    )");
     if (osc::test_status::failure_count() - fail == failures_before) {
         pass++;
         spdlog::info("[PASS] Test 12: no prop script errors");
@@ -8415,7 +8459,8 @@ void test_arc(TestContext& ctx) {
         w.CreateProjectile = function(self, muzzle)
             local p = fire(self, muzzle)
             if not p then return p end
-            local rec = {from = p:GetPosition(), top = p:GetPosition()[2]}
+            local at = p:GetPosition()
+            local rec = {from = {at[1], at[2], at[3]}, top = at[2]}
             table.insert(__osc_shells, rec)
             table.insert(__osc_live, {p = p, rec = rec})
             local impact = p.OnImpact
@@ -9290,7 +9335,8 @@ void test_drive(TestContext& ctx) {
             )");
                });
     lua_check("Test 11: its GetVelocity is its last tick's move", R"(
-        __osc_before = __osc_mover:GetPosition()
+        local p = __osc_mover:GetPosition()
+        __osc_before = {p[1], p[2], p[3]}
     )");
     run(1);
     lua_check("Test 11b: per tick", R"(
@@ -9668,7 +9714,10 @@ void test_crowd(TestContext& ctx) {
         ForkThread(function()
             while GetGameTick() < 141 do WaitTicks(1) end
             __osc_at141 = {}
-            for i, u in __osc_group do __osc_at141[i] = u:GetPosition() end
+            for i, u in __osc_group do
+                local p = u:GetPosition()
+                __osc_at141[i] = {p[1], p[2], p[3]}
+            end
         end)
         __osc_idle = __osc_spawn('uel0201', 'ARMY_1', 680, 100, 0)
         __osc_mover = __osc_spawn('uel0201', 'ARMY_1', 680, 90, 0)
@@ -10114,7 +10163,8 @@ void test_missile(TestContext& ctx) {
                         if m.proj:BeenDestroyed() then
                             m.gone = GetGameTick()
                         else
-                            table.insert(m.path, m.proj:GetPosition())
+                            local p = m.proj:GetPosition()
+                            table.insert(m.path, {p[1], p[2], p[3]})
                         end
                     end
                 end
@@ -10155,7 +10205,8 @@ void test_missile(TestContext& ctx) {
                     local proj = create(self, muzzle)
                     if proj then
                         rec.launched = rec.launched + 1
-                        table.insert(__osc_missiles, {owner = u, proj = proj, path = {proj:GetPosition()},
+                        local p = proj:GetPosition()
+                        table.insert(__osc_missiles, {owner = u, proj = proj, path = {{p[1], p[2], p[3]}},
                                                       tick = GetGameTick()})
                     end
                     return proj
@@ -10747,7 +10798,8 @@ void test_defence(TestContext& ctx) {
                         if m.proj:BeenDestroyed() then
                             m.gone = GetGameTick()
                         else
-                            table.insert(m.path, m.proj:GetPosition())
+                            local p = m.proj:GetPosition()
+                            table.insert(m.path, {p[1], p[2], p[3]})
                         end
                     end
                 end
@@ -10772,7 +10824,8 @@ void test_defence(TestContext& ctx) {
                     local proj = create(self, muzzle)
                     if proj then
                         u.__osc_fired = u.__osc_fired + 1
-                        local rec = {owner = u, proj = proj, path = {proj:GetPosition()}, tick = GetGameTick(),
+                        local p = proj:GetPosition()
+                        local rec = {owner = u, proj = proj, path = {{p[1], p[2], p[3]}}, tick = GetGameTick(),
                                      torpedo = EntityCategoryContains(categories.TORPEDO, proj)}
                         -- Whether it was ever asked about meeting a Lua entity
                         -- (a flare): retail's scripts say what refuses a
@@ -12583,7 +12636,8 @@ void test_factory_rally(TestContext& ctx) {
         [&] {
             (void)ctx.lua_state.do_string(R"(
                 __osc_scout = __osc_scout or __osc_building(__osc_airf) or false
-                __osc_was = __osc_scout and not __osc_scout:IsDead() and __osc_scout:GetPosition()
+                local was = __osc_scout and not __osc_scout:IsDead() and __osc_scout:GetPosition()
+                __osc_was = was and {was[1], was[2], was[3]}
             )");
             ctx.sim.tick();
             (void)ctx.lua_state.do_string(R"(
@@ -14934,7 +14988,8 @@ void test_air_turn(TestContext& ctx) {
         __osc_f_id = __osc_f:GetEntityId()
         __osc_a_moved, __osc_a_closed, __osc_a_x, __osc_a_z = -1, -1, 0, 0
         ForkThread(function()
-            local start = __osc_a:GetPosition()
+            local s = __osc_a:GetPosition()
+            local start = {s[1], s[2], s[3]}
             for t = 1, 260 do
                 local p = __osc_a:GetPosition()
                 if __osc_a_moved < 0 and (p[1] ~= start[1] or p[3] ~= start[3]) then
