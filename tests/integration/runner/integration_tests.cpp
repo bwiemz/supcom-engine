@@ -6519,6 +6519,57 @@ void test_prop(TestContext& ctx) {
         local up_y = 1 - 2 * (q[1] * q[1] + q[3] * q[3])
         if math.abs(up_y) > 0.05 then error('still standing: up.y ' .. up_y) end
     )");
+    lua_check("Test 15: the trees a broken group makes stand as the original game's", R"(
+        local groups = {
+            {'/env/desert/props/trees/groups/cactus01_group1_prop.bp', 737.5, 0, 41},
+            {'/env/desert/props/trees/groups/cactus01_group1_prop.bp', 762.5, 1, 41},
+            {'/env/evergreen/props/trees/groups/pine06_big_groupa_prop.bp', 787.5, 0, 27},
+            {'/env/evergreen/props/trees/groups/pine06_big_groupa_prop.bp', 812.5, 1, 27},
+            {'/env/desert/props/trees/groups/manzanita01_group1_prop.bp', 837.5, 1, 13},
+        }
+        -- The original game's, probed 2026-11-06.
+        local want = {
+            [1] = {[1] = {737.576233, 386.43222, -5.96046448e-8, -0.168494821, 0, 0.985702574},
+                   [2] = {737.128967, 386.633301, 0, -0.923750579, 0, -0.382994503}},
+            [3] = {[1] = {786.84314, 386.486633, 0, 0, 0, 0.99999994}},
+            [4] = {[2] = {810.403931, 383.617859, 0, 0.00872653536, 0, 0.999961853}},
+            [5] = {[1] = {836.841919, 386.208008, 0, 0.00872653536, 0, 0.999961913}},
+        }
+        for i, row in groups do
+            local x, z = row[2], 386.5
+            local g = CreatePropHPR(row[1], x, GetTerrainHeight(x, z), z, row[3], 0, 0)
+            local made = {}
+            local create = g.CreatePropAtBone
+            g.CreatePropAtBone = function(s, bone, bp)
+                local t = create(s, bone, bp)
+                table.insert(made, t)
+                return t
+            end
+            g:Breakup()
+            if table.getn(made) ~= row[4] then
+                error(string.format('group %d made %d trees, not %d', i, table.getn(made), row[4]))
+            end
+            for j, t in made do
+                local q = t:GetOrientation()
+                if math.abs(q[1]) > 1e-5 or math.abs(q[3]) > 1e-5 then
+                    error(string.format('group %d tree %d is tilted: %.4f %.4f %.4f %.4f', i, j, q[1], q[2], q[3], q[4]))
+                end
+                local w = want[i] and want[i][j]
+                if w then
+                    local p = t:GetPosition()
+                    local sign = q[4] * w[6] < 0 and -1 or 1
+                    local off = 0
+                    for k = 1, 4 do
+                        off = math.max(off, math.abs(sign * q[k] - w[2 + k]))
+                    end
+                    if off > 1e-5 or math.abs(p[1] - w[1]) > 1e-3 or math.abs(p[3] - w[2]) > 1e-3 then
+                        error(string.format('group %d tree %d at %.6f %.6f turned %.6f %.6f %.6f %.6f', i, j, p[1],
+                                            p[3], q[1], q[2], q[3], q[4]))
+                    end
+                end
+            end
+        end
+    )");
     if (osc::test_status::failure_count() - fail == failures_before) {
         pass++;
         spdlog::info("[PASS] Test 12: no prop script errors");
@@ -8050,6 +8101,11 @@ void test_impact(TestContext& ctx) {
         end
         -- A tank shelling a power generator; each shell's impact is logged
         -- with the target's health around its OnImpact.
+        for _, p in GetReclaimablesInRect(Rect(212, 782, 240, 798)) or {} do
+            if IsProp(p) then
+                p:Destroy()
+            end
+        end
         __osc_tank = spawn('uel0201', 'ARMY_1', 220, 790)
         __osc_target = spawn('ueb1101', 'ARMY_2', 232, 790)
         __osc_impacts = {}
@@ -8660,6 +8716,13 @@ void test_collide(TestContext& ctx) {
     // comes, and lets it through (retail's TreeGroup.OnCollisionCheck). A
     // shield stops what comes in, not what goes out.
     lua_check("setup: a rock, a tree group and a shield", R"(
+        for _, r in {Rect(640, 80, 680, 130), Rect(318, 788, 372, 812), Rect(205, 850, 240, 870)} do
+            for _, p in GetReclaimablesInRect(r) or {} do
+                if IsProp(p) then
+                    p:Destroy()
+                end
+            end
+        end
         __osc_rock = CreatePropHPR('/env/evergreen/props/rocks/fieldstone03_prop.bp',
                                    660, __osc_ground(660, 90), 90, 0, 0, 0)
         __osc_on_rock = {}
@@ -11351,6 +11414,11 @@ void test_charge(TestContext& ctx) {
     // OverCharge: an ACU on hold fire (its main gun quiet), an enemy tank in
     // reach of its OverCharge, on flat ground between them.
     lua_check("setup: an OverCharge", R"(
+        for _, p in GetReclaimablesInRect(Rect(572, 97, 603, 113)) or {} do
+            if IsProp(p) then
+                p:Destroy()
+            end
+        end
         __osc_acu = __osc_spawn('uel0001', 'ARMY_1', 580, 105)
         __osc_acu:SetFireState(1)
         -- Its script swaps the main gun out for the OverCharge and back.
