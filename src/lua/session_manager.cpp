@@ -247,10 +247,11 @@ void read_player_slots(lua_State* L, int options, sim::GameSetup& setup) {
 bool lobby_adds_civilians(const GameOptionsConfig& options) {
     for (const auto& [key, value] : options.values) {
         if (key == "CivilianAlliance") {
+            constexpr std::string_view none = "none";
             const std::string_view text = value.string_value;
             return value.type == GameOptionValue::Type::String &&
-                   !std::equal(text.begin(), text.end(), std::string_view("none").begin(),
-                               std::string_view("none").end(), [](char a, char b) {
+                   !std::equal(text.begin(), text.end(), none.begin(), none.end(),
+                               [](char a, char b) {
                                    return std::tolower(static_cast<unsigned char>(a)) == b;
                                });
         }
