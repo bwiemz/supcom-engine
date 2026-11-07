@@ -86,6 +86,9 @@ struct GameSetup {
     /// One per army, when a lobby configured them (empty otherwise): the
     /// slots taken, in order, as Moho packs them.
     std::vector<ArmySlotConfig> slots;
+    /// The scenario's ExtraArmies play after these, as civilian armies (Moho's
+    /// CLobby::LaunchGame, retail's command-line skirmish).
+    bool civilians = false;
     GameOptionsConfig options;
     /// Armies (0-based) the AI plays when no slots say so, and its personality.
     std::vector<int> ai_armies;

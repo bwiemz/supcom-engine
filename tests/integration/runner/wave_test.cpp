@@ -25,10 +25,10 @@ namespace osc::test {
 
 namespace {
 
-/// The shores about the map's middle (960 generators within 150), where
-/// no unit's effects are
-constexpr f32 kShoreX = 512.0f;
-constexpr f32 kShoreZ = 512.0f;
+/// A shore on the map's west side (424 generators within 150), where no
+/// unit's effects are: the civilians' wrecks smoke about the map's middle
+constexpr f32 kShoreX = 100.0f;
+constexpr f32 kShoreZ = 300.0f;
 /// Inland: no generator within 150.
 constexpr f32 kInlandX = 600.0f;
 constexpr f32 kInlandZ = 700.0f;

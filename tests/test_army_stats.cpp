@@ -1088,6 +1088,71 @@ TEST_CASE("A lobby's sessionConfig becomes the game's setup", "[session][config]
     CHECK(setup.options.values.size() == 2);
 }
 
+TEST_CASE("A lobby's game has the scenario's civilians unless CivilianAlliance is none",
+          "[session][config]") {
+    const auto [alliance, civilians] =
+        GENERATE(std::pair{"'enemy'", true}, std::pair{"'removed'", true},
+                 std::pair{"'None'", false}, std::pair{"nil", false});
+    osc::lua::LuaState lua;
+    auto made = lua.do_string(std::string("config = {GameOptions = {CivilianAlliance = ") +
+                              alliance + "}, PlayerOptions = {[1] = {Human = true}}}");
+    REQUIRE(made.ok());
+    lua_getglobal(lua.raw(), "config");
+    const auto setup = osc::lua::read_session_config(lua.raw(), lua_gettop(lua.raw()));
+    lua_pop(lua.raw(), 1);
+    CHECK(setup.civilians == civilians);
+    CHECK(setup.slots.size() == 1);
+}
+
+TEST_CASE("A single-player launch's civilians are its teamInfo's, and take no slot",
+          "[session][config]") {
+    const bool civilian = GENERATE(true, false);
+    osc::lua::LuaState lua;
+    auto made = lua.do_string(std::string(R"(
+        config = {scenarioInfo = {Options = {}}, teamInfo = {
+            {Human = true, ArmyName = 'ARMY_1'},
+            {Human = false, AIPersonality = 'rush', ArmyName = 'ARMY_2'},
+            {Human = false, ArmyName = 'ARMY_9', Civilian = )") +
+                              (civilian ? "true" : "false") + "}}}");
+    REQUIRE(made.ok());
+    lua_getglobal(lua.raw(), "config");
+    const auto setup = osc::lua::read_session_config(lua.raw(), lua_gettop(lua.raw()));
+    lua_pop(lua.raw(), 1);
+    CHECK(setup.civilians == civilian);
+    CHECK(setup.slots.size() == (civilian ? 2u : 3u));
+}
+
+TEST_CASE("A civilian army is one by its launch, not its name", "[session]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::lua::SessionManager mgr;
+    osc::lua::ScenarioMetadata meta;
+    meta.armies = {"ARMY_1", "NEUTRAL_CIVILIAN"};
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("NEUTRAL_CIVILIAN", "NEUTRAL_CIVILIAN");
+    sim.add_army("ARMY_9", "ARMY_9").set_civilian(true);
+    std::vector<osc::lua::ArmySlotConfig> slots(2);
+    for (auto& slot : slots) {
+        slot.configured = true;
+        slot.team = 3;
+    }
+    mgr.set_army_slot_configs(slots);
+    REQUIRE(lua.do_string("ScenarioInfo = {}").ok());
+    REQUIRE(mgr.start_session(lua, osc::vfs::VirtualFileSystem{}, sim, meta).ok());
+
+    CHECK_FALSE(sim.get_army(1)->is_civilian());
+    CHECK(sim.army_command_sources(1).size() == 1);
+    CHECK(sim.army_command_sources(2).empty());
+    auto result = lua.do_string(R"(
+        local setup = ScenarioInfo.ArmySetup
+        assert(setup.NEUTRAL_CIVILIAN.Civilian == false and setup.NEUTRAL_CIVILIAN.Human, 'a player')
+        assert(setup.ARMY_9.Civilian and not setup.ARMY_9.Human, 'the civilian')
+        assert(setup.ARMY_9.Team == 1 and setup.ARMY_9.StartSpot == 1, 'no team')
+        assert(setup.ARMY_9.AIPersonality == '', 'no AI')
+    )");
+    CHECK(result.ok());
+}
+
 TEST_CASE("GameOptions parser preserves lobby scalar values and restrictions", "[session][config]") {
     osc::lua::LuaState lua;
     auto setup = lua.do_string(R"(
