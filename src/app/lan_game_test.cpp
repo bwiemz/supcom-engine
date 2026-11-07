@@ -39,8 +39,7 @@ constexpr u32 kMaxHostWaitFrames = 6000;
 constexpr u32 kPressInterval = 600;
 /// Frames after the check that a side waits for kEndTick at most.
 constexpr u32 kWindDownFrames = 600;
-/// Frames a host whose joiner left waits for the disconnect dialog's Eject:
-/// retail's shows a client quiet for 5 s and enables Eject 15 s later.
+/// Retail's dialog shows a client quiet for 5 s and enables Eject 15 s later.
 constexpr u32 kEjectWaitFrames = 1200;
 
 /// __osc_upvalue(fn, name): the upvalue `name` of the Lua function `fn`,
@@ -209,8 +208,7 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
             !s)
             fail("saving: " + s.error().message);
     }
-    // --lan-game-quit-at: the joiner's process ends here, with no goodbye;
-    // the host plays on
+    // --lan-game-quit-at: the joiner's process ends here, with no goodbye
     const bool resumed = saw_pause_ && number_global(ui.raw(), "__osc_lan_resumed") >= 1;
     if (!host_ && quit_at_ > 0 && checked_at_ && resumed && sim->tick_count() >= quit_at_) {
         spdlog::info("[lan-game] the joiner leaves at tick {}", sim->tick_count());
@@ -225,9 +223,9 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
     }
     if (host_ && quit_at_ > 0 && checked_at_ && disconnect_dialog_open(ui)) {
         dialog_seen_ = true;
-        if (!ejected_at_ && press_eject(ui)) {
+        if (!eject_pressed_at_ && press_enabled_eject(ui)) {
             spdlog::info("[lan-game] the host ejects the joiner at tick {}", sim->tick_count());
-            ejected_at_ = frames_;
+            eject_pressed_at_ = frames_;
         }
     }
     if (checked_at_ && resume_.empty()) pause_frame(ui, *sim);
@@ -278,7 +276,7 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
             }
             if (!dialog_seen_) {
                 fail("retail's disconnect dialog never opened");
-            } else if (!ejected_at_) {
+            } else if (!eject_pressed_at_) {
                 fail("retail's disconnect dialog never offered its Eject");
             }
             if (disconnect_dialog_open(ui)) fail("retail's disconnect dialog stayed open");
@@ -397,7 +395,7 @@ bool LanGameTest::disconnect_dialog_open(lua::LuaState& ui) {
     return r && number_global(ui.raw(), "__osc_lan_dialog") != 0;
 }
 
-bool LanGameTest::press_eject(lua::LuaState& ui) {
+bool LanGameTest::press_enabled_eject(lua::LuaState& ui) {
     auto r = ui.do_string(R"(
         local module = __modules['/lua/ui/dialogs/disconnect.lua']
         local parent = __osc_upvalue(module.Update, 'parent')

@@ -145,10 +145,7 @@ int push_session_clients(lua_State* L) {
             uid = mp.clients[i].uid;
             if (!local && mp.lobby_game) peer = mp.lobby_game->net().peer(uid);
         }
-        // Dropped, or ejected by this player, it is no longer connected
-        // (Moho's: its eject pending here); those that ejected it, others
-        // among them, are its ejectedBy (the dialog waits until all still in
-        // have)
+        // Moho's connected is NoEjectionPending, its ejectedBy CollectEjecters
         const sim::LockstepSession* session = mp.session.get();
         const auto source = static_cast<u32>(i);
         const std::vector<u32> ejectors = session ? session->ejectors(source) : std::vector<u32>{};

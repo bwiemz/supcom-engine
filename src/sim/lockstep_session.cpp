@@ -175,13 +175,12 @@ void LockstepSession::receive_and_advance() {
         // Only the game's sources play: a frame from any other (the engine's,
         // whose callbacks defeat armies, among them) would gate the scheduler
         // on a source that never confirms, and carry orders no player gave.
-        // Ignore a source that is dropped or that this peer ejected: late
-        // frames must neither re-register it in the scheduler gate
-        // (re-stalling the survivors) nor move the last frame this peer
-        // reported for it.
+        // A dropped or ejected source's late frames would re-gate the
+        // scheduler on it and move the last frame this peer reported
         if (!participant(source) || has_dropped(source) || ejecting(source) ||
-            source == local_source_)
+            source == local_source_) {
             continue;
+        }
         u32 frame = r.u32v();
         u8 has_cs = r.u8v();
         u32 cs_beat = r.u32v();
