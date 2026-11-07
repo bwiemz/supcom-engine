@@ -182,6 +182,68 @@ std::vector<i32> glfw_keys_named(std::string_view name) {
     return {};
 }
 
+namespace {
+
+/// One key in both code sets.
+struct KeyCodePair {
+    i32 windows;
+    i32 wx;
+};
+
+/// wxCharCodeMSWToWX's switch, read from its jump tables in the Steam and
+/// FAF executables (the same in both; FAF exe 0x0096ABB0): each Windows
+/// virtual-key code it names and the wx code it gives. Keypad operators get
+/// wx's WXK_NUMPAD_* codes (391...), Alt (VK_MENU) WXK_MENU.
+constexpr KeyCodePair kWindowsToWx[] = {
+    {3, 303},    {8, 8},     {9, 9},     {12, 305},  {13, 13},   {16, 306},   {17, 308},
+    {18, 309},   {19, 310},  {20, 311},  {27, 27},   {32, 32},   {33, 312},   {34, 313},
+    {35, 314},   {36, 315},  {37, 316},  {38, 317},  {39, 318},  {40, 319},   {41, 320},
+    {42, 321},   {43, 322},  {45, 324},  {46, 127},  {47, 325},  {96, 326},   {97, 327},
+    {98, 328},   {99, 329},  {100, 330}, {101, 331}, {102, 332}, {103, 333},  {104, 334},
+    {105, 335},  {106, 391}, {107, 392}, {109, 394}, {110, 395}, {111, 396},  {112, 342},
+    {113, 343},  {114, 344}, {115, 345}, {116, 346}, {117, 347}, {118, 348},  {119, 349},
+    {120, 350},  {121, 351}, {122, 352}, {123, 353}, {124, 354}, {125, 355},  {126, 356},
+    {127, 357},  {128, 358}, {129, 359}, {130, 360}, {131, 361}, {132, 362},  {133, 363},
+    {134, 364},  {135, 365}, {144, 366}, {145, 367}, {186, ';'}, {187, '+'},  {188, ','},
+    {189, '-'},  {190, '.'}, {191, '/'}, {192, '~'}, {219, '['}, {220, '\\'}, {221, ']'},
+    {222, '\''},
+};
+
+/// wxCharCodeWXToMSW's (FAF exe 0x0096AFC0): the wx codes it names and
+/// their Windows codes. It isn't kWindowsToWx turned round: it has no key
+/// for the characters, nor for space, Tab, Return or Escape, which come back
+/// unchanged as any other code it doesn't name does.
+constexpr KeyCodePair kWxToWindows[] = {
+    {3, 303},   {46, 127},  {12, 305},  {16, 306},  {17, 308},  {18, 309},  {19, 310},  {20, 311},
+    {33, 312},  {34, 313},  {35, 314},  {36, 315},  {37, 316},  {38, 317},  {39, 318},  {40, 319},
+    {41, 320},  {42, 321},  {43, 322},  {45, 324},  {47, 325},  {96, 326},  {97, 327},  {98, 328},
+    {99, 329},  {100, 330}, {101, 331}, {102, 332}, {103, 333}, {104, 334}, {105, 335}, {112, 342},
+    {113, 343}, {114, 344}, {115, 345}, {116, 346}, {117, 347}, {118, 348}, {119, 349}, {120, 350},
+    {121, 351}, {122, 352}, {123, 353}, {124, 354}, {125, 355}, {126, 356}, {127, 357}, {128, 358},
+    {129, 359}, {130, 360}, {131, 361}, {132, 362}, {133, 363}, {134, 364}, {135, 365}, {144, 366},
+    {145, 367}, {106, 391}, {107, 392}, {109, 394}, {110, 395}, {111, 396},
+};
+
+} // namespace
+
+i32 wx_key_code_of_windows(i32 vk) {
+    for (const auto& pair : kWindowsToWx) {
+        if (pair.windows == vk) {
+            return pair.wx;
+        }
+    }
+    return 0;
+}
+
+i32 windows_key_code_of_wx(i32 wx) {
+    for (const auto& pair : kWxToWindows) {
+        if (pair.wx == wx) {
+            return pair.windows;
+        }
+    }
+    return wx;
+}
+
 i32 moho_mouse_button(i32 glfw_button) {
     switch (glfw_button) {
     case GLFW_MOUSE_BUTTON_LEFT: return 1;
