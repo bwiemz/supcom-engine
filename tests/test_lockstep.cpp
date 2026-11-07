@@ -282,7 +282,6 @@ TEST_CASE("LockstepSession waits for a silent peer, however long", "[lockstep][d
     CHECK(sa.take_dropped().empty());
     CHECK_FALSE(sa.has_dropped(1));
 
-    // Heard again, B catches up, and the two play on together
     for (int r = 0; r < 60; ++r) {
         round();
     }
@@ -567,7 +566,9 @@ TEST_CASE("A survivor waits for a silent peer another ejected, until it ejects i
     SimState a(ga.L, nullptr), b(gb.L, nullptr), c(gc.L, nullptr);
     for (SimState* s : {&a, &b, &c}) {
         s->set_victory_condition("sandbox");
-        for (const char* army : {"ARMY_1", "ARMY_2", "ARMY_3"}) s->add_army(army, army);
+        for (const char* army : {"ARMY_1", "ARMY_2", "ARMY_3"}) {
+            s->add_army(army, army);
+        }
     }
     LoopbackHub hub;
     LoopbackTransport ta(hub, hub.add_endpoint()), tb(hub, hub.add_endpoint()),
@@ -602,7 +603,6 @@ TEST_CASE("A survivor waits for a silent peer another ejected, until it ejects i
     const osc::u32 held = b.tick_count();
     CHECK(a.tick_count() == held);
 
-    // B's player ejects it too: both drop it, on the same tick, and play on
     REQUIRE(sb.eject(2));
     CHECK_FALSE(sb.eject(2));
     for (int i = 0; i < 10; ++i) {
@@ -646,13 +646,16 @@ TEST_CASE("A player ejects another still playing; the survivors agree (M218e)",
     CHECK_FALSE(sa.eject(2)); // once
     CHECK(sa.ejectors(2) == std::vector<osc::u32>{0});
     CHECK_FALSE(sa.has_dropped(2));
-    // B hears of it, and waits for C until its player ejects C too; then
-    // both drop C, on the same tick
-    for (int i = 0; i < 10; ++i) round();
+    // B waits for C until its own player ejects it
+    for (int i = 0; i < 10; ++i) {
+        round();
+    }
     CHECK(sb.ejectors(2) == std::vector<osc::u32>{0});
     CHECK_FALSE(sb.has_dropped(2));
     REQUIRE(sb.eject(2));
-    for (int i = 0; i < 10; ++i) round();
+    for (int i = 0; i < 10; ++i) {
+        round();
+    }
     REQUIRE(sa.has_dropped(2));
     REQUIRE(sb.has_dropped(2));
     CHECK(sa.ejectors(2) == std::vector<osc::u32>{0, 1});

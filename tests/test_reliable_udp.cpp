@@ -223,7 +223,6 @@ TEST_CASE("A reliable UDP stream waits for a quiet peer, however long (M220c)", 
         p.host.pump(p.net.now);
     }
     CHECK(p.host.state(p.to_joiner) == State::Open);
-    // It runs again: what the host sent meanwhile comes through
     std::vector<u8> got;
     REQUIRE(p.run(2000, [&] {
         const auto x = p.joiner.take_received(p.to_host);

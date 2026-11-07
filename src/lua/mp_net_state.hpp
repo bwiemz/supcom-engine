@@ -85,9 +85,8 @@ void mp_set_save_handler(MpSaveHandler handler);
 // as Moho closes an ejected client's (M218e).
 void mp_disconnect_source(osc::u32 source);
 
-// The clients whose connection closed since the last call are ejected, as
-// Moho's CClientBase ejects one on LOBMSG_ConnLostEof/Errored; their names.
-// On the session's thread.
+// Ejects the clients whose connection closed, as Moho's CClientBase on
+// LOBMSG_ConnLostEof/Errored; their names. On the session's thread.
 std::vector<std::string> mp_eject_lost();
 
 // Tear down the session and the lobby's connections (game end / return to lobby).

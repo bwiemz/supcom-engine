@@ -513,11 +513,6 @@ void App::Window::advance_sim(double dt) {
                 session->send_frame();
                 session->receive_and_advance();
                 osc::lua::note_disconnected(ui_lua_state.raw(), osc::lua::mp_eject_lost());
-                // An ejected peer leaves: the survivors agree on its last
-                // frame, and its command source ends in the same beat on
-                // every one of them (a command, so replays keep it) -- an
-                // army it leaves with no player is abandoned to its brain,
-                // which retail's defeats.
                 for (osc::u32 src : session->take_dropped()) {
                     spdlog::warn("[mp] peer {} dropped — its source ends", src);
                     osc::lua::mp_disconnect_source(src); // M218e

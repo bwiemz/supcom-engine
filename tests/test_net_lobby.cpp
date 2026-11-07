@@ -905,8 +905,7 @@ TEST_CASE("Another player's eject shows in ejectedBy; this one ejects for itself
     REQUIRE(mp.all_sources == std::vector<osc::u32>{0, 1, 2});
     REQUIRE(mp.local_source == 0);
 
-    // Bob goes silent, and Alice ejects him: her report (as her session
-    // sends it) reaches the host
+    // Alice's eject of Bob, as her session reports it
     std::vector<osc::u8> report;
     osc::sim::ByteWriter wr(report);
     wr.u8v(1);  // a drop report
