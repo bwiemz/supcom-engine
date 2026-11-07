@@ -189,3 +189,49 @@ TEST_CASE("GetGameTime and FormatTime give Moho's hours, minutes and seconds", "
                   .empty());
     }
 }
+
+TEST_CASE("Every army's score is shown, a civilian's too, until SetArmyShowScore hides it",
+          "[session]") {
+    // A sim of a player and a civilian army, its own state with its own
+    // bindings, and the UI state bound to it.
+    osc::lua::LuaState sim_lua;
+    osc::sim::SimState sim{sim_lua.raw(), nullptr};
+    osc::lua::register_moho_bindings(sim_lua, sim);
+    osc::lua::register_sim_bindings(sim_lua, sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("NEUTRAL_CIVILIAN", "NEUTRAL_CIVILIAN");
+    sim.get_army(1)->set_civilian(true);
+    osc::lua::LuaState ui;
+    osc::ui::UIControlRegistry registry;
+    osc::GameStateManager mgr;
+    osc::lua::register_moho_bindings(ui, sim);
+    osc::lua::register_ui_bindings(ui, registry);
+    osc::lua::register_user_bindings(ui);
+    osc::app::register_session_ui_globals(ui);
+    lua_State* L = ui.raw();
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_pushlightuserdata(L, &mgr);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    mgr.transition_to(osc::GameState::GAME, nullptr);
+    const auto run = [](osc::lua::LuaState& state, const char* code) {
+        auto r = state.do_string(code);
+        return r.ok() ? std::string() : r.error().message;
+    };
+
+    // Moho's mShowScore starts on for every army: the score screens leave
+    // civilians out by `civilian`, and the unit view names their units.
+    CHECK(run(ui, "local t = GetArmiesTable().armiesTable\n"
+                  "assert(t[1].showScore == true and t[2].showScore == true)\n"
+                  "assert(t[2].civilian == true)\n")
+              .empty());
+    // SetArmyShowScore takes the army by number or name.
+    CHECK(run(sim_lua, "SetArmyShowScore(2, false)").empty());
+    CHECK_FALSE(sim.get_army(1)->show_score());
+    CHECK(run(ui, "assert(GetArmiesTable().armiesTable[2].showScore == false)").empty());
+    CHECK(run(sim_lua, "SetArmyShowScore('ARMY_1', false)\nSetArmyShowScore('ARMY_1', true)")
+              .empty());
+    CHECK(sim.get_army(0)->show_score());
+    CHECK(run(sim_lua, "SetArmyShowScore(1)")
+              .ends_with("SetArmyColor(army, bool) - determines if the user should be able to "
+                         "see the army score\n  expected 2 args, but got 1"));
+}
