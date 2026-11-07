@@ -21,12 +21,10 @@ G BaseManagerReclaimThread  # not Moho's: a BaseManager method called bare
 G ClearQueueGrid            # not Moho's
 G ERROR                     # not Moho's: a retail typo (error)
 G GetArmy                   # not Moho's as a global (a method of units and brains)
-G GetUIControlsAlpha        # user state: with SetUIControlsAlpha
 G InternalCreateMesh        # user state: the Mesh control, a mesh drawn by Moho's thumbnail renderer; nothing makes one
 G IssueEnhance              # not Moho's
 G SetQueueGrid              # not Moho's
 G SetQueueState             # not Moho's
-G SetUIControlsAlpha
 G errro                     # not Moho's: a retail typo (error)
 M AddOnKilledCallback       # not Moho's
 M GiveUnitOrder             # not Moho's: a TriggerManager method it never defines
