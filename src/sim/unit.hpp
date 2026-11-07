@@ -959,6 +959,21 @@ public:
     f32 elevation_target() const { return elevation_target_; }
     void set_elevation_target(f32 e) { elevation_target_ = e; }
     void set_dive_surface_speed(f32 s) { dive_surface_speed_ = s; }
+    /// Physics.RollDamping and RollStability: how a hull's rock (RecoilImpulse)
+    /// dies away and rights itself (Moho's defaults 0.5, 0.2).
+    void set_roll_physics(f32 damping, f32 stability) {
+        roll_damping_ = damping;
+        roll_stability_ = stability;
+    }
+    /// Unit:RecoilImpulse (Moho's CUnitMotion::AddRecoilImpulse): a tenth of
+    /// what of `impulse` lies across its hull (the rest, along its heading,
+    /// is dropped) rocks it, as its tilt settles while it moves
+    /// (dive_lean_normal). Retail's weapons push one for a ShipRock weapon,
+    /// which no blueprint sets.
+    void add_recoil_impulse(const Vector3& impulse);
+    const Vector3& recoil_impulse() const { return recoil_impulse_; }
+    /// The rock it leans by on top of its dive (Moho's mBodyTiltOffset).
+    const Vector3& body_tilt() const { return body_tilt_; }
     /// How far under the water's surface a sub is (M206o): 0 at the surface,
     /// down to its Physics.Elevation when dived.
     f32 sub_elevation() const { return sub_elevation_; }
@@ -1997,7 +2012,8 @@ private:
     /// With no navigator driving it, it brakes to a stop along its heading. False if it
     /// stood still.
     bool coast(f64 dt, const map::Terrain* terrain);
-    /// Moho's CUnitMotion::CalcRollHack, without the recoil: no blueprint sets ShipRock.
+    /// Moho's CUnitMotion::CalcRollHack: the up its hull tilts to, from its
+    /// lean into a dive and its rock (add_recoil_impulse).
     Vector3 dive_lean_normal(f32 diving_speed);
     EntityId shield_entity_id_{}; // entity ID of shield (set by _c_CreateShield)
     bool busy_ = false;
@@ -2231,6 +2247,10 @@ private:
     f32 sub_elevation_ = 0.0f;
     f32 dive_surface_speed_ = 1.0f; // Physics.DiveSurfaceSpeed
     Vector3 dive_lean_;
+    Vector3 recoil_impulse_;    ///< Moho's mRecoilImpulse
+    Vector3 body_tilt_;         ///< Moho's mBodyTiltOffset
+    f32 roll_damping_ = 0.5f;   // Physics.RollDamping
+    f32 roll_stability_ = 0.2f; // Physics.RollStability
     std::string vert_event_ = "Top";
     // A killed aircraft's fall (step_dead_motion)
     MotionState motion_state_ = MotionState::None;

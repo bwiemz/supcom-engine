@@ -559,6 +559,27 @@ static int unit_SetSpeedMult(lua_State* L) {
     return 0;
 }
 
+/// RecoilImpulse(self, x, y, z): rock the unit's hull (Moho's
+/// cfunc_UnitRecoilImpulseL, CUnitMotion::AddRecoilImpulse); a unit without
+/// motion (a structure) has none to rock.
+static int unit_RecoilImpulse(lua_State* L) {
+    if (lua_gettop(L) != 4) {
+        return arg_count_error(L, "RecoilImpulse(self, x, y, z)", 4, lua_gettop(L));
+    }
+    auto* u = check_unit(L);
+    f32 impulse[3] = {};
+    for (int arg = 2; arg <= 4; ++arg) {
+        if (lua_type(L, arg) != LUA_TNUMBER) {
+            return arg_type_error(L, arg, "number");
+        }
+        impulse[arg - 2] = static_cast<f32>(lua_tonumber(L, arg));
+    }
+    if (u && u->is_mobile()) {
+        u->add_recoil_impulse({impulse[0], impulse[1], impulse[2]});
+    }
+    return 0;
+}
+
 // FAF's ForceAltFootprint(self, bool) (FA-Binary-Patches EntityGetFootprint.cpp)
 static int unit_ForceAltFootprint(lua_State* L) {
     auto* u = check_unit(L);
@@ -2422,6 +2443,7 @@ const MethodEntry unit_methods[] = {
     {"GetNavigator",                unit_GetNavigator},
     {"SetSpeedMult",                unit_SetSpeedMult},
     {"ForceAltFootprint",           unit_ForceAltFootprint},
+    {"RecoilImpulse",               unit_RecoilImpulse},
     {"SetAccMult",                  unit_SetAccMult},
     {"SetTurnMult",                 unit_SetTurnMult},
     {"SetBreakOffDistanceMult",     unit_SetBreakOffDistanceMult},

@@ -1520,6 +1520,10 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.sub_elevation_);
     w.f32v(u.dive_surface_speed_);
     w.vec3(u.dive_lean_);
+    w.vec3(u.recoil_impulse_);
+    w.vec3(u.body_tilt_);
+    w.f32v(u.roll_damping_);
+    w.f32v(u.roll_stability_);
     w.str(u.vert_event_);
     enum8(w, u.motion_state_);
     w.vec3(u.tumble_torque_);
@@ -1949,6 +1953,10 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.sub_elevation_ = r.f32v();
     u.dive_surface_speed_ = r.f32v();
     u.dive_lean_ = r.vec3();
+    u.recoil_impulse_ = r.vec3();
+    u.body_tilt_ = r.vec3();
+    u.roll_damping_ = r.f32v();
+    u.roll_stability_ = r.f32v();
     u.vert_event_ = r.str();
     u.motion_state_ = enum8<Unit::MotionState>(r);
     u.tumble_torque_ = r.vec3();

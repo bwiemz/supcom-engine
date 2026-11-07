@@ -1020,7 +1020,7 @@ static void resolve_footprints(lua_State* L, const sim::SimState& sim, const Blu
 }
 
 /// A ship's or sub's Physics.Elevation (negative: its draft below the
-/// surface) and DiveSurfaceSpeed.
+/// surface), DiveSurfaceSpeed, RollDamping and RollStability.
 static void read_naval(lua_State* L, const BlueprintStore& store, const BlueprintEntry& entry,
                        sim::Unit& unit) {
     store.push_lua_table(entry, L);
@@ -1040,6 +1040,17 @@ static void read_naval(lua_State* L, const BlueprintStore& store, const Blueprin
         lua_gettable(L, -2);
         if (lua_isnumber(L, -1)) unit.set_dive_surface_speed(static_cast<f32>(lua_tonumber(L, -1)));
         lua_pop(L, 1);
+        // How its rock (Unit:RecoilImpulse) dies away and rights itself
+        // (Moho's defaults 0.5 and 0.2; no retail blueprint sets them).
+        f32 roll[2] = {0.5f, 0.2f};
+        const char* roll_fields[2] = {"RollDamping", "RollStability"};
+        for (int i = 0; i < 2; ++i) {
+            lua_pushstring(L, roll_fields[i]);
+            lua_gettable(L, -2);
+            if (lua_isnumber(L, -1)) roll[i] = static_cast<f32>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+        }
+        unit.set_roll_physics(roll[0], roll[1]);
     }
     lua_pop(L, 2);
 }
