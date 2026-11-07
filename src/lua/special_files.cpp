@@ -1,5 +1,7 @@
 #include "lua/special_files.hpp"
 
+#include "lua/arg_count.hpp"
+#include "lua/enum_args.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
@@ -21,10 +23,12 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <ctime>
 #include <fstream>
 #include <iterator>
+#include <string_view>
 #include <system_error>
 
 namespace osc::lua {
@@ -94,6 +98,43 @@ int l_GetSpecialFiles(lua_State* L) {
         }
     }
     lua_rawset(L, -3);
+    return 1;
+}
+
+/// GetSpecialFolder(type) -> the folder a special file type's profiles sit
+/// in, as GetSpecialFiles' `directory` gives it (Moho's USER_Get*Dir: with
+/// a trailing separator). The name may carry Moho's SFT_ prefix, in any case
+/// (ESpecialFileType's lexical form). Screenshot is Moho's fourth type: its
+/// folder is made as it is asked for, as Moho's USER_GetScreenshotDir does;
+/// the engine writes no screenshots there.
+int l_GetSpecialFolder(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "string GetSpecialFolder(string type)", 1, lua_gettop(L));
+    }
+    const char* name = lua_tostring(L, 1);
+    if (!name) {
+        return arg_type_error(L, 1, "string");
+    }
+    static constexpr std::array<std::string_view, 4> kNames{"SaveGame", "Replay", "Screenshot",
+                                                            "CampaignSave"};
+    const int which = parse_enum(name, "SFT_", kNames);
+    if (which < 0) {
+        return luaL_error(L, "Invalid special file type %s", name);
+    }
+    auto* files = get_special_files(L);
+    std::string dir;
+    if (files) {
+        static constexpr SpecialFiles::Type kScreenshot{"Screenshot", "screenshots", "bmp"};
+        const auto* type = which == 2 ? &kScreenshot : SpecialFiles::find_type(kNames[which]);
+        const fs::path folder = files->directory(*type);
+        if (type == &kScreenshot) {
+            std::error_code ec;
+            fs::create_directories(folder, ec);
+        }
+        dir = folder.generic_string();
+        if (!dir.empty() && dir.back() != '/') dir += '/';
+    }
+    lua_pushstring(L, dir.c_str());
     return 1;
 }
 
@@ -580,6 +621,7 @@ void register_special_file_bindings(LuaState& state, SpecialFiles* files) {
     lua_rawset(L, LUA_REGISTRYINDEX);
     state.register_function("GetSpecialFiles", l_GetSpecialFiles);
     state.register_function("GetSpecialFilePath", l_GetSpecialFilePath);
+    state.register_function("GetSpecialFolder", l_GetSpecialFolder);
     state.register_function("GetSpecialFileInfo", l_GetSpecialFileInfo);
     state.register_function("RemoveSpecialFile", l_RemoveSpecialFile);
     state.register_function("RemoveProfileDirectories", l_RemoveProfileDirectories);
