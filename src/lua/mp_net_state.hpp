@@ -81,9 +81,14 @@ bool mp_attach_session(osc::sim::SimState& sim);
 using MpSaveHandler = std::function<void(osc::sim::SimState&, const std::string& name)>;
 void mp_set_save_handler(MpSaveHandler handler);
 
-// A lobby's game dropped `source` (a timeout or an eject): the host closes
-// its connection, as Moho closes an ejected client's (M218e).
+// A lobby's game dropped `source` (an eject): the host closes its connection,
+// as Moho closes an ejected client's (M218e).
 void mp_disconnect_source(osc::u32 source);
+
+// The clients whose connection closed since the last call are ejected, as
+// Moho's CClientBase ejects one on LOBMSG_ConnLostEof/Errored; their names.
+// On the session's thread.
+std::vector<std::string> mp_eject_lost();
 
 // Tear down the session and the lobby's connections (game end / return to lobby).
 void mp_teardown();

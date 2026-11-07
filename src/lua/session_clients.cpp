@@ -1,6 +1,7 @@
 #include "lua/session_clients.hpp"
 
 #include "core/game_state.hpp"
+#include "core/localization.hpp"
 #include "lua/lobby_wire.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/net_lobby.hpp"
@@ -144,7 +145,7 @@ int push_session_clients(lua_State* L) {
             uid = mp.clients[i].uid;
             if (!local && mp.lobby_game) peer = mp.lobby_game->net().peer(uid);
         }
-        // Dropped or being dropped (ejected, or timed out), it is no longer
+        // Dropped or being dropped (ejected), it is no longer
         // connected; the survivors that reported it ejected it (Moho's
         // ejectedBy: the dialog waits until all still in have)
         const sim::LockstepSession* session = mp.session.get();
@@ -270,6 +271,20 @@ void pump_disconnect_dialog(lua_State* L) {
         }
     }
     lua_settop(L, top);
+}
+
+void note_disconnected(lua_State* L, const std::vector<std::string>& names) {
+    lua_pushstring(L, "__osc_loc_cache");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const auto* loc = static_cast<const core::Localization*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    for (const std::string& name : names) {
+        std::string line = loc ? loc->format("<LOC Engine0002>", {name}) : std::string{};
+        if (line.empty() || line.rfind("<LOC", 0) == 0) {
+            line = name + " disconnected.";
+        }
+        spdlog::info("{}", line);
+    }
 }
 
 void call_on_user_pause(lua_State* L, bool pause) {

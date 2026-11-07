@@ -252,7 +252,7 @@ TEST_CASE("Each differing checksum is a desync naming its peer", "[lockstep]") {
     CHECK(sa.take_desyncs().empty());
 }
 
-TEST_CASE("LockstepSession times out a silent peer", "[lockstep][drop]") {
+TEST_CASE("LockstepSession waits for a silent peer, however long", "[lockstep][drop]") {
     LoopbackHub hub;
     LuaGuard ga, gb;
     SimState a(ga.L, nullptr), b(gb.L, nullptr);
@@ -260,43 +260,71 @@ TEST_CASE("LockstepSession times out a silent peer", "[lockstep][drop]") {
     LoopbackTransport tb(hub, hub.add_endpoint());
     LockstepSession sa(a, ta, 0, {0, 1});
     LockstepSession sb(b, tb, 1, {0, 1});
-    sa.set_drop_timeout(5);
+    const auto round = [&] {
+        sa.send_frame();
+        sb.send_frame();
+        sa.receive_and_advance();
+        sb.receive_and_advance();
+    };
+    for (int r = 0; r < 3; ++r) {
+        round();
+    }
 
-    // A few healthy rounds so each side's peer_confirmed_ is armed.
+    // B goes silent for 300 rounds (30 seconds of the game): A holds
+    sa.send_frame();
+    sa.receive_and_advance();
+    const osc::u32 held = a.tick_count();
+    for (int r = 0; r < 300; ++r) {
+        sa.send_frame();
+        sa.receive_and_advance();
+    }
+    CHECK(a.tick_count() == held);
+    CHECK(sa.take_dropped().empty());
+    CHECK_FALSE(sa.has_dropped(1));
+
+    // Heard again, B catches up, and the two play on together
+    for (int r = 0; r < 60; ++r) {
+        round();
+    }
+    CHECK(a.tick_count() >= held + 50);
+    CHECK(a.tick_count() == b.tick_count());
+    CHECK_FALSE(sb.has_dropped(0));
+    CHECK_FALSE(sa.desynced());
+    CHECK_FALSE(sb.desynced());
+}
+
+TEST_CASE("An ejected peer's late frames don't hold the survivor", "[lockstep][drop]") {
+    LoopbackHub hub;
+    LuaGuard ga, gb;
+    SimState a(ga.L, nullptr), b(gb.L, nullptr);
+    LoopbackTransport ta(hub, hub.add_endpoint());
+    LoopbackTransport tb(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1});
+    LockstepSession sb(b, tb, 1, {0, 1});
     for (int r = 0; r < 3; ++r) {
         sa.send_frame();
         sb.send_frame();
         sa.receive_and_advance();
         sb.receive_and_advance();
     }
-    REQUIRE(sa.take_dropped().empty());
+    for (int r = 0; r < 5; ++r) {
+        sa.send_frame();
+        sa.receive_and_advance();
+    }
+    REQUIRE(sa.eject(1));
+    REQUIRE(sa.take_dropped() == std::vector<osc::u32>{1});
 
-    bool dropped = false;
-    tick_until(
-        [&] {
-            sa.send_frame();
-            sa.receive_and_advance();
-            auto d = sa.take_dropped();
-            if (std::find(d.begin(), d.end(), 1u) != d.end()) {
-                dropped = true;
-            }
-        },
-        "B goes silent and A drops it", 30, [&] { return dropped; });
-    REQUIRE(sa.has_dropped(1));
-
-    // After the drop, A is no longer gated on the silent peer — it advances.
     osc::u32 before = a.tick_count();
     sa.send_frame();
     sa.receive_and_advance();
     REQUIRE(a.tick_count() > before);
 
-    // Late/buffered data from the dropped peer must not re-register it and
-    // re-stall the survivor.
-    sb.send_frame(); // B (already dropped by A) emits one more frame
+    // A frame B sends late must not re-register it and stall A again
+    sb.send_frame();
     osc::u32 t2 = a.tick_count();
     sa.send_frame();
     sa.receive_and_advance();
-    REQUIRE(a.tick_count() > t2); // A ignored B's late frame and kept advancing
+    REQUIRE(a.tick_count() > t2);
     REQUIRE(sa.has_dropped(1));
 }
 
@@ -412,9 +440,9 @@ TEST_CASE("Only the game's sources are heard: not the engine's, nor one not play
 
 TEST_CASE("Survivors agree on a dropped peer's last frame", "[lockstep][drop]") {
     // Three peers. C's last frame -- carrying an order -- reaches A but not B
-    // before C dies. Deciding the drop alone, A would play C's order and B
-    // would not: a desync. By agreement, B gets the frame relayed, and both
-    // defeat C's army on the same tick.
+    // before C dies, and A's player ejects it. Deciding the drop alone, A
+    // would play C's order and B would not: a desync. By agreement, B gets
+    // the frame relayed, and both defeat C's army on the same tick.
     LuaGuard ga, gb, gc;
     SimState a(ga.L, nullptr), b(gb.L, nullptr), c(gc.L, nullptr);
     std::vector<EntityId> movers;
@@ -437,8 +465,6 @@ TEST_CASE("Survivors agree on a dropped peer's last frame", "[lockstep][drop]") 
     LockstepSession sa(a, ta, 0, {0, 1, 2});
     LockstepSession sb(b, tb, 1, {0, 1, 2});
     LockstepSession sc(c, tc, 2, {0, 1, 2});
-    sa.set_drop_timeout(5);
-    sb.set_drop_timeout(5);
 
     for (int round = 0; round < 5; ++round) {
         sa.send_frame();
@@ -455,6 +481,9 @@ TEST_CASE("Survivors agree on a dropped peer's last frame", "[lockstep][drop]") 
     sb.send_frame();
     sc.send_frame();
     for (int round = 0; round < 30; ++round) {
+        if (round == 5) {
+            REQUIRE(sa.eject(2));
+        }
         sa.receive_and_advance();
         sb.receive_and_advance();
         sa.send_frame();
@@ -482,7 +511,8 @@ TEST_CASE("Survivors agree on a dropped peer's last frame", "[lockstep][drop]") 
 TEST_CASE("A dropped player's own army is defeated, not the one numbered as its source",
           "[lockstep][drop]") {
     // A lobby's game: player A (source 0) plays army 0, an AI army 1, player
-    // B (source 1) army 2, and C (source 2) watches. B goes silent, then C.
+    // B (source 1) army 2, and C (source 2) watches. B goes silent, then C,
+    // and A's player ejects each.
     LuaGuard ga, gb, gc;
     SimState a(ga.L, nullptr), b(gb.L, nullptr), c(gc.L, nullptr);
     for (SimState* s : {&a, &b, &c}) {
@@ -498,13 +528,12 @@ TEST_CASE("A dropped player's own army is defeated, not the one numbered as its 
     LockstepSession sa(a, ta, 0, {0, 1, 2});
     LockstepSession sb(b, tb, 1, {0, 1, 2});
     LockstepSession sc(c, tc, 2, {0, 1, 2});
-    sa.set_drop_timeout(5);
-    sc.set_drop_timeout(5);
     for (int round = 0; round < 5; ++round) {
         for (LockstepSession* s : {&sa, &sb, &sc}) s->send_frame();
         for (LockstepSession* s : {&sa, &sb, &sc}) s->receive_and_advance();
     }
     // B goes silent: A and C drop it, and its army 2 goes, not army 1
+    REQUIRE(sa.eject(1));
     for (int round = 0; round < 30; ++round) {
         sa.send_frame();
         sc.send_frame();
@@ -517,6 +546,7 @@ TEST_CASE("A dropped player's own army is defeated, not the one numbered as its 
     CHECK_FALSE(a.army_at(1)->is_defeated());
     CHECK(c.army_at(2)->is_defeated());
     // The watcher goes silent too: A drops it, and no army goes with it
+    REQUIRE(sa.eject(2));
     for (int round = 0; round < 30; ++round) {
         sa.send_frame();
         sa.receive_and_advance();
@@ -574,7 +604,8 @@ TEST_CASE("A player ejects another still playing; the survivors agree (M218e)",
     for (int i = 0; i < 5; ++i) round();
     CHECK(a.tick_count() > at);
     CHECK(a.tick_count() == b.tick_count());
-    sc.set_drop_timeout(5);
+    CHECK_FALSE(sc.eject(0));
+    CHECK_FALSE(sc.eject(1));
     for (int i = 0; i < 40; ++i) {
         sc.send_frame();
         sc.receive_and_advance();
@@ -625,8 +656,6 @@ struct PausePair {
             for (const char* army : {"ARMY_1", "ARMY_2"}) s->add_army(army, army);
             mover = spawn_mover(*s, 5.0f);
         }
-        sa.set_drop_timeout(5);
-        sb.set_drop_timeout(5);
     }
     void round() {
         sa.send_frame();
@@ -820,7 +849,6 @@ TEST_CASE("A drop report fits one wire message, keeping the newest frames", "[lo
     LoopbackTransport ta(hub, hub.add_endpoint()), tc(hub, hub.add_endpoint());
     LockstepSession sa(a, ta, 0, {0, 1});
     LockstepSession sc(c, tc, 1, {0, 1});
-    sa.set_drop_timeout(5);
 
     std::vector<EntityId> crowd(300000);
     for (size_t i = 0; i < crowd.size(); ++i) {
@@ -834,12 +862,7 @@ TEST_CASE("A drop report fits one wire message, keeping the newest frames", "[lo
         sc.receive_and_advance();
     }
     hub.drain(1); // what C was sent so far
-    tick_until(
-        [&] {
-            sa.send_frame();
-            sa.receive_and_advance();
-        },
-        "A drops the silent C", 30, [&] { return sa.has_dropped(1); });
+    REQUIRE(sa.eject(1));
     size_t largest = 0;
     for (const auto& msg : hub.drain(1)) {
         CHECK(msg.size() <= osc::sim::kMaxWireMessage);
@@ -918,8 +941,7 @@ osc::u32 lead(const LockstepSession& s, const SimState& sim) {
 
 } // namespace
 
-TEST_CASE("A peer runs at most two seconds of frames ahead of its sim, and a dead peer still "
-          "drops (M218h)",
+TEST_CASE("A peer runs at most two seconds of frames ahead of its sim (M218h)",
           "[lockstep][pace]") {
     LoopbackHub hub;
     LuaGuard ga, gb;
@@ -936,29 +958,19 @@ TEST_CASE("A peer runs at most two seconds of frames ahead of its sim, and a dea
     }
     hub.drain(1);
 
-    // B goes silent: A runs ahead to the cap, then only says it's there
+    // B goes silent: A runs ahead to the cap, then sends nothing
     for (osc::u32 r = 0; r < LockstepSession::kMaxLead + 5; ++r) {
         sa.send_frame();
         sa.receive_and_advance();
         CHECK(lead(sa, a) <= LockstepSession::kMaxLead);
     }
     CHECK(lead(sa, a) == LockstepSession::kMaxLead);
-    int frames = 0, alive = 0;
-    for (const auto& msg : hub.drain(1)) {
-        frames += msg[0] == 0 ? 1 : 0;
-        alive += msg[0] == 3 ? 1 : 0;
+    const auto sent = hub.drain(1);
+    CHECK(sent.size() == LockstepSession::kMaxLead);
+    for (const auto& msg : sent) {
+        CHECK(msg[0] == 0);
     }
-    CHECK(frames == static_cast<int>(LockstepSession::kMaxLead));
-    CHECK(alive == 5);
     CHECK_FALSE(sa.has_dropped(1));
-
-    tick_until(
-        [&] {
-            sa.send_frame();
-            sa.receive_and_advance();
-        },
-        "held at the cap, A still counts B's silence and drops it", 10,
-        [&] { return sa.has_dropped(1); });
 }
 
 TEST_CASE("Latency costs a local order's delay, not the game's pace (M218h)", "[lockstep][pace]") {
@@ -1052,13 +1064,11 @@ TEST_CASE("The slowest peer sets the game's pace, and isn't dropped (M218h)", "[
     CHECK_FALSE(sb.desynced());
 }
 
-TEST_CASE("A peer held at the cap still says it's there, so a slow one isn't dropped (M218h)",
-          "[lockstep][pace]") {
+TEST_CASE("The slowest peer sets the pace of two at the cap (M218h)", "[lockstep][pace]") {
     // C, slower still, sends a frame every 29 of A's rounds: both A and B
     // wait on it at the cap, and each sends a frame only as C's lets the
     // sim move. B, slow too (a round in seven of A's), then sends one only
-    // on a round of its own after C's, 28 or 35 of A's apart: the 35 is
-    // past A's timeout. Its word each round it has keeps it in.
+    // on a round of its own after C's.
     LuaGuard ga, gb, gc;
     SimState a(ga.L, nullptr), b(gb.L, nullptr), c(gc.L, nullptr);
     LoopbackHub hub;
@@ -1150,8 +1160,7 @@ TEST_CASE("A speed change reaches every peer; the newest wins, a tie the lower s
     CHECK_FALSE(g.sa.desynced());
 }
 
-TEST_CASE("At speed, the lead cap and the drop timeout keep their times (M218i)",
-          "[lockstep][speed]") {
+TEST_CASE("At speed, the lead cap keeps its time (M218i)", "[lockstep][speed]") {
     for (const osc::i32 speed : {10, -10}) {
         DYNAMIC_SECTION("at " << speed) {
             LoopbackHub hub;
@@ -1168,19 +1177,16 @@ TEST_CASE("At speed, the lead cap and the drop timeout keep their times (M218i)"
                 sb.receive_and_advance();
             }
             // B goes silent: A runs ahead two seconds' worth of rounds at
-            // this speed, and drops B after three seconds' worth
+            // this speed
             const osc::u32 cap = speed > 0 ? 200 : 2;
-            const int timeout = speed > 0 ? 300 : 3;
             osc::u32 most = 0;
-            const int rounds = tick_until(
-                [&] {
-                    sa.send_frame();
-                    sa.receive_and_advance();
-                    most = std::max(most, lead(sa, a));
-                },
-                "A drops the silent B", 1000, [&] { return sa.has_dropped(1); });
+            for (int r = 0; r < 1000; ++r) {
+                sa.send_frame();
+                sa.receive_and_advance();
+                most = std::max(most, lead(sa, a));
+            }
             CHECK(most == cap);
-            CHECK(rounds == timeout + 1);
+            CHECK_FALSE(sa.has_dropped(1));
         }
     }
 }

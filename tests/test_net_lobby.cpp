@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "core/game_state.hpp"
+#include "log_capture.hpp"
 #include "lua/lobby_wire.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -822,6 +823,54 @@ TEST_CASE("Ejecting a client: Moho's refusals, and the lockstep drops it (M218e)
         assert(not ok and string.find(err, 'must be >= 1 and <= 1'), err)
         assert(__dialog == 1, "the dialog is a network game's")
     )"));
+}
+
+TEST_CASE("A client whose connection closes is ejected and named on the console, as Moho's",
+          "[lobby][lua]") {
+    MpGuard guard;
+    World w;
+    REQUIRE(w.run(kScenarios));
+    REQUIRE(w.run("host = NewLobby('Host') host:HostGame()"));
+    REQUIRE(w.until("host.hosted"));
+    REQUIRE(w.run(R"(
+        a = NewLobby('Alice') a:JoinGame('127.0.0.1:' .. host:GetLocalPort(), 'Alice', nil)
+    )"));
+    REQUIRE(w.until("a.me == '1'"));
+    REQUIRE(w.run(R"(
+        function GameInfo()
+            return Config('/maps/two/two_scenario.lua', {
+                {Human = true, OwnerID = '0', PlayerName = 'Host'},
+                {Human = true, OwnerID = '1', PlayerName = 'Alice'},
+            })
+        end
+        a:LaunchGame(GameInfo())
+    )"));
+    auto alice = take_launched();
+    REQUIRE(w.run("host:LaunchGame(GameInfo())"));
+    REQUIRE(osc::lua::mp_attach_session(w.sim));
+    auto& mp = osc::lua::mp_net_state();
+    CHECK(osc::lua::mp_eject_lost().empty());
+
+    // Alice's game ends, and her connection with it: a goodbye
+    alice.reset();
+    std::vector<std::string> lost;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline && lost.empty()) {
+        mp.session->receive_and_advance();
+        lost = osc::lua::mp_eject_lost();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    REQUIRE(lost == std::vector<std::string>{"Alice"});
+    CHECK(mp.session->has_dropped(1));
+    REQUIRE(w.run(R"(
+        local clients = GetSessionClients()
+        assert(not clients[2].connected, 'Alice is gone')
+        assert(table.getn(clients[2].ejectedBy) == 1 and clients[2].ejectedBy[1] == 1, 'by the host')
+    )"));
+    osc::test::LogCapture log;
+    osc::lua::note_disconnected(w.state.raw(), lost);
+    CHECK(log.count("Alice disconnected.") == 1);
+    CHECK(osc::lua::mp_eject_lost().empty());
 }
 
 TEST_CASE("A lobby's game has the speed its lobby set; players change it, observers can't (M218i)",

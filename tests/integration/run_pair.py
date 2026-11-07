@@ -6,11 +6,12 @@ needed, so these run in CI.
 
 Usage:
     run_pair.py <osc_integration> <port> [--joiner-exe <exe>]
-                [--client-may-fail] [-- extra args...]
+                [--client-may-fail] [--continue-after <s>] [-- extra args...]
 
 Extra args after `--` go to both processes. With --client-may-fail only the
 host's exit code decides the result (used when the client deliberately
-leaves mid-match, e.g. --mp-drop-at).
+leaves mid-match, e.g. --mp-drop-at). With --continue-after, a joiner that
+stops its process (--mp-freeze-at) is continued that many seconds later.
 
 --joiner-exe runs the joiner from another build (the host's by default):
 Windows against Linux (M219). Off Windows, a `.exe` runs under Wine.
@@ -19,6 +20,7 @@ Windows against Linux (M219). Off Windows, a `.exe` runs under Wine.
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -44,6 +46,23 @@ def environment() -> dict[str, str]:
     return env
 
 
+def continue_when_stopped(proc: subprocess.Popen[bytes], after: float, deadline: float) -> None:
+    """Wait for `proc` to stop, then continue it `after` seconds later; if
+    it exits first, keep its exit code."""
+    while time.monotonic() < deadline:
+        pid, status = os.waitpid(proc.pid, os.WUNTRACED | os.WNOHANG)
+        if pid == 0:
+            time.sleep(0.05)
+            continue
+        if os.WIFSTOPPED(status):
+            print(f"run_pair: the joiner stopped; continuing it in {after:g} s", flush=True)
+            time.sleep(after)
+            os.kill(proc.pid, signal.SIGCONT)
+        else:
+            proc.returncode = os.waitstatus_to_exitcode(status)
+        return
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(__doc__, file=sys.stderr)
@@ -57,6 +76,9 @@ def main(argv: list[str]) -> int:
     joiner_exe = exe
     if "--joiner-exe" in options:
         joiner_exe = Path(options[options.index("--joiner-exe") + 1])
+    continue_after = None
+    if "--continue-after" in options:
+        continue_after = float(options[options.index("--continue-after") + 1])
 
     common = ["--mp-port", port, *extra]
     env = environment()
@@ -65,6 +87,8 @@ def main(argv: list[str]) -> int:
     # retries a refused join, but a refused connect costs Windows seconds).
     time.sleep(0.5)
     client = subprocess.Popen([*command(joiner_exe), "--mp-join", "127.0.0.1", *common], env=env)
+    if continue_after is not None:
+        continue_when_stopped(client, continue_after, time.monotonic() + TIMEOUT_SECONDS)
 
     try:
         client_rc = client.wait(timeout=TIMEOUT_SECONDS)
