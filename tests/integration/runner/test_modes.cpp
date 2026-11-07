@@ -153,6 +153,7 @@ constexpr Mode kModesBefore[] = {
     {"--strata-test", test_strata, false},
     {"--meshless-test", test_meshless, false},
     {"--lod-test", test_lod, false},
+    {"--mesh-load-test", test_mesh_load, false},
     {"--scroll-render-test", test_scroll_render, false},
     {"--camera-test", test_camera, false},
     {"--material-test", test_material, false},
@@ -408,6 +409,7 @@ void IntegrationModes::print_usage() const {
               << "  --strata-test      The terrain's strata blend as FA's (sharpened masks, upper stratum)\n"
               << "  --meshless-test    Entities without a mesh: nothing for effect carriers, a cube for units\n"
               << "  --lod-test         A mesh's LOD by Moho's LOD metric, none past its last; LOD bones by name\n"
+              << "  --mesh-load-test   No mesh drawn without its textures: every LOD's load with the mesh\n"
               << "  --scroll-render-test Texture scrollers: tank treads scroll as they drive\n"
               << "  --camera-test      The camera focuses on the ground; clicks pick the ground under the cursor\n"
               << "  --material-test    Meshes shade as FA's NormalMappedPS (environment cube, team colour)\n"

@@ -435,7 +435,7 @@ TEST_CASE("CivilianDeserter hands a defeated army's units to a civilian army",
     sim.set_share_condition("CivilianDeserter");
     sim.add_army("ARMY_1", "ARMY_1");
     sim.add_army("ARMY_2", "ARMY_2");
-    sim.add_army("CIVILIAN", "CIVILIAN"); // civilian recipient (not a participant)
+    sim.add_army("CIVILIAN", "CIVILIAN").set_civilian(true);
 
     spawn(sim, 0, {"COMMAND"});
     EntityId enemy_acu = spawn(sim, 1, {"COMMAND"});

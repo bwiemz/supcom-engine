@@ -230,6 +230,11 @@ void load_world(WorldLoad& load, osc::vfs::VirtualFileSystem& vfs,
         for (const std::string& name :
              osc::sim::session_army_names(setup, load.scenario_meta.armies))
             sim.add_army(name, name);
+        if (setup.civilians) {
+            for (const std::string& name : load.scenario_meta.extra_armies) {
+                sim.add_army(name, name).set_civilian(true);
+            }
+        }
     }
     if (sim.army_count() == 0) {
         sim.add_army("ARMY_1", "Player");

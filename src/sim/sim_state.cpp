@@ -980,10 +980,6 @@ ArmyBrain& SimState::add_army(const std::string& name,
     brain->set_index(static_cast<i32>(armies_.size()));
     brain->set_name(name);
     brain->set_nickname(nickname);
-    if (name.find("CIVILIAN") != std::string::npos ||
-        name.find("NEUTRAL") != std::string::npos) {
-        brain->set_civilian(true);
-    }
     armies_.push_back(std::move(brain));
     return *armies_.back();
 }

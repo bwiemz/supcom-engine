@@ -46,11 +46,15 @@ void CollisionCells::init(u32 width, u32 height) {
     const size_t cells = initialized() ? static_cast<size_t>(width_) * height_ : 0;
     units_.assign(cells, {});
     props_.assign(cells, {});
+    others_.assign(cells, {});
 }
 
 void CollisionCells::clear() {
     for (auto& cell : units_) cell.clear();
     for (auto& cell : props_) cell.clear();
+    for (auto& cell : others_) {
+        cell.clear();
+    }
 }
 
 CollisionCells::Rect CollisionCells::query_rect(f32 x0, f32 z0, f32 x1, f32 z1) {
@@ -92,31 +96,39 @@ std::optional<CollisionCells::Rect> CollisionCells::cells_of(const Entity& e) co
     return r;
 }
 
-std::vector<std::vector<Entity*>>* CollisionCells::lists_for(const Entity& e) {
-    if (e.is_unit()) return &units_;
-    if (e.is_prop()) return &props_;
-    return nullptr;
+std::vector<std::vector<Entity*>>& CollisionCells::lists_for(const Entity& e) {
+    if (e.is_unit()) {
+        return units_;
+    }
+    if (e.is_prop()) {
+        return props_;
+    }
+    return others_;
 }
 
 void CollisionCells::add(Entity& e) {
-    auto* lists = lists_for(e);
+    auto& lists = lists_for(e);
     const CellLink& l = e.cell_link();
-    if (!lists) return;
     // Rows step by the width; a cell past the map's edge wraps through the
     // mask, as Moho's index does.
     u32 row = static_cast<u32>(l.x) + (static_cast<u32>(l.z) << shift_);
-    for (u32 j = 0; j < l.h; ++j, row += static_cast<u32>(width_))
-        for (u32 i = 0; i < l.w; ++i) (*lists)[(row + i) & last_index_].push_back(&e);
+    for (u32 j = 0; j < l.h; ++j, row += static_cast<u32>(width_)) {
+        for (u32 i = 0; i < l.w; ++i) {
+            lists[(row + i) & last_index_].push_back(&e);
+        }
+    }
 }
 
 void CollisionCells::remove(Entity& e) {
-    auto* lists = lists_for(e);
+    auto& lists = lists_for(e);
     const CellLink& l = e.cell_link();
-    if (!lists || l.seq == 0) return;
+    if (l.seq == 0) {
+        return;
+    }
     u32 row = static_cast<u32>(l.x) + (static_cast<u32>(l.z) << shift_);
     for (u32 j = 0; j < l.h; ++j, row += static_cast<u32>(width_)) {
         for (u32 i = 0; i < l.w; ++i) {
-            auto& cell = (*lists)[(row + i) & last_index_];
+            auto& cell = lists[(row + i) & last_index_];
             // The last occurrence: a wrapped box may list it in one cell twice.
             const auto it = std::find(cell.rbegin(), cell.rend(), &e);
             if (it != cell.rend()) cell.erase(std::next(it).base());
@@ -125,7 +137,9 @@ void CollisionCells::remove(Entity& e) {
 }
 
 void CollisionCells::link(Entity& e) {
-    if (!initialized() || !lists_for(e)) return;
+    if (!initialized()) {
+        return;
+    }
     CellLink& l = e.cell_link();
     const auto cells = cells_of(e);
     if (!cells) {
@@ -145,12 +159,14 @@ void CollisionCells::link(Entity& e) {
 
 void CollisionCells::unlink(Entity& e) {
     CellLink& l = e.cell_link();
-    if (l.seq == 0) return;
+    if (l.seq == 0) {
+        return;
+    }
     remove(e);
     l = CellLink{};
 }
 
-std::vector<Entity*> CollisionCells::gather(const Rect& r, bool units, bool props) {
+std::vector<Entity*> CollisionCells::gather(const Rect& r, bool units, bool props, bool others) {
     std::vector<Entity*> out;
     if (!initialized()) return out;
     const u64 mark = ++gather_;
@@ -170,6 +186,9 @@ std::vector<Entity*> CollisionCells::gather(const Rect& r, bool units, bool prop
             const u32 index = (row + static_cast<u32>(i)) & last_index_;
             if (units) take(units_[index]);
             if (props) take(props_[index]);
+            if (others) {
+                take(others_[index]);
+            }
         }
     }
     return out;
@@ -183,7 +202,9 @@ void CollisionCells::restore(std::vector<Entity*> entities, u64 count) {
         CellLink& l = e->cell_link();
         const u64 seq = l.seq;
         l = CellLink{};
-        if (seq == 0 || !initialized() || !lists_for(*e)) continue;
+        if (seq == 0 || !initialized()) {
+            continue;
+        }
         const auto cells = cells_of(*e);
         if (!cells) continue;
         l.x = cells->x;

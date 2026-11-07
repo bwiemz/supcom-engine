@@ -9,9 +9,9 @@ namespace osc::sim {
 
 class Entity;
 
-/// Moho's collision-cell database (EntityOccupationManager), for units and
-/// props. The map is cut into cells 4 units square, and each cell lists the
-/// units and the props whose collision box (its world bounds) touches it,
+/// Moho's collision-cell database (EntityOccupationManager). The map is cut
+/// into cells 4 units square, and each cell lists the units, the props and
+/// the other entities whose collision box (its world bounds) touches it,
 /// the last linked first. GetUnitsInRect and GetReclaimablesInRect gather
 /// from it: they take whatever touches the rectangle's cells, not what
 /// stands in it, and give it in the cells' order.
@@ -44,16 +44,16 @@ public:
     static Rect box_rect(f32 min_x, f32 min_z, f32 max_x, f32 max_z);
 
     /// Link `e` where its collision box is now, relinking it if its cells
-    /// changed, or unlink it if it has no shape (Moho's UpdateRect). Only
-    /// units and props link.
+    /// changed, or unlink it if it has no shape (Moho's UpdateRect).
     void link(Entity& e);
     /// Take `e` out (Moho's CollisionShapeBase::Remove).
     void unlink(Entity& e);
 
     /// Each entity in the cells `r` covers, once, in Moho's order: cell by
     /// cell along each row, row after row, and in each cell its units (with
-    /// `units`), then its props (with `props`), the last linked first.
-    std::vector<Entity*> gather(const Rect& r, bool units, bool props);
+    /// `units`), then its props (with `props`), then the rest (with `others`),
+    /// the last linked first.
+    std::vector<Entity*> gather(const Rect& r, bool units, bool props, bool others = false);
 
     /// How many links have been made: a snapshot keeps it, so that links
     /// after a load go on in the same order.
@@ -68,15 +68,15 @@ private:
     i32 height_ = 0;     ///< cells down
     i32 shift_ = 0;      ///< log2 of width_, rounded down (Moho's mGridWidthShift)
     u32 last_index_ = 0; ///< the cell index mask (Moho's mLastIndex)
-    /// Each cell's units and props, the last linked at the back.
     std::vector<std::vector<Entity*>> units_;
     std::vector<std::vector<Entity*>> props_;
+    std::vector<std::vector<Entity*>> others_;
     u64 seq_ = 0;
     u64 gather_ = 0;
 
     /// The cells `e`'s collision box covers now, none without a shape.
     std::optional<Rect> cells_of(const Entity& e) const;
-    std::vector<std::vector<Entity*>>* lists_for(const Entity& e);
+    std::vector<std::vector<Entity*>>& lists_for(const Entity& e);
     void add(Entity& e);
     void remove(Entity& e);
 };

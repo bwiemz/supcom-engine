@@ -67,6 +67,7 @@ void test_feedback_render(TestContext& ctx) {
     crosshair.shader_name = "CommandFeedback2";
     r.add_command_feedback_blip(flag);
     r.add_command_feedback_blip(crosshair);
+    shots.redraw_until_loaded();
 
     const Pixels marked = shot(2);
     const u32 flags = r.mesh_draws(renderer::MeshTechnique::CommandFeedback);
@@ -86,6 +87,7 @@ void test_feedback_render(TestContext& ctx) {
         site.uniform_scale = 1.0f;
         return site;
     }());
+    shots.redraw_until_loaded();
     (void)shot(1);
     const u32 with_site = r.mesh_draws(renderer::MeshTechnique::CommandFeedback);
     t.check(with_site == 2,
@@ -115,6 +117,7 @@ void test_feedback_render(TestContext& ctx) {
     const Pixels hidden_flag = shot(2);
     const u32 hidden_draws = r.mesh_draws(renderer::MeshTechnique::RallyPoint);
     rally.world_mesh()->hidden = false;
+    shots.redraw_until_loaded();
     const Pixels rally_shown = shot(2);
     const u32 rally_draws = r.mesh_draws(renderer::MeshTechnique::RallyPoint);
     const size_t rally_changed = changed_pixels(hidden_flag, rally_shown);

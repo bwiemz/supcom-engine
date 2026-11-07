@@ -519,15 +519,22 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
     }
     // Random spawn: the two slots taken, in order, are armies 0 and 1 (each
     // side's by where retail's shuffle put it), both human, each starting at
-    // the marker of its slot's army, apart
+    // the marker of its slot's army, apart; after them the scenario's two
+    // civilian armies (Moho's LaunchGame)
     const i32 want = mp.local_army();
     if (want != 0 && want != 1) fail(fmt::format("plays army {}, not 0 or 1", want));
     const auto human = [&](size_t i) {
         const sim::ArmyBrain* brain = sim.army_at(i);
         return brain && brain->is_human();
     };
-    if (sim.army_count() != 2 || !human(0) || !human(1)) {
-        fail(fmt::format("{} armies, not the lobby's two humans", sim.army_count()));
+    const auto civilian = [&](size_t i, const char* name) {
+        const sim::ArmyBrain* brain = sim.army_at(i);
+        return brain && brain->is_civilian() && brain->name() == name;
+    };
+    if (sim.army_count() != 4 || !human(0) || !human(1) || !civilian(2, "ARMY_9") ||
+        !civilian(3, "NEUTRAL_CIVILIAN")) {
+        fail(fmt::format("{} armies, not the lobby's two humans and the scenario's two civilians",
+                         sim.army_count()));
     } else {
         const sim::ArmyBrain& a = *sim.army_at(0);
         const sim::ArmyBrain& b = *sim.army_at(1);
