@@ -1602,20 +1602,41 @@ static void run_ui_chunk(lua_State* L, const char* code, const char* what) {
     }
 }
 
-/// EngineStartFrontEndUI(): Moho's UI_StartFrontEnd, in this Lua state (the
-/// splash screen leaves through it). The UI state becomes the front end's,
-/// the input capture and the dragger let go and the root frame is emptied,
-/// as Moho's new frames start, then uimain.lua's StartFrontEndUI shows the
-/// main menu.
-static int l_EngineStartFrontEndUI(lua_State* L) {
-    osc::set_ui_state(osc::UIState::FrontEnd);
+/// Moho's StartUIMainEntry, in this Lua state: the UI state becomes
+/// `state`, the input capture and the dragger let go and the root frame is
+/// emptied, as Moho's new frames start, then `code` runs uimain.lua's entry.
+static void start_ui_main_entry(lua_State* L, osc::UIState state, const char* code,
+                                const char* what) {
+    osc::set_ui_state(state);
     if (auto* reg = get_ui_registry(L)) reg->clear_input_capture();
     lua_pushstring(L, "__osc_active_dragger");
     lua_pushnil(L);
     lua_rawset(L, LUA_REGISTRYINDEX);
     run_ui_chunk(L, "moho.control_methods.Destroy(GetFrame(0))", "the root frame's reset");
-    run_ui_chunk(L, "import('/lua/ui/uimain.lua').StartFrontEndUI()",
-                 "'/lua/ui/uimain.lua:StartFrontEndUI'");
+    run_ui_chunk(L, code, what);
+}
+
+/// EngineStartFrontEndUI(): Moho's UI_StartFrontEnd (the splash screen
+/// leaves through it): uimain.lua's StartFrontEndUI shows the main menu.
+static int l_EngineStartFrontEndUI(lua_State* L) {
+    start_ui_main_entry(L, osc::UIState::FrontEnd, "import('/lua/ui/uimain.lua').StartFrontEndUI()",
+                        "'/lua/ui/uimain.lua:StartFrontEndUI'");
+    return 0;
+}
+
+/// EngineStartSplashScreens(): Moho's UI_StartSplashScreens, as
+/// EngineStartFrontEndUI but for the splash state and uimain.lua's
+/// StartSplashScreen, which the game starts with (faf-re
+/// func_EngineStartSplashScreens). No retail script calls it.
+static int l_EngineStartSplashScreens(lua_State* L) {
+    if (lua_gettop(L) != 0) {
+        return arg_count_error(L,
+                               "EngineStartSplashScreens() - kill current UI and start splash "
+                               "screens",
+                               0, lua_gettop(L));
+    }
+    start_ui_main_entry(L, osc::UIState::Splash, "import('/lua/ui/uimain.lua').StartSplashScreen()",
+                        "'/lua/ui/uimain.lua:StartSplashScreen'");
     return 0;
 }
 
@@ -4407,6 +4428,23 @@ static int l_PlayVoice(lua_State* L) {
     return 1;
 }
 
+/// PlayTutorialVO(sound) -> handle, or nil: a tutorial's voice cue. Moho's
+/// plays it on its ambient engine, neither prepared first nor ducking
+/// (faf-re cfunc_PlayTutorialVOL); the engine has one engine for all.
+static int l_PlayTutorialVO(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "PlayTutorialVO(params)", 1, lua_gettop(L));
+    }
+    auto* mgr = get_sound_mgr(L);
+    std::string bank, cue;
+    if (!mgr || !sound_arg(L, 1, bank, cue)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    push_sound_handle(L, play_ui_sound(*mgr, bank, cue, false));
+    return 1;
+}
+
 /// StopAllSounds()
 static int l_StopAllSounds(lua_State* L) {
     if (auto* mgr = get_sound_mgr(L)) mgr->stop_all();
@@ -4964,6 +5002,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("SetCursor", l_SetCursor);
     state.register_function("GetCursor", l_GetCursor);
     state.register_function("EngineStartFrontEndUI", l_EngineStartFrontEndUI);
+    state.register_function("EngineStartSplashScreens", l_EngineStartSplashScreens);
     state.register_function("AddInputCapture", l_AddInputCapture);
     state.register_function("RemoveInputCapture", l_RemoveInputCapture);
     state.register_function("AnyInputCapture", l_AnyInputCapture);
@@ -5138,6 +5177,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("PlaySound", l_PlaySound);
     state.register_function("StopSound", l_StopSound);
     state.register_function("PlayVoice", l_PlayVoice);
+    state.register_function("PlayTutorialVO", l_PlayTutorialVO);
     state.register_function("SoundIsPrepared", l_SoundIsPrepared);
     state.register_function("StartSound", l_StartSound);
     state.register_function("PauseSound", l_PauseSound);

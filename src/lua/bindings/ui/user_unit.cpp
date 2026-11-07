@@ -6,6 +6,7 @@
 // retail UI script calls, GetStat and CanAttackTarget, still read the live
 // unit (read-only): the snapshot doesn't carry a unit's stats or weapons.
 
+#include "lua/arg_count.hpp"
 #include "lua/category_utils.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings_internal.hpp"
@@ -609,6 +610,16 @@ const sim::WorldSnapshot* ui_world(lua_State* L) {
         sim::capture_pending(*sim, world.snapshot);
     }
     return &world.snapshot;
+}
+
+int ui_GetBlueprint(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "blueprint = GetBlueprint(entity)", 1, lua_gettop(L));
+    }
+    if (!lua_istable(L, 1)) {
+        return luaL_error(L, "Expected a game object. (Did you call with '.' instead of ':'?)");
+    }
+    return uu_GetBlueprint(L);
 }
 
 int ui_is_destroyed(lua_State* L) {
