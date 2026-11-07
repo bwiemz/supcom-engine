@@ -293,6 +293,10 @@ public:
     bool resource_sharing() const { return resource_sharing_; }
     void set_resource_sharing(bool b) { resource_sharing_ = b; }
 
+    // --- Score shown (Moho's mShowScore: on for every army, SetArmyShowScore) ---
+    bool show_score() const { return show_score_; }
+    void set_show_score(bool b) { show_score_ = b; }
+
     // --- Skin name ---
     const std::string& skin_name() const { return skin_name_; }
     void set_skin_name(const std::string& s) { skin_name_ = s; }
@@ -410,6 +414,7 @@ private:
 
     std::string current_plan_;
     bool resource_sharing_ = true;
+    bool show_score_ = true;
     std::string skin_name_;
     std::set<std::string> restricted_blueprints_;
     std::unordered_map<std::string, f64> stats_;
