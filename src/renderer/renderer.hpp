@@ -320,6 +320,10 @@ public:
     /// UI_DrawLine and kin)
     const WorldShapes& world_shapes() const { return world_shapes_; }
     const SelectionRenderer& selection_renderer() const { return selection_renderer_; }
+    /// AddBlinkyBox: `unit`'s brackets flash (SelectionRenderer::add_blinky_box).
+    void add_blinky_box(sim::EntityId unit, f32 on_time, f32 off_time, f32 total_time) {
+        selection_renderer_.add_blinky_box(unit, on_time, off_time, total_time);
+    }
     /// FA's range overlays: the profiles and filters its UI sets and the
     /// range convars (Moho's viewport keeps them), and what they drew.
     RangeOverlays& range_overlays() { return *range_overlays_; }
