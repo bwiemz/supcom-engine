@@ -278,6 +278,7 @@ private:
 
     u32 collected_tick = 0;
     std::vector<u32> job_dropped;
+    std::vector<std::string> job_disconnected;
     /// The frames' wall times while a game plays: how many, their sum, the
     /// worst, and those over 20, 33 and 50 ms (at 60 fps: one frame dropped,
     /// two, three).

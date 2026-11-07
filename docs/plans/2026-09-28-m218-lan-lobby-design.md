@@ -229,6 +229,11 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
     game at their own speed, and one slower to load mustn't drop. A peer
     that never sends one (it died loading) is left to the players, as in
     Moho: the disconnect dialog shows it, and they eject it.
+  - *Changed (2026-11-07):* no peer is dropped for its silence, and no
+    stream lost: a silent peer is waited for, as Moho's client manager and
+    UDP connection wait, and the players eject it from retail's disconnect
+    dialog. A closed connection ejects its client at once, as Moho's does.
+    The drop timer and the alive message are gone.
 
 - **M218i:** a network game's speed, as Moho's client manager negotiates
   it. The lobby's `GameSpeed` fixes it (`normal` +0, `fast` +4) or lets

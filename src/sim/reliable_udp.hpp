@@ -73,8 +73,9 @@ public:
     static constexpr i64 kFirstResendMs = 200;
     static constexpr i64 kMostResendMs = 2000;
     static constexpr i64 kHelloEveryMs = 250;
-    /// A stream with no word from its peer this long is lost; a hello
-    /// unanswered this long fails.
+    /// A stream closed here with no word from its peer this long is gone (an
+    /// open one waits for its peer however long, as Moho's UDP connection
+    /// does); a hello unanswered this long fails.
     static constexpr i64 kLostMs = 10000;
     static constexpr i64 kConnectMs = 10000;
 

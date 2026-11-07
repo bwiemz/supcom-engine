@@ -147,6 +147,8 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME mp.lockstep_desync_detected
              COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29732
                      -- --mp-desync)
+    # A joiner gone without a goodbye is quiet: the host's player ejects it
+    # once retail's disconnect dialog would show it, and plays on
     add_test(NAME mp.lockstep_peer_drop
              COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29733
                      --client-may-fail -- --mp-drop-at 20)
@@ -160,6 +162,14 @@ if(Python3_Interpreter_FOUND)
                      $<TARGET_FILE:opensupcom>)
     set_tests_properties(mp.lockstep_sync mp.lockstep_desync_detected mp.lockstep_peer_drop
                          mp.lockstep_slow_peer mp.no_game_exit PROPERTIES LABELS mp TIMEOUT 240)
+    if(NOT WIN32)
+        # The joiner's process stopped for 12 s (SIGSTOP): the host waits for
+        # it, as Moho's does, and both play on in sync
+        add_test(NAME mp.lockstep_silent_peer
+                 COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29735
+                         --continue-after 12 -- --mp-freeze-at 20)
+        set_tests_properties(mp.lockstep_silent_peer PROPERTIES LABELS mp TIMEOUT 240)
+    endif()
 else()
     message(STATUS "Python3 not found: two-process multiplayer tests not registered")
 endif()
@@ -635,9 +645,10 @@ if(Python3_Interpreter_FOUND)
         RESOURCE_LOCK lan_game
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
-    # M218e: the joiner leaves at tick 120; the host drops it by the
-    # lockstep's agreement, defeats its army, shows and closes retail's
-    # disconnect dialog, and plays on alone.
+    # M218e: the joiner's process ends at tick 120 without a goodbye; the
+    # host's player ejects it from retail's disconnect dialog, the lockstep
+    # drops it, its army is defeated, the dialog closes, and the host plays
+    # on alone.
     add_test(NAME data.lan_game_quit
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/lan_game.py
                      $<TARGET_FILE:opensupcom> 29742 -- --lan-game-quit-at 120)
