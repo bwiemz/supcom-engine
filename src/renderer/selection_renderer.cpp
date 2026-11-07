@@ -121,12 +121,33 @@ const SelectionBlueprint& SelectionRenderer::box_blueprint(const std::string& id
     return out;
 }
 
+bool advance_blinky_box(BlinkyBox& box, f32 dt) {
+    box.duration += dt;
+    box.cycle += dt;
+    const f32 half = box.on ? box.on_time : box.off_time;
+    if (box.cycle > half) {
+        box.on = !box.on;
+        box.cycle -= half;
+    }
+    return box.on;
+}
+
+void SelectionRenderer::add_blinky_box(sim::EntityId unit, f32 on_time, f32 off_time,
+                                       f32 total_time) {
+    BlinkyBox box;
+    box.unit = unit;
+    box.on_time = on_time;
+    box.off_time = off_time;
+    box.total_time = total_time;
+    blinky_boxes_.push_back(box);
+}
+
 void SelectionRenderer::update(const sim::FrameView& view, const Camera& camera, u32 viewport_h,
                                const std::unordered_set<sim::EntityId>* selected,
                                sim::EntityId hovered, i32 player_army,
                                const std::optional<std::array<Vector3, 4>>& drag,
-                               TextureCache& tex_cache, MeshCache& mesh_cache, lua_State* L,
-                               u32 fi) {
+                               TextureCache& tex_cache, MeshCache& mesh_cache, lua_State* L, u32 fi,
+                               f32 dt) {
     brackets_.clear();
     drew_drag_box_ = false;
     std::vector<WorldQuadBatch::Quad> quads;
@@ -208,8 +229,19 @@ void SelectionRenderer::update(const sim::FrameView& view, const Camera& camera,
             add_brackets(id, true);
         }
     }
-    if (hovered && !(selected && selected->count(hovered))) {
+    // The unit under the cursor, unless it is selected or blinking: a
+    // blinky box's brackets are its own, lit or not (func_RenUI 0x007FD679).
+    const bool blinking = std::any_of(blinky_boxes_.begin(), blinky_boxes_.end(),
+                                      [&](const BlinkyBox& box) { return box.unit == hovered; });
+    if (hovered && !(selected && selected->count(hovered)) && !blinking) {
         add_brackets(hovered, false);
+    }
+    // The blinky boxes lit this frame, in the unit's army colour for the
+    // player as the hovered unit's, selected or not; one whose unit is gone
+    // or whose time is up goes (0x007FD804).
+    for (sim::EntityId id :
+         tick_blinky_boxes(dt, [&](const BlinkyBox& box) { return view.find(box.unit); })) {
+        add_brackets(id, false);
     }
     if (drag) {
         if (const GPUTexture* tex = tex_cache.get(kDragBox)) {

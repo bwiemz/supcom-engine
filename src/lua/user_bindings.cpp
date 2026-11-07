@@ -40,6 +40,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/waitable.hpp"
+#include "sim/world_snapshot.hpp"
 #include "ui/console.hpp"
 #include "ui/key_codes.hpp"
 #include "ui/ui_control.hpp"
@@ -621,6 +622,39 @@ static int l_AddCommandFeedbackBlip(lua_State* L) {
     spec.position = {xyz[0], xyz[1], xyz[2]};
     spec.duration = static_cast<f32>(lua_tonumber(L, 2));
     r->add_command_feedback_blip(std::move(spec));
+    return 0;
+}
+
+/// AddBlinkyBox(entityId, onTime, offTime, totalTime): the unit's brackets
+/// flash in its army's colour for the player, from off, `onTime` seconds on
+/// and `offTime` off, until `totalTime` seconds have passed or it is gone
+/// (faf-re cfunc_AddBlinkyBoxL, func_PushBlinkyBox). An id the session
+/// doesn't know is an error; the times are read last to first, as Moho's are.
+static int l_AddBlinkyBox(lua_State* L) {
+    if (lua_gettop(L) != 4) {
+        return arg_count_error(L, "AddBlinkyBox(entityId, onTime, offTime, totalTime)", 4,
+                               lua_gettop(L));
+    }
+    if (lua_type(L, 1) != LUA_TNUMBER) {
+        return arg_type_error(L, 1, "integer");
+    }
+    const auto moho_id = static_cast<u32>(static_cast<i32>(lua_tonumber(L, 1)));
+    const sim::SimState* sim = session_active(L) ? sim::get_sim(L) : nullptr;
+    const sim::EntityId id = sim ? sim->entity_registry().live_id(moho_id) : sim::EntityId();
+    const sim::WorldSnapshot* world = id ? ui_world(L) : nullptr;
+    if (!world || !world->find(id)) {
+        return luaL_error(L, "Invalid entity id");
+    }
+    f32 times[3] = {};
+    for (int arg = 4; arg >= 2; --arg) {
+        if (lua_type(L, arg) != LUA_TNUMBER) {
+            return arg_type_error(L, arg, "number");
+        }
+        times[arg - 2] = static_cast<f32>(lua_tonumber(L, arg));
+    }
+    if (auto* r = get_renderer(L)) {
+        r->add_blinky_box(id, times[0], times[1], times[2]);
+    }
     return 0;
 }
 
@@ -2243,6 +2277,7 @@ void register_user_bindings(LuaState& state) {
     // Globals of the UI state.
     state.register_function("SetInvertMidMouseButton", l_SetInvertMidMouseButton);
     state.register_function("AddCommandFeedbackBlip", l_AddCommandFeedbackBlip);
+    state.register_function("AddBlinkyBox", l_AddBlinkyBox);
     state.register_function("IsDestroyed", ui_is_destroyed);
     // The engine's statistics tree, as each frame publishes it
     // (update_engine_stats), and FAF's engine/Library.lua's folder the

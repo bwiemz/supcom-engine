@@ -16,7 +16,6 @@
 # a dead path, and the gap stays. A name marked "user state" is one of
 # Moho's user-state functions no retail script calls, with what Moho's does.
 
-G AddBlinkyBox              # user state: blinks a unit's selection bracket
 G BaseManagerReclaimThread  # not Moho's: a BaseManager method called bare
 G ClearQueueGrid            # not Moho's
 G ERROR                     # not Moho's: a retail typo (error)
