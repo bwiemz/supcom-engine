@@ -147,9 +147,7 @@ std::string valid_player_name(u32 uid, const std::string& name, u32 local_uid,
 
 /// A launched game's connections (M218c): the lobby's, carrying the
 /// lockstep's frames, as Moho's LaunchGame hands its peers' connections to
-/// the game. Receiving polls the lobby, which keeps its keepalive going;
-/// what the lobby reports (a player gone, late chat) is only logged, since
-/// the lockstep notices a silent player itself.
+/// the game. Receiving polls the lobby, which keeps its keepalive going.
 class LobbyGameTransport : public INetTransport {
 public:
     /// `clock`: poll's monotonic milliseconds.
@@ -167,11 +165,15 @@ public:
         if (net_->hosting()) net_->eject(uid, "KickedByHost");
     }
     std::vector<LobbyEvent> take_data();
+    /// The players whose connection closed since the last call (the host's,
+    /// for a client that lost it), by uid.
+    std::vector<u32> take_lost();
 
 private:
     std::unique_ptr<LobbyNet> net_;
     std::function<i64()> clock_;
     std::vector<LobbyEvent> data_;
+    std::vector<u32> lost_;
 };
 
 } // namespace osc::sim

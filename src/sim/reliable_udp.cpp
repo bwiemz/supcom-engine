@@ -367,10 +367,13 @@ void ReliableUdp::pump_locked(i64 now) {
                 send_control(*s, kHello);
             }
             break;
-        case State::Open:
+        case State::Open: flush(*s); break;
         case State::Closing:
-            if (now - s->last_heard > kLostMs) s->state = State::Closed;
-            else flush(*s);
+            if (now - s->last_heard > kLostMs) {
+                s->state = State::Closed;
+            } else {
+                flush(*s);
+            }
             break;
         case State::Closed: break;
         }

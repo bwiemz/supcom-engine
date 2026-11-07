@@ -291,6 +291,22 @@ void mp_disconnect_source(osc::u32 source) {
     if (s.lobby_game && source < s.clients.size()) s.lobby_game->disconnect(s.clients[source].uid);
 }
 
+std::vector<std::string> mp_eject_lost() {
+    auto& s = mp_net_state();
+    std::vector<std::string> names;
+    if (!s.lobby_game || !s.session) {
+        return names;
+    }
+    for (const osc::u32 uid : s.lobby_game->take_lost()) {
+        for (osc::u32 source = 0; source < s.clients.size(); ++source) {
+            if (s.clients[source].uid == uid && s.session->eject(source)) {
+                names.push_back(s.clients[source].name);
+            }
+        }
+    }
+    return names;
+}
+
 void mp_teardown() {
     reset_session_chat(); // the game's chat not yet delivered goes with it
     mp_net_state().reset();

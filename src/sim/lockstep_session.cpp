@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <utility>
 
@@ -96,10 +97,6 @@ u32 LockstepSession::lead_cap() const {
     return scaled_rounds(kMaxLead, speed_);
 }
 
-u32 LockstepSession::drop_timeout() const {
-    return drop_timeout_rounds_ == 0 ? 0 : scaled_rounds(drop_timeout_rounds_, speed_);
-}
-
 void LockstepSession::submit_local(const std::vector<EntityId>& unit_ids, const UnitCommand& cmd,
                                    bool clear_existing) {
     ScheduledCommand sc;
@@ -123,17 +120,13 @@ u32 LockstepSession::submit_local_callback(SimCallbackEntry callback) {
 }
 
 void LockstepSession::send_frame() {
-    ++round_;
-    std::vector<u8> msg;
-    ByteWriter w(msg);
     // As far ahead of the sim as a peer runs: it waits for the others (its
-    // orders wait in pending_), saying only that it is still there
+    // orders wait in pending_)
     if (next_frame_ > sim_.beat_count() + lead_cap()) {
-        w.u8v(kAliveMessage);
-        w.u32v(local_source_);
-        transport_.broadcast(msg);
         return;
     }
+    std::vector<u8> msg;
+    ByteWriter w(msg);
     w.u8v(kFrameMessage);
     w.u32v(local_source_);
     w.u32v(next_frame_);
@@ -177,23 +170,17 @@ void LockstepSession::receive_and_advance() {
                 apply_speed(clock, source, rate);
             continue;
         }
-        if (type == kAliveMessage) {
-            const u32 source = r.u32v();
-            auto heard = peer_heard_round_.find(source);
-            if (r.ok() && heard != peer_heard_round_.end()) heard->second = round_;
-            continue;
-        }
         if (type != kFrameMessage) continue;
         u32 source = r.u32v();
         // Only the game's sources play: a frame from any other (the engine's,
         // whose callbacks defeat armies, among them) would gate the scheduler
         // on a source that never confirms, and carry orders no player gave.
-        // Ignore a source that is dropped or being dropped: late frames must
-        // neither re-register it in the scheduler gate (re-stalling the
-        // survivors) nor move the last frame this peer reported for it.
-        if (!participant(source) || has_dropped(source) || dropping(source) ||
-            source == local_source_)
+        // A dropped or ejected source's late frames would re-gate the
+        // scheduler on it and move the last frame this peer reported
+        if (!participant(source) || has_dropped(source) || ejecting(source) ||
+            source == local_source_) {
             continue;
+        }
         u32 frame = r.u32v();
         u8 has_cs = r.u8v();
         u32 cs_beat = r.u32v();
@@ -215,7 +202,6 @@ void LockstepSession::receive_and_advance() {
         sim_.command_scheduler().confirm_frame(source, frame);
         u32& pc = peer_confirmed_[source];
         if (frame > pc) pc = frame;
-        peer_heard_round_[source] = round_; // arms the drop timer after first contact
         if (has_cs) {
             note_peer_checksum(source, cs_beat, cs_parts);
         }
@@ -227,30 +213,9 @@ void LockstepSession::receive_and_advance() {
     }
 
     // Ejected, this peer's game is over: it neither ticks on nor drops the
-    // others (cut off from them, it would time them all out and play on
-    // alone), as Moho's ejected client waits
+    // others, as Moho's ejected client waits
     if (ejected_) return;
 
-    // A peer silent for longer than the timeout, in rounds (each a tick's
-    // time: a peer held at kMaxLead still has them, with no frames), is
-    // reported by this survivor; the drop happens once every survivor has.
-    // Only sources that have sent a frame are armed: peers load the game at
-    // their own speed, so a slow first frame at session start can't
-    // false-drop. One that never sends one is left to the players, as
-    // Moho's: the disconnect dialog shows it, and they eject it.
-    if (const u32 timeout = drop_timeout(); timeout > 0) {
-        std::vector<u32> late;
-        for (const auto& [src, heard] : peer_heard_round_) {
-            if (src == local_source_ || has_dropped(src) || dropping(src)) continue;
-            if (round_ - heard > timeout) late.push_back(src);
-        }
-        std::sort(late.begin(), late.end());
-        for (u32 src : late) {
-            spdlog::warn("[lockstep] peer source {} timed out ({} rounds without a word)", src,
-                         round_ - peer_heard_round_[src]);
-            begin_drop(src);
-        }
-    }
     finalize_drops();
 
     // Beat as far as every peer's confirmations allow.
@@ -263,13 +228,24 @@ void LockstepSession::receive_and_advance() {
 }
 
 void LockstepSession::begin_drop(u32 source) {
-    if (source == local_source_ || has_dropped(source) || dropping(source)) return;
+    if (source == local_source_ || has_dropped(source) || ejecting(source)) {
+        return;
+    }
+    // Its own reports count no more, as Moho's ProcessEject drops its
+    // requests
+    for (auto it = drop_votes_.begin(); it != drop_votes_.end();) {
+        it->second.last_frame.erase(source);
+        it = it->second.last_frame.empty() ? drop_votes_.erase(it) : std::next(it);
+    }
     DropVote& vote = drop_votes_[source];
     auto confirmed = peer_confirmed_.find(source);
     const u32 last = confirmed == peer_confirmed_.end() ? 0 : confirmed->second;
     vote.last_frame[local_source_] = last;
-    auto kept = recent_frames_.find(source);
-    if (kept != recent_frames_.end()) vote.frames = kept->second;
+    if (auto kept = recent_frames_.find(source); kept != recent_frames_.end()) {
+        for (const auto& [frame, commands] : kept->second) {
+            vote.frames.emplace(frame, commands);
+        }
+    }
 
     // Report it: the last frame this peer holds, and the frames it has kept,
     // as many of the newest as fit one wire message (the newest are the ones
@@ -333,8 +309,9 @@ void LockstepSession::take_drop_report(ByteReader& r) {
         ejected_ = true;
         return;
     }
-    if (has_dropped(source) || has_dropped(reporter) || dropping(reporter)) return;
-    begin_drop(source); // a report from another survivor draws this one's
+    if (has_dropped(source) || has_dropped(reporter) || ejecting(reporter)) {
+        return;
+    }
     DropVote& vote = drop_votes_[source];
     vote.last_frame[reporter] = last;
     for (auto& [frame, commands] : relayed) vote.frames.emplace(frame, std::move(commands));
@@ -419,9 +396,10 @@ std::vector<u32> LockstepSession::take_dropped() {
 }
 
 bool LockstepSession::eject(u32 source) {
-    if (source == local_source_ || has_dropped(source) || dropping(source) ||
-        std::find(all_sources_.begin(), all_sources_.end(), source) == all_sources_.end())
+    if (ejected_ || source == local_source_ || has_dropped(source) || ejecting(source) ||
+        std::find(all_sources_.begin(), all_sources_.end(), source) == all_sources_.end()) {
         return false;
+    }
     spdlog::warn("[lockstep] ejecting peer source {}", source);
     begin_drop(source);
     finalize_drops(); // this peer may be its only survivor
