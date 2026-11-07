@@ -4203,7 +4203,37 @@ void Unit::tick_dive(const map::Terrain* terrain, lua_State* L, bool moved, bool
     }
 }
 
+void Unit::add_recoil_impulse(const Vector3& impulse) {
+    // Its heading: the current transform's Z axis (0x006B89B0).
+    const Quaternion& q = orientation();
+    const Vector3 forward{(q.x * q.z + q.w * q.y) * 2.0f, (q.y * q.z - q.w * q.x) * 2.0f,
+                          1.0f - (q.x * q.x + q.y * q.y) * 2.0f};
+    const f32 length_sq = forward.x * forward.x + forward.y * forward.y + forward.z * forward.z;
+    Vector3 along;
+    if (length_sq > 0.0f) {
+        const f32 scale =
+            (impulse.y * forward.y + impulse.z * forward.z + impulse.x * forward.x) / length_sq;
+        along = {forward.x * scale, forward.y * scale, forward.z * scale};
+    }
+    constexpr f32 kRecoilShare = 0.1f;
+    recoil_impulse_.x += (impulse.x - along.x) * kRecoilShare;
+    recoil_impulse_.y += (impulse.y - along.y) * kRecoilShare;
+    recoil_impulse_.z += (impulse.z - along.z) * kRecoilShare;
+}
+
 Vector3 Unit::dive_lean_normal(f32 diving_speed) {
+    // Its rock first: the recoil, damped, moves the tilt, which the hull's
+    // stability pulls back on (0x006C1350). Neither tips it up or down.
+    body_tilt_.y = 0.0f;
+    recoil_impulse_.y = 0.0f;
+    const f32 damping = 1.0f - roll_damping_;
+    recoil_impulse_ = {recoil_impulse_.x * damping, recoil_impulse_.y * damping,
+                       recoil_impulse_.z * damping};
+    body_tilt_ = {body_tilt_.x + recoil_impulse_.x, body_tilt_.y + recoil_impulse_.y,
+                  body_tilt_.z + recoil_impulse_.z};
+    recoil_impulse_ = {recoil_impulse_.x - body_tilt_.x * roll_stability_,
+                       recoil_impulse_.y - body_tilt_.y * roll_stability_,
+                       recoil_impulse_.z - body_tilt_.z * roll_stability_};
     Vector3 target;
     if (vert_motion_ != VertMotion::None) {
         const Quaternion& q = orientation();
@@ -4216,7 +4246,8 @@ Vector3 Unit::dive_lean_normal(f32 diving_speed) {
     }
     dive_lean_.x = target.x * 0.25f + dive_lean_.x * 0.75f;
     dive_lean_.z = target.z * 0.25f + dive_lean_.z * 0.75f;
-    return normalized({dive_lean_.x, 1.0f, dive_lean_.z});
+    return normalized(
+        {dive_lean_.x + body_tilt_.x, 1.0f + body_tilt_.y, dive_lean_.z + body_tilt_.z});
 }
 
 void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {
