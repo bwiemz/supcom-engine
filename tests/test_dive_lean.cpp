@@ -211,3 +211,46 @@ TEST_CASE("A sub dives nose first under way; a ship beside it stays level", "[di
     CHECK(ship->position().x - 40.0f > 5.0f);
     CHECK(ship_tilt < 0.01f);
 }
+
+TEST_CASE("A ship's hull rocks from a recoil across it, and rights itself under way", "[dive]") {
+    Sea w(false);
+    Unit* ship = w.make("ship", 40.0f, 30.0f);
+    const Vector3 forward{std::sin(kHeading), 0, std::cos(kHeading)};
+    const Vector3 right{std::cos(kHeading), 0, -std::sin(kHeading)};
+    // Unit:RecoilImpulse, as retail's ShipRock weapons push one: along the
+    // heading it is dropped, across it a tenth rocks the hull.
+    lua_State* L = w.state.raw();
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ship->lua_table_ref());
+    lua_setglobal(L, "ship");
+    REQUIRE(w.state
+                .do_string("ship:RecoilImpulse(" + std::to_string(forward.x) + ", 0, " +
+                           std::to_string(forward.z) + ")")
+                .ok());
+    CHECK(std::abs(ship->recoil_impulse().x) < 1e-5f);
+    CHECK(std::abs(ship->recoil_impulse().z) < 1e-5f);
+    ship->add_recoil_impulse(right);
+    CHECK(std::abs(ship->recoil_impulse().x - 0.1f * right.x) < 1e-5f);
+    CHECK(std::abs(ship->recoil_impulse().z - 0.1f * right.z) < 1e-5f);
+
+    // Standing, the hull isn't snapped to the water, so it doesn't rock yet
+    // (Moho's MoveTo snaps a hull only while it moves or leans).
+    const Swing still = watch(w, *ship, 10);
+    CHECK(still.roll < 1e-3f);
+    CHECK(std::abs(ship->recoil_impulse().x - 0.1f * right.x) < 1e-5f);
+
+    // Under way it rocks: the tilt peaks at 0.073 across (atan: 4.18 deg)
+    // three ticks on, then rights itself, damped by RollDamping 0.5 and
+    // pulled back by RollStability 0.2.
+    order(ship, CommandType::Move, {40.0f + forward.x * 60.0f, 0, 30.0f + forward.z * 60.0f});
+    const Swing rock = watch(w, *ship, 30);
+    CHECK(rock.roll > 4.1f);
+    CHECK(rock.roll < 4.25f);
+    CHECK(rock.turn < 1e-3f);
+    watch(w, *ship, 10);
+    CHECK(std::abs(roll_deg(*ship)) < 0.01f);
+    CHECK(std::abs(ship->body_tilt().x) < 1e-4f);
+
+    // RecoilImpulse takes three numbers.
+    CHECK_FALSE(w.state.do_string("ship:RecoilImpulse(1, 2)").ok());
+    CHECK_FALSE(w.state.do_string("ship:RecoilImpulse(1, 2, 'x')").ok());
+}

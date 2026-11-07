@@ -43,7 +43,6 @@ G errro                     # not Moho's: a retail typo (error)
 M AddOnKilledCallback       # not Moho's
 M GiveUnitOrder             # not Moho's: a TriggerManager method it never defines
 M OnApplyBuff               # not Moho's: a buff definition's own hook
-M RecoilImpulse
 M SetDamageRadius           # not Moho's: retail's Buff.lua asks for it; Moho has ChangeDamageRadius
 M SetWeaponDisableByLabel   # not Moho's
 M write
