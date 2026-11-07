@@ -4091,6 +4091,27 @@ static int l_SetArmyColor(lua_State* L) {
     return 0;
 }
 
+/// SetArmyShowScore(army, show): whether the army's score is shown (Moho's
+/// cfunc_SetArmyShowScoreL, SSTIArmyVariableData::mShowScore). Every army's
+/// is, civilians' too, until this says otherwise; GetArmiesTable answers it
+/// as showScore, which the score screens and the unit view read.
+static int l_SetArmyShowScore(lua_State* L) {
+    if (lua_gettop(L) != 2) {
+        // Moho's help text names SetArmyColor, as the executable has it.
+        return arg_count_error(L,
+                               "SetArmyColor(army, bool) - determines if the user should be able "
+                               "to see the army score",
+                               2, lua_gettop(L));
+    }
+    auto* sim = get_sim(L);
+    const i32 army = resolve_army(L, 1, sim);
+    const bool show = arg_boolean(L, 2);
+    if (auto* brain = sim ? sim->get_army(army) : nullptr) {
+        brain->set_show_score(show);
+    }
+    return 0;
+}
+
 // Moho's cfunc_SetArmyColorIndexL: GameColors.PlayerColors[index + 1].
 static int l_SetArmyColorIndex(lua_State* L) {
     auto* sim = get_sim(L);
@@ -5898,7 +5919,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
         restrict_army_builds(L, false);
         return 0;
     });
-    state.register_function("SetArmyShowScore", stub_noop);
+    state.register_function("SetArmyShowScore", l_SetArmyShowScore);
 
     // Damage
     state.register_function("Damage", l_Damage);

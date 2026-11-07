@@ -18,9 +18,8 @@
 // alone (a commander's under-attack voice-over), and each side focuses its
 // own, yet the two must agree.
 //
-// With `quit_at` (M218e) the joiner leaves the game at that tick: the host
-// must drop it by the lockstep's agreement, defeat its army, show and close
-// retail's disconnect dialog without a script error, and play on alone.
+// With `quit_at` (M218e) the joiner's process ends at that tick without a
+// goodbye, and the host ejects it from retail's disconnect dialog.
 //
 // A network game saved and resumed (OE-128), in two runs on the same user
 // folders. With `save_as` the host saves the game under that name at
@@ -93,6 +92,7 @@ private:
     static bool joiner_defeated(const sim::SimState& sim);
     /// Whether retail's disconnect dialog is open (its file-local `parent`).
     bool disconnect_dialog_open(lua::LuaState& ui);
+    bool press_enabled_eject(lua::LuaState& ui);
     void check_chat(lua::LuaState& ui);
     /// The checksum at kEndTick logged; this side's copy of a save, and a
     /// resumed game's start, checked.
@@ -119,6 +119,7 @@ private:
     bool listening_ = false;        ///< the game's chat is heard
     bool left_ = false;             ///< the joiner left at quit_at_
     bool dialog_seen_ = false;      ///< the host saw retail's disconnect dialog open
+    std::optional<u32> eject_pressed_at_;
     bool saw_pause_ = false;        ///< the host's pause held here
     std::optional<u32> paused_tick_; ///< the tick the pause holds on
     u32 paused_frames_ = 0;          ///< frames the joiner has seen it hold

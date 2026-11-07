@@ -204,6 +204,30 @@ void test_selection_render(TestContext& ctx) {
     r.set_select_boxes(true);
     t.check(none, "Test 6: ren_SelectBoxes off draws no brackets");
 
+    // Test 6b: AddBlinkyBox (Moho's blinky boxes). From off, the enemy's
+    // brackets flash 0.22 s on and 0.15 s off, a frame each 0.1 s, the
+    // overshoot carried; under the cursor meanwhile it has no brackets of
+    // its own, lit or not. Once 0.95 s have passed the box goes, and the
+    // cursor's are back.
+    r.set_selection_marks(enemy, std::nullopt);
+    r.set_fixed_frame_dt(0.1f);
+    r.add_blinky_box(enemy, 0.22f, 0.15f, 0.95f);
+    std::string lit;
+    std::string blinky_texture = "none";
+    for (int frame = 0; frame < 12; ++frame) {
+        shots.redraw();
+        lit += bracket_of(r, enemy) ? '1' : '0';
+        if (frame == 1) {
+            blinky_texture = texture_of(enemy);
+        }
+    }
+    r.set_fixed_frame_dt(1.0f / 60.0f);
+    r.set_selection_marks(sim::EntityId(), std::nullopt);
+    t.check(lit == "011001101101" && ends_with(blinky_texture, "_enemy.dds") &&
+                r.selection_renderer().blinky_boxes().empty(),
+            fmt::format("Test 6b: a blinky box's frames {} (011001101101), in {}", lit,
+                        blinky_texture));
+
     const sim::EntityId tank = spawn_unit(ctx, "__osc_sel_d", "uel0201", "ARMY_1", {sx, sz + 8});
     const auto priority = [&](sim::EntityId id) {
         const auto* e = ctx.sim.entity_registry().find(id);

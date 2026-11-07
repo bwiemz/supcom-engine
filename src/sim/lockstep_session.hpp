@@ -84,28 +84,28 @@ public:
     static constexpr u32 kMaxLead = 20;
 
     // --- Peer drop, by agreement (M198b) ---
-    // A peer silent for more than `rounds` rounds (send_frame calls, one
-    // each tick's time: default 30 ≈ 3s at 10 Hz; 0 disables detection) is
-    // dropped -- but not by one survivor alone: survivors may hold different last frames from
-    // it (it died mid-broadcast), and each notices at its own moment. So a
-    // survivor that times it out stops taking its frames and reports the last
-    // one it holds, with the peer's recent frames; a report from another
-    // survivor draws its own. Once every survivor has reported, all take the
-    // furthest frame reported as the peer's last, apply any of its frames they
-    // missed (relayed in the reports), release it from the gate, and defeat
-    // its army in the beat after -- the same beat on every survivor.
-    void set_drop_timeout(u32 rounds) { drop_timeout_rounds_ = rounds; }
+    // A peer is dropped only when every survivor has ejected it (below): a
+    // silent one is waited for, as Moho's client manager waits, and another
+    // survivor's eject is only its report (Moho's ejectedBy). Survivors may
+    // hold different last frames from it (it died mid-broadcast). So a
+    // survivor that ejects it stops taking its frames and reports the last
+    // one it holds, with the peer's recent frames. Once every survivor has
+    // reported, all take the furthest frame reported as the peer's last,
+    // apply any of its frames they missed (relayed in the reports), release
+    // it from the gate, and defeat its army in the beat after -- the same
+    // beat on every survivor.
     /// Sources newly declared dropped since the last call (drained on return).
     std::vector<u32> take_dropped();
     bool has_dropped(u32 src) const;
 
     // --- Eject (EjectSessionClient, M218e) ---
-    /// This peer ejects `source`: it starts the drop a timeout would, and the
-    /// survivors agree it as they do one. False for this peer itself, one
-    /// dropped or being dropped already, or no participant.
+    /// This peer ejects `source` (a player's choice, or its connection
+    /// closed): it reports the drop, which the survivors agree once each has
+    /// ejected it. False for this peer itself, one dropped or ejected here
+    /// already, no participant, or once this peer is ejected.
     bool eject(u32 source);
-    /// The survivors that have reported `source` dropped (Moho's
-    /// ejectedBy): while its drop is agreed, and once it is. Sorted.
+    /// The survivors that have ejected `source` (Moho's ejectedBy), this one
+    /// or others: while its drop is agreed, and once it is. Sorted.
     std::vector<u32> ejectors(u32 source) const;
     /// Whether a survivor reports this peer dropped: its game is over, and
     /// it no longer ticks or drops anyone.
@@ -124,8 +124,8 @@ public:
     // lets the players change it ('adjustable'). A change is a message every
     // peer applies, the newest (by its clock) winning, a tie going to the
     // lower source, so all come to the same speed. A round is a tick's time
-    // at that speed: the lead cap and the drop timeout are counted in rounds
-    // scaled to it, so they keep their times.
+    // at that speed: the lead cap is counted in rounds scaled to it, so it
+    // keeps its time.
     /// The game's speed option: its speed, and whether players may change it.
     void set_speed_option(i32 rate, bool adjustable);
     /// This peer asks for `rate` (-10 to +50): false if the speed is fixed.
@@ -150,8 +150,6 @@ public:
 private:
     static constexpr u8 kFrameMessage = 0;
     static constexpr u8 kDropMessage = 1;
-    /// A peer held at kMaxLead sends no frame: this says it is still there.
-    static constexpr u8 kAliveMessage = 3;
     static constexpr u8 kSpeedMessage = 4;
     /// How many of a peer's latest frames are kept to relay if it drops.
     static constexpr u32 kRelayFrames = 256;
@@ -180,10 +178,7 @@ private:
     std::pair<u64, u64> desync_hashes_{};
     bool desynced_ = false;
     std::vector<Desync> desyncs_;
-    u32 drop_timeout_rounds_ = 30;
-    u32 round_ = 0;                                 // send_frame calls
-    std::unordered_map<u32, u32> peer_confirmed_;   // source -> last confirmed frame
-    std::unordered_map<u32, u32> peer_heard_round_; // source -> round last heard from
+    std::unordered_map<u32, u32> peer_confirmed_; // source -> last confirmed frame
     std::vector<u32> dropped_;                    // sources already declared dropped
     std::vector<u32> newly_dropped_;              // drained by take_dropped()
     std::map<u32, std::vector<u32>> dropped_by_;  // a dropped source's reporters
@@ -197,11 +192,14 @@ private:
     u32 submit_local_command(const char* name);
     /// Apply a change if it is the newest (a tie: the lower source's).
     void apply_speed(u32 clock, u32 source, i32 rate);
-    /// kMaxLead and the drop timeout, in rounds at the game's speed.
+    /// kMaxLead, in rounds at the game's speed.
     u32 lead_cap() const;
-    u32 drop_timeout() const;
 
     bool dropping(u32 source) const { return drop_votes_.count(source) > 0; }
+    bool ejecting(u32 source) const {
+        const auto vote = drop_votes_.find(source);
+        return vote != drop_votes_.end() && vote->second.last_frame.count(local_source_) > 0;
+    }
     /// One of the game's command sources. A message naming any other (the
     /// engine's kEngineSource among them) is forged or corrupt.
     bool participant(u32 source) const {

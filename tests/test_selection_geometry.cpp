@@ -6,6 +6,9 @@
 #include "sim/manipulator.hpp"
 #include "sim/unit.hpp"
 
+#include <string>
+#include <vector>
+
 using osc::renderer::bracket_quads;
 using osc::renderer::inside_ground_quad;
 using osc::renderer::SelectionBox;
@@ -155,4 +158,56 @@ TEST_CASE("A world point lands on the screen as the overlays project it", "[sele
     std::array<osc::f32, 16> behind = identity;
     behind[15] = -1.0f;
     CHECK_FALSE(screen_point(behind, {0, 0, 0}, 800, 600));
+}
+
+TEST_CASE("A blinky box flashes from off, its overshoot carried into the next half",
+          "[selection]") {
+    using osc::renderer::advance_blinky_box;
+    using osc::renderer::BlinkyBox;
+    BlinkyBox box;
+    box.on_time = 0.22f;
+    box.off_time = 0.15f;
+    box.total_time = 1.0f;
+    std::string lit;
+    for (int frame = 0; frame < 10; ++frame) {
+        lit += advance_blinky_box(box, 0.1f) ? '1' : '0';
+    }
+    CHECK(lit == "0110011011");
+    CHECK(box.duration == Catch::Approx(1.0f));
+    // A step longer than a half changes it once: the rest waits in the next.
+    BlinkyBox slow;
+    slow.on_time = 0.1f;
+    slow.off_time = 0.1f;
+    CHECK(advance_blinky_box(slow, 0.35f));
+    CHECK(slow.cycle == Catch::Approx(0.25f));
+    CHECK_FALSE(advance_blinky_box(slow, 0.0f));
+}
+
+TEST_CASE("Blinky boxes go once their unit is gone or their time is up", "[selection]") {
+    using osc::renderer::BlinkyBox;
+    using osc::sim::EntityId;
+    osc::renderer::SelectionRenderer r;
+    const EntityId a = EntityId::of(1, 1);
+    const EntityId b = EntityId::of(2, 1);
+    r.add_blinky_box(a, 0.05f, 0.05f, 0.3f);
+    r.add_blinky_box(b, 0.05f, 0.05f, 10.0f);
+    const auto everyone = [](const BlinkyBox&) { return true; };
+    // Both start off, then light together, in the order given.
+    CHECK(r.tick_blinky_boxes(0.04f, everyone).empty());
+    CHECK(r.tick_blinky_boxes(0.04f, everyone) == std::vector<EntityId>{a, b});
+    // a's time is up once more than 0.3 s have passed: it goes the frame after.
+    for (int i = 0; i < 3; ++i) {
+        (void)r.tick_blinky_boxes(0.1f, everyone);
+    }
+    REQUIRE(r.blinky_boxes().size() == 2);
+    (void)r.tick_blinky_boxes(0.1f, everyone);
+    REQUIRE(r.blinky_boxes().size() == 1);
+    CHECK(r.blinky_boxes()[0].unit == b);
+    // b's unit is gone: it goes.
+    (void)r.tick_blinky_boxes(0.1f, [&](const BlinkyBox& box) { return box.unit != b; });
+    CHECK(r.blinky_boxes().empty());
+    // A new world: none carried over.
+    r.add_blinky_box(a, 1, 1, 1);
+    r.clear_blinky_boxes();
+    CHECK(r.blinky_boxes().empty());
 }

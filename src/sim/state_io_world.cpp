@@ -299,6 +299,7 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
     w.u8v(a.color_b_);
     w.str(a.current_plan_);
     w.b(a.resource_sharing_);
+    w.b(a.show_score_);
     w.str(a.skin_name_);
     w.size(a.restricted_blueprints_.size());
     for (const auto& id : a.restricted_blueprints_) {
@@ -403,6 +404,7 @@ void StateIO::load(StateReader& r, ArmyBrain& a, SimState& sim) {
     a.color_b_ = r.u8v();
     a.current_plan_ = r.str();
     a.resource_sharing_ = r.b();
+    a.show_score_ = r.b();
     a.skin_name_ = r.str();
     a.restricted_blueprints_.clear();
     const size_t restrictions = r.size(4);

@@ -51,6 +51,23 @@ f32 bracket_corner(const SelectionBox& box, f32 thickness, f32 min_px, f32 px_wo
 /// front-right, front-left), each from its own back-left corner
 std::array<std::array<sim::Vector3, 4>, 4> bracket_quads(const SelectionBox& box, f32 corner);
 
+/// A unit's brackets flashing on and off for a while (Moho's BlinkyBox,
+/// pushed by AddBlinkyBox(entityId, onTime, offTime, totalTime)).
+struct BlinkyBox {
+    sim::EntityId unit{};
+    bool on = false;  ///< it starts off
+    f32 duration = 0; ///< seconds since it was given
+    f32 cycle = 0;    ///< seconds into its current half
+    f32 on_time = 0;
+    f32 off_time = 0;
+    f32 total_time = 0;
+};
+
+/// Run a blinky box on by `dt` seconds (func_RenUI 0x007FD8B7): it changes
+/// half when the time in its half passes that half's length, the overshoot
+/// carried into the next. Whether it is lit after.
+bool advance_blinky_box(BlinkyBox& box, f32 dt);
+
 /// Moho's selection indicators (ren_SelectBoxes): brackets round the
 /// selected units and the one under the cursor, and the drag-selection box
 /// on the ground.
@@ -59,13 +76,29 @@ public:
     void init(VkDevice device, VmaAllocator allocator, VkRenderPass render_pass,
               VkDescriptorSetLayout texture_ds_layout);
 
-    /// This frame's brackets for `selected` and `hovered` (0: none), and the
-    /// drag box `drag` (its four corners on the ground). `L` is the UI state,
-    /// whose blueprints give the boxes.
+    /// This frame's brackets for `selected` and `hovered` (0: none), the
+    /// blinky boxes lit after `dt` seconds more, and the drag box `drag` (its
+    /// four corners on the ground). `L` is the UI state, whose blueprints
+    /// give the boxes.
     void update(const sim::FrameView& view, const Camera& camera, u32 viewport_h,
                 const std::unordered_set<sim::EntityId>* selected, sim::EntityId hovered,
                 i32 player_army, const std::optional<std::array<sim::Vector3, 4>>& drag,
-                TextureCache& tex_cache, MeshCache& mesh_cache, lua_State* L, u32 fi);
+                TextureCache& tex_cache, MeshCache& mesh_cache, lua_State* L, u32 fi, f32 dt);
+
+    /// AddBlinkyBox: `unit`'s brackets, in its army's colour for the player,
+    /// flash on for `on_time` seconds and off for `off_time`, from off, until
+    /// `total_time` seconds have passed or the unit is gone. Kept as Moho's
+    /// are, after the boxes given before.
+    void add_blinky_box(sim::EntityId unit, f32 on_time, f32 off_time, f32 total_time);
+    const std::vector<BlinkyBox>& blinky_boxes() const { return blinky_boxes_; }
+    /// The world is gone, and its units with it (Moho's weak links die).
+    void clear_blinky_boxes() { blinky_boxes_.clear(); }
+
+    /// The blinky boxes' turn of a frame: those whose unit `exists` no more,
+    /// or whose time is up, go; the rest run on by `dt`. The units of those
+    /// lit, in their order.
+    template <typename Exists>
+    std::vector<sim::EntityId> tick_blinky_boxes(f32 dt, Exists&& exists);
 
     void render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj, u32 fi) const;
 
@@ -94,6 +127,24 @@ private:
     std::vector<Bracket> brackets_;
     bool drew_drag_box_ = false;
     std::unordered_map<std::string, SelectionBlueprint> box_blueprints_;
+    std::vector<BlinkyBox> blinky_boxes_;
 };
+
+template <typename Exists>
+std::vector<sim::EntityId> SelectionRenderer::tick_blinky_boxes(f32 dt, Exists&& exists) {
+    std::vector<sim::EntityId> lit;
+    size_t kept = 0;
+    for (BlinkyBox& box : blinky_boxes_) {
+        if (!exists(box) || box.duration > box.total_time) {
+            continue;
+        }
+        if (advance_blinky_box(box, dt)) {
+            lit.push_back(box.unit);
+        }
+        blinky_boxes_[kept++] = box;
+    }
+    blinky_boxes_.resize(kept);
+    return lit;
+}
 
 } // namespace osc::renderer
