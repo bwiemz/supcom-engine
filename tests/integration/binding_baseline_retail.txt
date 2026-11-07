@@ -26,7 +26,6 @@ G GetBlueprint              # user state: a UI unit's blueprint, as UserUnit:Get
 G GetMovieVolume            # user state: the movies' volume
 G GetResourceSharing        # user state: whether the focus army shares resources
 G GetSpecialFolder          # user state: a special file type's folder
-G GetUIControlsAlpha        # user state: with SetUIControlsAlpha
 G InternalCreateMesh
 G IssueEnhance              # not Moho's
 G KeycodeMSWToMaui          # user state: a Windows key code as the UI's
@@ -37,7 +36,6 @@ G RenderOverlayMilitary     # user state: the military overlay
 G SetMovieVolume            # user state: with GetMovieVolume
 G SetQueueGrid              # not Moho's
 G SetQueueState             # not Moho's
-G SetUIControlsAlpha
 G _c_CreatePathDebugger
 G errro                     # not Moho's: a retail typo (error)
 M AddOnKilledCallback       # not Moho's

@@ -708,6 +708,7 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
             e.clip = self_clip;
             e.depth = depth;
             e.band = ui::DrawBand::WorldContent;
+            e.control = false;
             quads_.push_back(e);
             quad_count_++;
         }
@@ -824,6 +825,16 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
     reuse_frame();
 }
 
+UIInstance ui_upload_instance(UIInstance inst, bool control, f32 scale, f32 controls_alpha) {
+    for (f32& v : inst.rect) {
+        v *= scale;
+    }
+    if (control) {
+        inst.color[3] *= controls_alpha;
+    }
+    return inst;
+}
+
 void UIRenderer::reuse_frame() {
     groups_.clear();
     if (quads_.empty() || !instance_mapped_[fi_]) return;
@@ -836,11 +847,7 @@ void UIRenderer::reuse_frame() {
     // (write-combined), and scaling it in place read every rect back from
     // it, uncached -- 7 ms a frame of an eight-AI match's 1,500 quads.
     for (u32 i = 0; i < count; i++) {
-        UIInstance inst = quads_[i].inst;
-        for (f32& v : inst.rect) {
-            v *= scale_;
-        }
-        dst[i] = inst;
+        dst[i] = ui_upload_instance(quads_[i].inst, quads_[i].control, scale_, controls_alpha_);
     }
 
     // Build draw groups — batch consecutive quads with same descriptor set AND clip rect
@@ -958,6 +965,7 @@ void UIRenderer::emit_cursor_quad(lua_State* L, TextureCache& tex_cache,
     entry.texture_ds = tex->descriptor_set;
     entry.clip = viewport_clip;
     entry.depth = 999999.0f; // topmost
+    entry.control = false;
     quads_.push_back(entry);
 }
 
