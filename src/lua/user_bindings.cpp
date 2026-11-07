@@ -40,6 +40,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/waitable.hpp"
+#include "sim/world_snapshot.hpp"
 #include "ui/console.hpp"
 #include "ui/key_codes.hpp"
 #include "ui/ui_control.hpp"
@@ -621,6 +622,39 @@ static int l_AddCommandFeedbackBlip(lua_State* L) {
     spec.position = {xyz[0], xyz[1], xyz[2]};
     spec.duration = static_cast<f32>(lua_tonumber(L, 2));
     r->add_command_feedback_blip(std::move(spec));
+    return 0;
+}
+
+/// AddBlinkyBox(entityId, onTime, offTime, totalTime): the unit's brackets
+/// flash in its army's colour for the player, from off, `onTime` seconds on
+/// and `offTime` off, until `totalTime` seconds have passed or it is gone
+/// (faf-re cfunc_AddBlinkyBoxL, func_PushBlinkyBox). An id the session
+/// doesn't know is an error; the times are read last to first, as Moho's are.
+static int l_AddBlinkyBox(lua_State* L) {
+    if (lua_gettop(L) != 4) {
+        return arg_count_error(L, "AddBlinkyBox(entityId, onTime, offTime, totalTime)", 4,
+                               lua_gettop(L));
+    }
+    if (lua_type(L, 1) != LUA_TNUMBER) {
+        return arg_type_error(L, 1, "integer");
+    }
+    const auto moho_id = static_cast<u32>(static_cast<i32>(lua_tonumber(L, 1)));
+    const sim::SimState* sim = session_active(L) ? sim::get_sim(L) : nullptr;
+    const sim::EntityId id = sim ? sim->entity_registry().live_id(moho_id) : sim::EntityId();
+    const sim::WorldSnapshot* world = id ? ui_world(L) : nullptr;
+    if (!world || !world->find(id)) {
+        return luaL_error(L, "Invalid entity id");
+    }
+    f32 times[3] = {};
+    for (int arg = 4; arg >= 2; --arg) {
+        if (lua_type(L, arg) != LUA_TNUMBER) {
+            return arg_type_error(L, arg, "number");
+        }
+        times[arg - 2] = static_cast<f32>(lua_tonumber(L, arg));
+    }
+    if (auto* r = get_renderer(L)) {
+        r->add_blinky_box(id, times[0], times[1], times[2]);
+    }
     return 0;
 }
 
@@ -1208,12 +1242,204 @@ static int l_SyncPlayableRect(lua_State* L) {
     return 0;
 }
 
+/// SetUIControlsAlpha(alpha): the UI controls' alpha multiplier (faf-re
+/// cfunc_SetUIControlsAlphaL, CUIManager +0x68), which every UI pass hands
+/// the controls' shader (CD3DPrimBatcher::SetToViewport): each control
+/// draws with its alpha scaled by it. Only retail's MauiTest.lua sets it.
+static int l_SetUIControlsAlpha(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(
+            L, "SetUIControlsAlpha(float alpha) -- set the alpha multiplier for 2d UI controls", 1,
+            lua_gettop(L));
+    }
+    if (lua_type(L, 1) != LUA_TNUMBER) {
+        return arg_type_error(L, 1, "number");
+    }
+    if (auto* r = get_renderer(L)) {
+        r->set_ui_controls_alpha(static_cast<f32>(lua_tonumber(L, 1)));
+    }
+    return 0;
+}
+
+/// GetUIControlsAlpha() -> the multiplier (1 until it is set); nil with no
+/// UI drawn, as Moho's answers without its UI manager.
+static int l_GetUIControlsAlpha(lua_State* L) {
+    if (lua_gettop(L) != 0) {
+        return arg_count_error(
+            L, "float GetUIControlsAlpha() -- get the alpha multiplier for 2d UI controls", 0,
+            lua_gettop(L));
+    }
+    if (auto* r = get_renderer(L)) {
+        lua_pushnumber(L, r->ui_controls_alpha());
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
 /// RenderOverlayEconomy(on): the session's economy overlay flag (Moho's
 /// DisplayEconomyOverlay), which the MFD's toggle sets and a NIS clears.
 static int l_RenderOverlayEconomy(lua_State* L) {
     if (lua_gettop(L) != 1)
         return arg_count_error(L, "RenderOverlayEconomy(bool)", 1, lua_gettop(L));
     if (auto* r = get_renderer(L)) r->set_economy_overlay(lua_toboolean(L, 1) != 0);
+    return 0;
+}
+
+/// RenderOverlayMilitary(bool) and RenderOverlayIntel(bool): retired before
+/// FA shipped. Moho's check their count and warn, and change nothing (faf-re
+/// cfunc_RenderOverlayMilitary/Intel); retail's overlays are the
+/// SetOverlayFilters profiles.
+static int l_RenderOverlayMilitary(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "RenderOverlayMilitary(bool)", 1, lua_gettop(L));
+    }
+    spdlog::warn("RenderOverlayMilitary is deprecated");
+    return 0;
+}
+
+static int l_RenderOverlayIntel(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "RenderOverlayIntel(bool)", 1, lua_gettop(L));
+    }
+    spdlog::warn("RenderOverlayIntel is deprecated");
+    return 0;
+}
+
+/// GetResourceSharing() -> whether the focus army shares its overflow with
+/// its allies (the brain's SetResourceSharing); false for an observer.
+/// Outside a game Moho's warns, as its GetEconomyTotals does, and answers
+/// nothing (faf-re cfunc_GetResourceSharingL).
+static int l_GetResourceSharing(lua_State* L) {
+    if (lua_gettop(L) != 0) {
+        return arg_count_error(L, "bool GetResourceSharing()", 0, lua_gettop(L));
+    }
+    sim::SimState* sim = session_active(L) ? sim::get_sim(L) : nullptr;
+    if (!sim) {
+        spdlog::warn("Attempt to call GetEconomyTotals before world sessions exists.");
+        return 0;
+    }
+    const int army = focus_army(L);
+    const auto* brain = army >= 0 ? sim->get_army(army) : nullptr;
+    lua_pushboolean(L, brain && brain->resource_sharing() ? 1 : 0);
+    return 1;
+}
+
+/// KeycodeMauiToMSW(code): a key event's KeyCode (wx's) as Windows' key
+/// code, through wx's own table (wxCharCodeWXToMSW).
+static int l_KeycodeMauiToMSW(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L,
+                               "int KeycodeMauiToMSW(int) - given a char code from a key event, "
+                               "returns the MS Windows char code",
+                               1, lua_gettop(L));
+    }
+    if (lua_type(L, 1) != LUA_TNUMBER) {
+        return arg_type_error(L, 1, "integer");
+    }
+    lua_pushnumber(L, ui::windows_key_code_of_wx(static_cast<i32>(lua_tonumber(L, 1))));
+    return 1;
+}
+
+/// KeycodeMSWToMaui(code): a Windows key code as the UI's (wx's), through
+/// wxCharCodeMSWToWX: 0 for a letter or a digit, which wx leaves to its
+/// character.
+static int l_KeycodeMSWToMaui(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(
+            L,
+            "int KeycodeMSWToMaui(int) - given a MS Windows char code, returns the Maui char code",
+            1, lua_gettop(L));
+    }
+    if (lua_type(L, 1) != LUA_TNUMBER) {
+        return arg_type_error(L, 1, "integer");
+    }
+    lua_pushnumber(L, ui::wx_key_code_of_windows(static_cast<i32>(lua_tonumber(L, 1))));
+    return 1;
+}
+
+namespace {
+
+/// The movies' volume, as Moho's movie manager keeps it for the process:
+/// DirectSound's attenuation in hundredths of a decibel, -10000 (silent)
+/// to 0 (full).
+f32 g_movie_volume = 0.0f;
+
+} // namespace
+
+/// SetMovieVolume(volume): 0 to 2, as its help says, though anything over 1
+/// is full. Moho's stores it as an attenuation and hands it to Sofdec
+/// (faf-re MOV_SetVolume, CMovieManager::SetVolume). Retail's movies speak
+/// through XACT cues, which the Sofdec stream has no part in, and the
+/// engine's movies play no sound of their own; only GetMovieVolume sees it.
+static int l_SetMovieVolume(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "SetMovieVolume(volume): 0.0 - 2.0", 1, lua_gettop(L));
+    }
+    if (lua_type(L, 1) != LUA_TNUMBER) {
+        return arg_type_error(L, 1, "number");
+    }
+    const f32 volume = std::clamp(static_cast<f32>(lua_tonumber(L, 1)), 0.0f, 1.0f);
+    constexpr f32 kSilent = -10000.0f; // DSBVOLUME_MIN
+    g_movie_volume = static_cast<f32>(static_cast<i32>(kSilent - volume * kSilent));
+    return 0;
+}
+
+/// GetMovieVolume() -> the attenuation SetMovieVolume stored (0 until it is
+/// called), not the volume it was given: Moho's answers so (faf-re
+/// MOV_GetVolume).
+static int l_GetMovieVolume(lua_State* L) {
+    if (lua_gettop(L) != 0) {
+        return arg_count_error(L, "GetMovieVolume()", 0, lua_gettop(L));
+    }
+    lua_pushnumber(L, g_movie_volume);
+    return 1;
+}
+
+/// The C side of a path debugger: Moho's CPathDebugger holds nothing but
+/// its Lua object. The sim's path overlay it opens is the console's `dbg
+/// pathfinder`, which PathDebugger.lua runs itself.
+static int g_path_debugger_tag = 0;
+
+/// _c_CreatePathDebugger(luaobj, spec): makes `luaobj` a path debugger
+/// and answers it (faf-re cfunc__c_CreatePathDebuggerL); `spec` is unread.
+static int l_c_CreatePathDebugger(lua_State* L) {
+    if (lua_gettop(L) != 2) {
+        return arg_count_error(L, "_c_CreatePathDebugger(luaobj,spec)", 2, lua_gettop(L));
+    }
+    if (!lua_istable(L, 1)) {
+        return arg_type_error(L, 1, "table");
+    }
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, &g_path_debugger_tag);
+    lua_rawset(L, 1);
+    lua_settop(L, 1);
+    return 1;
+}
+
+/// PathDebugger:Destroy(): the C side goes; the object answers as a
+/// destroyed one after.
+static int pathdebugger_Destroy(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "Destroy the path debugger", 1, lua_gettop(L));
+    }
+    if (!lua_istable(L, 1)) {
+        return luaL_error(L, "Expected a game object. (Did you call with '.' instead of ':'?)");
+    }
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, 1);
+    const bool bound = lua_type(L, -1) == LUA_TLIGHTUSERDATA;
+    const bool alive = lua_touserdata(L, -1) == &g_path_debugger_tag;
+    lua_pop(L, 1);
+    if (!bound) {
+        return luaL_error(L, "Expected a game object. (Did you call with '.' instead of ':'?)");
+    }
+    if (!alive) {
+        return luaL_error(L, "Game object has been destroyed");
+    }
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, nullptr);
+    lua_rawset(L, 1);
     return 0;
 }
 
@@ -2243,6 +2469,7 @@ void register_user_bindings(LuaState& state) {
     // Globals of the UI state.
     state.register_function("SetInvertMidMouseButton", l_SetInvertMidMouseButton);
     state.register_function("AddCommandFeedbackBlip", l_AddCommandFeedbackBlip);
+    state.register_function("AddBlinkyBox", l_AddBlinkyBox);
     state.register_function("IsDestroyed", ui_is_destroyed);
     // The engine's statistics tree, as each frame publishes it
     // (update_engine_stats), and FAF's engine/Library.lua's folder the
@@ -2265,7 +2492,19 @@ void register_user_bindings(LuaState& state) {
     state.register_function("UnProject", l_UnProject);
     state.register_function("GetCamera", l_GetCamera);
     state.register_function("SyncPlayableRect", l_SyncPlayableRect);
+    state.register_function("SetUIControlsAlpha", l_SetUIControlsAlpha);
+    state.register_function("GetUIControlsAlpha", l_GetUIControlsAlpha);
     state.register_function("RenderOverlayEconomy", l_RenderOverlayEconomy);
+    state.register_function("RenderOverlayMilitary", l_RenderOverlayMilitary);
+    state.register_function("RenderOverlayIntel", l_RenderOverlayIntel);
+    state.register_function("GetResourceSharing", l_GetResourceSharing);
+    state.register_function("GetBlueprint", ui_GetBlueprint);
+    state.register_function("KeycodeMauiToMSW", l_KeycodeMauiToMSW);
+    state.register_function("KeycodeMSWToMaui", l_KeycodeMSWToMaui);
+    state.register_function("SetMovieVolume", l_SetMovieVolume);
+    state.register_function("GetMovieVolume", l_GetMovieVolume);
+    state.register_function("_c_CreatePathDebugger", l_c_CreatePathDebugger);
+    add_class_methods(L, "PathDebugger_methods", {{"Destroy", pathdebugger_Destroy}});
     state.register_function("TeamColorMode", l_TeamColorMode);
     state.register_function("SetOverlayFilter", l_SetOverlayFilter);
     state.register_function("SetOverlayFilters", l_SetOverlayFilters);

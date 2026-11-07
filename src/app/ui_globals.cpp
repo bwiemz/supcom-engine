@@ -291,8 +291,11 @@ static int l_GetArmiesTable(lua_State* L) {
                 lua_rawset(L, -3);
             }
 
+            // Shown unless SetArmyShowScore hid it, civilians' too (Moho's
+            // mShowScore): the score screens leave civilians out themselves,
+            // and the unit view names a civilian army's units.
             lua_pushstring(L, "showScore");
-            lua_pushboolean(L, brain->is_civilian() ? 0 : 1);
+            lua_pushboolean(L, brain->show_score() ? 1 : 0);
             lua_rawset(L, -3);
 
             // The command sources it takes commands from (1-based), as

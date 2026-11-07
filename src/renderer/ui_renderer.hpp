@@ -45,6 +45,11 @@ struct UIInstance {
     f32 color[4];  // r, g, b, a
 };
 
+/// A UI quad's instance as the GPU gets it: its rect scaled to the window's
+/// pixels by `scale`, and, for a control's own quad, its alpha scaled by the
+/// UI controls' alpha (SetUIControlsAlpha).
+UIInstance ui_upload_instance(UIInstance inst, bool control, f32 scale, f32 controls_alpha);
+
 /// A UI quad with its texture: what a world view draws into the UI.
 struct UIQuad {
     UIInstance inst{};
@@ -85,6 +90,14 @@ public:
     /// Advance playing bitmap animations by delta_time seconds.
     void advance_animations(lua_State* L, const ui::UIControlRegistry& registry,
                             f32 delta_time);
+
+    /// The UI controls' alpha multiplier (Moho's SetUIControlsAlpha): each
+    /// control's quads draw with their alpha scaled by it, as Moho's
+    /// primbatcher.fx scales them by the AlphaMultiplier its UI passes set
+    /// (CD3DPrimBatcher::SetToViewport). The cursor and a minimap's map are
+    /// drawn apart from the controls in Moho, and keep theirs.
+    void set_controls_alpha(f32 alpha) { controls_alpha_ = alpha; }
+    f32 controls_alpha() const { return controls_alpha_; }
 
     /// Where Movie controls find their frames' textures.
     void set_movie_textures(const MovieTextures* movies) { movies_ = movies; }
@@ -159,9 +172,11 @@ private:
         f32 depth = 0.0f;
         ui::DrawBand band = ui::DrawBand::Overlay;
         const ui::UIControl* movie = nullptr; ///< the movie whose frame this is
+        bool control = true;                  ///< a control's own: SetUIControlsAlpha scales it
     };
     bool draw_cursor_ = true;
     f32 scale_ = 1.0f;
+    f32 controls_alpha_ = 1.0f;
     std::vector<QuadEntry> quads_;
     const WorldViewPainter* minimap_painter_ = nullptr; // during update()
     const MovieTextures* movies_ = nullptr;

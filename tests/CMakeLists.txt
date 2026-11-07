@@ -93,6 +93,7 @@ add_executable(osc_tests
     test_upgrade_orders.cpp
     test_issue_checks.cpp
     test_faf_bindings.cpp
+    test_user_state_globals.cpp
     test_engine_stats.cpp
     test_army_stats_sync.cpp
     test_sim_console.cpp
@@ -129,6 +130,7 @@ add_executable(osc_tests
     test_user_stand_ins.cpp
     test_resource_icons.cpp
     test_ui_controls.cpp
+    test_ui_controls_alpha.cpp
     test_texture_alpha.cpp
     test_texture_scroller.cpp
     test_key_codes.cpp

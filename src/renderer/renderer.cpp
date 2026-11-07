@@ -1604,6 +1604,7 @@ void Renderer::clear_scene() {
     uploads_.finish();
     vkDeviceWaitIdle(device_);
     feedback_blips_.clear();         // the old world's order marks
+    selection_renderer_.clear_blinky_boxes(); // and its blinking units
     range_blueprints_.clear();       // read again from the next UI state
     minimap_renderer_.begin_frame(); // no minimap (or its clicks) until drawn again
     recon_.clear();                  // a new world: nothing seen of it yet
@@ -3659,8 +3660,11 @@ void Renderer::update_view_effects(u32 fi, const std::array<f32, 16>& vp, const 
         particle_renderer_.update(particle_system_, texture_cache_, fi);
     }
 
+    // Moho's func_RenUI runs its blinky boxes on by the smoothed frame time,
+    // at each world view it draws.
     selection_renderer_.update(view, *view_camera_, view_points()[1], selected_ids, hovered_,
-                               player_army_, drag_box_, texture_cache_, mesh_cache_, L, fi);
+                               player_army_, drag_box_, texture_cache_, mesh_cache_, L, fi,
+                               frame_dt_);
 
     update_world_shapes(L, view, frustum, ghost, fi);
     if (!primary && fog_on_) {

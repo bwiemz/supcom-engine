@@ -21,6 +21,16 @@ i32 windows_key_code(i32 glfw_key);
 /// right 3). 0 for any other button.
 i32 moho_mouse_button(i32 glfw_button);
 
+/// wx 2.4's wxCharCodeMSWToWX, which Moho's KeycodeMSWToMaui calls: a
+/// Windows virtual-key code's wx code. 0 for a key wx leaves to its
+/// character (the letters and digits) or has no code for.
+i32 wx_key_code_of_windows(i32 vk);
+
+/// wx 2.4's wxCharCodeWXToMSW, which Moho's KeycodeMauiToMSW calls: a wx
+/// code's Windows virtual-key code. A code it has no key for (the
+/// printable characters among them) comes back as it went in.
+i32 windows_key_code_of_wx(i32 wx);
+
 /// The side mouse buttons as keys, as FAF's patched game has them
 /// (FA-Binary-Patches OnWindowMessage.cpp makes WM_XBUTTONDOWN/UP the
 /// WM_KEYDOWN/UP of VK_XBUTTON1/2, which wx passes on as key codes 5 and 6;

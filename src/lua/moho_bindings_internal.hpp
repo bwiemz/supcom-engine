@@ -114,6 +114,9 @@ const sim::WorldSnapshot* ui_world(lua_State* L);
 /// live C object (a _c_object that isn't null, or a unit the UI's tick still
 /// shows). FAF's UI asks it of nil controls.
 int ui_is_destroyed(lua_State* L);
+/// GetBlueprint(unit) in the UI state: the unit's blueprint, as its
+/// GetBlueprint method gives it (Moho's cfunc_GetBlueprintUserL).
+int ui_GetBlueprint(lua_State* L);
 f32 get_unit_threat_for_type(const sim::Unit* unit, const char* type);
 void request_world_sound(lua_State* L, const sim::Entity& e, std::string bank, std::string cue,
                          std::string lod_cutoff);

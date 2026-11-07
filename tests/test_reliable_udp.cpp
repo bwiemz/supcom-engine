@@ -212,12 +212,38 @@ TEST_CASE("Closing a reliable UDP stream delivers what was sent, then says goodb
     REQUIRE(p.run(2000, [&] { return p.host.state(p.to_joiner) == State::Closed; }));
 }
 
-TEST_CASE("A reliable UDP stream is lost when its peer goes quiet (M220c)", "[udp]") {
+TEST_CASE("A reliable UDP stream waits for a quiet peer, however long (M220c)", "[udp]") {
     Pair p;
     REQUIRE(p.open());
-    // The joiner stops (a crash): no goodbye
-    i64 quiet_from = p.net.now;
-    while (p.host.state(p.to_joiner) == State::Open && p.net.now - quiet_from < 20000) {
+    // The joiner stops for a minute (its process held): nothing comes from it
+    const auto sent = bytes(3000, 7);
+    REQUIRE(p.host.send(p.to_joiner, sent.data(), sent.size()));
+    for (int i = 0; i < 600; ++i) {
+        p.net.now += 100;
+        p.host.pump(p.net.now);
+    }
+    CHECK(p.host.state(p.to_joiner) == State::Open);
+    std::vector<u8> got;
+    REQUIRE(p.run(2000, [&] {
+        const auto x = p.joiner.take_received(p.to_host);
+        got.insert(got.end(), x.begin(), x.end());
+        return got.size() >= sent.size();
+    }));
+    CHECK(got == sent);
+    CHECK(p.host.state(p.to_joiner) == State::Open);
+    CHECK(p.joiner.state(p.to_host) == State::Open);
+}
+
+TEST_CASE("A stream closed here is gone once its quiet peer has been quiet too long (M220c)",
+          "[udp]") {
+    Pair p;
+    REQUIRE(p.open());
+    const auto last = bytes(100, 8);
+    REQUIRE(p.host.send(p.to_joiner, last.data(), last.size()));
+    p.host.close(p.to_joiner);
+    // The joiner stops (a crash): no ack, no goodbye
+    const i64 quiet_from = p.net.now;
+    while (p.host.state(p.to_joiner) == State::Closing && p.net.now - quiet_from < 20000) {
         p.net.now += 100;
         p.host.pump(p.net.now);
     }

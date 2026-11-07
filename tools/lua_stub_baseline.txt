@@ -20,7 +20,6 @@ MetaImpact stub_noop
 PrefetchSession Command
 ProjectMultiple worldview_ProjectMultiple
 RefreshSteamGames l_RefreshSteamGames
-SetArmyShowScore stub_noop
 SetGreaterOf brain_SetGreaterOf
 SetTargetHead frame_SetTargetHead
 ShouldCreateInitialArmyUnits l_ShouldCreateInitialArmyUnits
