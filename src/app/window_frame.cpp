@@ -512,12 +512,7 @@ void App::Window::advance_sim(double dt) {
             for (int r = 0; r < rounds; ++r) {
                 session->send_frame();
                 session->receive_and_advance();
-                // A timed-out peer leaves so the match resolves instead
-                // of stalling in "waiting for players": the survivors
-                // agree on its last frame, and its command source ends in
-                // the same beat on every one of them (a command, so
-                // replays keep it) -- an army it leaves with no player is
-                // abandoned to its brain, which retail's defeats.
+                osc::lua::note_disconnected(ui_lua_state.raw(), osc::lua::mp_eject_lost());
                 for (osc::u32 src : session->take_dropped()) {
                     spdlog::warn("[mp] peer {} dropped — its source ends", src);
                     osc::lua::mp_disconnect_source(src); // M218e
@@ -567,7 +562,9 @@ osc::u32 App::Window::collect_sim() {
     world_interp.publish();
     collected_tick = sim_state ? sim_state->tick_count() : 0;
     time_ticks(job_ms, job_ticks);
-    // A timed-out peer, defeated by the lockstep's agreement, is let go
+    osc::lua::note_disconnected(ui_lua_state.raw(), job_disconnected);
+    job_disconnected.clear();
+    // An ejected peer, defeated by the lockstep's agreement, is let go
     for (const osc::u32 src : job_dropped) {
         spdlog::warn("[mp] peer {} dropped — its army is defeated", src);
         osc::lua::mp_disconnect_source(src); // M218e
@@ -614,6 +611,9 @@ void App::Window::start_sim(double dt) {
             for (int r = 0; r < rounds; ++r) {
                 session->send_frame();
                 session->receive_and_advance();
+                for (std::string& name : osc::lua::mp_eject_lost()) {
+                    job_disconnected.push_back(std::move(name));
+                }
                 for (const osc::u32 src : session->take_dropped()) job_dropped.push_back(src);
             }
             world_interp.history.stage_world(*sim_state);

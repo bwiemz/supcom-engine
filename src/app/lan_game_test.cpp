@@ -21,6 +21,8 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <utility>
 
 namespace osc::app {
@@ -37,6 +39,8 @@ constexpr u32 kMaxHostWaitFrames = 6000;
 constexpr u32 kPressInterval = 600;
 /// Frames after the check that a side waits for kEndTick at most.
 constexpr u32 kWindDownFrames = 600;
+/// Retail's dialog shows a client quiet for 5 s and enables Eject 15 s later.
+constexpr u32 kEjectWaitFrames = 1200;
 
 /// __osc_upvalue(fn, name): the upvalue `name` of the Lua function `fn`,
 /// or nil. The flow reads lobby.lua's own state (its gameInfo, GUI,
@@ -204,7 +208,7 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
             !s)
             fail("saving: " + s.error().message);
     }
-    // --lan-game-quit-at: the joiner leaves here; the host plays on
+    // --lan-game-quit-at: the joiner's process ends here, with no goodbye
     const bool resumed = saw_pause_ && number_global(ui.raw(), "__osc_lan_resumed") >= 1;
     if (!host_ && quit_at_ > 0 && checked_at_ && resumed && sim->tick_count() >= quit_at_) {
         spdlog::info("[lan-game] the joiner leaves at tick {}", sim->tick_count());
@@ -212,25 +216,34 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         check_pause(ui);
         check_speed(ui);
         left_ = true;
-        done_ = true;
-        return;
+        finish(sim);
+        spdlog::default_logger()->flush();
+        std::fflush(nullptr);
+        std::_Exit(test_status::failure_count() == 0 ? 0 : 1);
     }
-    if (host_ && quit_at_ > 0 && checked_at_ && disconnect_dialog_open(ui)) dialog_seen_ = true;
+    if (host_ && quit_at_ > 0 && checked_at_ && disconnect_dialog_open(ui)) {
+        dialog_seen_ = true;
+        if (!eject_pressed_at_ && press_enabled_eject(ui)) {
+            spdlog::info("[lan-game] the host ejects the joiner at tick {}", sim->tick_count());
+            eject_pressed_at_ = frames_;
+        }
+    }
     if (checked_at_ && resume_.empty()) pause_frame(ui, *sim);
     if (!checked_at_ && sim->tick_count() >= kCheckTick) {
         check(ui, *sim);
         checked_at_ = frames_;
     }
     const bool alone = !host_ || quit_at_ == 0 || joiner_defeated(*sim);
+    const u32 wind_down =
+        host_ && quit_at_ > 0 ? kWindDownFrames + kEjectWaitFrames : kWindDownFrames;
     const bool over = checked_at_ && ((alone && sim->tick_count() >= kEndTick) ||
-                                      frames_ - *checked_at_ > kWindDownFrames);
+                                      frames_ - *checked_at_ > wind_down);
     if (over && !over_at_) over_at_ = frames_;
     // A frame or two more, so the frame's pumps (the disconnect dialog's
     // update) see what the lockstep did this frame
     if (over && frames_ >= *over_at_ + 2) {
         // Both play to the end together: the lockstep lets neither stop
-        // short (a player who paused alone would stall the other, and be
-        // dropped)
+        // short (a player who paused alone would stall the other)
         if (sim->tick_count() < kEndTick)
             fail(fmt::format("stalled at tick {}, short of {}", sim->tick_count(), kEndTick));
         if (self_destructed_) {
@@ -261,7 +274,11 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
                 fail(
                     fmt::format("the joiner's army {} wasn't defeated", mp.army_of(joiner_source)));
             }
-            if (!dialog_seen_) fail("retail's disconnect dialog never opened");
+            if (!dialog_seen_) {
+                fail("retail's disconnect dialog never opened");
+            } else if (!eject_pressed_at_) {
+                fail("retail's disconnect dialog never offered its Eject");
+            }
             if (disconnect_dialog_open(ui)) fail("retail's disconnect dialog stayed open");
         }
         if (resume_.empty()) {
@@ -376,6 +393,25 @@ bool LanGameTest::disconnect_dialog_open(lua::LuaState& ui) {
         __osc_lan_dialog = module and __osc_upvalue(module.Update, 'parent') and 1 or 0
     )");
     return r && number_global(ui.raw(), "__osc_lan_dialog") != 0;
+}
+
+bool LanGameTest::press_enabled_eject(lua::LuaState& ui) {
+    auto r = ui.do_string(R"(
+        local module = __modules['/lua/ui/dialogs/disconnect.lua']
+        local parent = __osc_upvalue(module.Update, 'parent')
+        __osc_lan_ejected = 0
+        for _, slot in __osc_upvalue(parent.Update, 'slots') or {} do
+            if not slot.eject:IsHidden() and not slot.eject:IsDisabled() then
+                slot.eject.OnClick(slot.eject)
+                __osc_lan_ejected = 1
+            end
+        end
+    )");
+    if (!r) {
+        fail("pressing Eject: " + r.error().message);
+        return false;
+    }
+    return number_global(ui.raw(), "__osc_lan_ejected") != 0;
 }
 
 void LanGameTest::listen_for_chat(lua::LuaState& ui) {

@@ -16,6 +16,7 @@ extern "C" {
 }
 
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -108,8 +109,10 @@ std::unique_ptr<sim::LobbyNet> lobby_to_launch(bool is_host, const std::string& 
 // both processes is a synced match.
 // --mp-slow <ms>: the joiner takes that long a round, and must set the
 // game's pace rather than be dropped (M218h).
+// --mp-freeze-at <round>: the joiner's process stops there until run_pair.py
+// continues it; the host waits, and both play on.
 int run_mp_lobby_test(bool is_host, const std::string& address, osc::u16 port, osc::u32 frames,
-                      bool inject_desync, osc::u32 drop_at, osc::u32 slow_ms) {
+                      bool inject_desync, osc::u32 drop_at, osc::u32 slow_ms, osc::u32 freeze_at) {
     using namespace osc;
     namespace chrono = std::chrono;
 
@@ -162,6 +165,12 @@ int run_mp_lobby_test(bool is_host, const std::string& address, osc::u16 port, o
         cmd.type = sim::CommandType::Stop;
         issue(unit_id, cmd);
     };
+    auto quiet_ms = [&](u32 uid) -> i64 {
+        const sim::LobbyGameTransport* game = lua::mp_net_state().lobby_game;
+        const sim::LobbyPeer* peer = game ? game->net().peer(uid) : nullptr;
+        return peer && peer->last_heard_ms >= 0 ? lua::net_lobby_clock_ms() - peer->last_heard_ms
+                                                : 0;
+    };
 
     bool stalled = false;
     u32 dropped_count = 0;
@@ -177,6 +186,17 @@ int run_mp_lobby_test(bool is_host, const std::string& address, osc::u16 port, o
             spdlog::warn("[mp] joiner leaving at round {} (--mp-drop-at)", round);
             std::fflush(stdout);
             std::_Exit(0);
+        }
+        if (!is_host && freeze_at > 0 && round == freeze_at) {
+            spdlog::warn("[mp] joiner stopping at round {} (--mp-freeze-at)", round);
+            std::fflush(stdout);
+#ifdef _WIN32
+            spdlog::error("[mp] --mp-freeze-at stops the process with SIGSTOP, which Windows "
+                          "doesn't have");
+            return 1;
+#else
+            std::raise(SIGSTOP);
+#endif
         }
         // Host scripts a few player orders at known frames (joiner stays silent).
         if (is_host) {
@@ -196,18 +216,25 @@ int run_mp_lobby_test(bool is_host, const std::string& address, osc::u16 port, o
         }
         session->send_frame();
         auto last_resend = chrono::steady_clock::now();
+        const auto stall_until = last_resend + chrono::seconds(30);
         // Pump until this side advances one tick (both peers confirmed frame).
-        for (int i = 0; i < 20000 && sim->tick_count() <= round; ++i) {
+        while (sim->tick_count() <= round && chrono::steady_clock::now() < stall_until) {
             session->receive_and_advance();
+            for (const std::string& name : lua::mp_eject_lost()) {
+                spdlog::warn("[mp] {} disconnected", name);
+            }
+            // --mp-drop-at: the host's player ejects the vanished joiner once
+            // retail's disconnect dialog shows it, quiet over 5 s
+            if (is_host && drop_at > 0 && quiet_ms(joiner_uid) > 5000) {
+                session->eject(1);
+            }
             for (u32 s : session->take_dropped()) {
                 ++dropped_count;
                 spdlog::warn("[mp] peer {} dropped — playing on", s);
             }
             if (sim->tick_count() <= round) {
-                // Resend while stalled so a silent peer's drop timer accrues
-                // (it counts the frames sent since the peer's last), but only at
-                // the sim's ~10 Hz: resending every poll would race ahead and
-                // drop a peer that is merely slow.
+                // Send on while stalled, at the sim's ~10 Hz, as the game's
+                // frames go out: up to the lead cap
                 auto now = chrono::steady_clock::now();
                 if (now - last_resend >= chrono::milliseconds(100)) {
                     session->send_frame();
@@ -228,8 +255,7 @@ int run_mp_lobby_test(bool is_host, const std::string& address, osc::u16 port, o
     // Done, but the other side may not be: it may still want this side's
     // last frame, which closing now could lose (a socket closed with data
     // unread resets the connection, and the peer loses what it had yet to
-    // read). So go on answering for a second -- well inside the drop
-    // timeout -- before closing.
+    // read). So go on answering for a second before closing.
     if (!stalled) {
         const auto until = chrono::steady_clock::now() + chrono::seconds(1);
         auto last_send = chrono::steady_clock::now();
@@ -267,7 +293,7 @@ int run_mp_lobby_test(bool is_host, const std::string& address, osc::u16 port, o
     }
     if (desynced || stalled) return 2;
     // --mp-drop-at: the host must have dropped the joiner, and played on;
-    // else no one may be dropped (a slow joiner sets the pace)
+    // else no one may be dropped (a slow or stopped joiner is waited for)
     const u32 want_dropped = is_host && drop_at > 0 ? 1 : 0;
     if (dropped_count != want_dropped) {
         spdlog::error("[mp] {} dropped {} peers, not {}", is_host ? "host" : "joiner",

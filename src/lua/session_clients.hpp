@@ -11,6 +11,7 @@
 #include "core/types.hpp"
 
 #include <cstddef>
+#include <string>
 #include <vector>
 
 struct lua_State;
@@ -61,6 +62,9 @@ EjectByUid eject_session_uid(u32 uid);
 /// Each frame of a network game: retail's disconnect dialog looks at the
 /// clients (uimain.UpdateDisconnectDialog, as Moho's session calls it).
 void pump_disconnect_dialog(lua_State* L);
+/// Moho's NoteDisconnect: "<name> disconnected." (Engine0002) on the console
+/// for each client whose connection closed.
+void note_disconnected(lua_State* L, const std::vector<std::string>& names);
 
 /// SessionRequestPause / SessionResume (M218f): a command to the sim
 /// (SimState::request_pause), through the lockstep in a network game, and
