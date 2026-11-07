@@ -84,28 +84,28 @@ public:
     static constexpr u32 kMaxLead = 20;
 
     // --- Peer drop, by agreement (M198b) ---
-    // A peer is dropped only when ejected (below): a silent one is waited
-    // for, as Moho's client manager waits. Not by one survivor alone:
-    // survivors may hold different last frames from it (it died
-    // mid-broadcast). So a survivor that ejects it stops taking its frames and
-    // reports the last one it holds, with the peer's recent frames; a report
-    // from another survivor draws its own. Once every survivor has reported,
-    // all take the furthest frame reported as the peer's last, apply any of
-    // its frames they missed (relayed in the reports), release it from the
-    // gate, and defeat its army in the beat after -- the same beat on every
-    // survivor.
+    // A peer is dropped only when every survivor has ejected it (below): a
+    // silent one is waited for, as Moho's client manager waits, and another
+    // survivor's eject is only its report (Moho's ejectedBy). Survivors may
+    // hold different last frames from it (it died mid-broadcast). So a
+    // survivor that ejects it stops taking its frames and reports the last
+    // one it holds, with the peer's recent frames. Once every survivor has
+    // reported, all take the furthest frame reported as the peer's last,
+    // apply any of its frames they missed (relayed in the reports), release
+    // it from the gate, and defeat its army in the beat after -- the same
+    // beat on every survivor.
     /// Sources newly declared dropped since the last call (drained on return).
     std::vector<u32> take_dropped();
     bool has_dropped(u32 src) const;
 
     // --- Eject (EjectSessionClient, M218e) ---
     /// This peer ejects `source` (a player's choice, or its connection
-    /// closed): it starts the drop, and the survivors agree it. False for this
-    /// peer itself, one dropped or being dropped already, no participant, or
-    /// once this peer is ejected.
+    /// closed): it reports the drop, which the survivors agree once each has
+    /// ejected it. False for this peer itself, one dropped or ejected here
+    /// already, no participant, or once this peer is ejected.
     bool eject(u32 source);
-    /// The survivors that have reported `source` dropped (Moho's
-    /// ejectedBy): while its drop is agreed, and once it is. Sorted.
+    /// The survivors that have ejected `source` (Moho's ejectedBy), this one
+    /// or others: while its drop is agreed, and once it is. Sorted.
     std::vector<u32> ejectors(u32 source) const;
     /// Whether a survivor reports this peer dropped: its game is over, and
     /// it no longer ticks or drops anyone.
@@ -196,6 +196,10 @@ private:
     u32 lead_cap() const;
 
     bool dropping(u32 source) const { return drop_votes_.count(source) > 0; }
+    bool ejecting(u32 source) const {
+        const auto vote = drop_votes_.find(source);
+        return vote != drop_votes_.end() && vote->second.last_frame.count(local_source_) > 0;
+    }
     /// One of the game's command sources. A message naming any other (the
     /// engine's kEngineSource among them) is forged or corrupt.
     bool participant(u32 source) const {

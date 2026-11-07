@@ -12,6 +12,7 @@
 #include "lua/mp_net_state.hpp"
 #include "lua/net_lobby.hpp"
 #include "lua/session_clients.hpp"
+#include "sim/command_codec.hpp"
 #include "sim/lan_discovery.hpp"
 #include "sim/lobby_net.hpp"
 #include "sim/lockstep_session.hpp"
@@ -871,6 +872,67 @@ TEST_CASE("A client whose connection closes is ejected and named on the console,
     osc::lua::note_disconnected(w.state.raw(), lost);
     CHECK(log.count("Alice disconnected.") == 1);
     CHECK(osc::lua::mp_eject_lost().empty());
+}
+
+TEST_CASE("Another player's eject shows in ejectedBy; this one ejects for itself, as Moho's",
+          "[lobby][lua]") {
+    MpGuard guard;
+    World w;
+    REQUIRE(w.run(kScenarios));
+    REQUIRE(w.run("host = NewLobby('Host') host:HostGame()"));
+    REQUIRE(w.until("host.hosted"));
+    REQUIRE(w.run(R"(
+        port = host:GetLocalPort()
+        a = NewLobby('Alice') a:JoinGame('127.0.0.1:' .. port, 'Alice', nil)
+        b = NewLobby('Bob') b:JoinGame('127.0.0.1:' .. port, 'Bob', nil)
+    )"));
+    REQUIRE(w.until("a.me == '1' and b.me == '2'"));
+    REQUIRE(w.run(R"(
+        function GameInfo()
+            return Config('/maps/two/two_scenario.lua', {
+                {Human = true, OwnerID = '0', PlayerName = 'Host'},
+                {Human = true, OwnerID = '1', PlayerName = 'Alice'},
+            }, {{OwnerID = '2', PlayerName = 'Bob'}})
+        end
+        a:LaunchGame(GameInfo())
+    )"));
+    auto alice = take_launched();
+    REQUIRE(w.run("b:LaunchGame(GameInfo())"));
+    auto bob = take_launched();
+    REQUIRE(w.run("host:LaunchGame(GameInfo())"));
+    REQUIRE(osc::lua::mp_attach_session(w.sim));
+    auto& mp = osc::lua::mp_net_state();
+    REQUIRE(mp.all_sources == std::vector<osc::u32>{0, 1, 2});
+    REQUIRE(mp.local_source == 0);
+
+    // Bob goes silent, and Alice ejects him: her report (as her session
+    // sends it) reaches the host
+    std::vector<osc::u8> report;
+    osc::sim::ByteWriter wr(report);
+    wr.u8v(1);  // a drop report
+    wr.u32v(1); // from Alice
+    wr.u32v(2); // about Bob
+    wr.u32v(0); // his last frame she holds
+    wr.u32v(0); // no frames relayed
+    alice->broadcast(report);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline && mp.session->ejectors(2).empty()) {
+        mp.session->receive_and_advance();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    REQUIRE(mp.session->ejectors(2) == std::vector<osc::u32>{1});
+    CHECK_FALSE(mp.session->has_dropped(2));
+    REQUIRE(w.run(R"(
+        local clients = GetSessionClients()
+        assert(clients[3].connected, 'the host has not ejected Bob')
+        assert(table.getn(clients[3].ejectedBy) == 1 and clients[3].ejectedBy[1] == 2, 'Alice has')
+        EjectSessionClient(3)
+        clients = GetSessionClients()
+        assert(not clients[3].connected, 'Bob is gone')
+        local by = clients[3].ejectedBy
+        assert(table.getn(by) == 2 and by[1] == 1 and by[2] == 2, 'by both')
+    )"));
+    CHECK(mp.session->has_dropped(2));
 }
 
 TEST_CASE("A lobby's game has the speed its lobby set; players change it, observers can't (M218i)",

@@ -233,7 +233,9 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
     stream lost: a silent peer is waited for, as Moho's client manager and
     UDP connection wait, and the players eject it from retail's disconnect
     dialog. A closed connection ejects its client at once, as Moho's does.
-    The drop timer and the alive message are gone.
+    Another player's eject is only shown (`ejectedBy`): each player ejects
+    for themselves, and the drop is agreed once all still in have. The drop
+    timer and the alive message are gone.
 
 - **M218i:** a network game's speed, as Moho's client manager negotiates
   it. The lobby's `GameSpeed` fixes it (`normal` +0, `fast` +4) or lets

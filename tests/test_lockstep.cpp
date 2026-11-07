@@ -440,9 +440,9 @@ TEST_CASE("Only the game's sources are heard: not the engine's, nor one not play
 
 TEST_CASE("Survivors agree on a dropped peer's last frame", "[lockstep][drop]") {
     // Three peers. C's last frame -- carrying an order -- reaches A but not B
-    // before C dies, and A's player ejects it. Deciding the drop alone, A
-    // would play C's order and B would not: a desync. By agreement, B gets
-    // the frame relayed, and both defeat C's army on the same tick.
+    // before C dies, and A's player ejects it, then B's. Deciding the drop
+    // alone, A would play C's order and B would not: a desync. By agreement,
+    // B gets the frame relayed, and both defeat C's army on the same tick.
     LuaGuard ga, gb, gc;
     SimState a(ga.L, nullptr), b(gb.L, nullptr), c(gc.L, nullptr);
     std::vector<EntityId> movers;
@@ -484,6 +484,9 @@ TEST_CASE("Survivors agree on a dropped peer's last frame", "[lockstep][drop]") 
         if (round == 5) {
             REQUIRE(sa.eject(2));
         }
+        if (round == 10) {
+            REQUIRE(sb.eject(2));
+        }
         sa.receive_and_advance();
         sb.receive_and_advance();
         sa.send_frame();
@@ -512,7 +515,7 @@ TEST_CASE("A dropped player's own army is defeated, not the one numbered as its 
           "[lockstep][drop]") {
     // A lobby's game: player A (source 0) plays army 0, an AI army 1, player
     // B (source 1) army 2, and C (source 2) watches. B goes silent, then C,
-    // and A's player ejects each.
+    // and the players still in eject each.
     LuaGuard ga, gb, gc;
     SimState a(ga.L, nullptr), b(gb.L, nullptr), c(gc.L, nullptr);
     for (SimState* s : {&a, &b, &c}) {
@@ -534,6 +537,7 @@ TEST_CASE("A dropped player's own army is defeated, not the one numbered as its 
     }
     // B goes silent: A and C drop it, and its army 2 goes, not army 1
     REQUIRE(sa.eject(1));
+    REQUIRE(sc.eject(1));
     for (int round = 0; round < 30; ++round) {
         sa.send_frame();
         sc.send_frame();
@@ -555,6 +559,64 @@ TEST_CASE("A dropped player's own army is defeated, not the one numbered as its 
     CHECK_FALSE(a.army_at(0)->is_defeated());
     CHECK_FALSE(a.army_at(1)->is_defeated());
     CHECK(a.tick_count() > 30); // A plays on alone
+}
+
+TEST_CASE("A survivor waits for a silent peer another ejected, until it ejects it too",
+          "[lockstep][drop]") {
+    LuaGuard ga, gb, gc;
+    SimState a(ga.L, nullptr), b(gb.L, nullptr), c(gc.L, nullptr);
+    for (SimState* s : {&a, &b, &c}) {
+        s->set_victory_condition("sandbox");
+        for (const char* army : {"ARMY_1", "ARMY_2", "ARMY_3"}) s->add_army(army, army);
+    }
+    LoopbackHub hub;
+    LoopbackTransport ta(hub, hub.add_endpoint()), tb(hub, hub.add_endpoint()),
+        tc(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1, 2});
+    LockstepSession sb(b, tb, 1, {0, 1, 2});
+    LockstepSession sc(c, tc, 2, {0, 1, 2});
+    for (int i = 0; i < 5; ++i) {
+        for (LockstepSession* s : {&sa, &sb, &sc}) {
+            s->send_frame();
+        }
+        for (LockstepSession* s : {&sa, &sb, &sc}) {
+            s->receive_and_advance();
+        }
+    }
+    const auto round = [&] {
+        sa.send_frame();
+        sb.send_frame();
+        sa.receive_and_advance();
+        sb.receive_and_advance();
+    };
+
+    // C goes silent, and A's player ejects it: B only hears of it
+    REQUIRE(sa.eject(2));
+    for (int i = 0; i < 100; ++i) {
+        round();
+    }
+    CHECK(sb.ejectors(2) == std::vector<osc::u32>{0});
+    CHECK(sa.ejectors(2) == std::vector<osc::u32>{0});
+    CHECK_FALSE(sa.has_dropped(2));
+    CHECK_FALSE(sb.has_dropped(2));
+    const osc::u32 held = b.tick_count();
+    CHECK(a.tick_count() == held);
+
+    // B's player ejects it too: both drop it, on the same tick, and play on
+    REQUIRE(sb.eject(2));
+    CHECK_FALSE(sb.eject(2));
+    for (int i = 0; i < 10; ++i) {
+        round();
+    }
+    REQUIRE(sa.has_dropped(2));
+    REQUIRE(sb.has_dropped(2));
+    CHECK(sa.ejectors(2) == std::vector<osc::u32>{0, 1});
+    CHECK(sb.ejectors(2) == std::vector<osc::u32>{0, 1});
+    CHECK(a.tick_count() > held);
+    CHECK(a.tick_count() == b.tick_count());
+    CHECK(a.compute_sync_checksum() == b.compute_sync_checksum());
+    CHECK(a.army_at(2)->is_defeated());
+    CHECK(b.army_at(2)->is_defeated());
 }
 
 TEST_CASE("A player ejects another still playing; the survivors agree (M218e)",
@@ -584,7 +646,12 @@ TEST_CASE("A player ejects another still playing; the survivors agree (M218e)",
     CHECK_FALSE(sa.eject(2)); // once
     CHECK(sa.ejectors(2) == std::vector<osc::u32>{0});
     CHECK_FALSE(sa.has_dropped(2));
-    // B hears of it and votes too; then both drop C, on the same tick
+    // B hears of it, and waits for C until its player ejects C too; then
+    // both drop C, on the same tick
+    for (int i = 0; i < 10; ++i) round();
+    CHECK(sb.ejectors(2) == std::vector<osc::u32>{0});
+    CHECK_FALSE(sb.has_dropped(2));
+    REQUIRE(sb.eject(2));
     for (int i = 0; i < 10; ++i) round();
     REQUIRE(sa.has_dropped(2));
     REQUIRE(sb.has_dropped(2));
@@ -891,7 +958,8 @@ TEST_CASE("A drop report's frame number can't make a survivor work forever", "[l
     w.u32v(0);          // no frames relayed
     raw_b.broadcast(msg);
     sa.send_frame();
-    sa.receive_and_advance(); // returns: that is the test
+    sa.receive_and_advance();
+    REQUIRE(sa.eject(2)); // returns: that is the test
     CHECK(sa.has_dropped(2));
 }
 

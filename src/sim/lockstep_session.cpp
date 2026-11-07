@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <utility>
 
@@ -174,10 +175,11 @@ void LockstepSession::receive_and_advance() {
         // Only the game's sources play: a frame from any other (the engine's,
         // whose callbacks defeat armies, among them) would gate the scheduler
         // on a source that never confirms, and carry orders no player gave.
-        // Ignore a source that is dropped or being dropped: late frames must
-        // neither re-register it in the scheduler gate (re-stalling the
-        // survivors) nor move the last frame this peer reported for it.
-        if (!participant(source) || has_dropped(source) || dropping(source) ||
+        // Ignore a source that is dropped or that this peer ejected: late
+        // frames must neither re-register it in the scheduler gate
+        // (re-stalling the survivors) nor move the last frame this peer
+        // reported for it.
+        if (!participant(source) || has_dropped(source) || ejecting(source) ||
             source == local_source_)
             continue;
         u32 frame = r.u32v();
@@ -227,13 +229,24 @@ void LockstepSession::receive_and_advance() {
 }
 
 void LockstepSession::begin_drop(u32 source) {
-    if (source == local_source_ || has_dropped(source) || dropping(source)) return;
+    if (source == local_source_ || has_dropped(source) || ejecting(source)) {
+        return;
+    }
+    // Its own reports count no more, as Moho's ProcessEject drops its
+    // requests
+    for (auto it = drop_votes_.begin(); it != drop_votes_.end();) {
+        it->second.last_frame.erase(source);
+        it = it->second.last_frame.empty() ? drop_votes_.erase(it) : std::next(it);
+    }
     DropVote& vote = drop_votes_[source];
     auto confirmed = peer_confirmed_.find(source);
     const u32 last = confirmed == peer_confirmed_.end() ? 0 : confirmed->second;
     vote.last_frame[local_source_] = last;
-    auto kept = recent_frames_.find(source);
-    if (kept != recent_frames_.end()) vote.frames = kept->second;
+    if (auto kept = recent_frames_.find(source); kept != recent_frames_.end()) {
+        for (const auto& [frame, commands] : kept->second) {
+            vote.frames.emplace(frame, commands);
+        }
+    }
 
     // Report it: the last frame this peer holds, and the frames it has kept,
     // as many of the newest as fit one wire message (the newest are the ones
@@ -297,8 +310,9 @@ void LockstepSession::take_drop_report(ByteReader& r) {
         ejected_ = true;
         return;
     }
-    if (has_dropped(source) || has_dropped(reporter) || dropping(reporter)) return;
-    begin_drop(source); // a report from another survivor draws this one's
+    if (has_dropped(source) || has_dropped(reporter) || ejecting(reporter)) {
+        return;
+    }
     DropVote& vote = drop_votes_[source];
     vote.last_frame[reporter] = last;
     for (auto& [frame, commands] : relayed) vote.frames.emplace(frame, std::move(commands));
@@ -383,7 +397,7 @@ std::vector<u32> LockstepSession::take_dropped() {
 }
 
 bool LockstepSession::eject(u32 source) {
-    if (ejected_ || source == local_source_ || has_dropped(source) || dropping(source) ||
+    if (ejected_ || source == local_source_ || has_dropped(source) || ejecting(source) ||
         std::find(all_sources_.begin(), all_sources_.end(), source) == all_sources_.end()) {
         return false;
     }
