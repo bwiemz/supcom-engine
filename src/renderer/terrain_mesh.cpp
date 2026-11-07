@@ -1,4 +1,5 @@
 #include "renderer/terrain_mesh.hpp"
+#include "renderer/gpu_uploads.hpp"
 #include "renderer/vk_types.hpp"
 #include "map/terrain.hpp"
 #include "map/heightmap.hpp"
@@ -102,9 +103,7 @@ void TerrainMesh::record_update(VkCommandBuffer cmd, const osc::map::Heightmap& 
                          0, nullptr, 1, &after, 0, nullptr);
 }
 
-void TerrainMesh::build(const osc::map::Terrain& terrain, VkDevice device,
-                        VmaAllocator allocator, VkCommandPool cmd_pool,
-                        VkQueue queue) {
+void TerrainMesh::build(const osc::map::Terrain& terrain, GpuUploads& uploads) {
     const auto& hm = terrain.heightmap();
     u32 gw = hm.grid_width();
     u32 gh = hm.grid_height();
@@ -165,14 +164,10 @@ void TerrainMesh::build(const osc::map::Terrain& terrain, VkDevice device,
                  dw, dh, vertices.size(), index_count_);
 
     // Upload to GPU
-    vertex_buf_ = upload_buffer(device, allocator, cmd_pool, queue,
-                                vertices.data(),
-                                vertices.size() * sizeof(TerrainVertex),
-                                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    index_buf_ = upload_buffer(device, allocator, cmd_pool, queue,
-                               indices.data(),
-                               indices.size() * sizeof(u32),
-                               VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    vertex_buf_ = uploads.buffer(vertices.data(), vertices.size() * sizeof(TerrainVertex),
+                                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    index_buf_ = uploads.buffer(indices.data(), indices.size() * sizeof(u32),
+                                VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 }
 
 void TerrainMesh::destroy(VkDevice device, VmaAllocator allocator) {

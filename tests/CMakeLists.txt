@@ -71,6 +71,7 @@ add_executable(osc_tests
     test_bounded_props.cpp
     test_build_on_wreck.cpp
     test_entity_health.cpp
+    test_entity_position.cpp
     test_entity_lifetime.cpp
     test_entity_ids.cpp
     test_fixed_step.cpp
@@ -235,6 +236,7 @@ add_executable(osc_tests
     test_video_decoder.cpp
     test_vulkan_layer.cpp
     test_window_system.cpp
+    test_gpu_uploads.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE

@@ -178,6 +178,7 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     w.b(e.destroyed_);
     w.str(e.blueprint_id_.str());
     w.i32v(e.lua_table_ref_);
+    w.i32v(e.lua_position_ref_);
     w.size(e.ambient_sounds_.size());
     for (const auto& a : e.ambient_sounds_) {
         w.str(a.name);
@@ -281,6 +282,7 @@ void StateIO::load(StateReader& r, Entity& e) {
     e.destroyed_ = r.b();
     e.blueprint_id_ = InternedString(r.str());
     e.lua_table_ref_ = r.i32v();
+    e.lua_position_ref_ = r.i32v();
     e.ambient_sounds_.resize(r.size(16));
     for (auto& a : e.ambient_sounds_) {
         a.name = r.str();

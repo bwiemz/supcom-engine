@@ -185,22 +185,16 @@ endfunction()
 foreach(mode IN LISTS OSC_DATA_TESTS_GATE)
     osc_add_data_test(${mode} gate)
 endforeach()
-# The modes whose checks Moho's pathing changes (--moho-pathing, off by
-# default), again with it: each holds its expectations both ways until the
-# flag is the default.
-foreach(mode drive-test steer-test crowd-test weapon-test range-test factory-rally-test
-             shore-test choke-test crowdgap-test ferry-test)
-    add_test(NAME data.moho.${mode}
-             COMMAND osc_integration --map ${OSC_TEST_MAP} --${mode} --moho-pathing)
-    set_tests_properties(data.moho.${mode} PROPERTIES
-        LABELS "data;gate"
-        SKIP_RETURN_CODE 77
-        TIMEOUT 900)
-endforeach()
 # M212f: the one TTerrainGlow map, Varga Pass
 add_test(NAME data.terrain-glow-test
          COMMAND osc_integration --map /maps/SCMP_023/SCMP_023_scenario.lua --terrain-glow-test)
 set_tests_properties(data.terrain-glow-test PROPERTIES
+    LABELS "data;gate"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 900)
+add_test(NAME data.ship-shore-test
+         COMMAND osc_integration --map /maps/X1MP_012/X1MP_012_scenario.lua --ship-shore-test)
+set_tests_properties(data.ship-shore-test PROPERTIES
     LABELS "data;gate"
     SKIP_RETURN_CODE 77
     TIMEOUT 900)
@@ -291,14 +285,14 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
-    # And with Moho pathing (--moho-pathing), which the replay's setup
+    # And with the grid's pathing (--grid-pathing), which the replay's setup
     # records too (format 16): it plays back without the flag.
-    add_test(NAME data.replay_roundtrip_moho_pathing
+    add_test(NAME data.replay_roundtrip_grid_pathing
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/replay_roundtrip.py
                      $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
                      -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 4 --ticks 1200
-                     --seed 4242 --scripted-orders --moho-pathing)
-    set_tests_properties(data.replay_roundtrip_moho_pathing PROPERTIES
+                     --seed 4242 --scripted-orders --grid-pathing)
+    set_tests_properties(data.replay_roundtrip_grid_pathing PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
@@ -327,26 +321,24 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 1200)
-    # The same with Moho pathing (--moho-pathing): each save holds paths
-    # being followed, searches waiting and in flight, and dirty clusters,
-    # all in the checksum's navigation domain. Each load takes the switch
-    # from the save, not the command line: from its snapshot, or, catching
-    # up from its history, from the setup that history records.
-    add_test(NAME data.save_load_moho_pathing
+    # The same with the grid's pathing (--grid-pathing). Each load takes the
+    # switch from the save, not the command line: from its snapshot, or,
+    # catching up from its history, from the setup that history records.
+    add_test(NAME data.save_load_grid_pathing
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/save_load.py
                      $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
                      -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 4 --ticks 1200
-                     --seed 4242 --scripted-orders --moho-pathing)
-    set_tests_properties(data.save_load_moho_pathing PROPERTIES
+                     --seed 4242 --scripted-orders --grid-pathing)
+    set_tests_properties(data.save_load_grid_pathing PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 1200)
-    add_test(NAME data.save_load_replay_moho_pathing
+    add_test(NAME data.save_load_replay_grid_pathing
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/save_load.py --by-replay
                      $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
                      -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 4 --ticks 1200
-                     --seed 4242 --scripted-orders --moho-pathing)
-    set_tests_properties(data.save_load_replay_moho_pathing PROPERTIES
+                     --seed 4242 --scripted-orders --grid-pathing)
+    set_tests_properties(data.save_load_replay_grid_pathing PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 1200)
@@ -639,6 +631,7 @@ if(Python3_Interpreter_FOUND)
                      $<TARGET_FILE:opensupcom> 29741)
     set_tests_properties(data.lan_game PROPERTIES
         LABELS "data;gate"
+        RESOURCE_LOCK lan_game
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
     # M218e: the joiner leaves at tick 120; the host drops it by the
@@ -649,6 +642,7 @@ if(Python3_Interpreter_FOUND)
                      $<TARGET_FILE:opensupcom> 29742 -- --lan-game-quit-at 120)
     set_tests_properties(data.lan_game_quit PROPERTIES
         LABELS "data;gate"
+        RESOURCE_LOCK lan_game
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
     # Each side focuses its own army; the joiner self-destructs its commander
@@ -659,6 +653,7 @@ if(Python3_Interpreter_FOUND)
                      $<TARGET_FILE:opensupcom> 29743 -- --lan-game-self-destruct-at 10)
     set_tests_properties(data.lan_game_self_destruct PROPERTIES
         LABELS "data;gate"
+        RESOURCE_LOCK lan_game
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
     # OE-128: a network game saved and resumed together. A first lobby game
@@ -670,6 +665,7 @@ if(Python3_Interpreter_FOUND)
                      $<TARGET_FILE:opensupcom> 29763)
     set_tests_properties(data.lan_game_resume PROPERTIES
         LABELS "data;gate"
+        RESOURCE_LOCK lan_game
         SKIP_RETURN_CODE 77
         TIMEOUT 1200)
 
@@ -710,8 +706,8 @@ if(Python3_Interpreter_FOUND)
     # and p99 tick and peak memory within 15%, the same game (checksum).
     # Label `bench` alone (not `data`): timing wants a quiet machine, so they
     # run one at a time, and a Release build (`ctest -L bench`).
-    # (early-moho and late-moho: the same with --moho-pathing.)
-    foreach(_scenario early late early-moho late-moho)
+    # (late runs the grid's pathing for now, late-moho the same game with Moho's.)
+    foreach(_scenario early late late-moho)
         add_test(NAME bench.${_scenario}
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/bench.py
                          check $<TARGET_FILE:opensupcom> --scenario ${_scenario})

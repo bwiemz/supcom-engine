@@ -20,6 +20,7 @@ struct CommandCounts {
     u32 descriptor_set_binds = 0; ///< descriptor sets bound (a call binding two counts two)
     u32 push_constants = 0;       ///< vkCmdPushConstants calls
     u32 descriptor_writes = 0;    ///< VkWriteDescriptorSet entries (vkUpdateDescriptorSets)
+    u32 upload_waits = 0;         ///< waits for uploads to finish (GpuUploads::finish)
 };
 
 /// The counts so far. The renderer records on one thread; the benchmark

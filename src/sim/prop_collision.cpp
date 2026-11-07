@@ -61,6 +61,9 @@ void collide_with_props(Unit& unit, EntityRegistry& registry, lua_State* L, u32 
         return;
     }
     if (moho_pathing) {
+        if (!unit.has_motion()) {
+            return;
+        }
         const Vector3& mv = unit.motion_velocity();
         if (!(mv.x * mv.x + mv.y * mv.y + mv.z * mv.z > 0.000001f) && !unit.surface_collision())
             return;

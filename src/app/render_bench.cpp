@@ -259,7 +259,8 @@ bool RenderBench::write(const renderer::Renderer& renderer, const sim::SimState&
           {"descriptor_set_binds",
            counts([](const Sample& s) { return s.counts.descriptor_set_binds; })},
           {"descriptor_writes", counts([](const Sample& s) { return s.counts.descriptor_writes; })},
-          {"push_constants", counts([](const Sample& s) { return s.counts.push_constants; })}}},
+          {"push_constants", counts([](const Sample& s) { return s.counts.push_constants; })},
+          {"upload_waits", counts([](const Sample& s) { return s.counts.upload_waits; })}}},
         {"pipeline_statistics",
          counted
              ? nlohmann::json{{"primitives", pipeline([](const auto& g) { return g.primitives; })},

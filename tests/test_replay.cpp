@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "app/app_internal.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/command_codec.hpp"
 #include "sim/command_scheduler.hpp"
@@ -409,6 +410,7 @@ TEST_CASE("A version 8 replay's armies keep their own places", "[replay]") {
     CHECK(out.setup.slots[0].slot == 0);
     CHECK(out.setup.mods.empty()); // before version 10: none
     CHECK_FALSE(out.setup.moho_pathing); // before version 16: none
+    CHECK_FALSE(osc::app::recorded_moho_pathing(out));
     CHECK(osc::sim::session_army_names(out.setup, {"ARMY_1", "ARMY_2"}) ==
           std::vector<std::string>{"ARMY_1"});
 }

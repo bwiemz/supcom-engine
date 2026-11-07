@@ -155,7 +155,7 @@ How to read it:
 | Build templates (`Generate/Get/Set/ClearBuildTemplates`, `GenerateBuildTemplateFromSelection`), placed whole | [#410](https://github.com/bwiemz/supcom-engine/pull/410), [#436](https://github.com/bwiemz/supcom-engine/pull/436) |
 | `AutoLandTime` | [#419](https://github.com/bwiemz/supcom-engine/pull/419) |
 | `Circling*`, `HoverOverAttack`, `BankFactor`, `CirclingDirChange`, `TARGETCHASER` | [#422](https://github.com/bwiemz/supcom-engine/pull/422), [#431](https://github.com/bwiemz/supcom-engine/pull/431) |
-| `OccupancyCaps`, `OccupyRects`, `MaxSlope` (pathing by them behind `--moho-pathing`), `SpecFootprints` | [#406](https://github.com/bwiemz/supcom-engine/pull/406), [#398](https://github.com/bwiemz/supcom-engine/pull/398) |
+| `OccupancyCaps`, `OccupyRects`, `MaxSlope` (pathing by them, Moho's, by default), `SpecFootprints` | [#406](https://github.com/bwiemz/supcom-engine/pull/406), [#398](https://github.com/bwiemz/supcom-engine/pull/398) |
 | `TargetBones` | [#397](https://github.com/bwiemz/supcom-engine/pull/397) |
 | `UseFiringSolutionInsteadOfAimBone`, `MuzzleVelocityRandom` | [#405](https://github.com/bwiemz/supcom-engine/pull/405) |
 | Projectile lead (with `LeadTarget` set), `MaxZigZag`, `ZigZagFrequency`, `StartTurnDistance` | [#408](https://github.com/bwiemz/supcom-engine/pull/408) |

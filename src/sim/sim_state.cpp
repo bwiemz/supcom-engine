@@ -443,6 +443,10 @@ void SimState::release_script_handle(Entity& entity) {
         unit.release_manipulators(L_);
         unit.release_weapon_scripts(L_, /*run_on_destroy=*/false);
     }
+    if (entity.lua_position_ref() >= 0) {
+        luaL_unref(L_, LUA_REGISTRYINDEX, entity.lua_position_ref());
+        entity.set_lua_position_ref(LUA_NOREF);
+    }
     // The Lua table outlives the C++ object: null its _c_object so methods
     // called on a stale handle see "destroyed" instead of freed memory, and
     // release the registry reference.

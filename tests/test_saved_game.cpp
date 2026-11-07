@@ -345,7 +345,7 @@ TEST_CASE("A restored game's history records the pathing it plays with", "[saveg
     old.version = 15;
     old.has_setup = true;
     old.setup.scenario = "/maps/x/x_scenario.lua";
-    REQUIRE_FALSE(old.setup.moho_pathing);
+    old.setup.moho_pathing = false;
 
     LuaGuard g;
     SimState s(g.L, nullptr);

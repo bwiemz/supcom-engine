@@ -2,6 +2,7 @@
 #include "renderer/vk_cmd.hpp"
 
 #include "renderer/font_cache.hpp"
+#include "renderer/gpu_uploads.hpp"
 #include "core/utf8.hpp"
 #include "vfs/virtual_file_system.hpp"
 
@@ -12,46 +13,12 @@
 #include <cmath>
 #include <cstring>
 
-// forward-declare from vk_utils.cpp
-namespace osc::renderer {
-void upload_buffer(VmaAllocator allocator, VkDevice device,
-                   VkCommandPool pool, VkQueue queue,
-                   const void* data, VkDeviceSize size,
-                   VkBufferUsageFlags usage,
-                   AllocatedImage& out_image,
-                   u32 width, u32 height, VkFormat format);
-}
-
 namespace osc::renderer {
 
 // Upload raw R8 pixel data to a GPU image (similar to texture_cache upload but for R8)
-static AllocatedImage upload_r8_image(VmaAllocator allocator, VkDevice device,
-                                       VkCommandPool pool, VkQueue queue,
-                                       const u8* pixels, u32 width, u32 height) {
+static AllocatedImage upload_r8_image(GpuUploads& uploads, VmaAllocator allocator, VkDevice device,
+                                      const u8* pixels, u32 width, u32 height) {
     AllocatedImage result{};
-
-    // Create staging buffer
-    VkBufferCreateInfo staging_ci{};
-    staging_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    staging_ci.size = static_cast<VkDeviceSize>(width) * height;
-    staging_ci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-
-    VmaAllocationCreateInfo staging_alloc{};
-    staging_alloc.usage = VMA_MEMORY_USAGE_CPU_ONLY;
-
-    VkBuffer staging_buf = VK_NULL_HANDLE;
-    VmaAllocation staging_alloc_handle = VK_NULL_HANDLE;
-    if (vmaCreateBuffer(allocator, &staging_ci, &staging_alloc,
-                        &staging_buf, &staging_alloc_handle,
-                        nullptr) != VK_SUCCESS) {
-        spdlog::error("FontCache: staging buffer creation failed");
-        return result;
-    }
-
-    void* mapped = nullptr;
-    vmaMapMemory(allocator, staging_alloc_handle, &mapped);
-    std::memcpy(mapped, pixels, static_cast<size_t>(width) * height);
-    vmaUnmapMemory(allocator, staging_alloc_handle);
 
     // Create GPU image (R8_UNORM)
     VkImageCreateInfo img_ci{};
@@ -73,24 +40,18 @@ static AllocatedImage upload_r8_image(VmaAllocator allocator, VkDevice device,
                        &result.image, &result.allocation,
                        nullptr) != VK_SUCCESS) {
         spdlog::error("FontCache: image creation failed");
-        vmaDestroyBuffer(allocator, staging_buf, staging_alloc_handle);
         return result;
     }
 
-    // Record copy commands
-    VkCommandBufferAllocateInfo cmd_ai{};
-    cmd_ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmd_ai.commandPool = pool;
-    cmd_ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmd_ai.commandBufferCount = 1;
-
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device, &cmd_ai, &cmd);
-
-    VkCommandBufferBeginInfo begin{};
-    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
+    const VkDeviceSize size = static_cast<VkDeviceSize>(width) * height;
+    const GpuUploads::Staging staging = uploads.stage(size);
+    VkCommandBuffer cmd = staging.buffer ? uploads.commands() : VK_NULL_HANDLE;
+    if (!cmd) {
+        spdlog::error("FontCache: staging buffer creation failed");
+        vmaDestroyImage(allocator, result.image, result.allocation);
+        return {};
+    }
+    std::memcpy(staging.mapped, pixels, static_cast<size_t>(size));
 
     // Transition to TRANSFER_DST
     VkImageMemoryBarrier barrier{};
@@ -110,30 +71,16 @@ static AllocatedImage upload_r8_image(VmaAllocator allocator, VkDevice device,
     VkBufferImageCopy region{};
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent = {width, height, 1};
-    vkCmdCopyBufferToImage(cmd, staging_buf, result.image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    vkCmdCopyBufferToImage(cmd, staging.buffer, result.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           1, &region);
 
     // Transition to SHADER_READ_ONLY
     barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd;
-    vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(queue);
-
-    vkFreeCommandBuffers(device, pool, 1, &cmd);
-    vmaDestroyBuffer(allocator, staging_buf, staging_alloc_handle);
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                         0, nullptr, 0, nullptr, 1, &barrier);
 
     // Create image view — swizzle R8 to (1,1,1,R) so standard UI shader
     // renders text as fragColor * (1,1,1,glyphAlpha)
@@ -152,14 +99,12 @@ static AllocatedImage upload_r8_image(VmaAllocator allocator, VkDevice device,
     return result;
 }
 
-void FontCache::init(VkDevice device, VmaAllocator allocator,
-                     VkCommandPool cmd_pool, VkQueue queue,
+void FontCache::init(VkDevice device, VmaAllocator allocator, GpuUploads& uploads,
                      VkDescriptorSetLayout ds_layout, VkSampler sampler,
                      vfs::VirtualFileSystem* vfs) {
     device_ = device;
     allocator_ = allocator;
-    cmd_pool_ = cmd_pool;
-    queue_ = queue;
+    uploads_ = &uploads;
     ds_layout_ = ds_layout;
     sampler_ = sampler;
     vfs_ = vfs;
@@ -384,9 +329,8 @@ FontAtlas* FontCache::load_font(const std::string& family, i32 pointsize) {
 
     // Upload atlas to GPU
     if (device_ && allocator_) {
-        atlas->image = upload_r8_image(allocator_, device_, cmd_pool_, queue_,
-                                        bitmap.data(),
-                                        atlas->atlas_width, atlas->atlas_height);
+        atlas->image = upload_r8_image(*uploads_, allocator_, device_, bitmap.data(),
+                                       atlas->atlas_width, atlas->atlas_height);
 
         // Create descriptor set
         if (atlas->image.view && descriptor_pool_) {
@@ -464,6 +408,9 @@ f32 FontCache::string_advance(const std::string& family, i32 pointsize,
 }
 
 void FontCache::destroy(VkDevice device, VmaAllocator allocator) {
+    if (uploads_) {
+        uploads_->finish();
+    }
     for (auto& [key, atlas] : cache_) {
         if (atlas->image.view)
             vkDestroyImageView(device, atlas->image.view, nullptr);

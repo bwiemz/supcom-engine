@@ -17,6 +17,8 @@ class VirtualFileSystem;
 
 namespace osc::renderer {
 
+class GpuUploads;
+
 /// Per-glyph data for a rasterized character.
 struct GlyphInfo {
     f32 u0, v0, u1, v1;  // UV coords in atlas
@@ -75,10 +77,8 @@ inline i32 raster_pointsize(i32 pointsize, f32 scale) {
 /// Caches rasterized font atlases keyed by (family, pointsize).
 class FontCache {
 public:
-    void init(VkDevice device, VmaAllocator allocator,
-              VkCommandPool cmd_pool, VkQueue queue,
-              VkDescriptorSetLayout ds_layout, VkSampler sampler,
-              vfs::VirtualFileSystem* vfs);
+    void init(VkDevice device, VmaAllocator allocator, GpuUploads& uploads,
+              VkDescriptorSetLayout ds_layout, VkSampler sampler, vfs::VirtualFileSystem* vfs);
 
     /// Get or lazily load a font atlas for a given family and pointsize.
     /// Returns nullptr if the font cannot be loaded.
@@ -111,8 +111,7 @@ private:
 
     VkDevice device_ = VK_NULL_HANDLE;
     VmaAllocator allocator_ = VK_NULL_HANDLE;
-    VkCommandPool cmd_pool_ = VK_NULL_HANDLE;
-    VkQueue queue_ = VK_NULL_HANDLE;
+    GpuUploads* uploads_ = nullptr;
     vfs::VirtualFileSystem* vfs_ = nullptr;
 };
 

@@ -122,8 +122,8 @@ std::optional<int> App::boot_engine() {
         }
         g_steer_log = &steer_log;
     }
-    g_moho_pathing = parse_flag(argc, argv, "--moho-pathing");
-    if (g_moho_pathing) spdlog::info("Moho pathing on (--moho-pathing)");
+    g_moho_pathing = !parse_flag(argc, argv, "--grid-pathing");
+    if (!g_moho_pathing) spdlog::info("Grid pathing (--grid-pathing)");
     g_no_ai = arg_option(std::vector<std::string>(argv + 1, argv + argc), {"noai"}, 0).has_value();
     if (g_no_ai) spdlog::info("No opponent AI (/noai)");
     g_moho_random = parse_flag(argc, argv, "--moho-random");

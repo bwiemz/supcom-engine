@@ -5,6 +5,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include <array>
 #include <cstddef>
 #include <future>
 #include <memory>
@@ -21,6 +22,7 @@ class VirtualFileSystem;
 namespace osc::renderer {
 
 struct DDSTexture; // forward
+class GpuUploads;
 
 /// A GPU-resident texture with its descriptor set.
 struct GPUTexture {
@@ -33,10 +35,8 @@ struct GPUTexture {
 /// Each texture gets its own VkDescriptorSet (combined image sampler).
 class TextureCache {
 public:
-    void init(VkDevice device, VmaAllocator allocator,
-              VkCommandPool cmd_pool, VkQueue queue,
-              VkDescriptorSetLayout ds_layout, VkSampler sampler,
-              vfs::VirtualFileSystem* vfs);
+    void init(VkDevice device, VmaAllocator allocator, GpuUploads& uploads,
+              VkDescriptorSetLayout ds_layout, VkSampler sampler, vfs::VirtualFileSystem* vfs);
 
     /// Get or lazily load a GPU texture for a VFS path.
     /// Returns nullptr if the texture is still loading or cannot be loaded.
@@ -112,10 +112,9 @@ public:
 
 private:
     AllocatedImage upload_dds(const DDSTexture& dds);
-    void create_fallback();
-    void create_specteam_fallback();
-    void create_normal_fallback();
+    GPUTexture pixel_texture(const std::array<u8, 4>& rgba);
     void create_cube_fallback();
+    void drop(AllocatedImage& image);
     VkDescriptorSet allocate_and_write_descriptor(VkImageView view);
 
     const GPUTexture* finalize_load(const std::string& path,
@@ -152,8 +151,7 @@ private:
 
     VkDevice device_ = VK_NULL_HANDLE;
     VmaAllocator allocator_ = VK_NULL_HANDLE;
-    VkCommandPool cmd_pool_ = VK_NULL_HANDLE;
-    VkQueue queue_ = VK_NULL_HANDLE;
+    GpuUploads* uploads_ = nullptr;
     vfs::VirtualFileSystem* vfs_ = nullptr;
 };
 

@@ -253,6 +253,9 @@ public:
 
     int lua_table_ref() const { return lua_table_ref_; }
     void set_lua_table_ref(int ref) { lua_table_ref_ = ref; }
+    /// Moho's mLuaPositionCache: the one table GetPosition refills and hands out.
+    int lua_position_ref() const { return lua_position_ref_; }
+    void set_lua_position_ref(int ref) { lua_position_ref_ = ref; }
 
     /// The loops this entity wants, by name: a unit's blueprint Audio entry
     /// (ConstructLoop and ActiveLoop can both play), or SetAmbientSound's
@@ -494,6 +497,7 @@ private:
     bool destroyed_ = false;
     InternedString blueprint_id_;
     int lua_table_ref_ = -2; // LUA_NOREF
+    int lua_position_ref_ = -2;
     std::vector<AmbientSound> ambient_sounds_;
     const BoneData* bone_data_ = nullptr; // shared per-blueprint, not owned
     bool do_not_target_ = false;

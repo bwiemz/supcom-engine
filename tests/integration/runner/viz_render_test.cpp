@@ -48,6 +48,11 @@ void test_viz_render(TestContext& ctx) {
         t.check(false, "the map, and dry ground 60 from every unit");
         return;
     }
+    // A tank made among trees may knock them over on its first tick, as the original game's does.
+    run_lua(ctx, fmt::format("for _, p in GetReclaimablesInRect(Rect({}, {}, {}, {})) or {{}} do\n"
+                             "  if IsProp(p) then p:Destroy() end\n"
+                             "end\n",
+                             spot->x - 4, spot->z - 4, spot->x + 20, spot->z + 4));
     const sim::EntityId shown = spawn_unit(ctx, "__osc_viz_shown", "uel0201", "ARMY_1", *spot);
     const sim::EntityId hidden =
         spawn_unit(ctx, "__osc_viz_hidden", "uel0201", "ARMY_1", Spot{spot->x + 8, spot->z});

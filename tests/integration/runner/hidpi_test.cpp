@@ -46,6 +46,8 @@ struct Frame {
     u64 square = 0;
     u64 text = 0;
     bool raster = false;
+    u32 font_waits = 0;
+    bool font_loaded = false;
 };
 
 f64 ui_number(lua::LuaState& state, const std::string& expr) {
@@ -79,6 +81,9 @@ Frame draw_at(app::Engine& e, f32 scale) {
         return f;
     }
     r.init_ui_caches(&e.vfs);
+    (void)renderer::take_command_counts();
+    f.font_loaded = r.font_cache().get("Arial", kTextSize - 1) != nullptr;
+    f.font_waits = renderer::take_command_counts().upload_waits;
     r.set_fixed_frame_dt(1.0f / 30.0f);
     app::size_root_frame(L, r.ui_width(), r.ui_height());
     if (auto res = e.ui_lua_state.do_string(
@@ -206,6 +211,11 @@ void run_hidpi_test(app::Engine& e) {
                         "and {} pixels), from a {}px raster of its {}pt font ({})",
                         ink, two.text, one.text, renderer::raster_pointsize(kTextSize, 2.0f),
                         kTextSize, two.raster));
+
+    t.check(one.font_loaded && two.font_loaded && one.font_waits == 0 && two.font_waits == 0,
+            fmt::format("Test 4: a font's atlas loads between frames without waiting for an "
+                        "upload ({} and {} waits)",
+                        one.font_waits, two.font_waits));
 
     spdlog::info("HiDPI test: {}/{} passed", t.pass, t.pass + t.fail);
 }

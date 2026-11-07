@@ -17,6 +17,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/bone_data.hpp"
+#include "sim/pose.hpp"
 #include "sim/collision.hpp"
 #include "sim/entity.hpp"
 #include "sim/entity_registry.hpp"
@@ -226,7 +227,24 @@ static int entity_GetPosition(lua_State* L) {
         push_vector3(L, bone_world_position(e, idx));
         return 1;
     }
-    push_vector3(L, e->position());
+    const sim::Vector3& p = e->position();
+    if (e->lua_position_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_position_ref());
+        if (lua_istable(L, -1)) {
+            lua_pushnumber(L, p.x);
+            lua_rawseti(L, -2, 1);
+            lua_pushnumber(L, p.y);
+            lua_rawseti(L, -2, 2);
+            lua_pushnumber(L, p.z);
+            lua_rawseti(L, -2, 3);
+            return 1;
+        }
+        lua_pop(L, 1);
+        luaL_unref(L, LUA_REGISTRYINDEX, e->lua_position_ref());
+    }
+    push_vector3(L, p);
+    lua_pushvalue(L, -1);
+    e->set_lua_position_ref(luaL_ref(L, LUA_REGISTRYINDEX));
     return 1;
 }
 
@@ -1365,7 +1383,8 @@ static int prop_Kill(lua_State* L) {
 }
 
 // prop:CreatePropAtBone(bone, blueprint): a new prop at one of this prop's
-// bones (tree groups breaking up into trees).
+// bones (tree groups breaking up into trees), its own root bone on it (Moho's
+// Compose(Inverse(its bone 0), the bone's world transform), then Warp).
 static int prop_CreatePropAtBone(lua_State* L) {
     auto* e = check_entity(L);
     auto* sim = get_sim(L);
@@ -1380,7 +1399,22 @@ static int prop_CreatePropAtBone(lua_State* L) {
             ? sim::quat_multiply(e->orientation(),
                                  bones->bones[static_cast<size_t>(bone)].world_rotation)
             : e->orientation();
-    sim::spawn_prop(L, *sim, lua_tostring(L, 3), bone_world_position(e, bone), rot, true);
+    const sim::Vector3 at = bone_world_position(e, bone);
+    sim::Prop* made = sim::spawn_prop(L, *sim, lua_tostring(L, 3), at, rot, true);
+    const auto* own = made ? made->bone_data() : nullptr;
+    if (own && own->is_valid(0)) {
+        const sim::BoneInfo& root = own->bones[0];
+        const f32 s = own->model_scale;
+        const sim::Quaternion undo = sim::quat_conjugate(root.world_rotation);
+        const sim::Vector3 back =
+            sim::quat_rotate(undo, {-root.world_position.x * s, -root.world_position.y * s,
+                                    -root.world_position.z * s});
+        const sim::Vector3 offset = sim::quat_rotate(rot, back);
+        made->set_orientation(sim::quat_multiply(rot, undo));
+        made->set_position({at.x + offset.x, at.y + offset.y, at.z + offset.z});
+        made->note_snap();
+        made->place_now();
+    }
     return 1;
 }
 
