@@ -392,6 +392,10 @@ public:
     /// RenderOverlayEconomy): the MFD's economy toggle, off during a NIS.
     void set_economy_overlay(bool on) { economy_overlay_renderer_.set_enabled(on); }
     bool economy_overlay() const { return economy_overlay_renderer_.enabled(); }
+    /// SetUIControlsAlpha/GetUIControlsAlpha: the UI controls' alpha
+    /// multiplier, kept for the process as Moho's UI manager keeps it.
+    void set_ui_controls_alpha(f32 alpha) { ui_renderer_.set_controls_alpha(alpha); }
+    f32 ui_controls_alpha() const { return ui_renderer_.controls_alpha(); }
     const EconomyOverlayRenderer& economy_overlay_renderer() const {
         return economy_overlay_renderer_;
     }

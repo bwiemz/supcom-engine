@@ -1208,6 +1208,41 @@ static int l_SyncPlayableRect(lua_State* L) {
     return 0;
 }
 
+/// SetUIControlsAlpha(alpha): the UI controls' alpha multiplier (faf-re
+/// cfunc_SetUIControlsAlphaL, CUIManager +0x68), which every UI pass hands
+/// the controls' shader (CD3DPrimBatcher::SetToViewport): each control
+/// draws with its alpha scaled by it. Only retail's MauiTest.lua sets it.
+static int l_SetUIControlsAlpha(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(
+            L, "SetUIControlsAlpha(float alpha) -- set the alpha multiplier for 2d UI controls", 1,
+            lua_gettop(L));
+    }
+    if (lua_type(L, 1) != LUA_TNUMBER) {
+        return arg_type_error(L, 1, "number");
+    }
+    if (auto* r = get_renderer(L)) {
+        r->set_ui_controls_alpha(static_cast<f32>(lua_tonumber(L, 1)));
+    }
+    return 0;
+}
+
+/// GetUIControlsAlpha() -> the multiplier (1 until it is set); nil with no
+/// UI drawn, as Moho's answers without its UI manager.
+static int l_GetUIControlsAlpha(lua_State* L) {
+    if (lua_gettop(L) != 0) {
+        return arg_count_error(
+            L, "float GetUIControlsAlpha() -- get the alpha multiplier for 2d UI controls", 0,
+            lua_gettop(L));
+    }
+    if (auto* r = get_renderer(L)) {
+        lua_pushnumber(L, r->ui_controls_alpha());
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
 /// RenderOverlayEconomy(on): the session's economy overlay flag (Moho's
 /// DisplayEconomyOverlay), which the MFD's toggle sets and a NIS clears.
 static int l_RenderOverlayEconomy(lua_State* L) {
@@ -2265,6 +2300,8 @@ void register_user_bindings(LuaState& state) {
     state.register_function("UnProject", l_UnProject);
     state.register_function("GetCamera", l_GetCamera);
     state.register_function("SyncPlayableRect", l_SyncPlayableRect);
+    state.register_function("SetUIControlsAlpha", l_SetUIControlsAlpha);
+    state.register_function("GetUIControlsAlpha", l_GetUIControlsAlpha);
     state.register_function("RenderOverlayEconomy", l_RenderOverlayEconomy);
     state.register_function("TeamColorMode", l_TeamColorMode);
     state.register_function("SetOverlayFilter", l_SetOverlayFilter);
