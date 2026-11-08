@@ -3,6 +3,7 @@
 #include "blueprints/blueprint_store.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/mesh_cache.hpp"
+#include "renderer/recon_view.hpp"
 #include "renderer/texture_cache.hpp"
 #include "sim/world_snapshot.hpp"
 
@@ -121,6 +122,19 @@ const SelectionBlueprint& SelectionRenderer::box_blueprint(const std::string& id
     return out;
 }
 
+const char* bracket_texture(i32 army, i32 viewer, u32 allies, u32 enemies, bool seen_ever) {
+    if (viewer < 0 || army < 0 || army >= 32) {
+        return kBracketsNeutral;
+    }
+    if (army == viewer || (allies >> army & 1u) != 0) {
+        return kBracketsHighlighted;
+    }
+    if ((enemies >> army & 1u) == 0) {
+        return kBracketsNeutral;
+    }
+    return seen_ever ? kBracketsEnemy : nullptr;
+}
+
 bool advance_blinky_box(BlinkyBox& box, f32 dt) {
     box.duration += dt;
     box.cycle += dt;
@@ -144,7 +158,7 @@ void SelectionRenderer::add_blinky_box(sim::EntityId unit, f32 on_time, f32 off_
 
 void SelectionRenderer::update(const sim::FrameView& view, const Camera& camera, u32 viewport_h,
                                const std::unordered_set<sim::EntityId>* selected,
-                               sim::EntityId hovered, i32 player_army,
+                               sim::EntityId hovered, i32 player_army, const ReconView& recon,
                                const std::optional<std::array<Vector3, 4>>& drag,
                                TextureCache& tex_cache, MeshCache& mesh_cache, lua_State* L, u32 fi,
                                f32 dt) {
@@ -170,11 +184,12 @@ void SelectionRenderer::update(const sim::FrameView& view, const Camera& camera,
         if (is_selected) {
             return kBracketsPlayer;
         }
-        if (e.army == player_army) {
-            return kBracketsHighlighted;
+        const Sight sight = recon.sight(e);
+        const bool seen_ever = sight == Sight::SeenBlip || shows_mesh(sight);
+        if (!me) {
+            return bracket_texture(e.army, -1, 0, 0, seen_ever);
         }
-        const bool allied = me && e.army >= 0 && (me->allies & (1u << e.army)) != 0;
-        return allied || e.army < 0 ? kBracketsNeutral : kBracketsEnemy;
+        return bracket_texture(e.army, player_army, me->allies, me->enemies, seen_ever);
     };
     const auto vertex = [](const Vector3& p, f32 u, f32 v) {
         return WorldQuadBatch::Vertex{{p.x, p.y, p.z}, {u, v}, {1.0f, 1.0f, 1.0f, 1.0f}};
@@ -199,7 +214,7 @@ void SelectionRenderer::update(const sim::FrameView& view, const Camera& camera,
         const SelectionBox box =
             selection_box(bp, mesh_min, mesh_max, position, view.orientation(*e));
         const char* texture = texture_for(*e, is_selected);
-        const GPUTexture* tex = tex_cache.get(texture);
+        const GPUTexture* tex = texture ? tex_cache.get(texture) : nullptr;
         if (!tex) {
             return;
         }

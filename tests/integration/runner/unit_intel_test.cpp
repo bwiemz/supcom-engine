@@ -22,6 +22,7 @@
 #include "renderer/input_handler.hpp"
 #include "renderer/particle_system.hpp"
 #include "renderer/recon_view.hpp"
+#include "renderer/selection_renderer.hpp"
 #include "sim/entity.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
@@ -189,6 +190,14 @@ void test_unit_intel(TestContext& ctx) {
     const auto colour = [](const Quad* i) {
         return i ? fmt::format("{:.2f} {:.2f} {:.2f}", i->r, i->g, i->b) : std::string("none");
     };
+    const auto near_brackets = [&]() -> std::string {
+        for (const auto& b : r.selection_renderer().brackets()) {
+            if (b.unit == near_id) {
+                return b.texture.substr(b.texture.find_last_of('/') + 1);
+            }
+        }
+        return "none";
+    };
 
     // A shell of ARMY_3's, out over the fog, clear of its engineer's sight.
     const Spot ally_shell_at{ally_at.x + 50, ally_at.z - 40};
@@ -261,6 +270,11 @@ void test_unit_intel(TestContext& ctx) {
                             colour(near_icon), colour(far_icon)));
     }
 
+    t.check(sight(near_id) == renderer::Sight::SeenBlip &&
+                near_brackets() == "selection_brackets_enemy.dds",
+            fmt::format("Test 5b: hovered, the seen blip ({}) has brackets {}",
+                        name(sight(near_id)), near_brackets()));
+
     // Test 6: the power generator, seen, still draws, as it was seen, with
     // no icon.
     {
@@ -295,6 +309,10 @@ void test_unit_intel(TestContext& ctx) {
     t.check(sight(near_id) == renderer::Sight::Blip && unidentified(icon_of(f, near_id)),
             fmt::format("Test 8: found again, the engineer is unidentified ({}, icon {})",
                         name(sight(near_id)), colour(icon_of(f, near_id))));
+
+    t.check(sight(near_id) == renderer::Sight::Blip && near_brackets() == "none",
+            fmt::format("Test 8b: hovered, the blip never seen ({}) has brackets {}",
+                        name(sight(near_id)), near_brackets()));
 
     // Test 9: seen again, the power generator draws as it is now: turned.
     senses(true, false);

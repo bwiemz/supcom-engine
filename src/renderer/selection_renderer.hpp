@@ -21,6 +21,7 @@ namespace osc::renderer {
 
 class Camera;
 class MeshCache;
+class ReconView;
 class TextureCache;
 
 /// A unit's selection box, flattened to its four ground corners
@@ -50,6 +51,10 @@ f32 bracket_corner(const SelectionBox& box, f32 thickness, f32 min_px, f32 px_wo
 /// The four bracket tiles centred on the box's corners (back-left, back-right,
 /// front-right, front-left), each from its own back-left corner
 std::array<std::array<sim::Vector3, 4>, 4> bracket_quads(const SelectionBox& box, f32 corner);
+
+/// Moho's UserEntity::GetSelectionBracketTexture for the player of army
+/// `viewer` (-1: an observer); null for an enemy's unit never in its sight.
+const char* bracket_texture(i32 army, i32 viewer, u32 allies, u32 enemies, bool seen_ever);
 
 /// A unit's brackets flashing on and off for a while (Moho's BlinkyBox,
 /// pushed by AddBlinkyBox(entityId, onTime, offTime, totalTime)).
@@ -82,8 +87,9 @@ public:
     /// give the boxes.
     void update(const sim::FrameView& view, const Camera& camera, u32 viewport_h,
                 const std::unordered_set<sim::EntityId>* selected, sim::EntityId hovered,
-                i32 player_army, const std::optional<std::array<sim::Vector3, 4>>& drag,
-                TextureCache& tex_cache, MeshCache& mesh_cache, lua_State* L, u32 fi, f32 dt);
+                i32 player_army, const ReconView& recon,
+                const std::optional<std::array<sim::Vector3, 4>>& drag, TextureCache& tex_cache,
+                MeshCache& mesh_cache, lua_State* L, u32 fi, f32 dt);
 
     /// AddBlinkyBox: `unit`'s brackets, in its army's colour for the player,
     /// flash on for `on_time` seconds and off for `off_time`, from off, until
