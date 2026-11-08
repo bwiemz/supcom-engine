@@ -2141,6 +2141,9 @@ void SimState::tick() {
     PROFILE_ZONE("Sim::tick");
     if (L_ && Profiler::instance().enabled()) lua_profile::attach(L_);
     ++beat_count_;
+    if (!beat_observer_) {
+        print_lines_.clear();
+    }
     if (rng_trace_) {
         const bool on = tick_count_ + 1 >= rng_trace_from_ && tick_count_ + 1 <= rng_trace_to_;
         sim_random_.set_draw_hook(on ? &SimState::trace_rng_draw : nullptr, this);

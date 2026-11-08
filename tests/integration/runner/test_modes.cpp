@@ -23,6 +23,7 @@
 #include "bp_reflect_test.hpp"
 #include "integration_tests.hpp"
 #include "tick_until.hpp"
+#include "core/console_output.hpp"
 #include "core/game_state.hpp"
 #include "core/log.hpp"
 #include "core/profiler.hpp"
@@ -86,6 +87,11 @@ using app::world_beat;
 using lua::report_command_issued;
 
 namespace {
+
+int log_console_line(lua_State* L) {
+    spdlog::info("{}", lua_isstring(L, 1) ? lua_tostring(L, 1) : "");
+    return 0;
+}
 
 /// A mode run by one integration test function, against the sim's Lua
 /// state or (ui) the UI's.
@@ -1313,6 +1319,9 @@ void IntegrationModes::headless(Engine& e) {
     auto& sim_state = e.sim_state;
     auto& sim_lua_state = e.sim_lua_state;
     if (!sim_state || !sim_lua_state) return;
+    lua_pushcfunction(e.ui_lua_state.raw(), log_console_line);
+    core::add_console_receiver(e.ui_lua_state.raw(), -1);
+    lua_pop(e.ui_lua_state.raw(), 1);
     TestContext test_ctx{*sim_state, *sim_lua_state, sim_lua_state->raw(), e.vfs, e.store};
     // UI tests run against the UI Lua state, where the UI factories live
     // (the sim and UI states have been separate since M135c).
