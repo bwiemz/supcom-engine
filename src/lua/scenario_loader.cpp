@@ -3,6 +3,7 @@
 #include "map/heightmap.hpp"
 #include "map/scmap_parser.hpp"
 #include "map/terrain.hpp"
+#include "sim/flight_math.hpp"
 #include "sim/prop.hpp"
 #include "sim/sim_state.hpp"
 #include "vfs/virtual_file_system.hpp"
@@ -362,12 +363,9 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
             auto prop = std::make_unique<sim::Prop>();
             prop->set_blueprint_id(sp.blueprint_path);
             prop->set_position({sp.px, sp.py, sp.pz});
-            // The .scmap gives a prop's turned axes, X, Y then Z: its
-            // matrix's columns. Read as rows they would turn it the other
-            // way (Moho's GetOrientation and collision boxes show which).
             const f32* r = sp.rot;
-            const f32 m[9] = {r[0], r[3], r[6], r[1], r[4], r[7], r[2], r[5], r[8]};
-            prop->set_orientation(sim::rot_matrix_to_quat(m));
+            const f32 rows[3][3] = {{r[0], r[1], r[2]}, {r[3], r[4], r[5]}, {r[6], r[7], r[8]}};
+            prop->set_orientation(sim::map_prop_orientation(rows));
             prop->set_scale(sp.sx, sp.sy, sp.sz);
             prop->set_fraction_complete(1.0f);
             sim.entity_registry().register_entity(std::move(prop));

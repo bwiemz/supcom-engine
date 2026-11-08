@@ -20,6 +20,21 @@ Quaternion coords_orient(const Vector3& dir);
 /// and func_MatrixToQuat (0x004EB3F0) on the rows right, up, forward.
 Quaternion coords_orient_moho(const Vector3& dir);
 
+/// func_MatrixToQuat (0x004EB3F0): the rotation of a matrix given by its rows, as axes.
+Quaternion matrix_to_quat_moho(const f32 m[3][3]);
+
+/// A map prop's orientation from its .scmap rows (CWldMap's prop load): matrix_to_quat_moho,
+/// made unit length with the squares summed z, y, x, w.
+Quaternion map_prop_orientation(const f32 rows[3][3]);
+
+/// MatrixRowsToQuatCanonical (0x004F0CB0): the rotation of a matrix given by its rows.
+Quaternion matrix_rows_to_quat_canonical(const f32 m[3][3]);
+
+/// CreateUnitHPR's and CreatePropHPR's orientation: BuildRotationMatrixFromEulerHPR
+/// (0x006D1E30, heading about Y times pitch about X times roll about Z, in radians) through
+/// matrix_rows_to_quat_canonical.
+Quaternion hpr_orientation(f32 heading, f32 pitch, f32 roll);
+
 /// QuatCrossAdd: the shortest rotation from `from` to `to` (neither need be
 /// unit length), by their half vector. Opposite directions give the half
 /// turn about `from`.
