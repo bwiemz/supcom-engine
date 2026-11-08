@@ -291,10 +291,11 @@ public:
     bool turned_in_place() const { return turned_in_place_; }
     bool slaved_turning() const { return slaved_turning_; }
     /// Turn the hull toward its weapons' work, stopped (unit_facing.cpp).
-    void face_weapons_work(f64 dt, const EntityRegistry& registry);
+    /// `held`: only weighed, as in Moho's stunned CalcMoveCommon.
+    void face_weapons_work(f64 dt, const EntityRegistry& registry, bool held);
     /// Turn toward the heading `want` by at most `max_step` radians, onto it
     /// within that; false when already facing it.
-    bool rotate_yaw_toward(f32 want, f32 max_step);
+    bool rotate_yaw_toward(f32 want, f32 max_step, bool turn);
     /// AI.NeedUnpack: its weapon unpacks, holding the unit still, before it
     /// fires (retail's mobile artillery). A new order packs it up, and it
     /// looks for no targets while it moves (see begin_order).
@@ -520,6 +521,12 @@ public:
     void set_motion_velocity(const Vector3& v) { motion_velocity_ = v; }
     const Vector3& motion_pos() const { return motion_pos_; }
     void set_motion_pos(const Vector3& p) { motion_pos_ = p; }
+    /// mTargetPosition: where its steering last sent it.
+    const Vector3& motion_target() const { return motion_target_; }
+    void set_motion_target(const Vector3& p) { motion_target_ = p; }
+    /// CUnitMotion::Stop: its target where it stands, or 100 on along its velocity when it
+    /// drives through its target (mAlwaysUseTopSpeed).
+    void stop_motion(bool through);
     /// mIsBeingPushed: knocked off its spline, it coasts till slow.
     bool pushed() const { return pushed_; }
     void set_pushed(bool p) { pushed_ = p; }
@@ -1999,7 +2006,13 @@ private:
     bool being_captured_ = false; // is this unit currently being captured?
     bool paused_ = false;
     MotionHorz motion_horz_ = MotionHorz::Stopped;
-    void update_motion_horz(lua_State* L, bool crossing);
+    void update_motion_horz(lua_State* L, bool crossing, const Vector3& from);
+    /// What Moho's CalcMoveCommon returned this tick, where its motion runs it: held, or on the
+    /// ground with Moho pathing.
+    enum class CommonMove : u8 { None, Stood, Moved };
+    CommonMove common_move_ = CommonMove::None;
+    /// ProcessCommonMotionState on it, from `at`, where it stood before its MoveTo.
+    MotionHorz common_motion_horz(const Vector3& at) const;
     MotionTurn motion_turn_ = MotionTurn::Straight;
     MotionTurn motion_turn_next_ = MotionTurn::Straight;
     void update_motion_turn(lua_State* L);
@@ -2012,6 +2025,8 @@ private:
     /// With no navigator driving it, it brakes to a stop along its heading. False if it
     /// stood still.
     bool coast(f64 dt, const map::Terrain* terrain);
+    Vector3 braked(const Vector3& v) const;
+    bool brake_in_place(bool moho);
     /// Moho's CUnitMotion::CalcRollHack: the up its hull tilts to, from its
     /// lean into a dive and its rock (add_recoil_impulse).
     Vector3 dive_lean_normal(f32 diving_speed);
@@ -2123,6 +2138,7 @@ private:
     /// CUnitMotion's mPos: the node it last stood on, or where it coasted to, before the
     /// ground snap; a node's velocity is the step from it.
     Vector3 motion_pos_{};
+    Vector3 motion_target_{};
     bool pushed_ = false;              ///< mIsBeingPushed
     bool in_state_transition_ = false; ///< mInStateTransition
     bool surface_collision_ = true;    ///< mProcessSurfaceCollision; a new CUnitMotion's is set

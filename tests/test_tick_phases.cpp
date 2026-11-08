@@ -500,7 +500,8 @@ TEST_CASE("An attached unit that moves starts no order; an attached structure st
 
 namespace {
 
-osc::u32 seabed_tick(f32 stun_seconds, osc::u32 stun_tick, osc::u32* stunned_in) {
+osc::u32 seabed_tick(f32 stun_seconds, osc::u32 stun_tick, osc::u32* stunned_in,
+                     std::vector<f32>* xs = nullptr) {
     Phases w;
     std::vector<osc::u16> heights(static_cast<size_t>(257) * 257);
     for (size_t z = 0; z <= 256; ++z) {
@@ -523,6 +524,10 @@ osc::u32 seabed_tick(f32 stun_seconds, osc::u32 stun_tick, osc::u32* stunned_in)
                               std::to_string(stun_seconds) + ") stunned = GetGameTick() end)"));
             }
             w.sim.tick();
+            if (xs) {
+                xs->resize(w.sim.tick_count() + 1);
+                (*xs)[w.sim.tick_count()] = tank.position().x;
+            }
         },
         "the tank reaches the seabed", 100, [&] { return tank.layer() == "Seabed"; });
     *stunned_in = static_cast<osc::u32>(w.number("stunned"));
@@ -539,9 +544,18 @@ TEST_CASE("A stun a Lua thread sets is counted down before that tick's motion st
     const osc::u32 ticks = GENERATE(1u, 10u);
     CAPTURE(ticks);
     osc::u32 stunned = 0;
-    const osc::u32 entered = seabed_tick(static_cast<f32>(ticks) / 10.0f, shore, &stunned);
+    std::vector<f32> xs;
+    const osc::u32 entered = seabed_tick(static_cast<f32>(ticks) / 10.0f, shore, &stunned, &xs);
     REQUIRE(stunned == shore);
-    CHECK(entered == stunned + ticks - 1);
+    if (ticks == 1) {
+        CHECK(entered == stunned);
+        CHECK(xs[stunned] != xs[stunned - 1]);
+    } else {
+        for (osc::u32 t = stunned; t < stunned + ticks - 1; ++t) {
+            CHECK(xs[t] == xs[stunned - 1]);
+        }
+        CHECK(entered > stunned + ticks - 1);
+    }
 }
 
 TEST_CASE("A ship its step finds on land is hurt in that step", "[tick-phases]") {

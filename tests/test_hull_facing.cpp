@@ -6,6 +6,7 @@
 // once it is in it. See ~/.cache/osc-design-drafts/2026-10-05-hull-facing-design.md.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "core/dmath.hpp"
 #include "map/heightmap.hpp"
@@ -68,6 +69,7 @@ Unit* hull(SimState& sim, f32 x, f32 z, const std::string& motion = "RULEUMT_Lan
     u->set_max_speed(motion == "RULEUMT_None" ? 0.0f : 5.0f);
     u->set_motion_type(motion);
     u->set_position({x, 7.8f, z});
+    u->set_motion_target({x, 7.8f, z});
     u->set_max_health(100.0f);
     u->set_health(100.0f);
     Unit::Drive drive;
@@ -323,12 +325,18 @@ TEST_CASE("A mobile unit's slaved weapon holds a target out of its arc and fires
     CHECK(gun(*tank).has_target());
 }
 
-TEST_CASE("Held still or stunned it turns; an aircraft doesn't", "[hull-facing]") {
+TEST_CASE("Held still or stunned it turns only once let go; an aircraft doesn't", "[hull-facing]") {
+    const bool stun = GENERATE(false, true);
+    CAPTURE(stun);
     LuaGuard g;
     SimState sim(g.L, nullptr);
     flat(sim);
     Unit* held = hull(sim, 30.0f, 30.0f);
-    held->set_immobile(true);
+    if (stun) {
+        held->set_stunned(1.1);
+    } else {
+        held->set_immobile(true);
+    }
     Unit* plane = hull(sim, 80.0f, 30.0f, "RULEUMT_Air");
     plane->set_layer("Air");
     for (Unit* u : {held, plane}) {
@@ -338,6 +346,9 @@ TEST_CASE("Held still or stunned it turns; an aircraft doesn't", "[hull-facing]"
         foe->place_now();
         gun(*u).set_target_entity(foe->entity_id());
     }
+    ticks(sim, 10);
+    CHECK(std::abs(heading_deg(*held)) < 0.01f);
+    held->set_immobile(false);
     ticks(sim, 10);
     CHECK(std::abs(heading_deg(*held) - 45.0f) < 0.5f);
     CHECK(std::abs(heading_deg(*plane)) < 0.01f);

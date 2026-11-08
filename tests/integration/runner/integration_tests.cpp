@@ -9662,6 +9662,67 @@ void test_drive(TestContext& ctx) {
         if moho.unit_methods.GetVelocity == nil then error('not on moho.unit_methods') end
     )");
 
+    // The scene of the retail probe march-events: its units' OnMotionHorzEventChange, by tick.
+    lua_check("setup: marches", R"(
+        __osc_march = {}
+        ForkThread(function()
+            WaitTicks(5)
+            local t0
+            local function make(tag, bp, x, z)
+                local u = CreateUnitHPR(bp, 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+                __osc_march[tag] = {}
+                local on = u.OnMotionHorzEventChange
+                rawset(u, 'OnMotionHorzEventChange', function(s, new, old)
+                    table.insert(__osc_march[tag], {GetGameTick() - (t0 or GetGameTick()), old .. '>' .. new})
+                    if on then
+                        return on(s, new, old)
+                    end
+                end)
+                return u
+            end
+            local m1 = make('m1', 'uel0201', 66, 632)
+            local m2 = make('m2', 'uel0201', 110, 620)
+            local m3 = make('m3', 'uel0201', 125, 660)
+            local h1 = make('h1', 'uel0203', 66, 680)
+            local s1 = make('s1', 'uel0201', 66, 692)
+            local q1 = make('q1', 'uel0201', 66, 704)
+            t0 = GetGameTick()
+            WaitTicks(2)
+            IssueMove({m1}, {91, 0, 632})
+            IssueMove({m2}, {110, 0, 645})
+            IssueMove({m3}, {125, 0, 635})
+            IssueMove({h1}, {91, 0, 680})
+            IssueMove({s1}, {69, 0, 692})
+            IssueMove({q1}, {86, 0, 704})
+            IssueMove({q1}, {86, 0, 724})
+        end)
+    )");
+    run(165);
+    // h1 and s1 set off a tick later in retail than m1-m3: theirs count from their first event.
+    lua_check("Test 12: marching, turning and hopping, the events are the original's", R"(
+        local want = {
+            m1 = '4 Stopped>Cruise, 21 Cruise>TopSpeed, 87 TopSpeed>Stopping, 94 Stopping>Stopped',
+            m2 = '4 Stopped>Cruise, 11 Cruise>TopSpeed, 78 TopSpeed>Stopping, 85 Stopping>Stopped',
+            m3 = '4 Stopped>Cruise, 30 Cruise>TopSpeed, 100 TopSpeed>Stopping, 107 Stopping>Stopped',
+            h1 = '0 Stopped>Cruise, 12 Cruise>TopSpeed, 73 TopSpeed>Stopping, 80 Stopping>Stopped',
+            s1 = '0 Stopped>Cruise, 1 Cruise>Stopping, 16 Stopping>TopSpeed, 17 TopSpeed>Stopping, 25 Stopping>Stopped',
+        }
+        local bad = {}
+        for _, tag in {'m1', 'm2', 'm3', 'h1', 's1'} do
+            local events = __osc_march[tag]
+            local from = (tag == 'h1' or tag == 's1') and events[1] and events[1][1] or 0
+            local got = {}
+            for _, e in events do
+                table.insert(got, (e[1] - from) .. ' ' .. e[2])
+            end
+            got = table.concat(got, ', ')
+            if got ~= want[tag] then
+                table.insert(bad, tag .. ': ' .. got .. ', not ' .. want[tag])
+            end
+        end
+        if table.getn(bad) > 0 then error(table.concat(bad, '; ')) end
+    )");
+
     check(osc::test_status::failure_count() - fail == failures_before, "Test 10: no script errors");
     spdlog::info("Drive test: {}/{} passed", pass, pass + fail);
 }
@@ -13373,6 +13434,236 @@ void test_naval_depth(TestContext& ctx) {
     )");
 
     spdlog::info("Naval depth test: {} passed, {} failed", pass, fail);
+}
+
+void test_stun(TestContext& ctx) {
+    spdlog::info("=== STUN TEST: a stunned or immobile unit stands still, as Moho's ===");
+    int pass = 0, fail = 0;
+    const auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+
+    // The scene of the retail probe stun-motion, at its places on SCMP_009.
+    lua_check("setup", R"(
+        __osc_stun = {}
+        ForkThread(function()
+            local W, L = {48, 48}, {96, 656}
+            local function make(bp, x, z, y)
+                return CreateUnitHPR(bp, 'ARMY_1', x, y or GetSurfaceHeight(x, z), z, 0, 0, 0)
+            end
+            local s1 = make('urs0203', W[1], W[2])
+            local s2 = make('urs0203', W[1] + 12, W[2])
+            local s3 = make('urs0203', W[1] + 24, W[2])
+            local t1 = make('uel0201', L[1] - 30, L[2] - 12)
+            local t2 = make('uel0201', L[1] - 30, L[2])
+            local t3 = make('uel0201', L[1] - 30, L[2] + 12)
+            local h1 = make('uel0203', L[1] - 30, L[2] + 24)
+            local a1 = make('uea0203', L[1] - 30, L[2] - 24, GetTerrainHeight(L[1] - 30, L[2] - 24) + 10)
+            local tracked = {s1 = s1, s2 = s2, s3 = s3, t1 = t1, t2 = t2, t3 = t3, h1 = h1, a1 = a1}
+            __osc_stun_made = tracked
+            for name in tracked do
+                __osc_stun[name] = {}
+            end
+            local t0 = GetGameTick()
+            ForkThread(function()
+                while GetGameTick() < t0 + 70 do
+                    for name, u in tracked do
+                        local p = u:GetPosition()
+                        __osc_stun[name][GetGameTick() - t0] = {p[1], p[2], p[3]}
+                    end
+                    WaitTicks(1)
+                end
+            end)
+            WaitTicks(2)
+            IssueDive({s1, s2, s3})
+            IssueMove({t1, t2, t3, h1}, {L[1] + 60, 0, L[2]})
+            IssueMove({a1}, {L[1] + 60, 0, L[2] - 24})
+            WaitTicks(6)
+            s1:SetStunned(1.5)
+            s2:SetImmobile(true)
+            WaitTicks(12)
+            t1:SetStunned(1.5)
+            t2:SetImmobile(true)
+            h1:SetStunned(1.5)
+            a1:SetStunned(1.5)
+            WaitTicks(3)
+            s2:SetImmobile(false)
+            WaitTicks(12)
+            t2:SetImmobile(false)
+        end)
+        function __osc_still(name, axis, from, to)
+            local at = __osc_stun[name]
+            for t = from + 1, to do
+                if at[t][axis] ~= at[from][axis] then
+                    error(string.format('%s moved on tick %d: %.4f, not %.4f', name, t, at[t][axis], at[from][axis]))
+                end
+            end
+            if at[to + 1][axis] == at[to][axis] then
+                error(string.format('%s still on tick %d', name, to + 1))
+            end
+        end
+    )");
+    for (int i = 0; i < 80; ++i) {
+        ctx.sim.tick();
+    }
+    lua_check(
+        "Test 1: the subs' dive holds while stunned or immobile, then goes on where it stopped", R"(
+        __osc_still('s1', 2, 6, 20)
+        __osc_still('s2', 2, 6, 19)
+        local s1, s2, s3 = __osc_stun.s1, __osc_stun.s2, __osc_stun.s3
+        for t = 21, 45 do
+            if s1[t][2] ~= s3[t - 14][2] then error('s1 on tick ' .. t .. ': ' .. s1[t][2] .. ', not ' .. s3[t - 14][2]) end
+        end
+        for t = 20, 45 do
+            if s2[t][2] ~= s3[t - 13][2] then error('s2 on tick ' .. t .. ': ' .. s2[t][2] .. ', not ' .. s3[t - 13][2]) end
+        end
+    )");
+    lua_check("Test 2: a stunned or immobile tank, hover and gunship stop where they are", R"(
+        __osc_still('t1', 1, 17, 32)
+        __osc_still('t2', 1, 17, 31)
+        __osc_still('h1', 1, 17, 32)
+        __osc_still('a1', 1, 17, 31)
+        __osc_still('a1', 2, 17, 31)
+    )");
+    // Retail's positions as they set off again (the probe, to 1e-4).
+    lua_check("Test 3: the tanks and the hover set off from a standstill, the gunship at its speed",
+              R"(
+        local retail = {t1 = {[33] = 66.3740, [34] = 66.4419}, t2 = {[32] = 66.2364, [33] = 66.3040},
+                        h1 = {[33] = 67.2405, [34] = 67.3140}}
+        for name, at in retail do
+            for t, x in at do
+                local got = __osc_stun[name][t][1]
+                if math.abs(got - x) > 5e-4 then error(name .. ' on tick ' .. t .. ': ' .. got .. ', not ' .. x) end
+            end
+        end
+        local a1 = __osc_stun.a1
+        if a1[32][1] - a1[31][1] < 0.8 then error('the gunship set off at ' .. (a1[32][1] - a1[31][1])) end
+    )");
+
+    // The scenes of the retail probes stun-events3 (f1, f2, fh), stun-events (a1) and stun-events4
+    // (n2): their units' OnMotionHorzEventChange, by tick.
+    lua_check("events setup", R"(
+        for _, u in __osc_stun_made do
+            u:Destroy()
+        end
+        __osc_ev = {}
+        ForkThread(function()
+            WaitTicks(5)
+            local L = {96, 656}
+            local t0
+            local function make(tag, bp, x, z)
+                local u = CreateUnitHPR(bp, 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+                __osc_ev[tag] = {}
+                local on = u.OnMotionHorzEventChange
+                rawset(u, 'OnMotionHorzEventChange', function(s, new, old)
+                    table.insert(__osc_ev[tag], {GetGameTick() - (t0 or GetGameTick()), old .. '>' .. new})
+                    if on then
+                        return on(s, new, old)
+                    end
+                end)
+                return u
+            end
+            local f1 = make('f1', 'uel0201', L[1] - 30, L[2] - 12)
+            local f2 = make('f2', 'uel0201', L[1] - 30, L[2])
+            local fh = make('fh', 'uel0203', L[1] - 30, L[2] + 12)
+            local a1 = make('a1', 'ual0201', L[1] - 40, L[2] - 40)
+            local foe = CreateUnitHPR('uel0201', 'ARMY_2', L[1] - 30, GetTerrainHeight(L[1] - 30, L[2] - 30), L[2] - 30, 0, 0, 0)
+            __osc_stun_made = {f1, f2, fh, a1, foe}
+            foe:SetImmobile(true)
+            foe:SetCanTakeDamage(false)
+            t0 = GetGameTick()
+            a1:SetStunned(3)
+            WaitTicks(2)
+            IssueMove({f1}, {L[1] + 60, 0, L[2] - 12})
+            IssueMove({f2}, {L[1] + 60, 0, L[2]})
+            IssueMove({fh}, {L[1] + 60, 0, L[2] + 12})
+            for i = 1, 100 do
+                WaitTicks(1)
+                local t = GetGameTick() - t0
+                if t == 80 then
+                    f1:SetStunned(1.5)
+                    f2:SetImmobile(true)
+                    fh:SetStunned(1.5)
+                elseif t == 93 then
+                    f2:SetImmobile(false)
+                end
+            end
+        end)
+        function __osc_events(tag, from, to)
+            local got = {}
+            for _, e in __osc_ev[tag] do
+                if e[1] >= from and e[1] <= to then
+                    table.insert(got, e[1] .. ' ' .. e[2])
+                end
+            end
+            return table.concat(got, ', ')
+        end
+        function __osc_expect(tag, from, to, want)
+            local got = __osc_events(tag, from, to)
+            if got ~= want then
+                error(string.format('%s: %s, not %s (all: %s)', tag, got, want, __osc_events(tag, 0, 200)))
+            end
+        end
+    )");
+    for (int i = 0; i < 110; ++i) {
+        ctx.sim.tick();
+    }
+    lua_check("Test 4: held at speed far along their moves, they brake Cruising, then Stopped", R"(
+        __osc_expect('f1', 80, 95, '80 TopSpeed>Cruise, 86 Cruise>Stopped, 95 Stopped>Cruise')
+        __osc_expect('f2', 80, 94, '80 TopSpeed>Cruise, 86 Cruise>Stopped, 94 Stopped>Cruise')
+        __osc_expect('fh', 80, 95, '80 TopSpeed>Cruise, 86 Cruise>Stopped, 95 Stopped>Cruise')
+    )");
+    lua_check("Test 5: a stunned unit its slaved weapon would turn is Cruising, then Stopping", R"(
+        __osc_expect('a1', 0, 33, '9 Stopped>Cruise, 10 Cruise>Stopping, 33 Stopping>Stopped')
+    )");
+    lua_check("events setup 2", R"(
+        for _, u in __osc_stun_made do
+            u:Destroy()
+        end
+        ForkThread(function()
+            WaitTicks(5)
+            local L = {96, 656}
+            local n2 = CreateUnitHPR('uel0201', 'ARMY_1', L[1] - 30, GetTerrainHeight(L[1] - 30, L[2] - 12), L[2] - 12, 0, 0, 0)
+            local t0 = GetGameTick()
+            __osc_ev.n2 = {}
+            local on = n2.OnMotionHorzEventChange
+            rawset(n2, 'OnMotionHorzEventChange', function(s, new, old)
+                table.insert(__osc_ev.n2, {GetGameTick() - t0, old .. '>' .. new})
+                return on(s, new, old)
+            end)
+            WaitTicks(2)
+            IssueMove({n2}, {L[1] - 5, 0, L[2] - 12})
+            for i = 1, 60 do
+                WaitTicks(1)
+                if GetGameTick() - t0 == 40 then
+                    n2:SetStunned(1.5)
+                end
+            end
+        end)
+    )");
+    for (int i = 0; i < 70; ++i) {
+        ctx.sim.tick();
+    }
+    lua_check("Test 6: stunned on its last stretch, a tank brakes Stopping, then Stopped", R"(
+        __osc_expect('n2', 40, 54, '40 TopSpeed>Cruise, 41 Cruise>Stopping, 46 Stopping>Stopped')
+    )");
+
+    if (osc::test_status::failure_count() - fail != failures_before) {
+        fail++;
+        osc::test_status::fail("[FAIL] Test 7: script errors");
+    } else {
+        pass++;
+        spdlog::info("[PASS] Test 7: no script errors");
+    }
+    spdlog::info("Stun test: {} passed, {} failed", pass, fail);
 }
 
 void test_transport_slots(TestContext& ctx) {

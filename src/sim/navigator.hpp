@@ -141,9 +141,11 @@ public:
     const path::Spline& spline() const { return spline_; }
     /// The motion holds a node to stand on (CUnitMotion::IsMoving on the ground).
     bool has_motion_node() const { return motion_node_set_; }
+    /// The node it holds brakes it to a stop (ProcessCommonMotionState's PPS_1 waypoint).
+    bool motion_node_stops() const { return motion_node_set_ && motion_node_stops_; }
     /// UpdateMotionPathPointers: hand the motion the spline's next node, and move on.
     void advance_motion_node();
-    /// Stopped while immobile (mPausedForStateTransition); it sets off afresh after.
+    /// Stopped while immobile or stunned (mPausedForStateTransition); it sets off afresh after.
     bool steer_paused() const { return steer_paused_; }
     void set_steer_paused(bool p) { steer_paused_ = p; }
     /// Moho's point to step aside to (mCollisionAvoidTarget).
@@ -257,6 +259,7 @@ private:
     Vector3 avoid_target_{};   ///< mCollisionAvoidTarget
     path::Node motion_node_{}; ///< CUnitMotion's mNextWaypoint
     bool motion_node_set_ = false;
+    bool motion_node_stops_ = false;
     bool steer_paused_ = false; ///< mPausedForStateTransition
     /// Its target is outside the goal: driven through at speed, not stopped
     /// on (Moho's IAiSteering::UseTopSpeed).

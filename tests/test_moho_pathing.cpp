@@ -833,6 +833,113 @@ TEST_CASE("With Moho pathing a moving tank whose orders are cleared brakes along
     CHECK(tank->position().x - cleared > 1.2f);
 }
 
+TEST_CASE("With Moho pathing a held tank's steering makes a new move's spline but hands its motion "
+          "no node till let go",
+          "[pathing]") {
+    const bool stun = GENERATE(true, false);
+    INFO((stun ? "stunned" : "immobile"));
+    World w(true);
+    Unit* tank = w.make("tank", 20.5f, 30.5f);
+    World::move(*tank, 60.5f, 30.5f);
+    for (int t = 0; t < 10; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(tank->navigator().has_motion_node());
+    if (stun) {
+        tank->set_stunned(2.0);
+    } else {
+        tank->set_immobile(true);
+    }
+    w.sim.tick();
+    World::move(*tank, 20.5f, 70.5f);
+    bool spline = false;
+    for (int t = 0; t < 15; ++t) {
+        w.sim.tick();
+        spline = spline || tank->navigator().has_spline();
+        CHECK_FALSE(tank->navigator().has_motion_node());
+    }
+    CHECK(spline);
+    tank->set_immobile(false);
+    for (int t = 0; t < 5; ++t) {
+        w.sim.tick();
+    }
+    const f32 let_go = tank->position().z;
+    for (int t = 0; t < 20; ++t) {
+        w.sim.tick();
+    }
+    CHECK(tank->position().z - let_go > 1.0f);
+}
+
+TEST_CASE("A stunned tank braking where it stands is Stopping near its motion's target, else "
+          "Cruising, till Stopped",
+          "[pathing]") {
+    const bool near = GENERATE(true, false);
+    INFO((near ? "near" : "far"));
+    World w(true);
+    Unit* tank = w.make("tank", 20.5f, 30.5f);
+    for (int t = 0; t < 3; ++t) {
+        w.sim.tick();
+    }
+    tank->set_stunned(5.0);
+    w.sim.tick();
+    const osc::sim::Vector3 at = tank->position();
+    tank->set_motion_target(near ? at : osc::sim::Vector3{at.x, at.y, at.z + 60.0f});
+    tank->set_motion_velocity({0.0f, 0.0f, 0.3f});
+    REQUIRE(
+        w.state
+            .do_string("events = {} rawset(made, 'OnMotionHorzEventChange', function(self, new, "
+                       "old) table.insert(events, old .. '>' .. new) end)")
+            .ok());
+    for (int t = 0; t < 10; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.state.do_string("joined = table.concat(events, ', ')").ok());
+    lua_State* L = w.state.raw();
+    lua_getglobal(L, "joined");
+    const std::string events = lua_tostring(L, -1);
+    lua_pop(L, 1);
+    CHECK(events == (near ? "Stopped>Cruise, Cruise>Stopping, Stopping>Stopped"
+                          : "Stopped>Cruise, Cruise>Stopped"));
+    CHECK(tank->position().z == at.z);
+}
+
+TEST_CASE("With Moho pathing a tank's move is Cruising the tick its motion takes a node, and "
+          "Stopping only once below 80% of its top speed",
+          "[pathing]") {
+    const f32 to = GENERATE(2.0f, 30.0f);
+    INFO("a move of " << to);
+    World w(true);
+    Unit* tank = w.make("tank", 20.5f, 30.5f);
+    w.sim.tick();
+    World::move(*tank, 20.5f + to, 30.5f);
+    using Horz = Unit::MotionHorz;
+    std::vector<Horz> seen{Horz::Stopped};
+    int first_node = -1;
+    int first_event = -1;
+    for (int t = 0; t < 150; ++t) {
+        w.sim.tick();
+        if (first_node < 0 && tank->navigator().has_motion_node()) {
+            first_node = t;
+        }
+        const Horz now = tank->motion_horz();
+        if (now != seen.back()) {
+            if (first_event < 0) {
+                first_event = t;
+            }
+            CHECK_FALSE((seen.back() == Horz::Stopped && now == Horz::Stopping));
+            seen.push_back(now);
+        }
+        if (now == Horz::Stopping) {
+            const osc::sim::Vector3& v = tank->motion_velocity();
+            CHECK(std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z) <= 4.0f * 0.080000006f);
+        }
+    }
+    REQUIRE(seen.size() >= 3);
+    CHECK(seen[1] == Horz::Cruise);
+    CHECK(first_event == first_node);
+    CHECK(seen.back() == Horz::Stopped);
+}
+
 TEST_CASE("A move whose navigator aborts ends as Moho's move task hears AINAVEVENT_Aborted",
           "[pathing]") {
     const bool moho = GENERATE(false, true);
