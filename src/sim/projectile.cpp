@@ -32,12 +32,6 @@ constexpr f32 kDegToRad = 0.017453292f;
 /// TurnRate's degrees a second as radians a tick, MotionTick's and UpdateTracking's constant.
 constexpr f32 kTurnPerTick = 0.0017453292f;
 
-/// MotionTick's forward of an orientation (0x0069C1AA).
-Vector3 heading_of(const Quaternion& q) {
-    return {(q.z * q.x + q.w * q.y) * 2.0f, (q.y * q.z - q.w * q.x) * 2.0f,
-            1.0f - (q.x * q.x + q.y * q.y) * 2.0f};
-}
-
 /// `o` spun by `s` in its own frame, each lane summed as MotionTick's (0x0069C3AC).
 Quaternion spun(const Quaternion& o, const Quaternion& s) {
     return {s.x * o.w + s.z * o.y + o.x * s.w - s.y * o.z,
@@ -166,7 +160,7 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
             velocity = {velocity.x * cut, velocity.y * cut, velocity.z * cut};
         }
     }
-    if (stay_upright) facing = coords_orient_moho(heading_of(facing));
+    if (stay_upright) facing = coords_orient_moho(forward_moho(facing));
 
     auto pos = from;
     pos.x += (velocity.x + start_velocity.x) * step * 0.5f;
@@ -625,33 +619,31 @@ Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L, S
         field("RealisticOrdinance") != LUA_TNIL && lua_toboolean(L, -1) != 0;
     lua_pop(L, 1);
     number("Lifetime", found.lifetime);
-    // Each made a little different: base +- its range, uniformly (Moho's
-    // RandomSymmetricAround). Moho draws even for a range of 0; this only
-    // for one there is.
+    found.initial_speed = 1.0f;
+    number("InitialSpeed", found.initial_speed);
+    f32 spin = 0;
+    f32 spin_range = 0;
+    number("RotationalVelocity", spin);
+    number("RotationalVelocityRange", spin_range);
+    // Moho's Projectile draws in this order, GetAngularVelocity then RandomSymmetricAround, even
+    // for a range of 0.
+    const auto spread = [&](const char* key, f32& value) {
+        f32 range = 0;
+        number(key, range);
+        value += rng->range(-range, range);
+    };
     if (rng) {
-        f32 spin = 0;
-        f32 spin_range = 0;
-        number("RotationalVelocity", spin);
-        number("RotationalVelocityRange", spin_range);
-        if (spin != 0.0f || spin_range != 0.0f) {
-            Vector3 axis{gaussian(*rng), gaussian(*rng), gaussian(*rng)};
-            const f32 length = std::sqrt(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
-            const f32 rate = (spin + rng->range(-spin_range, spin_range)) * kDegToRad / length;
-            angular_velocity = {axis.x * rate, axis.y * rate, axis.z * rate};
-        }
-        const auto spread = [&](const char* key, f32& value) {
-            f32 range = 0;
-            number(key, range);
-            if (range != 0.0f) value += rng->range(-range, range);
-        };
+        Vector3 axis{rng->gaussian(), rng->gaussian(), rng->gaussian()};
+        wm3_normalize(axis);
+        const f32 rate = (spin + rng->range(-spin_range, spin_range)) * kDegToRad;
+        angular_velocity = {axis.x * rate, axis.y * rate, axis.z * rate};
         spread("TurnRateRange", turn_rate);
         spread("MaxSpeedRange", max_speed);
         spread("AccelerationRange", acceleration);
         spread("LifetimeRange", found.lifetime);
     }
     // Its bounces (Moho's RProjectileBlueprintPhysics defaults 0, 0 and 0.5): a pick in
-    // [MinBounceCount, MaxBounceCount), as Moho scales one draw by the span. Moho draws for an
-    // empty span too; this only for one there is, as above.
+    // [MinBounceCount, MaxBounceCount), as Moho scales one draw by the span.
     f32 min_bounces = 0;
     f32 max_bounces = 0;
     number("MinBounceCount", min_bounces);
@@ -660,8 +652,19 @@ Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L, S
     const auto low = static_cast<i32>(min_bounces);
     const auto span = static_cast<u32>(static_cast<i32>(max_bounces) - low);
     bounce_limit = low;
-    if (rng && span != 0) {
+    if (rng) {
         bounce_limit += static_cast<i32>((static_cast<u64>(span) * rng->next_u32()) >> 32);
+        if (found.realistic_ordinance && launcher_id) {
+            if (spin_range > 0.0f) {
+                found.launch_jitter.x = rng->range(-spin_range, spin_range);
+                found.launch_jitter.z = rng->range(-spin_range, spin_range);
+            }
+        } else {
+            spread("InitialSpeedRange", found.initial_speed);
+        }
+        // Display's DrawScale and its rate, drawn by Moho whatever their ranges.
+        rng->next_u32();
+        rng->next_u32();
     }
     lua_settop(L, top);
     return found;

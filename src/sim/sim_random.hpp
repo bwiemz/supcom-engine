@@ -22,6 +22,7 @@ public:
     explicit SimRandom(u64 seed = kDefaultSeed) : state_(seed) {}
 
     void seed(u64 s) {
+        has_gaussian_ = false;
         if (mt_) {
             mt_seed(static_cast<u32>(s));
         } else {
@@ -97,6 +98,31 @@ public:
         return static_cast<i64>(static_cast<u64>(lo) + r % span);
     }
 
+    /// CRandomStream::FRandGaussian: Marsaglia's polar method in float, the pair's second value
+    /// kept for the next call.
+    f32 gaussian() {
+        if (has_gaussian_) {
+            has_gaussian_ = false;
+            return gaussian_;
+        }
+        const auto signed_unit = [this] {
+            return static_cast<f32>(static_cast<double>(next_u32()) * 0x1p-31 - 1.0);
+        };
+        f32 x = 0.0f;
+        f32 y = 0.0f;
+        f32 r2 = 1.0f;
+        do {
+            x = signed_unit();
+            y = signed_unit();
+            r2 = y * y + x * x;
+        } while (r2 >= 1.0f);
+        const auto log_r2 = static_cast<f32>(osc::dmath::log(static_cast<double>(r2)));
+        const f32 scale = std::sqrt(-2.0f * log_r2 / r2);
+        gaussian_ = y * scale;
+        has_gaussian_ = true;
+        return x * scale;
+    }
+
     u64 state() const { return state_; }
 
     u64 digest() const {
@@ -142,23 +168,11 @@ private:
     std::optional<std::mt19937> mt_engine_;
     u32 mt_seed_ = 0;
     u64 mt_drawn_ = 0;
+    f32 gaussian_ = 0.0f;
+    bool has_gaussian_ = false;
     DrawHook draw_hook_ = nullptr;
     void* draw_hook_ctx_ = nullptr;
     void* caller_ = nullptr;
 };
-
-/// A standard normal draw: Moho's CRandomStream::FRandGaussian, Marsaglia's
-/// polar method (which keeps the pair's second value for the next call;
-/// this draws a fresh pair each time).
-inline f32 gaussian(SimRandom& rng) {
-    f64 x = 0;
-    f64 s = 0;
-    do {
-        x = rng.next_double() * 2.0 - 1.0;
-        const f64 y = rng.next_double() * 2.0 - 1.0;
-        s = x * x + y * y;
-    } while (s >= 1.0 || s == 0.0);
-    return static_cast<f32>(x * std::sqrt(-2.0 * osc::dmath::log(s) / s));
-}
 
 } // namespace osc::sim

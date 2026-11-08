@@ -60,10 +60,11 @@ Quaternion coords_orient(const Vector3& dir) {
                       (m[2][0] - m[0][2]) / t};
 }
 
-namespace {
+Vector3 forward_moho(const Quaternion& q) {
+    return {(q.z * q.x + q.w * q.y) * 2.0f, (q.y * q.z - q.w * q.x) * 2.0f,
+            1.0f - (q.x * q.x + q.y * q.y) * 2.0f};
+}
 
-/// Wm3's Vector3::Normalize: zero and its length 0 at 1e-6 or under, else times the
-/// inverse length.
 f32 wm3_normalize(Vector3& v) {
     const f32 length = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
     if (!(length > 1.0e-6f)) {
@@ -74,8 +75,6 @@ f32 wm3_normalize(Vector3& v) {
     v = {v.x * inv, v.y * inv, v.z * inv};
     return length;
 }
-
-} // namespace
 
 Quaternion coords_orient_moho(const Vector3& dir) {
     Vector3 f = dir;

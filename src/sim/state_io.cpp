@@ -581,6 +581,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         w.u32v(rng.mt_seed_);
         w.u64v(rng.mt_drawn_);
     }
+    w.f32v(rng.gaussian_);
+    w.b(rng.has_gaussian_);
     save_path_maps(w, sim);
 }
 
@@ -855,6 +857,8 @@ void StateIO::load(StateReader& r, SimState& sim) {
         rng.mt_drawn_ = r.u64v();
         rng.mt_engine_->discard(rng.mt_drawn_);
     }
+    rng.gaussian_ = r.f32v();
+    rng.has_gaussian_ = r.b();
     load_path_maps(r, sim);
 }
 

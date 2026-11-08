@@ -131,7 +131,8 @@ i32 resolve_bone_index(const sim::Entity* e, lua_State* L, int arg);
 f32 draw_scale_unit(lua_State* L, const sim::Entity& e);
 sim::Vector3 bone_world_position(const sim::Entity* e, i32 bone_idx);
 bool under_water(const sim::SimState* sim, const sim::Vector3& p);
-void apply_script_projectile_physics(lua_State* L, sim::Projectile& p);
+/// Its blueprint's Physics on `p`; the speed it is launched at.
+f32 apply_script_projectile_physics(lua_State* L, sim::Projectile& p);
 std::string lowercase_arg(lua_State* L, int idx);
 sim::Manipulator* check_manip_base(lua_State* L);
 int been_destroyed_check(lua_State* L);

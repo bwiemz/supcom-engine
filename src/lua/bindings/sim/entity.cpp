@@ -36,6 +36,7 @@
 #include "sim/unit.hpp"
 #include "sim/navigator.hpp"
 #include "sim/platoon.hpp"
+#include "sim/flight_math.hpp"
 #include "sim/projectile.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit_command.hpp"
@@ -708,10 +709,10 @@ static std::optional<ProjectileLaunch> projectile_launch(lua_State* L, const std
     return launch;
 }
 
-/// `base` moved by up to `range` either way, uniformly (Moho's FRand(-range, range) + base): a
-/// draw only for a range there is, as the engine's other spreads take
+/// `base` moved by up to `range` either way, uniformly (Moho's FRand(-range, range) + base),
+/// drawn whatever the range.
 static f32 spread(f32 base, f32 range, sim::SimRandom* rng) {
-    return rng && range != 0.0f ? base + rng->range(-range, range) : base;
+    return rng ? base + rng->range(-range, range) : base;
 }
 
 /// Per axis, x then y then z
@@ -725,13 +726,10 @@ static sim::Vector3 spread(const sim::Vector3& base, const sim::Vector3& range,
 /// Point a new projectile along `dir`, at `speed` (Moho's COORDS_Orient of its launch direction,
 /// its velocity forward); a zero direction is the identity, forward along +z.
 static void aim_projectile(sim::Projectile& p, const sim::Vector3& dir, f32 speed) {
-    const f32 len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-    const sim::Vector3 d =
-        len > 1e-6f ? sim::Vector3{dir.x / len, dir.y / len, dir.z / len} : sim::Vector3{0, 0, 1};
-    p.set_orientation(sim::euler_to_quat(osc::dmath::atan2(d.x, d.z),
-                                         osc::dmath::atan2(-d.y, std::sqrt(d.x * d.x + d.z * d.z)),
-                                         0.0f));
-    p.velocity = {d.x * speed, d.y * speed, d.z * speed};
+    const sim::Quaternion facing = sim::coords_orient_moho(dir);
+    p.set_orientation(facing);
+    const sim::Vector3 ahead = sim::forward_moho(facing);
+    p.velocity = {ahead.x * speed, ahead.y * speed, ahead.z * speed};
 }
 
 // entity:CreateProjectile(bp, offX, offY, offZ, dirX, dirY, dirZ): a
@@ -764,13 +762,11 @@ static int entity_CreateProjectile(lua_State* L) {
                                    : launch
                                        ? spread(launch->direction, launch->direction_range, rng)
                                        : sim::Vector3{};
-    const f32 speed = launch ? spread(launch->speed, launch->speed_range, rng) : 0.0f;
     const sim::Vector3 at = e->position();
     proj->set_position({at.x + offset.x, at.y + offset.y, at.z + offset.z});
     proj->set_army(e->army());
     proj->launcher_id = launcher_of(*e);
-    apply_script_projectile_physics(L, *proj);
-    aim_projectile(*proj, direction, speed);
+    aim_projectile(*proj, direction, apply_script_projectile_physics(L, *proj));
 
     sim::EntityId proj_id = sim->entity_registry().register_entity(std::move(proj));
     auto* proj_ptr = static_cast<sim::Projectile*>(

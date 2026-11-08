@@ -14,12 +14,14 @@
 #include "sim/flight_math.hpp"
 #include "sim/projectile.hpp"
 #include "sim/projectile_script.hpp"
+#include "sim/sim_random.hpp"
 #include "sim/sim_state.hpp"
 
 extern "C" {
 #include <lua.h>
 }
 
+#include <bit>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -213,4 +215,56 @@ TEST_CASE("A projectile stays upright if its blueprint says StayUpright", "[blue
     CHECK(ahead.z == Catch::Approx(std::cos(2.5f)).margin(1e-4));
     const osc::sim::Quaternion tumbling = spin("tumbling");
     CHECK(osc::sim::quat_rotate(tumbling, {0, 1, 0}).y < 0.5f);
+}
+
+TEST_CASE("A projectile draws its spin and spreads as Moho's Projectile, whatever its ranges",
+          "[blueprints]") {
+    osc::lua::LuaState state;
+    REQUIRE(state
+                .do_string(R"(
+        __blueprints = {flash = {Physics = {RotationalVelocity = 50, StayUpright = true}}}
+    )")
+                .ok());
+    osc::sim::SimRandom rng;
+    rng.set_mt19937(true);
+    rng.seed(7);
+    osc::sim::Projectile made;
+    made.set_blueprint_id("flash");
+    (void)made.apply_blueprint_physics(state.raw(), &rng);
+    CHECK(std::bit_cast<osc::u32>(made.angular_velocity.x) == 0x3f3b744au);
+    CHECK(std::bit_cast<osc::u32>(made.angular_velocity.y) == 0xbef27585u);
+    CHECK(std::bit_cast<osc::u32>(made.angular_velocity.z) == 0xbd088950u);
+    CHECK(rng.words_drawn() == 15);
+    CHECK(rng.next_u32() == 1801189930u);
+}
+
+TEST_CASE("A projectile a script aims faces as retail's, bit for bit", "[blueprints]") {
+    // Retail 3599's GetOrientation (x, y, z, w) of one made along (0.3, 0.5, -0.8).
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::lua::register_sim_bindings(lua, sim);
+    osc::lua::register_moho_bindings(lua, sim);
+    REQUIRE(lua.do_string("__blueprints = {shell = {Physics = {}}}").ok());
+    lua_State* L = lua.raw();
+    auto parent = std::make_unique<osc::sim::Projectile>();
+    parent->set_blueprint_id("shell");
+    const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(parent));
+    osc::sim::create_projectile_object(
+        L, *static_cast<osc::sim::Projectile*>(sim.entity_registry().find(id)), false, true);
+    lua_setglobal(L, "parent");
+    lua_settop(L, 0);
+    REQUIRE(lua.do_string("child = moho.entity_methods.CreateProjectile(parent, 'shell', 0, 0, 0,"
+                          " 0.3, 0.5, -0.8)")
+                .ok());
+    lua_getglobal(L, "child");
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, -2);
+    const auto* child = static_cast<const osc::sim::Projectile*>(lua_touserdata(L, -1));
+    lua_settop(L, 0);
+    REQUIRE(child);
+    const osc::sim::Quaternion q = child->pending_orientation();
+    CHECK(std::bit_cast<osc::u32>(q.x) == 0xbd3f394cu);
+    CHECK(std::bit_cast<osc::u32>(q.y) == 0x3f731ddcu);
+    CHECK(std::bit_cast<osc::u32>(q.z) == 0x3e83d126u);
+    CHECK(std::bit_cast<osc::u32>(q.w) == 0x3e305782u);
 }
