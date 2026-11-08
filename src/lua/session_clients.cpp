@@ -33,6 +33,8 @@ constexpr size_t kMaxChatBytes = 1024;
 /// Moho's clients report 50 as their sim rate unless told otherwise.
 constexpr int kMaxSimRate = 50;
 
+constexpr const char* kLocalSpeedChanges = "__osc_local_speed_changes";
+
 /// A chat message for the local client: who sent it, and its bytes.
 struct Chat {
     std::string sender;
@@ -391,7 +393,51 @@ bool session_speed(i32& rate) {
     return true;
 }
 
+void note_local_speed_change(lua_State* L, i32 rate) {
+    lua_pushstring(L, kLocalSpeedChanges);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushstring(L, kLocalSpeedChanges);
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    int next = 1;
+    for (lua_rawgeti(L, -1, next); !lua_isnil(L, -1); lua_rawgeti(L, -1, next)) {
+        lua_pop(L, 1);
+        ++next;
+    }
+    lua_pop(L, 1);
+    lua_pushnumber(L, static_cast<double>(rate));
+    lua_rawseti(L, -2, next);
+    lua_pop(L, 1);
+}
+
 void pump_speed_changes(lua_State* L) {
+    lua_pushstring(L, kLocalSpeedChanges);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    std::vector<double> rates;
+    if (lua_istable(L, -1)) {
+        for (int i = 1;; ++i) {
+            lua_rawgeti(L, -1, i);
+            if (!lua_isnumber(L, -1)) {
+                lua_pop(L, 1);
+                break;
+            }
+            rates.push_back(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+    lua_pushstring(L, kLocalSpeedChanges);
+    lua_pushnil(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    for (const double rate : rates) {
+        lua_pushnumber(L, 1);
+        lua_pushnumber(L, rate);
+        core::call_ui_callback(L, core::kUiMainModule, "NoteGameSpeedChanged", 2);
+    }
     auto* session = mp_net_state().session.get();
     if (!session_is_multiplayer() || !session) return;
     for (const sim::LockstepSession::SpeedChange& change : session->take_speed_changes()) {

@@ -92,8 +92,13 @@ bool session_request_speed(i32 rate);
 /// GetGameSpeed in a network game: the game's speed. False in single-player.
 bool session_speed(i32& rate);
 
-/// Each frame of a network game: uimain.NoteGameSpeedChanged(client, speed)
-/// for each change the lockstep applied, as Moho's client manager calls it.
+/// A single-player game's speed asked for, which its one client hears as Moho's
+/// client manager tells it (CClientBase::ApplyIncomingGameSpeedRequest).
+void note_local_speed_change(lua_State* L, i32 rate);
+
+/// Each frame of a game: uimain.NoteGameSpeedChanged(client, speed) for each
+/// change the lockstep applied, or this client asked for alone, as Moho's
+/// client manager calls it.
 void pump_speed_changes(lua_State* L);
 
 void show_desyncs(lua_State* L, osc::u32 beat, const std::vector<osc::u32>& sources);
