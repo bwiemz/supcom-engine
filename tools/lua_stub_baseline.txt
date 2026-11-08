@@ -9,7 +9,6 @@ ClearFrame Command
 DebugGetSelection stub_nil
 Destroy wlduiprovider_Destroy
 EndLoggingStats l_EndLoggingStats
-EntityCategoryEmpty l_EntityCategoryEmpty
 GetOmni shield_GetOmni
 InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService
 IsKnownFake blip_IsKnownFake

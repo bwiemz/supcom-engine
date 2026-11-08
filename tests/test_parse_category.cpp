@@ -16,6 +16,7 @@ extern "C" {
 }
 
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -119,4 +120,50 @@ TEST_CASE("The engine tests units against a string as ParseEntityCategory parses
     CHECK_FALSE(by_id.matches({"LAND"}));
     CHECK(osc::lua::parse_entity_category(L, "tech1").empty());
     CHECK(lua_gettop(L) == top);
+}
+
+TEST_CASE("EntityCategoryEmpty: whether any unit, prop or projectile blueprint is in it",
+          "[category]") {
+    CategoryWorld w;
+    lua_State* L = w.state.raw();
+    // Moho's set has a bit for every entity blueprint, a prop's and a
+    // projectile's too.
+    for (const auto& [type, bp] : {
+             std::pair{osc::blueprints::BlueprintType::Prop,
+                       "{BlueprintId = 'rock', Categories = {'RECLAIMABLE', 'OBSTRUCTSBUILDING'}}"},
+             std::pair{osc::blueprints::BlueprintType::Projectile,
+                       "{BlueprintId = 'shell', Categories = {'PROJECTILE', 'DIRECTFIRE'}}"},
+         }) {
+        REQUIRE(w.state.do_string(std::string("return ") + bp).ok());
+        w.store.register_blueprint(L, type, lua_gettop(L));
+        lua_pop(L, 1);
+    }
+    const auto empty = [&w](const char* expr) {
+        REQUIRE(
+            w.state.do_string(std::string("__osc_empty = EntityCategoryEmpty(") + expr + ")").ok());
+        lua_State* S = w.state.raw();
+        lua_getglobal(S, "__osc_empty");
+        const bool yes = lua_toboolean(S, -1) != 0;
+        lua_pop(S, 1);
+        return yes;
+    };
+    CHECK_FALSE(empty("categories.TECH1"));
+    CHECK_FALSE(empty("categories.MASSEXTRACTION * categories.TECH2"));
+    CHECK(empty("categories.COMMAND * categories.TECH1"));
+    CHECK(empty("categories.NAVAL"));
+    // A prop's and a projectile's categories count; ALLUNITS holds neither.
+    CHECK_FALSE(empty("categories.RECLAIMABLE"));
+    CHECK_FALSE(empty("categories.DIRECTFIRE"));
+    CHECK_FALSE(empty("categories.ALLPROJECTILES"));
+    CHECK(empty("categories.RECLAIMABLE * categories.ALLUNITS"));
+    CHECK(empty("categories.DIRECTFIRE * categories.ALLUNITS"));
+
+    auto r = w.state.do_string("EntityCategoryEmpty()");
+    REQUIRE_FALSE(r.ok());
+    CHECK(r.error().message.find("Test for an empty category\n  expected 1 args, but got 0") !=
+          std::string::npos);
+    r = w.state.do_string("EntityCategoryEmpty(1)");
+    REQUIRE_FALSE(r.ok());
+    CHECK(r.error().message.find("attempt to use as EntityCategory a number value") !=
+          std::string::npos);
 }

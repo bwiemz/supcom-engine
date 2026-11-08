@@ -43,6 +43,7 @@ IsDestroyed l_IsDestroyed  # the sim's and the UI's are real
 EntityCategoryContains l_EntityCategoryContains  # the sim's and the UI's are real
 EntityCategoryFilterDown l_EntityCategoryFilterDown  # the sim's and the UI's are real
 EntityCategoryGetUnitList l_EntityCategoryGetUnitList  # the sim's and the UI's are real
+EntityCategoryEmpty l_EntityCategoryEmpty  # the sim's and the UI's are real
 #
 # The user state's globals its init script sets before any script reads them.
 __language GlobalString  # userInit.lua sets it from the player's options
