@@ -11,14 +11,12 @@ Destroy wlduiprovider_Destroy
 EndLoggingStats l_EndLoggingStats
 EntityCategoryEmpty l_EntityCategoryEmpty
 GetOmni shield_GetOmni
-GetScreenPos worldview_GetScreenPos
 InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService
 IsKnownFake blip_IsKnownFake
 IsRestricted <lambda>
 IssuePause stub_noop
 MetaImpact stub_noop
 PrefetchSession Command
-ProjectMultiple worldview_ProjectMultiple
 RefreshSteamGames l_RefreshSteamGames
 SetGreaterOf brain_SetGreaterOf
 SetTargetHead frame_SetTargetHead

@@ -612,6 +612,10 @@ const sim::WorldSnapshot* ui_world(lua_State* L) {
     return &world.snapshot;
 }
 
+const sim::EntityRecord* user_unit_record(lua_State* L, int idx) {
+    return record(L, idx);
+}
+
 int ui_GetBlueprint(lua_State* L) {
     if (lua_gettop(L) != 1) {
         return arg_count_error(L, "blueprint = GetBlueprint(entity)", 1, lua_gettop(L));
