@@ -1,11 +1,13 @@
 // --selection-render-test: Moho's selection indicators (ren_SelectBoxes).
 //
-// On dry ground away from the starts, two of ARMY_1's engineers and one of
-// ARMY_2's. The selected one has retail's player brackets, sized from its
-// blueprint's SelectionSize; the one under the cursor has the highlighted
-// ones, an enemy's the enemy's; the drag box is drawn; the overlay draws no
-// ring; ren_SelectBoxes off draws none. An aircraft is picked, and boxed,
-// where it is drawn at its height.
+// On dry ground away from the starts, two of ARMY_1's engineers and one
+// each of ARMY_2's, ARMY_3's (an ally) and ARMY_4's (a neutral). The
+// selected one has retail's player brackets, sized from its blueprint's
+// SelectionSize; the one under the cursor has the highlighted ones, an
+// ally's too, an enemy's the enemy's, a neutral's or an observer's the
+// neutral's; the drag box is drawn; the overlay draws no ring;
+// ren_SelectBoxes off draws none. An aircraft is picked, and boxed, where
+// it is drawn at its height.
 
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
@@ -115,6 +117,12 @@ void test_selection_render(TestContext& ctx) {
     const sim::EntityId own = spawn_unit(ctx, "__osc_sel_a", "uel0105", "ARMY_1", {sx, sz});
     const sim::EntityId other = spawn_unit(ctx, "__osc_sel_b", "uel0105", "ARMY_1", {sx + 8, sz});
     const sim::EntityId enemy = spawn_unit(ctx, "__osc_sel_c", "uel0105", "ARMY_2", {sx - 8, sz});
+    const sim::EntityId ally =
+        spawn_unit(ctx, "__osc_sel_ally", "uel0105", "ARMY_3", {sx + 16, sz});
+    const sim::EntityId neutral =
+        spawn_unit(ctx, "__osc_sel_neutral", "uel0105", "ARMY_4", {sx - 16, sz});
+    run_lua(ctx, "SetAlliance('ARMY_1', 'ARMY_3', 'Ally')\n"
+                 "SetAlliance('ARMY_1', 'ARMY_4', 'Neutral')\n");
     ctx.sim.tick();
 
     OffscreenShots shots(ctx);
@@ -173,6 +181,29 @@ void test_selection_render(TestContext& ctx) {
     t.check(ends_with(hovered_own, "_player_highlighted.dds") &&
                 ends_with(hovered_enemy, "_enemy.dds"),
             fmt::format("Test 3: hovered: own {}, enemy {}", hovered_own, hovered_enemy));
+
+    const auto hovered_texture = [&](sim::EntityId id) {
+        r.set_selection_marks(id, std::nullopt);
+        draw();
+        return texture_of(id);
+    };
+    const std::string hovered_ally = hovered_texture(ally);
+    const std::string hovered_neutral = hovered_texture(neutral);
+    t.check(ends_with(hovered_ally, "_player_highlighted.dds") &&
+                ends_with(hovered_neutral, "_neutral.dds"),
+            fmt::format("Test 3b: hovered: ally {}, neutral {}", hovered_ally, hovered_neutral));
+
+    r.set_player_army(-1);
+    std::vector<std::string> observed;
+    for (const sim::EntityId id : {other, enemy, ally, neutral}) {
+        observed.push_back(hovered_texture(id));
+    }
+    r.set_player_army(0);
+    r.set_selection_marks(sim::EntityId(), std::nullopt);
+    t.check(std::all_of(observed.begin(), observed.end(),
+                        [&](const std::string& s) { return ends_with(s, "_neutral.dds"); }),
+            fmt::format("Test 3c: an observer's hovered: own {}, enemy {}, ally {}, neutral {}",
+                        observed[0], observed[1], observed[2], observed[3]));
 
     // Test 4: the cursor's unit is the one whose box holds the point
     renderer::InputHandler input;
