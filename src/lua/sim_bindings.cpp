@@ -2055,9 +2055,12 @@ static int l_ui_ParseEntityCategory(lua_State* L) {
     return l_ParseEntityCategory(L);
 }
 
+static int l_EntityCategoryEmpty(lua_State* L);
+
 void register_category_bindings(LuaState& state) {
     setup_categories(state.raw());
     state.register_function("ParseEntityCategory", l_ui_ParseEntityCategory);
+    state.register_function("EntityCategoryEmpty", l_EntityCategoryEmpty);
 }
 
 // ====================================================================
@@ -3230,6 +3233,49 @@ static int l_EntityCategoryFilterDown(lua_State* L) {
 // EntityCategoryFilterOut(category, unitList) -> filtered table
 static int l_EntityCategoryFilterOut(lua_State* L) {
     return category_filter(L, false);
+}
+
+/// EntityCategoryEmpty(category): whether no blueprint is in the category,
+/// as Moho's answers from the set's bits (faf-re cfunc_EntityCategoryEmptyL):
+/// every entity blueprint has a bit there, a unit's, a prop's or a
+/// projectile's (REntityBlueprint's mCategoryBitIndex). The sim's and the
+/// UI's; the blueprint phase's stand-in answers true.
+static int l_EntityCategoryEmpty(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "Test for an empty category", 1, lua_gettop(L));
+    }
+    if (!lua_istable(L, 1)) {
+        return arg_type_error(L, 1, "EntityCategory");
+    }
+    auto* store = LuaState::get_blueprint_store(L);
+    if (!store) {
+        if (auto* sim = get_sim(L)) store = sim->blueprint_store();
+    }
+    bool empty = true;
+    if (store) {
+        const osc::lua::CategoryMatcher category(L, 1);
+        using blueprints::BlueprintType;
+        for (const BlueprintType type :
+             {BlueprintType::Unit, BlueprintType::Prop, BlueprintType::Projectile}) {
+            for (const auto* entry : store->get_all(type)) {
+                store->push_lua_table(*entry, L);
+                std::unordered_set<std::string> cats;
+                sim::collect_blueprint_categories(L, lua_gettop(L), cats);
+                lua_pop(L, 1);
+                if (cats.empty()) continue;
+                // Moho's projectile blueprints hold ALLPROJECTILES (ALLUNITS
+                // is every entity but them).
+                if (type == BlueprintType::Projectile) cats.insert("ALLPROJECTILES");
+                if (category.matches(cats, type == BlueprintType::Unit)) {
+                    empty = false;
+                    break;
+                }
+            }
+            if (!empty) break;
+        }
+    }
+    lua_pushboolean(L, empty ? 1 : 0);
+    return 1;
 }
 
 // EntityCategoryGetUnitList(category) -> table of blueprint IDs
@@ -5798,6 +5844,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
                             l_EntityCategoryFilterOut);
     state.register_function("EntityCategoryGetUnitList",
                             l_EntityCategoryGetUnitList);
+    state.register_function("EntityCategoryEmpty", l_EntityCategoryEmpty);
     state.register_function("EntityCategoryCount", l_EntityCategoryCount);
 
     // Math / vector, and the alliance queries: Moho's Core functions
