@@ -5,6 +5,7 @@
 
 #include "blueprints/blueprint_store.hpp"
 #include "core/color.hpp"
+#include "core/console_output.hpp"
 #include "core/game_state.hpp"
 #include "core/localization.hpp"
 #include "platform/executable.hpp"
@@ -2881,7 +2882,7 @@ void print_loc(lua_State* L, const char* token) {
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* loc = static_cast<core::Localization*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-    spdlog::info("{}", loc ? loc->lookup(token) : std::string(token));
+    core::console_print(L, loc ? loc->lookup(token) : std::string(token));
 }
 
 /// The selection's units still there, by id

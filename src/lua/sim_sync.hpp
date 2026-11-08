@@ -4,6 +4,8 @@
 
 #include <deque>
 #include <optional>
+#include <string>
+#include <vector>
 
 struct lua_State;
 
@@ -48,6 +50,7 @@ public:
 private:
     lua_State* packets_state_ = nullptr;
     std::deque<int> packets_;
+    std::deque<std::vector<std::string>> print_lines_;
     std::optional<int> ui_request_;
 };
 

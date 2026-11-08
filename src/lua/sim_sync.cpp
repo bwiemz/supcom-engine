@@ -1,5 +1,6 @@
 #include "lua/sim_sync.hpp"
 
+#include "core/console_output.hpp"
 #include "core/lua_copy.hpp"
 #include "core/test_status.hpp"
 #include "lua/engine_stats.hpp"
@@ -179,6 +180,8 @@ void SyncQueue::queue(lua_State* sim_L, lua_State* ui_L) {
     copy_lua_value(sim_L, -1, packets_state_);
     lua_pop(sim_L, 1);
     packets_.push_back(luaL_ref(packets_state_, LUA_REGISTRYINDEX));
+    sim::SimState* sim = sim::get_sim(sim_L);
+    print_lines_.push_back(sim ? sim->take_print_lines() : std::vector<std::string>{});
     call_global(sim_L, "ResetSyncTable", 0);
 }
 
@@ -202,11 +205,17 @@ void SyncQueue::deliver(lua_State* sim_L, lua_State* ui_L) {
     }
     const bool queued = !packets_.empty();
     lua_State* from = queued ? packets_state_ : sim_L;
+    std::vector<std::string> print_lines;
     if (queued) {
         lua_rawgeti(packets_state_, LUA_REGISTRYINDEX, packets_.front());
         luaL_unref(packets_state_, LUA_REGISTRYINDEX, packets_.front());
         packets_.pop_front();
+        print_lines = std::move(print_lines_.front());
+        print_lines_.pop_front();
     } else {
+        if (sim::SimState* sim = sim::get_sim(sim_L)) {
+            print_lines = sim->take_print_lines();
+        }
         apply_focus_request(sim_L, ui_L, ui_request_);
         sync_army_stats(sim_L);
         push_sim_sync(sim_L);
@@ -241,6 +250,9 @@ void SyncQueue::deliver(lua_State* sim_L, lua_State* ui_L) {
         call_global(sim_L, "ResetSyncTable", 0);
     }
     call_global(ui_L, "OnSync", 0);
+    for (const std::string& line : print_lines) {
+        core::console_print(ui_L, line);
+    }
 }
 
 void SyncQueue::clear() {
@@ -248,6 +260,7 @@ void SyncQueue::clear() {
         luaL_unref(packets_state_, LUA_REGISTRYINDEX, ref);
     }
     packets_.clear();
+    print_lines_.clear();
     ui_request_.reset();
 }
 

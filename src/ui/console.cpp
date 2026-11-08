@@ -1,5 +1,7 @@
 #include "ui/console.hpp"
 
+#include "core/console_output.hpp"
+
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -113,9 +115,12 @@ void Console::execute(lua_State* L, std::string_view line) {
     while (!pending.empty()) {
         parse_console_command(pending, tokens, remainder);
         if (!tokens.empty()) {
-            if (const auto it = commands_.find(tokens.front()); it != commands_.end())
+            if (const auto it = commands_.find(tokens.front()); it != commands_.end()) {
                 it->second(L, tokens);
-            else spdlog::info("Unknown console command \"{}\"", tokens.front());
+            } else if (L) {
+                core::console_print(L,
+                                    fmt::format("Unknown console command \"{}\"", tokens.front()));
+            }
         }
         if (tokens.empty() && remainder == pending) break;
         pending = remainder;

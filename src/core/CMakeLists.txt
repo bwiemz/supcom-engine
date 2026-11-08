@@ -1,6 +1,7 @@
 add_library(osc_core STATIC
     image.cpp
     log.cpp
+    console_output.cpp
     test_status.cpp
     preferences.cpp
     lua_copy.cpp

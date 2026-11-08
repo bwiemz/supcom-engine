@@ -1,6 +1,7 @@
 #include "lua/sim_bindings.hpp"
 #include "lua/arg_count.hpp"
 #include "core/color.hpp"
+#include "core/console_output.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/unit_blueprint.hpp"
 #include "lua/engine_bindings.hpp"
@@ -5640,6 +5641,17 @@ static int l_IssueFerry(lua_State* L) {
     return 0;
 }
 
+/// print(...) in the sim state: a console line for the beat's sync (Moho's cfunc_printSim).
+static int l_print_sim(lua_State* L) {
+    auto* sim = get_sim(L);
+    core::concat_print_args(L, '\t', [sim](const std::string& line) {
+        if (sim) {
+            sim->print_line(line);
+        }
+    });
+    return 0;
+}
+
 // ====================================================================
 // Registration
 // ====================================================================
@@ -5669,6 +5681,8 @@ void register_core_bindings(LuaState& state) {
 
 void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     lua_State* L = state.raw();
+
+    state.register_function("print", l_print_sim);
 
     // Entity creation
     state.register_function("_c_CreateEntity", l_c_CreateEntity);
