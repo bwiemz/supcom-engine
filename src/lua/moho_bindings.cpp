@@ -4376,10 +4376,15 @@ static int l_PlaySound(lua_State* L) {
     return 1;
 }
 
-/// SoundIsPrepared(handle) -> whether it has finished preparing. The
-/// engine reads a cue's waves as it prepares it, so always (and for nil,
-/// as Moho's is for no cue).
+/// SoundIsPrepared(handle) -> whether its cue has finished preparing: Moho's
+/// asks the cue's XACT state for XACT_CUESTATE_PREPARING (0x2), and answers
+/// true for nil or a handle without a cue (faf-re cfunc_SoundIsPreparedL,
+/// SoundHandleCueIsPrepared). The engine reads a cue's waves as it prepares
+/// it, so no cue is ever preparing: true, after Moho's count check.
 static int l_SoundIsPrepared(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "bool = SoundIsPrepared(handle)", 1, lua_gettop(L));
+    }
     lua_pushboolean(L, 1);
     return 1;
 }

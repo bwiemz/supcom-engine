@@ -279,3 +279,18 @@ TEST_CASE("EngineStartSplashScreens starts the splash state", "[ui]") {
           std::string::npos);
     osc::set_ui_state(before);
 }
+
+TEST_CASE("SoundIsPrepared answers as Moho's for a cue that never waits to prepare",
+          "[ui][audio]") {
+    UiGame g;
+    // Moho's is true for nil or a handle without a cue, and for a cue not
+    // XACT_CUESTATE_PREPARING; the engine reads a cue's waves as it
+    // prepares it.
+    CHECK(run(g.ui, "assert(SoundIsPrepared(nil) == true)\n"
+                    "assert(SoundIsPrepared(12) == true)\n")
+              .empty());
+    CHECK(run(g.ui, "SoundIsPrepared()")
+              .ends_with("bool = SoundIsPrepared(handle)\n  expected 1 args, but got 0"));
+    CHECK(run(g.ui, "SoundIsPrepared(1, 2)")
+              .ends_with("bool = SoundIsPrepared(handle)\n  expected 1 args, but got 2"));
+}
