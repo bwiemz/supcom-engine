@@ -16,6 +16,13 @@ Vector3 forward_of(const Quaternion& q);
 /// turn about X.
 Quaternion coords_orient(const Vector3& dir);
 
+/// The forward axis of an orientation as Moho's Projectile and MotionTick take it.
+Vector3 forward_moho(const Quaternion& q);
+
+/// Wm3's Vector3::Normalize: zero and its length 0 at 1e-6 or under, else times the
+/// inverse length.
+f32 wm3_normalize(Vector3& v);
+
 /// COORDS_Orient (0x0050B480) bit for bit: Wm3's Normalize (times the inverse length)
 /// and func_MatrixToQuat (0x004EB3F0) on the rows right, up, forward.
 Quaternion coords_orient_moho(const Vector3& dir);
@@ -34,6 +41,10 @@ Quaternion matrix_rows_to_quat_canonical(const f32 m[3][3]);
 /// (0x006D1E30, heading about Y times pitch about X times roll about Z, in radians) through
 /// matrix_rows_to_quat_canonical.
 Quaternion hpr_orientation(f32 heading, f32 pitch, f32 roll);
+
+/// QuatFromAxisAngleVector (0x00697360): the turn of `axis_angle`'s length about it, the axis
+/// by Wm3's Normalize.
+Quaternion quat_from_axis_angle_moho(Vector3 axis_angle);
 
 /// QuatCrossAdd: the shortest rotation from `from` to `to` (neither need be
 /// unit length), by their half vector. Opposite directions give the half

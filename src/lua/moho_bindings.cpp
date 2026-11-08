@@ -380,12 +380,13 @@ bool under_water(const sim::SimState* sim, const sim::Vector3& p) {
 
 /// A projectile a script creates takes its blueprint's Physics, falling at
 /// Moho's gravity unless that says not (debris and cluster bomblets fall).
-void apply_script_projectile_physics(lua_State* L, sim::Projectile& p) {
+f32 apply_script_projectile_physics(lua_State* L, sim::Projectile& p) {
     sim::SimState* sim = get_sim(L);
     const sim::Projectile::BlueprintPhysics physics =
         p.apply_blueprint_physics(L, sim ? &sim->entity_registry().sim_random() : nullptr);
     if (physics.use_gravity.value_or(true)) p.ballistic_accel = -sim::Projectile::GRAVITY;
     p.set_lifetime(physics.lifetime, sim ? sim->tick_count() : 0);
+    return physics.initial_speed;
 }
 
 std::string lowercase_arg(lua_State* L, int idx) {

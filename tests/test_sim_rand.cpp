@@ -14,6 +14,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <bit>
 #include <cstdint>
 #include <random>
 #include <string>
@@ -137,6 +138,22 @@ TEST_CASE("Moho's random stream turns its words into numbers as CRandomStream do
     CHECK(SimRandom::mul_word(0x800005p-24f, 1481428173u) == 740714560.0f);
     CHECK(SimRandom::mul_word(1.0f, 0xFFFFFFFFu) == 4294967296.0f);
     CHECK(SimRandom::mul_word(-3.0f, 0x80000001u) == -6442450944.0f);
+}
+
+TEST_CASE("Moho's random stream draws normals as CRandomStream::FRandGaussian does", "[simrand]") {
+    SimRandom r;
+    r.set_mt19937(true);
+    r.seed(1);
+    const auto bits = [](float v) { return std::bit_cast<osc::u32>(v); };
+    CHECK(bits(r.gaussian()) == 0x3e1fcfa8u);
+    CHECK(r.words_drawn() == 4);
+    CHECK(bits(r.gaussian()) == 0x3e9ce066u);
+    CHECK(r.words_drawn() == 4);
+    CHECK(bits(r.gaussian()) == 0xbf116b11u);
+    CHECK(bits(r.gaussian()) == 0xbed9492du);
+    CHECK(r.words_drawn() == 10);
+    r.seed(1);
+    CHECK(bits(r.gaussian()) == 0x3e1fcfa8u);
 }
 
 // --- Scripts' randomness (M196) ----------------------------------------------

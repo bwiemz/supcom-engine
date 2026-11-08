@@ -11,6 +11,7 @@
 #include "sim/unit.hpp"
 #include "support/tick_until.hpp"
 
+#include <bit>
 #include <cmath>
 #include <memory>
 #include <utility>
@@ -147,12 +148,13 @@ TEST_CASE("A rocket thrusts the way it faces, its speed capped", "[flight]") {
     CHECK(nuke->velocity.y == Approx(0.3f));
 }
 
-TEST_CASE("A velocity-aligned shot turns after its velocity at TurnRate a tick", "[flight]") {
+TEST_CASE("A velocity-aligned shot turns after its velocity at a tenth of TurnRate a tick",
+          "[flight]") {
     EntityRegistry reg;
     Projectile* shot = add_shot(reg, {0, 50, 0}, {0, 0, 10});
     shot->velocity_align = true;
-    shot->ballistic_accel = -40; // falls fast: its velocity turns down
-    shot->turn_rate = 2;         // degrees, per tick in this branch
+    shot->ballistic_accel = -40;
+    shot->turn_rate = 20;
     fly(reg, *shot);
     const Vector3 f = osc::sim::forward_of(shot->orientation());
     CHECK(angle_between(f, {0, 0, 1}) == Approx(2 * kDeg).margin(1e-4));
@@ -306,4 +308,59 @@ TEST_CASE("A spinning shot turns in its own frame, about its forward axis if ali
           Approx(0.0f).margin(1e-4));
     const Vector3 up = osc::sim::quat_rotate(shot->orientation(), Vector3{0, 1, 0});
     CHECK(std::atan2(-up.x, up.y) == Approx(0.5f).margin(1e-4));
+}
+
+TEST_CASE("An upright spinning shot faces as retail's, bit for bit", "[flight]") {
+    // UnitTeleport01_proj (RotationalVelocity 50, StayUpright) in retail 3599's /synclog: its
+    // (w, y) after 21, 71, 121 and 171 ticks, at the two rates its draws come to.
+    struct Case {
+        u32 rate;
+        u32 wy[4][2];
+    };
+    const Case cases[] = {
+        {0x3f5f66f3,
+         {{0x3f1bd7c4, 0x3f4b1939},
+          {0x3f7fc1a1, 0xbd32a93a},
+          {0x3f098c8b, 0xbf57e874},
+          {0x3ec3eee8, 0x3f6c8368}}},
+        {0x3f5f66f2,
+         {{0x3f1bd7ca, 0x3f4b1936},
+          {0x3f7fc1a1, 0xbd32aaa2},
+          {0xbf098c73, 0x3f57e883},
+          {0x3ec3ef27, 0x3f6c835b}}},
+    };
+    for (const Case& c : cases) {
+        EntityRegistry reg;
+        Projectile* shot = add_shot(reg, {0, 10, 0}, {0, 0, 0});
+        shot->stay_upright = true;
+        shot->angular_velocity = {0, std::bit_cast<f32>(c.rate), 0};
+        const u32 at[] = {21, 71, 121, 171};
+        size_t k = 0;
+        for (u32 tick = 1; tick <= 171; ++tick) {
+            fly(reg, *shot, tick);
+            if (tick != at[k]) {
+                continue;
+            }
+            const Quaternion q = shot->orientation();
+            CHECK(std::bit_cast<u32>(q.w) == c.wy[k][0]);
+            CHECK(std::bit_cast<u32>(q.y) == c.wy[k][1]);
+            CHECK(std::bit_cast<u32>(q.x) == 0u);
+            CHECK(std::bit_cast<u32>(q.z) == 0u);
+            ++k;
+        }
+    }
+}
+
+TEST_CASE("A free spin turns the facing lane by lane as MotionTick's", "[flight]") {
+    EntityRegistry reg;
+    Projectile* shot = add_shot(reg, {0, 10, 0}, {0, 0, 0});
+    shot->angular_velocity = {2.0f, -3.0f, 4.5f};
+    for (u32 tick = 1; tick <= 10; ++tick) {
+        fly(reg, *shot, tick);
+    }
+    const Quaternion q = shot->orientation();
+    CHECK(std::bit_cast<u32>(q.w) == 0xbf777f5bu);
+    CHECK(std::bit_cast<u32>(q.x) == 0x3db58d00u);
+    CHECK(std::bit_cast<u32>(q.y) == 0xbe0829bcu);
+    CHECK(std::bit_cast<u32>(q.z) == 0x3e4c3ea1u);
 }

@@ -155,11 +155,15 @@ public:
         /// Physics.RealisticOrdinance: a bomb, which leaves with its
         /// launcher's speed, aimed at the target (Moho's Projectile).
         bool realistic_ordinance = false;
+        /// Physics.InitialSpeed, spread by InitialSpeedRange with `rng`.
+        f32 initial_speed = 0.0f;
+        /// What a bomb's launch velocity gains across (x, z).
+        Vector3 launch_jitter;
     };
     /// Take its blueprint's Physics: speed, acceleration, tracking, where it
-    /// ends of itself, what it collides with. With `rng`, its TurnRate,
-    /// MaxSpeed, Acceleration and Lifetime each move by up to their *Range
-    /// either way, uniformly, as Moho's Projectile does.
+    /// ends of itself, what it collides with. With `rng`, its spin and its
+    /// TurnRate, MaxSpeed, Acceleration, Lifetime and InitialSpeed spreads are
+    /// drawn as Moho's Projectile draws them.
     BlueprintPhysics apply_blueprint_physics(lua_State* L, SimRandom* rng = nullptr);
 
     /// What retail's Projectile.OnImpact calls the thing hit: 'Unit',

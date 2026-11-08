@@ -1202,7 +1202,7 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry, lua_State* L, const
 
 f32 Weapon::muzzle_speed_at(f32 distance, SimRandom* rng) const {
     f32 speed = muzzle_velocity;
-    if (rng && muzzle_velocity_random != 0.0f) speed += gaussian(*rng) * muzzle_velocity_random;
+    if (rng && muzzle_velocity_random != 0.0f) speed += rng->gaussian() * muzzle_velocity_random;
     if (muzzle_velocity_reduce_distance > distance)
         speed *= std::sqrt(distance / muzzle_velocity_reduce_distance);
     return speed;
@@ -1357,8 +1357,8 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
         }
         if (firing_randomness > 0.0f) {
             constexpr f32 kDegToRad = kPi / 180.0f;
-            const f32 heading = gaussian(registry.sim_random()) * firing_randomness * kDegToRad;
-            const f32 pitch = gaussian(registry.sim_random()) * firing_randomness * kDegToRad;
+            const f32 heading = registry.sim_random().gaussian() * firing_randomness * kDegToRad;
+            const f32 pitch = registry.sim_random().gaussian() * firing_randomness * kDegToRad;
             dir = turned(dir, heading, pitch);
         }
         vel = {dir.x * speed, dir.y * speed, dir.z * speed};
@@ -1414,6 +1414,8 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
         const f32 len = std::sqrt(ax * ax + az * az);
         vel = len > 0.001f ? Vector3{ax / len * speed, 0.0f, az / len * speed}
                            : Vector3{v.x, 0.0f, v.z};
+        vel.x += physics.launch_jitter.x;
+        vel.z += physics.launch_jitter.z;
         proj->velocity = vel;
         proj->target_position = at;
     }
