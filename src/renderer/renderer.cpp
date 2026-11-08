@@ -3663,7 +3663,7 @@ void Renderer::update_view_effects(u32 fi, const std::array<f32, 16>& vp, const 
     // Moho's func_RenUI runs its blinky boxes on by the smoothed frame time,
     // at each world view it draws.
     selection_renderer_.update(view, *view_camera_, view_points()[1], selected_ids, hovered_,
-                               player_army_, drag_box_, texture_cache_, mesh_cache_, L, fi,
+                               player_army_, recon_, drag_box_, texture_cache_, mesh_cache_, L, fi,
                                frame_dt_);
 
     update_world_shapes(L, view, frustum, ghost, fi);
