@@ -46,6 +46,50 @@ inline BonePose pose_relative(const BonePose& parent, const BonePose& world) {
     return {quat_rotate(inverse, d), quat_multiply(inverse, world.rotation)};
 }
 
+/// MultQuadVec (0x00452D40): `v` turned by `q` through QuatToMatrix's rows, each summed from zero.
+inline Vector3 mult_quad_vec(const Quaternion& q, const Vector3& v) {
+    const f32 x2 = q.x * 2.0f, y2 = q.y * 2.0f, z2 = q.z * 2.0f;
+    const f32 wx = q.w * x2, wy = q.w * y2, wz = q.w * z2;
+    const f32 xx = q.x * x2, xy = q.x * y2, xz = q.x * z2;
+    const f32 yy = q.y * y2, yz = q.y * z2, zz = q.z * z2;
+    const f32 rows[3][3] = {{1.0f - (zz + yy), xy - wz, xz + wy},
+                            {xy + wz, 1.0f - (zz + xx), yz - wx},
+                            {xz - wy, yz + wx, 1.0f - (yy + xx)}};
+    f32 out[3];
+    for (int r = 0; r < 3; ++r) {
+        out[r] = ((v.x * rows[r][0] + 0.0f) + v.y * rows[r][1]) + v.z * rows[r][2];
+    }
+    return {out[0], out[1], out[2]};
+}
+
+/// VTransform::Compose (0x00549C20): `local` placed under `parent`, each lane summed as Moho's.
+inline BonePose compose_moho(const BonePose& local, const BonePose& parent) {
+    const Quaternion& l = local.rotation;
+    const Quaternion& r = parent.rotation;
+    const Vector3 turned = mult_quad_vec(r, local.position);
+    return {
+        {parent.position.x + turned.x, parent.position.y + turned.y, parent.position.z + turned.z},
+        {l.z * r.y + l.w * r.x + l.x * r.w - l.y * r.z,
+         l.x * r.z + l.w * r.y + l.y * r.w - l.z * r.x,
+         l.y * r.x + l.w * r.z + l.z * r.w - l.x * r.y,
+         l.w * r.w - l.x * r.x - l.y * r.y - l.z * r.z}};
+}
+
+/// CalculateAttachedTransform (0x0067A020) past the parent's bone: `child` (its own bone, in
+/// its frame) taken back off `parent`, the turn made unit length.
+inline BonePose attached_moho(const BonePose& child, const BonePose& parent) {
+    const Quaternion& p = parent.rotation;
+    const Quaternion& c = child.rotation;
+    const Quaternion turn{p.y * -c.z + p.w * -c.x + p.x * c.w + p.z * c.y,
+                          p.z * -c.x + p.w * -c.y + p.y * c.w + p.x * c.z,
+                          p.x * -c.y + p.w * -c.z + p.z * c.w + p.y * c.x,
+                          p.w * c.w + p.x * c.x + p.y * c.y + p.z * c.z};
+    const Vector3 back =
+        mult_quad_vec(turn, {-child.position.x, -child.position.y, -child.position.z});
+    return {{back.x + parent.position.x, back.y + parent.position.y, back.z + parent.position.z},
+            quat_normalized_moho(turn)};
+}
+
 /// Normalized linear interpolation of rotations, the short way round.
 inline Quaternion quat_nlerp(const Quaternion& a, const Quaternion& b, f32 t) {
     const f32 dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;

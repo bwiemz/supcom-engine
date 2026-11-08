@@ -635,7 +635,7 @@ void SimState::follow_parent(Entity& e, const Entity& parent) {
     const BonePose bone =
         parent.is_unit() ? static_cast<const Unit&>(parent).bone_world_transform(e.parent_bone())
                          : BonePose{parent.position(), parent.orientation()};
-    const BonePose at = pose_compose(bone, {e.parent_offset(), Quaternion{}});
+    const BonePose at = attached_moho({}, compose_moho({e.parent_offset(), Quaternion{}}, bone));
     e.set_position(at.position);
     e.set_orientation(at.rotation);
     // Attaching is a jump, and so is following a parent that jumped since: the renderer pops it.

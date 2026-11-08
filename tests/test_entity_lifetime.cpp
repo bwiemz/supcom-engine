@@ -24,6 +24,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <bit>
 #include <memory>
 #include <vector>
 
@@ -272,8 +273,8 @@ TEST_CASE("A chain of attached entities follows its root in the tick it moves", 
     const osc::sim::Quaternion turned{0.0f, 0.7071f, 0.0f, 0.7071f};
     c->set_orientation(turned);
     sim.tick();
-    CHECK(b->orientation().y == turned.y);
-    CHECK(a->orientation().y == turned.y);
+    CHECK(b->orientation().y == osc::sim::quat_normalized_moho(turned).y);
+    CHECK(a->orientation().y == osc::sim::quat_normalized_moho(turned).y);
 
     // A cycle, which Moho's AttachTo refuses, doesn't hold the walk up.
     Unit* d = spawn(1.0f);
@@ -316,8 +317,8 @@ TEST_CASE("An attached entity sits at its parent bone, then its offset (M211k)",
     osc::sim::BoneData bones;
     bones.model_scale = 2.0f;
     osc::sim::BoneInfo muzzle;
-    muzzle.world_position = {0.0f, 3.0f, 1.0f};
-    muzzle.world_rotation = quarter;
+    muzzle.local_position = muzzle.world_position = {0.0f, 3.0f, 1.0f};
+    muzzle.local_rotation = muzzle.world_rotation = quarter;
     bones.bones.push_back(muzzle);
     unit->set_bone_data(&bones);
     shield->set_parent(unit->entity_id(), 0);
@@ -342,4 +343,48 @@ TEST_CASE("An attached entity sits at its parent bone, then its offset (M211k)",
     CHECK(script->position().x == Catch::Approx(11.0f).margin(1e-4));
     CHECK(script->position().y == Catch::Approx(6.0f).margin(1e-4));
     CHECK(script->position().z == Catch::Approx(18.0f).margin(1e-4));
+}
+
+TEST_CASE("An attached entity's turn is made unit length, as CalculateAttachedTransform's",
+          "[sim][attach]") {
+    // UAC1401's root bone in its SCM, and its dome entity in retail 3599's /synclog.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    osc::sim::BoneData bones;
+    osc::sim::BoneInfo root;
+    root.local_rotation = root.world_rotation = {std::bit_cast<osc::f32>(0x33b504f3u), 0.0f, 0.0f,
+                                                 std::bit_cast<osc::f32>(0x3f7fffffu)};
+    bones.bones.push_back(root);
+    auto owned = std::make_unique<Unit>();
+    Unit* unit = owned.get();
+    unit->set_position({253.5f, 0.0f, 245.5f});
+    unit->set_bone_data(&bones);
+    sim.entity_registry().register_entity(std::move(owned));
+    auto dome_owned = std::make_unique<osc::sim::Shield>();
+    osc::sim::Shield* dome = dome_owned.get();
+    sim.entity_registry().register_entity(std::move(dome_owned));
+    dome->set_parent(unit->entity_id(), 0);
+    sim.tick();
+    CHECK(std::bit_cast<osc::u32>(dome->orientation().w) == 0x3f800000u);
+    CHECK(std::bit_cast<osc::u32>(dome->orientation().x) == 0x33b504f4u);
+}
+
+TEST_CASE("A unit's bone -1 is half its height straight up, however it is tilted",
+          "[sim][attach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto owned = std::make_unique<Unit>();
+    Unit* unit = owned.get();
+    unit->set_position({10.0f, 0.0f, 20.0f});
+    unit->set_orientation({0.25881904f, 0.0f, 0.0f, 0.96592583f});
+    unit->set_size_y(4.0f);
+    sim.entity_registry().register_entity(std::move(owned));
+    auto child_owned = std::make_unique<osc::sim::Shield>();
+    osc::sim::Shield* child = child_owned.get();
+    sim.entity_registry().register_entity(std::move(child_owned));
+    child->set_parent(unit->entity_id(), -1);
+    sim.tick();
+    CHECK(child->position().x == 10.0f);
+    CHECK(child->position().y == 2.0f);
+    CHECK(child->position().z == 20.0f);
 }

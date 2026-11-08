@@ -711,7 +711,7 @@ TEST_CASE("An aircraft docking at a staging platform is taken aboard on the tick
     osc::sim::BoneInfo point;
     point.name = "Attachpoint01";
     point.parent_index = 0;
-    point.world_position = {0.0f, 1.0f, 0.0f};
+    point.local_position = point.world_position = {0.0f, 1.0f, 0.0f};
     skeleton.bones.push_back(point);
     World w;
     Unit& pad = w.make("pad", 80.0f, 128.0f);
