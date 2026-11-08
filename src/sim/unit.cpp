@@ -4842,15 +4842,10 @@ BonePose Unit::bone_pose(i32 bone) const {
 
 Vector3 Unit::bone_world_position(i32 bone) const {
     const BoneData* bd = bone_data();
-    const Vector3& at = pending_position();
     if (!bd || !bd->is_valid(bone)) {
-        return at;
+        return pending_position();
     }
-    const Vector3 model = bone_pose(bone).position;
-    const f32 s = bd->model_scale;
-    const Vector3 offset =
-        quat_rotate(pending_orientation(), Vector3{model.x * s, model.y * s, model.z * s});
-    return {at.x + offset.x, at.y + offset.y, at.z + offset.z};
+    return posed_bone(*bd, bone).position;
 }
 
 Vector3 Unit::bone_world_forward(i32 bone) const {
@@ -4859,7 +4854,7 @@ Vector3 Unit::bone_world_forward(i32 bone) const {
     if (!bd || !bd->is_valid(bone)) {
         return quat_rotate(pending_orientation(), kAhead);
     }
-    return quat_rotate(pending_orientation(), quat_rotate(bone_pose(bone).rotation, kAhead));
+    return quat_rotate(posed_bone(*bd, bone).rotation, kAhead);
 }
 
 Quaternion Unit::bone_world_rotation(i32 bone) const {
@@ -4867,15 +4862,34 @@ Quaternion Unit::bone_world_rotation(i32 bone) const {
     if (!bd || !bd->is_valid(bone)) {
         return pending_orientation();
     }
-    return quat_multiply(pending_orientation(), bone_pose(bone).rotation);
+    return posed_bone(*bd, bone).rotation;
 }
 
 BonePose Unit::bone_world_transform(i32 bone) const {
     const BoneData* bd = bone_data();
-    if (bd && bd->is_valid(bone)) return {bone_world_position(bone), bone_world_rotation(bone)};
-    const Vector3& at = pending_position();
-    const Vector3 up = quat_rotate(pending_orientation(), Vector3{0.0f, size_y_ * 0.5f, 0.0f});
-    return {{at.x + up.x, at.y + up.y, at.z + up.z}, pending_orientation()};
+    if (bd && bd->is_valid(bone)) {
+        return posed_bone(*bd, bone);
+    }
+    const f32 up = bone == -1 ? size_y_ * 0.5f : 0.0f;
+    return compose_moho({pending_position(), pending_orientation()},
+                        {{0.0f, up, 0.0f}, Quaternion{}});
+}
+
+BonePose Unit::posed_bone(const BoneData& bd, i32 bone) const {
+    const auto i = static_cast<size_t>(bone);
+    const bool posed = !pose_.empty() && pose_locals_.local.size() == bd.bones.size();
+    const BonePose rest = posed ? pose_locals_.local[i]
+                                : BonePose{bd.bones[i].local_position, bd.bones[i].local_rotation};
+    const f32 s = bd.model_scale;
+    const BonePose local{{rest.position.x * s, rest.position.y * s, rest.position.z * s},
+                         rest.rotation};
+    const i32 parent = bd.bones[i].parent_index;
+    const bool model_space =
+        posed && i < pose_locals_.model_space.size() && pose_locals_.model_space[i] != 0;
+    if (model_space || parent < 0 || static_cast<size_t>(parent) >= i) {
+        return compose_moho(local, {pending_position(), pending_orientation()});
+    }
+    return compose_moho(local, posed_bone(bd, parent));
 }
 
 i32 Unit::target_point_count() const {

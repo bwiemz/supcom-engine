@@ -1354,7 +1354,9 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.size(u.manipulators_.size());
     for (const auto& m : u.manipulators_) save(w, *m);
     save_poses(w, u.pose_);
-    // pose_order_, pose_locals_: update_pose's scratch
+    save_poses(w, u.pose_locals_.local);
+    save_bytes(w, u.pose_locals_.model_space);
+    // pose_order_, pose_locals_.changed: update_pose's scratch
     w.ids(u.cargo_ids_);
     w.i32v(u.storage_slots_);
     w.ids(u.stored_ids_);
@@ -1782,6 +1784,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
         if (m) u.manipulators_.push_back(std::move(m));
     }
     u.pose_ = load_poses(r);
+    u.pose_locals_.local = load_poses(r);
+    u.pose_locals_.model_space = load_bytes(r);
     u.cargo_ids_ = r.ids();
     u.storage_slots_ = r.i32v();
     u.stored_ids_ = r.ids();

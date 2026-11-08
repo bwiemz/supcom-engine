@@ -1537,8 +1537,8 @@ public:
     Quaternion bone_world_rotation(i32 bone) const;
     /// Where an entity attached to a bone of ours sits before its parent
     /// offset (Moho's Unit::GetBoneWorldTransform, M211k): the bone's world
-    /// place and turn as the sim poses it; for bone -1, or one we haven't,
-    /// our centre, half our height up.
+    /// place and turn as the sim poses it; for bone -1 half our height above
+    /// our position, for one we haven't our position.
     BonePose bone_world_transform(i32 bone) const;
     /// Its blueprint's AI.TargetBones: the points weapons aim at on it
     /// (Moho's target points). How many it has.
@@ -2093,6 +2093,8 @@ private:
     std::vector<Manipulator*> pose_order_;
     PoseLocals pose_locals_;
     void update_pose();
+    /// CAniPoseBone::GetCompositeTransform: a bone composed down from our transform.
+    BonePose posed_bone(const BoneData& bd, i32 bone) const;
     /// The renderer's matrices from pose_ (update_pose's end, and a load's).
     void refresh_bone_matrices();
     // Transport system

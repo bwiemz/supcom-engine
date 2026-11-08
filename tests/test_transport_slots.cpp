@@ -19,7 +19,7 @@ BoneData skeleton(const std::vector<std::pair<std::string, Vector3>>& bones) {
         BoneInfo bone;
         bone.name = name;
         bone.parent_index = 0;
-        bone.world_position = pos;
+        bone.local_position = bone.world_position = pos;
         data.bones.push_back(bone);
     }
     return data;
