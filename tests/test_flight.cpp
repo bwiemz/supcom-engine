@@ -148,12 +148,13 @@ TEST_CASE("A rocket thrusts the way it faces, its speed capped", "[flight]") {
     CHECK(nuke->velocity.y == Approx(0.3f));
 }
 
-TEST_CASE("A velocity-aligned shot turns after its velocity at TurnRate a tick", "[flight]") {
+TEST_CASE("A velocity-aligned shot turns after its velocity at a tenth of TurnRate a tick",
+          "[flight]") {
     EntityRegistry reg;
     Projectile* shot = add_shot(reg, {0, 50, 0}, {0, 0, 10});
     shot->velocity_align = true;
-    shot->ballistic_accel = -40; // falls fast: its velocity turns down
-    shot->turn_rate = 2;         // degrees, per tick in this branch
+    shot->ballistic_accel = -40;
+    shot->turn_rate = 20;
     fly(reg, *shot);
     const Vector3 f = osc::sim::forward_of(shot->orientation());
     CHECK(angle_between(f, {0, 0, 1}) == Approx(2 * kDeg).margin(1e-4));

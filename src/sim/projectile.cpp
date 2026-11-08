@@ -29,6 +29,8 @@ namespace osc::sim {
 namespace {
 
 constexpr f32 kDegToRad = 0.017453292f;
+/// TurnRate's degrees a second as radians a tick, MotionTick's and UpdateTracking's constant.
+constexpr f32 kTurnPerTick = 0.0017453292f;
 
 /// MotionTick's forward of an orientation (0x0069C1AA).
 Vector3 heading_of(const Quaternion& q) {
@@ -149,9 +151,9 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
     if (!tracking) {
         velocity.y += ballistic_accel * step;
         thrust();
-        // TurnRate degrees a tick here, where UpdateTracking turns a tenth
-        // of that: a shot with none keeps the facing it left with.
-        if (velocity_align) facing = turned_toward(facing, velocity, turn_rate * kDegToRad);
+        if (velocity_align) {
+            facing = turned_toward(facing, velocity, turn_rate * kTurnPerTick);
+        }
     } else {
         if (!steer(facing, registry, L, terrain, tick)) return; // its script destroyed it
         thrust();
@@ -311,7 +313,7 @@ bool Projectile::steer(Quaternion& facing, EntityRegistry& registry, lua_State* 
     }
 
     // It turns at most TurnRate degrees a second
-    facing = turned_toward(facing, toward, turn_rate * kDegToRad * 0.1f);
+    facing = turned_toward(facing, toward, turn_rate * kTurnPerTick);
 
     // Under the water, one rising toward the surface levels off at it
     if (stay_underwater && in_water) {
