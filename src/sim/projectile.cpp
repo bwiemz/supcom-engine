@@ -30,6 +30,20 @@ namespace {
 
 constexpr f32 kDegToRad = 0.017453292f;
 
+/// MotionTick's forward of an orientation (0x0069C1AA).
+Vector3 heading_of(const Quaternion& q) {
+    return {(q.z * q.x + q.w * q.y) * 2.0f, (q.y * q.z - q.w * q.x) * 2.0f,
+            1.0f - (q.x * q.x + q.y * q.y) * 2.0f};
+}
+
+/// `o` spun by `s` in its own frame, each lane summed as MotionTick's (0x0069C3AC).
+Quaternion spun(const Quaternion& o, const Quaternion& s) {
+    return {s.x * o.w + s.z * o.y + o.x * s.w - s.y * o.z,
+            s.y * o.w + s.x * o.z + o.y * s.w - s.z * o.x,
+            s.z * o.w + s.y * o.x + o.z * s.w - s.x * o.y,
+            s.w * o.w - s.x * o.x - s.y * o.y - s.z * o.z};
+}
+
 /// The water's height, or Moho's -10000 on a map without
 f32 water_line(const map::Terrain* terrain) {
     return terrain && terrain->has_water() ? terrain->water_elevation() : -10000.0f;
@@ -150,7 +164,7 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
             velocity = {velocity.x * cut, velocity.y * cut, velocity.z * cut};
         }
     }
-    if (stay_upright) facing = coords_orient(forward_of(facing));
+    if (stay_upright) facing = coords_orient_moho(heading_of(facing));
 
     auto pos = from;
     pos.x += (velocity.x + start_velocity.x) * step * 0.5f;
@@ -169,12 +183,9 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
             angular_velocity =
                 velocity_align || tracking ? Vector3{0.0f, 0.0f, rate} : Vector3{0.0f, rate, 0.0f};
         }
-        const Vector3 turn{angular_velocity.x * step, angular_velocity.y * step,
-                           angular_velocity.z * step};
-        const f32 angle = std::sqrt(turn.x * turn.x + turn.y * turn.y + turn.z * turn.z);
-        const f32 s = osc::dmath::sin(angle * 0.5f) / angle;
-        facing = quat_multiply(
-            facing, Quaternion{turn.x * s, turn.y * s, turn.z * s, osc::dmath::cos(angle * 0.5f)});
+        facing = spun(
+            facing, quat_from_axis_angle_moho({angular_velocity.x * step, angular_velocity.y * step,
+                                               angular_velocity.z * step}));
     }
 
     // A torpedo in the water stays just under its surface; one above it

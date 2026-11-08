@@ -169,6 +169,12 @@ Quaternion hpr_orientation(f32 heading, f32 pitch, f32 roll) {
     return matrix_rows_to_quat_canonical(m);
 }
 
+Quaternion quat_from_axis_angle_moho(Vector3 axis_angle) {
+    const f32 half = wm3_normalize(axis_angle) * 0.5f;
+    const f32 s = osc::dmath::sin(half);
+    return Quaternion{axis_angle.x * s, axis_angle.y * s, axis_angle.z * s, osc::dmath::cos(half)};
+}
+
 Quaternion shortest_arc(Vector3 from, Vector3 to) {
     normalize(from);
     normalize(to);

@@ -35,6 +35,10 @@ Quaternion matrix_rows_to_quat_canonical(const f32 m[3][3]);
 /// matrix_rows_to_quat_canonical.
 Quaternion hpr_orientation(f32 heading, f32 pitch, f32 roll);
 
+/// QuatFromAxisAngleVector (0x00697360): the turn of `axis_angle`'s length about it, the axis
+/// by Wm3's Normalize.
+Quaternion quat_from_axis_angle_moho(Vector3 axis_angle);
+
 /// QuatCrossAdd: the shortest rotation from `from` to `to` (neither need be
 /// unit length), by their half vector. Opposite directions give the half
 /// turn about `from`.
