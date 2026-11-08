@@ -3,6 +3,7 @@
 #include "core/log.hpp"
 #include "core/test_status.hpp"
 #include "core/version.hpp"
+#include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/smoke_test.hpp"
 #include "lua/special_files.hpp"
@@ -149,7 +150,10 @@ App::App(int arg_count, char* arg_values[], TestModes* test_modes, lua::InitConf
     if (!opt.match_telemetry_path.empty()) telemetry.emplace(opt.match_telemetry_path);
 }
 
-App::~App() = default;
+App::~App() {
+    // The process's command line points into opt, which goes with this App.
+    osc::lua::set_process_command_line(nullptr);
+}
 
 int App::run() {
     if (auto code = boot()) return *code;

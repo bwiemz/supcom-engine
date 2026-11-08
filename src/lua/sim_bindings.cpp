@@ -4398,8 +4398,16 @@ static int l_SessionGetScenarioInfo(lua_State* L) {
     return 1;
 }
 
+/// ShouldCreateInitialArmyUnits(): false when `/noinitialunits` is on the
+/// command line, as Moho's asks CFG_GetArgOption (faf-re
+/// cfunc_ShouldCreateInitialArmyUnitsL). Retail's ScenarioUtilities asks it
+/// before making each army's starting units. Like Moho's, it reads this
+/// process's command line, not the game's setup.
 static int l_ShouldCreateInitialArmyUnits(lua_State* L) {
-    lua_pushboolean(L, 1);
+    if (lua_gettop(L) != 0) {
+        return arg_count_error(L, "", 0, lua_gettop(L));
+    }
+    lua_pushboolean(L, command_line_has("/noinitialunits") ? 0 : 1);
     return 1;
 }
 
