@@ -5,18 +5,27 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
+#include "map/heightmap.hpp"
+#include "map/terrain.hpp"
+#include "sim/flight_math.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
 
 extern "C" {
 #include <lua.h>
 }
 
 #include <array>
+#include <bit>
 #include <cmath>
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -132,6 +141,93 @@ TEST_CASE("CreatePropHPR takes its heading, pitch and roll in degrees", "[quater
     expect(orientation("180, 0, 0"), {0, 1, 0, 0});
     expect(orientation("0, 90, 0"), {h, 0, 0, h});
     expect(orientation("0, 0, 90"), {0, 0, h, h});
+}
+
+TEST_CASE("CreatePropHPR and CreateUnitHPR turn as retail's, bit for bit", "[quaternion]") {
+    // Retail 3599's GetOrientation of each, made at these angles (x, y, z, w).
+    struct Case {
+        const char* angles;
+        osc::u32 want[4];
+    };
+    SimLua s;
+    const auto bits = [](double v) { return std::bit_cast<osc::u32>(static_cast<osc::f32>(v)); };
+    for (const Case& c : {Case{"360, 0, 0", {0, 0x33bbbd2e, 0, 0x3f800000}},
+                          Case{"180, 0, 0", {0, 0x3f800000, 0, 0xb33bbd2e}},
+                          Case{"30, 20, 10", {0x3e41d9eb, 0x3e750aa1, 0x3d1c3301, 0x3f7398af}},
+                          Case{"200, -40, 15", {0x3e37fc81, 0x3f68e534, 0x3ea012d8, 0xbe52aea1}}}) {
+        const auto q =
+            s.quat(std::string(
+                       "moho.entity_methods.GetOrientation(CreatePropHPR('/p_prop.bp', 0, 0, 0, ") +
+                   c.angles + "))");
+        INFO("CreatePropHPR " << c.angles);
+        for (size_t k = 0; k < 4; ++k) {
+            CHECK(bits(q[k]) == c.want[k]);
+        }
+    }
+
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store{state.raw()};
+    osc::sim::SimState sim{state.raw(), &store};
+    osc::lua::register_moho_bindings(state, sim);
+    osc::lua::register_sim_bindings(state, sim);
+    std::vector<osc::u16> ground(129 * 129, 0);
+    sim.set_terrain(std::make_unique<osc::map::Terrain>(
+        osc::map::Heightmap(128, 128, 1.0f / 128.0f, std::move(ground)), 0.0f, false));
+    sim.add_army("ARMY_1", "ARMY_1");
+    lua_State* L = state.raw();
+    REQUIRE(state
+                .do_string("return {BlueprintId = 'civ', Categories = {'STRUCTURE'},"
+                           " Defense = {MaxHealth = 100}, Footprint = {SizeX = 1, SizeZ = 1},"
+                           " SizeX = 1, SizeZ = 1}")
+                .ok());
+    store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+    lua_pop(L, 1);
+    store.expose_to_lua(L);
+    osc::f32 x = 0.0f;
+    for (const Case& c :
+         {Case{"0, 6.283185, 0", {0, 0xb4222169, 0, 0x3f800000}},
+          Case{"0.5, 0.3, 0.2", {0x3e840615, 0x3df509a1, 0x3d7113d0, 0x3f74f9da}},
+          Case{"0.1, 4.0, -0.2", {0xbde41080, 0x3f66cbd3, 0xbb7426b3, 0xbed60f8e}}}) {
+        x += 10.0f;
+        REQUIRE(state
+                    .do_string("CreateUnitHPR('civ', 'ARMY_1', " + std::to_string(x) + ", 0, 10, " +
+                               c.angles + ")")
+                    .ok());
+        osc::sim::Quaternion q;
+        sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+            if (e.position().x == x) {
+                q = e.orientation();
+            }
+        });
+        INFO("CreateUnitHPR " << c.angles);
+        CHECK(bits(q.x) == c.want[0]);
+        CHECK(bits(q.y) == c.want[1]);
+        CHECK(bits(q.z) == c.want[2]);
+        CHECK(bits(q.w) == c.want[3]);
+    }
+}
+
+TEST_CASE("A map prop turns as retail's map load turns it, bit for bit", "[quaternion]") {
+    // Tree groups on SCMP_016: their .scmap rows, and retail 3599's GetOrientation (x, y, z, w).
+    struct Case {
+        osc::u32 rows[9];
+        osc::u32 want[4];
+    };
+    const auto f = [](osc::u32 b) { return std::bit_cast<osc::f32>(b); };
+    for (const Case& c :
+         {Case{{0xbecfe854, 0, 0xbf69f18f, 0, 0x3f800000, 0, 0x3f69f18f, 0, 0xbecfe854},
+               {0, 0x3f56a614, 0, 0x3f0b8189}},
+          Case{{0xbf7feea4, 0, 0x3cbc8286, 0, 0x3f800000, 0, 0xbcbc8286, 0, 0xbf7feea4},
+               {0, 0x3f7ffbab, 0, 0xbc3c85ba}}}) {
+        const osc::f32 rows[3][3] = {{f(c.rows[0]), f(c.rows[1]), f(c.rows[2])},
+                                     {f(c.rows[3]), f(c.rows[4]), f(c.rows[5])},
+                                     {f(c.rows[6]), f(c.rows[7]), f(c.rows[8])}};
+        const osc::sim::Quaternion q = osc::sim::map_prop_orientation(rows);
+        CHECK(std::bit_cast<osc::u32>(q.x) == c.want[0]);
+        CHECK(std::bit_cast<osc::u32>(q.y) == c.want[1]);
+        CHECK(std::bit_cast<osc::u32>(q.z) == c.want[2]);
+        CHECK(std::bit_cast<osc::u32>(q.w) == c.want[3]);
+    }
 }
 
 TEST_CASE("Vectors and quaternions share the one metatable FAF extends", "[quaternion]") {
