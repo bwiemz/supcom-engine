@@ -201,7 +201,8 @@ void stand_plate(TestContext& ctx, const std::string& root, const std::string& b
     // stand level on the test's flat ground, as retail's scripts leave them.
     // A mesh blueprint as retail's are, with IconFadeInZoom (130, as most of
     // retail's): without one, Moho shows its unit's strategic icon at any
-    // zoom (M215c), over what the test measures.
+    // zoom (M215c), over what the test measures. Its skirt isn't flattened: FlattenMapRect would
+    // set the plates about it, stood off the ground, back on it, as Moho's warps them.
     const std::string lua = fmt::format(
         "local mesh = '{12}/{0}_plate'\n"
         "__blueprints[mesh] = {{ BlueprintId = mesh, "
@@ -216,6 +217,8 @@ void stand_plate(TestContext& ctx, const std::string& root, const std::string& b
         "bp.Display = bp.Display or {{}}\n"
         "bp.Display.MeshBlueprint = mesh\n"
         "bp.Display.UniformScale = 1\n"
+        "bp.Physics = bp.Physics or {{}}\n"
+        "bp.Physics.FlattenSkirt = false\n"
         "__osc_last_plate = {6}\n"
         "if __osc_last_plate.BuildPointSlider then\n"
         "  __osc_last_plate.BuildPointSlider:Destroy()\n"

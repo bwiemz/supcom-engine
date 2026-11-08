@@ -5,6 +5,7 @@
 #include "blueprints/blueprint_store.hpp"
 #include "sim/steering.hpp"
 #include "sim/blueprint_categories.hpp"
+#include "sim/collision.hpp"
 #include "sim/collision_beam.hpp"
 #include "sim/decal.hpp"
 #include "sim/path_tables.hpp"
@@ -922,21 +923,36 @@ bool SimState::flatten_map_rect(i32 x, i32 z, i32 size_x, i32 size_z, f32 elevat
     const f32 mid_z = static_cast<f32>(lo_z + flat->z1) * 0.5f;
     const auto reach_x = static_cast<f32>(flat->x1 - lo_x);
     const auto reach_z = static_cast<f32>(flat->z1 - lo_z);
+    const OrientedBox box =
+        oriented_box({mid_x, 0.0f, mid_z}, Quaternion{}, {reach_x, 100.0f, reach_z});
+    std::vector<EntityId> warped;
     entity_registry_.for_each_unit([&](Entity& e) {
         auto& unit = static_cast<Unit&>(e);
-        if (unit.destroyed() || unit.is_dying() || !unit.is_mobile()) {
+        if (unit.destroyed() || unit.is_dying()) {
             return;
         }
         if (unit.layer() != "Land" && unit.layer() != "Seabed") {
             return;
         }
-        Vector3 p = unit.pending_position();
-        if (std::abs(p.x - mid_x) > reach_x || std::abs(p.z - mid_z) > reach_z) {
+        if (!shape_meets_box(unit, box)) {
             return;
         }
-        p.y = unit.ground_y(terrain_.get(), p.x, p.z);
-        unit.set_position(p);
+        if (!unit.has_motion()) {
+            warped.push_back(unit.entity_id());
+        } else if (moho_pathing_) {
+            unit.set_surface_collision(true);
+        } else {
+            Vector3 p = unit.pending_position();
+            p.y = unit.ground_y(terrain_.get(), p.x, p.z);
+            unit.set_position(p);
+        }
     });
+    for (const EntityId id : warped) {
+        auto* unit = static_cast<Unit*>(entity_registry_.find(id));
+        if (unit && !unit->destroyed()) {
+            unit->warp(terrain_.get(), unit->position(), L_);
+        }
+    }
     return true;
 }
 

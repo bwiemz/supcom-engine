@@ -113,7 +113,7 @@ How to read it:
 | Projectile `Physics.LeadTarget` defaults to true (homing missiles and torpedoes lead a moving target) | [#529](https://github.com/bwiemz/supcom-engine/pull/529) |
 | `PrefersPrimaryWeaponTarget` (a weapon takes its primary's target when it can hit it) and `StopOnPrimaryWeaponBusy` (it drops its target while the primary has one): ships, gunships, ASF, experimentals; Janus and Notha bombs | [#549](https://github.com/bwiemz/supcom-engine/pull/549) |
 | Texture scrollers (`AddThreadScroller`, `AddPingPongScroller`, `AddManualScroller`, `RemoveScroller`) and the mesh LOD's `Scrolling`: tank treads (36 retail blueprints with `Treads.ScrollTreads`) and UEA0102's ping-pong scroll move | [#540](https://github.com/bwiemz/supcom-engine/pull/540) |
-| `FlattenMapRect(x, z, sx, sz, y)` writes the heightfield: a FlattenSkirt structure levels the ground under its skirt, the land units on it follow, and a save keeps it | [#541](https://github.com/bwiemz/supcom-engine/pull/541) |
+| `FlattenMapRect(x, z, sx, sz, y)` writes the heightfield: a FlattenSkirt structure levels the ground under its skirt and stands on it, the land units on it follow (structures at once, units with a motion on their next move, as Moho's), and a save keeps it | [#541](https://github.com/bwiemz/supcom-engine/pull/541) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |
