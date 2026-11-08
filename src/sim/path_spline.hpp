@@ -108,11 +108,14 @@ public:
     const std::vector<Node>& nodes() const { return nodes_; }
     size_t current() const { return current_; }
     PathType type() const { return type_; }
+    /// Its nodes brake it to a stop going forward (Update's PPS_1), but for the last.
+    bool braking_forward() const { return braking_forward_; }
 
 private:
     std::vector<Node> nodes_;
     size_t current_ = 0;
     PathType type_ = PathType::Normal;
+    bool braking_forward_ = false;
     // SContinueInfo: the pose before its last node, and the state it was in.
     Vector3 cont_position_;
     Vector3 cont_direction_{0, 0, 1};

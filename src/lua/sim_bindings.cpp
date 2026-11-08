@@ -304,6 +304,7 @@ static sim::EntityId create_unit_core(lua_State* L, const char* bp_id, int army,
     unit->set_unit_id(bp_id);
     unit->set_army(army);
     unit->set_position({x, y, z});
+    unit->set_motion_target({x, y, z});
     unit->set_cap_cost(cap_cost);
     if (entry) unit->set_auto_mode(blueprint_initial_auto_mode(L, *store, *entry));
 

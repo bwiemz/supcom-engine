@@ -259,6 +259,7 @@ void test_air_staging(TestContext& ctx);
 void test_factory_assist(TestContext& ctx);
 void test_factory_rally(TestContext& ctx);
 void test_naval_depth(TestContext& ctx);
+void test_stun(TestContext& ctx);
 void test_influence(TestContext& ctx);
 void test_issue_handles(TestContext& ctx);
 void test_terrain_tex(TestContext& ctx);

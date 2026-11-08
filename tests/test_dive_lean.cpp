@@ -254,3 +254,45 @@ TEST_CASE("A ship's hull rocks from a recoil across it, and rights itself under 
     CHECK_FALSE(w.state.do_string("ship:RecoilImpulse(1, 2)").ok());
     CHECK_FALSE(w.state.do_string("ship:RecoilImpulse(1, 2, 'x')").ok());
 }
+
+TEST_CASE("A sub's dive holds while it is stunned or immobile, then goes on where it stopped",
+          "[dive]") {
+    const bool moho = GENERATE(false, true);
+    const bool stun = GENERATE(false, true);
+    CAPTURE(moho, stun);
+    Sea w(moho);
+    Unit* held = w.make("sub", 30.0f, 40.0f);
+    Unit* other = w.make("sub", 64.0f, 64.0f);
+    order(held, CommandType::Dive);
+    order(other, CommandType::Dive);
+    std::vector<f32> held_y;
+    std::vector<f32> other_y;
+    const auto tick = [&] {
+        w.sim.tick();
+        held_y.push_back(held->position().y);
+        other_y.push_back(other->position().y);
+    };
+    for (int t = 0; t < 5; ++t) {
+        tick();
+    }
+    REQUIRE(held_y.back() != held_y.front());
+    if (stun) {
+        held->set_stunned(1.0);
+    } else {
+        held->set_immobile(true);
+    }
+    const size_t from = held_y.size() - 1;
+    for (int t = 0; t < 9; ++t) {
+        tick();
+    }
+    held->set_immobile(false);
+    for (int t = 0; t < 20; ++t) {
+        tick();
+    }
+    for (size_t t = from + 1; t <= from + 9; ++t) {
+        CHECK(held_y[t] == held_y[from]);
+    }
+    for (size_t t = from + 10; t < held_y.size(); ++t) {
+        CHECK(held_y[t] == other_y[t - 9]);
+    }
+}

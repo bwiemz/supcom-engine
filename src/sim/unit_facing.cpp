@@ -35,18 +35,21 @@ f32 attack_angle_heading(f32 bearing, f32 heading, f32 attack_angle) {
     return wrap(bearing + (err >= 0.0f ? -attack_angle : attack_angle));
 }
 
-bool Unit::rotate_yaw_toward(f32 want, f32 max_step) {
+bool Unit::rotate_yaw_toward(f32 want, f32 max_step, bool turn) {
     const f32 yaw = quat_yaw(pending_orientation());
     const f32 err = wrap(want - yaw);
     // Already facing it: within about 0.81 degrees (a dot of 0.9999).
     if (osc::dmath::cos(err) >= 0.9999f || max_step <= 0.0f) return false;
+    if (!turn) {
+        return true;
+    }
     // At most a tick's turn, onto the heading exactly once within it.
     const f32 next = std::fabs(err) <= max_step ? want : yaw + (err > 0.0f ? max_step : -max_step);
     set_orientation(euler_to_quat(wrap(next), 0.0f, 0.0f));
     return true;
 }
 
-void Unit::face_weapons_work(f64 dt, const EntityRegistry& registry) {
+void Unit::face_weapons_work(f64 dt, const EntityRegistry& registry, bool held) {
     turned_in_place_ = false;
     // Aircraft, flying or landed, move by CalcMoveAir alone; a unit being
     // built, dying, carried or attached, or rising to a transport, is turned
@@ -56,9 +59,8 @@ void Unit::face_weapons_work(f64 dt, const EntityRegistry& registry) {
         return;
     }
     // Driven along a path, it faces the path; a new goal overwrites a parked
-    // attack's facing (Moho's SetTarget, mFormationVec). Held still or
-    // stunned, it turns in place all the same.
-    if (drove_ && !immobile_ && !is_stunned()) {
+    // attack's facing (Moho's SetTarget, mFormationVec).
+    if (drove_) {
         attack_facing_ = {};
         return;
     }
@@ -103,7 +105,7 @@ void Unit::face_weapons_work(f64 dt, const EntityRegistry& registry) {
     if (!want) return;
     // A hover turns at TurnFacingRate (none without one), the rest at TurnRate.
     const f32 rate = (is_hover() ? drive_.turn_facing_rate : drive_.turn_rate) * turn_mult_;
-    turned_in_place_ = rotate_yaw_toward(*want, rate * static_cast<f32>(dt));
+    turned_in_place_ = rotate_yaw_toward(*want, rate * static_cast<f32>(dt), !held);
 }
 
 } // namespace osc::sim

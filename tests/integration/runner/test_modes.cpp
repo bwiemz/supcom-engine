@@ -264,6 +264,7 @@ constexpr Mode kModesBefore[] = {
     {"--factory-assist-test", test_factory_assist, false},
     {"--factory-rally-test", test_factory_rally, false},
     {"--naval-depth-test", test_naval_depth, false},
+    {"--stun-test", test_stun, false},
     {"--influence-test", test_influence, false},
     {"--issue-handles-test", test_issue_handles, false},
     {"--binding-tail-test", test_binding_tail, false},
