@@ -9,93 +9,22 @@
 
 namespace osc::ui {
 
-namespace {
-
-// wxWidgets 2.4's codes, as Moho's EMauiKeyCode lists them (faf-re).
-constexpr i32 kWxBack = 8;
-constexpr i32 kWxTab = 9;
-constexpr i32 kWxReturn = 13;
-constexpr i32 kWxEscape = 27;
-constexpr i32 kWxDelete = 127;
-constexpr i32 kWxShift = 306;
-constexpr i32 kWxAlt = 307;
-constexpr i32 kWxControl = 308;
-constexpr i32 kWxMenu = 309;
-constexpr i32 kWxPause = 310;
-constexpr i32 kWxCapital = 311;
-constexpr i32 kWxPrior = 312;
-constexpr i32 kWxNext = 313;
-constexpr i32 kWxEnd = 314;
-constexpr i32 kWxHome = 315;
-constexpr i32 kWxLeft = 316;
-constexpr i32 kWxUp = 317;
-constexpr i32 kWxRight = 318;
-constexpr i32 kWxDown = 319;
-constexpr i32 kWxSnapshot = 323;
-constexpr i32 kWxInsert = 324;
-constexpr i32 kWxNumpad0 = 326;
-constexpr i32 kWxMultiply = 336;
-constexpr i32 kWxAdd = 337;
-constexpr i32 kWxSubtract = 339;
-constexpr i32 kWxDecimal = 340;
-constexpr i32 kWxDivide = 341;
-constexpr i32 kWxF1 = 342;
-constexpr i32 kWxNumlock = 366;
-constexpr i32 kWxScroll = 367;
-constexpr i32 kWxNumpadEqual = 390;
-
-} // namespace
-
 i32 moho_key_code(i32 glfw_key) {
-    // Moho's wx (wxCharCodeMSWToWX's table, FAF exe 0x0096AD62..0x0096ADA3)
-    // names the OEM keys by a character each, VK_OEM_1..7 as ; + , - . / ~ [
-    // \ ] ': two differ from the key's own, the = key (+) and the ` key (~).
-    if (glfw_key == GLFW_KEY_EQUAL) return '+';
-    if (glfw_key == GLFW_KEY_GRAVE_ACCENT) return '~';
-    // GLFW's printable keys are their (unshifted, upper case) ASCII codes,
-    // as wx's are.
+    // Moho's KeyCode is wx 2.4's: wxCharCodeMSWToWX's table for the key's
+    // Windows code (FAF exe 0x0096ABB0). It names the OEM keys by a
+    // character each, VK_OEM_1..7 as ; + , - . / ~ [ \ ] ', so the = key is
+    // + and the ` key is ~; Alt (VK_MENU) is WXK_MENU, 309; the keypad's
+    // operators are WXK_NUMPAD_*, 391 to 396. Print Screen, the Windows keys
+    // and the Menu key aren't in it: 0.
+    if (const i32 wx = wx_key_code_of_windows(windows_key_code(glfw_key)); wx != 0) {
+        return wx;
+    }
+    // A key the table leaves to its character (letters and digits): GLFW's
+    // printable keys are their (unshifted, upper case) ASCII codes, as wx's
+    // are.
     if (glfw_key >= GLFW_KEY_SPACE && glfw_key <= GLFW_KEY_GRAVE_ACCENT) return glfw_key;
     if (glfw_key == kKeyXButton1 || glfw_key == kKeyXButton2) return glfw_key;
-    if (glfw_key >= GLFW_KEY_F1 && glfw_key <= GLFW_KEY_F24)
-        return kWxF1 + (glfw_key - GLFW_KEY_F1);
-    if (glfw_key >= GLFW_KEY_KP_0 && glfw_key <= GLFW_KEY_KP_9)
-        return kWxNumpad0 + (glfw_key - GLFW_KEY_KP_0);
-    switch (glfw_key) {
-    case GLFW_KEY_ESCAPE: return kWxEscape;
-    case GLFW_KEY_ENTER: return kWxReturn;
-    case GLFW_KEY_KP_ENTER: return kWxReturn; // Windows reports it as Return
-    case GLFW_KEY_TAB: return kWxTab;
-    case GLFW_KEY_BACKSPACE: return kWxBack;
-    case GLFW_KEY_INSERT: return kWxInsert;
-    case GLFW_KEY_DELETE: return kWxDelete;
-    case GLFW_KEY_RIGHT: return kWxRight;
-    case GLFW_KEY_LEFT: return kWxLeft;
-    case GLFW_KEY_DOWN: return kWxDown;
-    case GLFW_KEY_UP: return kWxUp;
-    case GLFW_KEY_PAGE_UP: return kWxPrior;
-    case GLFW_KEY_PAGE_DOWN: return kWxNext;
-    case GLFW_KEY_HOME: return kWxHome;
-    case GLFW_KEY_END: return kWxEnd;
-    case GLFW_KEY_CAPS_LOCK: return kWxCapital;
-    case GLFW_KEY_SCROLL_LOCK: return kWxScroll;
-    case GLFW_KEY_NUM_LOCK: return kWxNumlock;
-    case GLFW_KEY_PRINT_SCREEN: return kWxSnapshot;
-    case GLFW_KEY_PAUSE: return kWxPause;
-    case GLFW_KEY_KP_DECIMAL: return kWxDecimal;
-    case GLFW_KEY_KP_DIVIDE: return kWxDivide;
-    case GLFW_KEY_KP_MULTIPLY: return kWxMultiply;
-    case GLFW_KEY_KP_SUBTRACT: return kWxSubtract;
-    case GLFW_KEY_KP_ADD: return kWxAdd;
-    case GLFW_KEY_KP_EQUAL: return kWxNumpadEqual;
-    case GLFW_KEY_LEFT_SHIFT:
-    case GLFW_KEY_RIGHT_SHIFT: return kWxShift;
-    case GLFW_KEY_LEFT_CONTROL:
-    case GLFW_KEY_RIGHT_CONTROL: return kWxControl;
-    case GLFW_KEY_LEFT_ALT:
-    case GLFW_KEY_RIGHT_ALT: return kWxAlt;
-    case GLFW_KEY_MENU: return kWxMenu;
-    default: return 0; // the Windows keys and the rest: wx 2.4 has no code
-    }
+    return 0;
 }
 
 i32 windows_key_code(i32 glfw_key) {

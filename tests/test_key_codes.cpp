@@ -47,20 +47,24 @@ TEST_CASE("Keys reach Lua with wx's key codes, as Moho gives them", "[ui][input]
     CHECK(moho_key_code(GLFW_KEY_INSERT) == 324);
     CHECK(moho_key_code(GLFW_KEY_KP_0) == 326);
     CHECK(moho_key_code(GLFW_KEY_KP_9) == 335);
-    CHECK(moho_key_code(GLFW_KEY_KP_MULTIPLY) == 336);
-    CHECK(moho_key_code(GLFW_KEY_KP_ADD) == 337);
-    CHECK(moho_key_code(GLFW_KEY_KP_SUBTRACT) == 339);
-    CHECK(moho_key_code(GLFW_KEY_KP_DECIMAL) == 340);
-    CHECK(moho_key_code(GLFW_KEY_KP_DIVIDE) == 341);
+    CHECK(moho_key_code(GLFW_KEY_KP_MULTIPLY) == 391);
+    CHECK(moho_key_code(GLFW_KEY_KP_ADD) == 392);
+    CHECK(moho_key_code(GLFW_KEY_KP_SUBTRACT) == 394);
+    CHECK(moho_key_code(GLFW_KEY_KP_DECIMAL) == 395);
+    CHECK(moho_key_code(GLFW_KEY_KP_DIVIDE) == 396);
     CHECK(moho_key_code(GLFW_KEY_LEFT_SHIFT) == 306);
     CHECK(moho_key_code(GLFW_KEY_RIGHT_SHIFT) == 306);
-    CHECK(moho_key_code(GLFW_KEY_LEFT_ALT) == 307);
+    CHECK(moho_key_code(GLFW_KEY_LEFT_ALT) == 309);
+    CHECK(moho_key_code(GLFW_KEY_RIGHT_ALT) == 309);
     CHECK(moho_key_code(GLFW_KEY_RIGHT_CONTROL) == 308);
     CHECK(moho_key_code(GLFW_KEY_CAPS_LOCK) == 311);
     CHECK(moho_key_code(GLFW_KEY_NUM_LOCK) == 366);
     CHECK(moho_key_code(GLFW_KEY_SCROLL_LOCK) == 367);
     // Keys wx 2.4 has no code for.
     CHECK(moho_key_code(GLFW_KEY_LEFT_SUPER) == 0);
+    CHECK(moho_key_code(GLFW_KEY_MENU) == 0);
+    CHECK(moho_key_code(GLFW_KEY_PRINT_SCREEN) == 0);
+    CHECK(moho_key_code(GLFW_KEY_KP_EQUAL) == 0);
     CHECK(moho_key_code(GLFW_KEY_F25) == 0);
     CHECK(moho_key_code(GLFW_KEY_UNKNOWN) == 0);
 }
