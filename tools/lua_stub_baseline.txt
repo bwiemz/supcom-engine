@@ -22,7 +22,6 @@ ProjectMultiple worldview_ProjectMultiple
 RefreshSteamGames l_RefreshSteamGames
 SetGreaterOf brain_SetGreaterOf
 SetTargetHead frame_SetTargetHead
-ShouldCreateInitialArmyUnits l_ShouldCreateInitialArmyUnits
 SimConExecute stub_noop
 SoundIsPrepared l_SoundIsPrepared
 SpecFootprints stub_noop

@@ -635,12 +635,14 @@ void App::publish_session_objects() {
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
-    // Command-line args for HasCommandLineArg (M147d)
+    // Command-line args for HasCommandLineArg (M147d); the sim's
+    // ShouldCreateInitialArmyUnits reads the process's, as Moho's does.
     {
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_cmdline_args");
         lua_pushlightuserdata(uL, &opt.cmdline_args);
         lua_rawset(uL, LUA_REGISTRYINDEX);
+        osc::lua::set_process_command_line(&opt.cmdline_args);
     }
 
     // GameStateManager — outer scope for headless test access (M144b)

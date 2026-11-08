@@ -4584,16 +4584,21 @@ static int l_SetFrontEndData(lua_State* L) {
 // HasCommandLineArg (M147d)
 // ====================================================================
 
-/// HasCommandLineArg(arg) -> boolean
-/// Moho's CFG_GetArgOption: the `count` arguments after `option` on the
-/// command line (the first time it is there, case aside, with that many
-/// after it), or nothing.
+namespace {
+/// The process's command line (set_process_command_line).
+const std::vector<std::string>* g_process_command_line = nullptr;
+} // namespace
+
+void set_process_command_line(const std::vector<std::string>* args) {
+    g_process_command_line = args;
+}
+
+/// Moho's CFG_GetArgOption over `args`: the `count` arguments after
+/// `option` (the first time it is there, case aside, with that many after
+/// it), or nothing.
 static std::optional<std::vector<std::string>>
-command_line_option(lua_State* L, const std::string& option, size_t count) {
-    lua_pushstring(L, "__osc_cmdline_args");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    const auto* args = static_cast<const std::vector<std::string>*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
+command_line_option_in(const std::vector<std::string>* args, const std::string& option,
+                       size_t count) {
     if (!args || option.empty()) return std::nullopt;
     const auto same = [](const std::string& a, const std::string& b) {
         return a.size() == b.size() &&
@@ -4608,6 +4613,22 @@ command_line_option(lua_State* L, const std::string& option, size_t count) {
                                         args->begin() + static_cast<long>(i + 1 + count));
     }
     return std::nullopt;
+}
+
+/// HasCommandLineArg and GetCommandLineArg's: the state's own command line
+/// (`__osc_cmdline_args`, which only the UI state holds). The sim's scripts,
+/// a map's or a mod's among them, see none of it.
+static std::optional<std::vector<std::string>>
+command_line_option(lua_State* L, const std::string& option, size_t count) {
+    lua_pushstring(L, "__osc_cmdline_args");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const auto* args = static_cast<const std::vector<std::string>*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return command_line_option_in(args, option, count);
+}
+
+bool command_line_has(const char* option) {
+    return command_line_option_in(g_process_command_line, option, 0).has_value();
 }
 
 /// HasCommandLineArg(option): whether it is on the command line (Moho's
