@@ -397,11 +397,6 @@ static int worldview_GetRightMouseButtonOrder(lua_State* L) {
     return 1;
 }
 
-static int worldview_GetScreenPos(lua_State* L) {
-    lua_pushnil(L);
-    return 1;
-}
-
 static int worldview_GetsGlobalCameraCommands(lua_State* L) {
     if (auto* wv = check_world_view(L)) {
         wv->set_global_camera_commands(lua_toboolean(L, 2) != 0);
@@ -548,7 +543,6 @@ const MethodEntry ui_worldview_methods[] = {
     {"CameraReset", worldview_CameraReset},
     {"EnableResourceRendering", worldview_EnableResourceRendering},
     {"GetRightMouseButtonOrder", worldview_GetRightMouseButtonOrder},
-    {"GetScreenPos", worldview_GetScreenPos},
     {"GetsGlobalCameraCommands", worldview_GetsGlobalCameraCommands},
     {"HasHighlightCommand", worldview_HasHighlightCommand},
     {"IsCartographic", worldview_IsCartographic},
