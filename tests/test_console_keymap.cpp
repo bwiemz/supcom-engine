@@ -4,6 +4,7 @@
 #include "core/game_state.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/session_clients.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/console.hpp"
 #include "ui/keymap.hpp"
@@ -213,6 +214,54 @@ TEST_CASE("GetSimRate answers the game speed the sim runs at", "[ui][console]") 
     mgr.set_sim_rate(4);
     CHECK(lua.do_string("assert(GetSimRate() == 4 and GetGameSpeed() == 4, GetSimRate())").ok());
     CHECK(lua.do_string("SetGameSpeed(-3) assert(GetSimRate() == -3, GetSimRate())").ok());
+}
+
+TEST_CASE("In a single-player game each speed asked for is heard by uimain, as Moho's client "
+          "manager tells it",
+          "[ui][console]") {
+    osc::GameStateManager mgr;
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+    Console console;
+    osc::lua::register_console_commands(console);
+    lua_State* L = lua.raw();
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_pushlightuserdata(L, &mgr);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "__osc_console");
+    lua_pushlightuserdata(L, &console);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    REQUIRE(lua.do_string("heard = {}\n"
+                          "function NoteGameSpeedChanged(client, speed)\n"
+                          "    table.insert(heard, client .. ':' .. speed)\n"
+                          "end\n"
+                          "lines = {}\n"
+                          "AddConsoleOutputReciever(function(text) table.insert(lines, text) end)\n"
+                          "SetGameSpeed(4)")
+                .ok());
+    osc::lua::pump_speed_changes(L);
+    REQUIRE(lua.do_string("assert(table.getn(heard) == 0, 'no game: ' .. table.getn(heard))").ok());
+
+    mgr.transition_to(osc::GameState::GAME, nullptr);
+    REQUIRE(lua.do_string("SetGameSpeed(0) SetGameSpeed(2) SetGameSpeed(2)\n"
+                          "ConExecute('WLD_IncreaseSimRate') ConExecute('WLD_ResetSimRate')\n"
+                          "ConExecute('WLD_ResetSimRate') ConExecute('WLD_GameSpeed -3')\n"
+                          "ConExecute('WLD_GameSpeed 60') SetGameSpeed(60)")
+                .ok());
+    REQUIRE(lua.do_string("assert(table.getn(heard) == 0, 'heard as the frame pumps')").ok());
+    osc::lua::pump_speed_changes(L);
+    CHECK(lua.do_string("local all = table.concat(heard, ' ')\n"
+                        "assert(all == '1:0 1:2 1:2 1:3 1:0 1:-3 1:50 1:60', all)")
+              .ok());
+    osc::lua::pump_speed_changes(L);
+    CHECK(lua.do_string("assert(table.getn(heard) == 8, table.getn(heard))").ok());
+    CHECK(lua.do_string(
+                 "ConExecute('WLD_GameSpeed')\n"
+                 "assert(lines[1] == 'WLD_GameSpeed <int> - set current game speed', lines[1])")
+              .ok());
 }
 
 TEST_CASE("ConTextMatches lists the console's names starting with the text", "[ui][console]") {

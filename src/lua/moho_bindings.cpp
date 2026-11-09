@@ -4040,6 +4040,9 @@ static int l_ui_SessionGetScenarioInfo(lua_State* L) {
 static void set_game_speed(lua_State* L, i32 rate) {
     if (session_request_speed(rate)) return;
     if (auto* mgr = get_game_state_mgr(L)) mgr->set_sim_rate(rate);
+    if (session_active(L)) {
+        note_local_speed_change(L, rate);
+    }
 }
 
 /// The game speed: a network game's, or this game's own.
@@ -4211,10 +4214,12 @@ void register_console_commands(ui::Console& console) {
     // The sim rate (Moho's WLD_* commands).
     console.add("WLD_GameSpeed", [](lua_State* L, const Args& args) {
         if (args.size() != 2) {
-            spdlog::info("WLD_GameSpeed <int> - set current game speed");
+            core::console_print(L, "WLD_GameSpeed <int> - set current game speed");
             return;
         }
-        set_game_speed(L, static_cast<i32>(std::strtod(args[1].c_str(), nullptr))); // Moho: atof
+        const auto rate = static_cast<i32>(std::strtod(args[1].c_str(), nullptr)); // Moho: atof
+        set_game_speed(L, std::clamp(rate, osc::GameStateManager::kMinSimRate,
+                                     osc::GameStateManager::kMaxSimRate));
     });
     // As Moho's: one step, within -10..+50; asking for the speed it has is nothing
     console.add("WLD_IncreaseSimRate", [](lua_State* L, const Args&) {
