@@ -392,6 +392,9 @@ public:
     void set_beat_observer(std::function<void(const SimState&)> fn) {
         beat_observer_ = std::move(fn);
     }
+    /// Moho's Sim::Printf: a console line the beat's sync carries to the user side.
+    void print_line(std::string line) { print_lines_.push_back(std::move(line)); }
+    std::vector<std::string> take_print_lines() { return std::exchange(print_lines_, {}); }
     u32 tick_count() const { return tick_count_; }
     /// The beats begun (Moho's mCurBeat): the commands' clock.
     u32 beat_count() const { return beat_count_; }
@@ -1265,6 +1268,7 @@ private:
     u32 intel_pass_ = 0;
     audio::SoundManager* sound_manager_ = nullptr;
     std::function<void(const SimState&)> beat_observer_;
+    std::vector<std::string> print_lines_;
     std::ostream* checksum_trace_ = nullptr;
     std::ostream* entity_trace_ = nullptr;
     std::ostream* steer_log_ = nullptr;

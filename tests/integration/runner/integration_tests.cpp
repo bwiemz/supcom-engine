@@ -19552,6 +19552,15 @@ static int count_descendants(const osc::ui::UIControl* root) {
     return n;
 }
 
+static bool shows_text(const osc::ui::UIControl* root, const std::string& text) {
+    for (const auto* child : root->children()) {
+        if ((!child->destroyed() && child->text_content() == text) || shows_text(child, text)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static int count_movies(const osc::ui::UIControl* root) {
     int n = 0;
     for (const auto* child : root->children()) {
@@ -19695,6 +19704,28 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         else
             osc::test_status::fail("[FAIL] Test 3b: {} profiles, {} visible", profiles.size(),
                                    overlays ? overlays->visible().size() : 0);
+    }
+
+    {
+        bool shown = false;
+        if (lua_ok("Test 3c: print in the user state", "print('osc console echo')") &&
+            ctx.lua_state.do_string("__osc_test_root = GetFrame(0)")) {
+            lua_pushstring(L, "__osc_test_root");
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "_c_object");
+                lua_rawget(L, -2);
+                const auto* root = static_cast<const osc::ui::UIControl*>(lua_touserdata(L, -1));
+                shown = root && shows_text(root, "osc console echo");
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+        if (shown) {
+            spdlog::info("[PASS] Test 3c: a line printed shows in retail's console echo");
+        } else {
+            osc::test_status::fail("[FAIL] Test 3c: no control shows the line printed");
+        }
     }
 
     // 4. Frames run the UI: CreateUI's control-cluster OnFrame fires

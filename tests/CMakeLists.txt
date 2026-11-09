@@ -96,6 +96,7 @@ add_executable(osc_tests
     test_user_state_globals.cpp
     test_engine_stats.cpp
     test_army_stats_sync.cpp
+    test_console_output.cpp
     test_sim_console.cpp
     test_cheat_commands.cpp
     test_external_factory.cpp

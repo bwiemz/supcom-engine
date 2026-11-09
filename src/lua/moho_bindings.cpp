@@ -3,6 +3,7 @@
 #include "lua/arg_count.hpp"
 
 #include "core/color.hpp"
+#include "core/console_output.hpp"
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
@@ -2524,34 +2525,34 @@ static int l_SessionGetCommandSourceNames(lua_State* L) {
     return 1;
 }
 
-/// AddConsoleOutputReciever(fn) -> handle (Moho's spelling). The console
-/// echo (consoleecho.lua) registers here; console output is not forwarded
-/// to receivers yet, so they are only kept until removed.
+/// AddConsoleOutputReciever(fn) -> handle (Moho's spelling): `fn` hears
+/// each console line.
 static int l_AddConsoleOutputReciever(lua_State* L) {
-    luaL_checktype(L, 1, LUA_TFUNCTION);
-    lua_pushstring(L, "__osc_console_receivers");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_newtable(L);
-        lua_pushstring(L, "__osc_console_receivers");
-        lua_pushvalue(L, -2);
-        lua_rawset(L, LUA_REGISTRYINDEX);
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "handler AddConsoleOutputReciever(func(text))", 1, lua_gettop(L));
     }
-    lua_pushvalue(L, 1);
-    int handle = luaL_ref(L, -2);
-    lua_pop(L, 1);
-    lua_pushnumber(L, handle);
+    if (!lua_isfunction(L, 1)) {
+        spdlog::warn("AddConsoleOutputReciever received an object that was not a function!");
+        return 0;
+    }
+    lua_pushnumber(L, core::add_console_receiver(L, 1));
     return 1;
 }
 
 static int l_RemoveConsoleOutputReciever(lua_State* L) {
-    if (!lua_isnumber(L, 1)) return 0;
-    lua_pushstring(L, "__osc_console_receivers");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (lua_istable(L, -1))
-        luaL_unref(L, -1, static_cast<int>(lua_tonumber(L, 1)));
-    lua_pop(L, 1);
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "RemoveConsoleOutputReciever(handler)", 1, lua_gettop(L));
+    }
+    if (lua_isnumber(L, 1)) {
+        core::remove_console_receiver(L, static_cast<int>(lua_tonumber(L, 1)));
+    }
+    return 0;
+}
+
+/// print(...) in the user state: a console line (Moho's cfunc_printUser).
+static int l_print_user(lua_State* L) {
+    core::concat_print_args(L, '\t',
+                            [L](const std::string& line) { core::console_print(L, line); });
     return 0;
 }
 
@@ -5056,6 +5057,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetIdleFactories", l_GetIdleFactories);
     state.register_function("AddConsoleOutputReciever", l_AddConsoleOutputReciever);
     state.register_function("RemoveConsoleOutputReciever", l_RemoveConsoleOutputReciever);
+    state.register_function("print", l_print_user);
 
     // SimCallback UI→Sim bridge (M138a)
 
