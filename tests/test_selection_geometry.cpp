@@ -211,3 +211,26 @@ TEST_CASE("Blinky boxes go once their unit is gone or their time is up", "[selec
     r.clear_blinky_boxes();
     CHECK(r.blinky_boxes().empty());
 }
+
+TEST_CASE("A unit's brackets by the player's alliance with its army", "[selection]") {
+    using osc::renderer::bracket_texture;
+    const auto texture = [](const char* t) {
+        const std::string s = t ? t : "none";
+        return s.substr(s.find_last_of('/') + 1);
+    };
+    const osc::u32 allies = 1u << 2;
+    const osc::u32 enemies = 1u << 1;
+    CHECK(texture(bracket_texture(0, 0, allies, enemies, true)) ==
+          "selection_brackets_player_highlighted.dds");
+    CHECK(texture(bracket_texture(2, 0, allies, enemies, true)) ==
+          "selection_brackets_player_highlighted.dds");
+    CHECK(texture(bracket_texture(1, 0, allies, enemies, true)) == "selection_brackets_enemy.dds");
+    CHECK(texture(bracket_texture(1, 0, allies, enemies, false)) == "none");
+    CHECK(texture(bracket_texture(3, 0, allies, enemies, false)) ==
+          "selection_brackets_neutral.dds");
+    CHECK(texture(bracket_texture(-1, 0, allies, enemies, false)) ==
+          "selection_brackets_neutral.dds");
+    for (const int army : {0, 1, 2, 3}) {
+        CHECK(texture(bracket_texture(army, -1, 0, 0, true)) == "selection_brackets_neutral.dds");
+    }
+}
