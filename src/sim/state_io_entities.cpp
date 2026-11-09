@@ -531,6 +531,7 @@ void StateIO::save(StateWriter& w, const Navigator& n) {
     w.vec3(n.motion_node_.position);
     w.vec3(n.motion_node_.direction);
     w.b(n.motion_node_set_);
+    w.b(n.motion_node_stops_);
     w.u8v(n.collision_.type);
     w.b(n.steer_paused_);
 }
@@ -582,6 +583,7 @@ void StateIO::load(StateReader& r, Navigator& n, SimState& sim, i32 army) {
     n.motion_node_.position = r.vec3();
     n.motion_node_.direction = r.vec3();
     n.motion_node_set_ = r.b();
+    n.motion_node_stops_ = r.b();
     n.collision_.type = r.u8v();
     n.steer_paused_ = r.b();
 }
@@ -1287,6 +1289,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.jostled_);
     w.vec3(u.motion_velocity_);
     w.vec3(u.motion_pos_);
+    w.vec3(u.motion_target_);
+    enum8(w, u.common_move_);
     w.b(u.pushed_);
     w.b(u.in_state_transition_);
     w.b(u.surface_collision_);
@@ -1715,6 +1719,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.jostled_ = r.b();
     u.motion_velocity_ = r.vec3();
     u.motion_pos_ = r.vec3();
+    u.motion_target_ = r.vec3();
+    u.common_move_ = enum8<Unit::CommonMove>(r);
     u.pushed_ = r.b();
     u.in_state_transition_ = r.b();
     u.surface_collision_ = r.b();

@@ -152,6 +152,7 @@ void Spline::brake(const SplineUnit& u, const Pose& pose, int mode, const Spline
     nodes_.clear();
     type_ = static_cast<PathType>(mode);
     current_ = 0;
+    braking_forward_ = true;
     const Vector3 forward = pose.forward;
     Vector3 position = pose.position;
     const Vector3& v = pose.velocity;
@@ -165,8 +166,10 @@ void Spline::brake(const SplineUnit& u, const Pose& pose, int mode, const Spline
         const f32 inverse = 1.0f / speed;
         travel = {v.x * inverse, v.y * inverse, v.z * inverse};
     }
-    if (travel.y * forward.y + travel.z * forward.z + travel.x * forward.x < 0)
+    if (travel.y * forward.y + travel.z * forward.z + travel.x * forward.x < 0) {
         step = {-step.x, -step.y, -step.z};
+        braking_forward_ = false;
+    }
     bool done = false;
     while (!done) {
         cont_position_ = position;
@@ -222,6 +225,7 @@ void Spline::generate(const SplineUnit& u, const Pose& pose, const Vector3& dest
     nodes_.clear();
     type_ = type;
     current_ = 0;
+    braking_forward_ = false;
     int limit = u.node_limit;
     // TurnRadius against TurnRate as the blueprint gives them.
     const bool wide = u.turn_radius > u.turn_rate;

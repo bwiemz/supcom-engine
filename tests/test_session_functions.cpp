@@ -235,3 +235,46 @@ TEST_CASE("Every army's score is shown, a civilian's too, until SetArmyShowScore
               .ends_with("SetArmyColor(army, bool) - determines if the user should be able to "
                          "see the army score\n  expected 2 args, but got 1"));
 }
+
+TEST_CASE("ShouldCreateInitialArmyUnits is false with /noinitialunits on the command line",
+          "[session][scenario]") {
+    osc::lua::LuaState sim_lua;
+    osc::sim::SimState sim(sim_lua.raw(), nullptr);
+    osc::lua::register_moho_bindings(sim_lua, sim);
+    osc::lua::register_sim_bindings(sim_lua, sim);
+    const auto answer = [&sim_lua] {
+        auto r = sim_lua.do_string("__answer = ShouldCreateInitialArmyUnits()");
+        REQUIRE(r.ok());
+        lua_State* L = sim_lua.raw();
+        lua_pushstring(L, "__answer");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const bool yes = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        return yes;
+    };
+
+    // No command line known: the starting units are made.
+    osc::lua::set_process_command_line(nullptr);
+    CHECK(answer());
+
+    // Moho's reads the process's command line (CFG_GetArgOption), case aside.
+    const std::vector<std::string> with{"/map", "/maps/x/x_scenario.lua", "/NoInitialUnits"};
+    const std::vector<std::string> without{"/map", "/maps/x/x_scenario.lua", "/nomovie"};
+    osc::lua::set_process_command_line(&with);
+    CHECK_FALSE(answer());
+    // Scripts don't get it from the process: HasCommandLineArg answers from
+    // a state's own copy, which only the UI state is given.
+    osc::lua::LuaState ui;
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(ui, sim);
+    osc::lua::register_ui_bindings(ui, registry);
+    CHECK(ui.do_string("assert(HasCommandLineArg('/noinitialunits') == false)").ok());
+    osc::lua::set_process_command_line(&without);
+    CHECK(answer());
+
+    // Its usage is empty in Moho, so its count error is the bare count.
+    auto r = sim_lua.do_string("ShouldCreateInitialArmyUnits(1)");
+    REQUIRE_FALSE(r.ok());
+    CHECK(r.error().message.find("expected 0 args, but got 1") != std::string::npos);
+    osc::lua::set_process_command_line(nullptr);
+}

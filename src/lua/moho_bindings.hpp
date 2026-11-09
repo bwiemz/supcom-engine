@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 #include "sim/entity_id.hpp"
 
+#include <string>
 #include <vector>
 
 struct lua_State;
@@ -30,6 +31,16 @@ void advance_ui_clock(lua_State* L, double dt);
 /// Populate the `moho` global table with all class method tables.
 /// Must be called before globalInit.lua executes.
 void register_moho_bindings(LuaState& state, sim::SimState& sim);
+
+/// The process's command line, for the engine's own questions of it
+/// (command_line_has). It must outlive its use; null to clear. Lua's
+/// HasCommandLineArg and GetCommandLineArg don't read it: they answer from
+/// the UI state's own copy, so no sim script sees the command line.
+void set_process_command_line(const std::vector<std::string>* args);
+
+/// Whether `option` is on the process's command line, case aside, as Moho's
+/// CFG_GetArgOption(option, 0) answers.
+bool command_line_has(const char* option);
 
 /// The UI's WaitFor hands a table it is given (another binding's waitable:
 /// the camera's move, M217g) to `hook`, which parks the thread or returns.

@@ -7,7 +7,13 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/user_bindings.hpp"
 #include "renderer/camera.hpp"
+#include "sim/bone_data.hpp"
+#include "sim/manipulator.hpp"
+#include "sim/pose.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
+#include "sim/weapon.hpp"
+#include "ui/ui_control.hpp"
 #include "ui/world_view.hpp"
 
 extern "C" {
@@ -15,8 +21,11 @@ extern "C" {
 }
 
 #include <array>
+#include <cmath>
+#include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 using Catch::Approx;
 
@@ -179,4 +188,84 @@ TEST_CASE("GetMouseScreenPos and GetAntiAliasingOptions answer Moho's types", "[
     lua_getglobal(L, "args_checked");
     CHECK(lua_toboolean(L, -1) != 0);
     lua_pop(L, 1);
+}
+
+TEST_CASE("WorldView:GetScreenPos and ProjectMultiple put world points on the view, as Moho's",
+          "[ui][worldview][lua]") {
+    osc::renderer::Camera camera;
+    camera.init(512.0f, 512.0f);
+    camera.set_target(200.0f, 300.0f);
+    camera.set_zoom(150.0f);
+    osc::ui::WorldView view;
+    view.register_camera("WorldCamera", &camera);
+    view.set_viewport(1280, 720);
+
+    // Three units: one in view with a mesh, one far off it, one without a mesh.
+    osc::lua::LuaState sim_lua;
+    osc::sim::SimState sim{sim_lua.raw(), nullptr};
+    sim.add_army("ARMY_1", "ARMY_1");
+    osc::sim::BoneData model;
+    model.mesh_bounds = osc::sim::MeshBounds{{-1.0f, 0.0f, -1.0f}, {1.0f, 2.0f, 1.0f}};
+    std::vector<osc::sim::EntityId> ids;
+    for (const auto& [at, meshed] : {std::pair{osc::sim::Vector3{230.0f, 0.0f, 280.0f}, true},
+                                     std::pair{osc::sim::Vector3{4000.0f, 0.0f, 4000.0f}, true},
+                                     std::pair{osc::sim::Vector3{215.0f, 0.0f, 310.0f}, false}}) {
+        auto unit = std::make_unique<osc::sim::Unit>();
+        unit->set_army(0);
+        unit->set_position(at);
+        if (meshed) unit->set_bone_data(&model);
+        ids.push_back(sim.entity_registry().register_entity(std::move(unit)));
+    }
+
+    osc::lua::LuaState ui;
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_blueprint_bindings(ui);
+    osc::lua::register_moho_bindings(ui, sim);
+    osc::lua::register_ui_bindings(ui, registry);
+    osc::lua::register_user_bindings(ui);
+    lua_State* L = ui.raw();
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, &view);
+    lua_rawset(L, -3);
+    lua_setglobal(L, "view");
+    osc::lua::push_units_for_ui(L, ids);
+    lua_setglobal(L, "units");
+
+    float sx = 0.0f, sy = 0.0f;
+    REQUIRE(view.project(230.0f, 0.0f, 280.0f, sx, sy));
+    const auto number = [L](const char* name) {
+        lua_getglobal(L, name);
+        const double v = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return v;
+    };
+
+    // In view: its position's pixel, floored, as a Vector2.
+    REQUIRE(ui.do_string("local p = moho.UIWorldView.GetScreenPos(view, units[1]) "
+                         "gx, gy = p.x, p[2]")
+                .ok());
+    CHECK(number("gx") == std::floor(sx));
+    CHECK(number("gy") == std::floor(sy));
+    // Out of the view's frustum, or without a mesh: nil.
+    CHECK(ui.do_string("assert(moho.UIWorldView.GetScreenPos(view, units[2]) == nil)").ok());
+    CHECK(ui.do_string("assert(moho.UIWorldView.GetScreenPos(view, units[3]) == nil)").ok());
+
+    // ProjectMultiple: each point under its own key, a plain {x, y}.
+    REQUIRE(ui.do_string("local r = moho.UIWorldView.ProjectMultiple(view, "
+                         "{a = Vector(230, 0, 280), [3] = {230, 0, 280}}) "
+                         "assert(getmetatable(r.a) == nil and r.b == nil) "
+                         "mx, my, nx = r.a[1], r.a[2], r[3][1]")
+                .ok());
+    CHECK(number("mx") == Approx(sx));
+    CHECK(number("my") == Approx(sy));
+    CHECK(number("nx") == Approx(sx));
+
+    auto r = ui.do_string("moho.UIWorldView.GetScreenPos(view)");
+    REQUIRE_FALSE(r.ok());
+    CHECK(r.error().message.find("(vector2f|nil) = GetScreenPos(unit)\n  expected 2 args, but "
+                                 "got 1") != std::string::npos);
+    r = ui.do_string("moho.UIWorldView.ProjectMultiple(view, 5)");
+    REQUIRE_FALSE(r.ok());
+    CHECK(r.error().message.find("table expected.") != std::string::npos);
 }

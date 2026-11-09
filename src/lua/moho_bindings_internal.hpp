@@ -30,6 +30,7 @@ class SimCallbackQueue;
 class SimState;
 class Unit;
 class Weapon;
+struct EntityRecord;
 struct UnitCommand;
 struct Vector3;
 struct WorldSnapshot;
@@ -117,6 +118,9 @@ int ui_is_destroyed(lua_State* L);
 /// GetBlueprint(unit) in the UI state: the unit's blueprint, as its
 /// GetBlueprint method gives it (Moho's cfunc_GetBlueprintUserL).
 int ui_GetBlueprint(lua_State* L);
+/// The UI unit object at `idx` as the UI's tick shows it; null for anything
+/// else, or once it is gone.
+const sim::EntityRecord* user_unit_record(lua_State* L, int idx);
 f32 get_unit_threat_for_type(const sim::Unit* unit, const char* type);
 void request_world_sound(lua_State* L, const sim::Entity& e, std::string bank, std::string cue,
                          std::string lod_cutoff);

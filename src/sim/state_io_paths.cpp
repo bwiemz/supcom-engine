@@ -190,6 +190,7 @@ void StateIO::save(StateWriter& w, const path::Spline& s) {
     }
     w.u64v(s.current_);
     w.u8v(static_cast<u8>(s.type_));
+    w.b(s.braking_forward_);
     w.vec3(s.cont_position_);
     w.vec3(s.cont_direction_);
     w.vec3(s.cont_velocity_);
@@ -204,6 +205,7 @@ void StateIO::load(StateReader& r, path::Spline& s) {
     }
     s.current_ = static_cast<size_t>(r.u64v());
     s.type_ = static_cast<path::PathType>(r.u8v());
+    s.braking_forward_ = r.b();
     s.cont_position_ = r.vec3();
     s.cont_direction_ = r.vec3();
     s.cont_velocity_ = r.vec3();

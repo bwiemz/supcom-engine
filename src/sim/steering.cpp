@@ -612,6 +612,29 @@ void collide_moho_units(SimState& sim, Unit& owner) {
     }
 }
 
+/// ProcessSplineMovement's mPausedForStateTransition: held still, the steering stops and
+/// does nothing more till let go. True while paused.
+bool pause_steering(SimState& sim, Unit& u, path::PathType type) {
+    Navigator& nav = u.navigator();
+    const bool held = u.immobile() || u.is_stunned();
+    if (!nav.steer_paused()) {
+        if (held) {
+            nav.set_steer_paused(true);
+            steer_stop(sim, u);
+        }
+        return held;
+    }
+    if (held) {
+        return true;
+    }
+    if (const Vector3* dest = nav.steer_destination()) {
+        nav.spline_generate(u, *dest, type, false);
+        check_moho(sim, u);
+    }
+    nav.set_steer_paused(false);
+    return false;
+}
+
 /// Moho's CAiSteeringImpl::Execute on a unit's spline, in its army's phase: the spline
 /// made and checked, its meetings resolved, and the next node handed to its motion.
 void steer_moho(SimState& sim, Unit& u) {
@@ -649,18 +672,8 @@ void steer_moho(SimState& sim, Unit& u) {
             nav.spline_generate(u, *dest, mode(), true);
             check_moho(sim, u);
         }
-        if (!nav.steer_paused()) {
-            if (u.immobile()) {
-                nav.set_steer_paused(true);
-                stop();
-                return;
-            }
-        } else if (!u.immobile()) {
-            if (dest) {
-                nav.spline_generate(u, *dest, mode(), false);
-                check_moho(sim, u);
-            }
-            nav.set_steer_paused(false);
+        if (pause_steering(sim, u, mode())) {
+            return;
         }
         const Navigator::Collision col = nav.collision();
         if (col.type == 5) {
@@ -670,12 +683,15 @@ void steer_moho(SimState& sim, Unit& u) {
             const Navigator::Collision after = nav.collision();
             if (after.type == 0) {
                 if (dest) {
-                    if (!nav.has_spline() || nav.spline().empty())
+                    if (!nav.has_spline() || nav.spline().empty()) {
                         nav.spline_generate(u, *dest, mode(), false);
+                        u.set_motion_target(*dest);
+                    }
                     check_moho(sim, u);
                 }
             } else if (after.type == 2) {
                 const Vector3 to = nav.avoid_target();
+                u.set_motion_target(to);
                 nav.spline_generate(u, to, path::PathType::Sidestep, false);
                 nav.set_avoid_target({});
             } else if (after.type == 4) {
@@ -691,6 +707,7 @@ void steer_moho(SimState& sim, Unit& u) {
         if (const Vector3* wp = nav.waypoint()) {
             nav.set_steer_destination(*wp);
             if (!Navigator::unit_at(u, *wp)) {
+                u.set_motion_target(*wp);
                 nav.spline_generate(u, *wp, mode(), false);
                 check_moho(sim, u);
                 process();
@@ -890,12 +907,18 @@ void steer_units(SimState& sim, const std::vector<EntityId>& ids) {
         // Moho's steering ticks every unit, a still one too (CAiSteeringImpl::OnTick): one
         // pushed settles once slower than a hundredth of its top speed a tick
         // (ProcessSplineMovement), and meets what it runs into again.
-        if (sim.moho_pathing() && steers(u) && u.pushed()) {
+        const bool pushed = sim.moho_pathing() && steers(u) && u.pushed();
+        if (pushed) {
             const Vector3& v = u.motion_velocity();
             if (u.max_speed() * 0.01f > std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z)) {
                 u.set_pushed(false);
                 u.set_in_state_transition(false);
             }
+        }
+        if (sim.moho_pathing() && steers_moho(u)) {
+            pause_steering(sim, u, path::PathType::Normal);
+        }
+        if (pushed) {
             continue;
         }
         if (!steers(u) || !nav.is_moving() || nav.holding() || nav.sidestepping()) continue;
@@ -910,10 +933,14 @@ void collide_units(SimState& sim, Unit& u) {
 
 void steer_stop(SimState& sim, Unit& u) {
     Navigator& nav = u.navigator();
-    if (!nav.has_spline()) return;
-    const bool remaining = !nav.spline().empty();
-    nav.spline_stop();
-    if (remaining) check_moho(sim, u);
+    if (nav.has_spline()) {
+        const bool remaining = !nav.spline().empty();
+        nav.spline_stop();
+        if (remaining) {
+            check_moho(sim, u);
+        }
+    }
+    u.stop_motion(nav.through_target());
 }
 
 void steer_no_waypoints(SimState& sim, Unit& u) {

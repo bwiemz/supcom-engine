@@ -493,14 +493,11 @@ void Navigator::advance_motion_node() {
     if (!has_spline_) return; // the motion keeps what it holds
     const path::Node* node = spline_.advance();
     motion_node_set_ = node != nullptr;
+    motion_node_stops_ = spline_.braking_forward() && !spline_.empty();
     if (node) motion_node_ = *node;
 }
 
 void Navigator::drive_spline(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
-    if (unit.immobile()) {
-        unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
-        return;
-    }
     // No node handed over, or pushed: undriven, it coasts on its velocity (CalcMoveCommon's
     // branch for no node or mIsBeingPushed; Unit::coast_moho).
     // The node stays the motion's till its steering hands over the next (mNextWaypoint).

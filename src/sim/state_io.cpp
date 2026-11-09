@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 107; // 2: entities' wanted loops (M216b);
+constexpr u32 kVersion = 108; // 2: entities' wanted loops (M216b);
                               // 3: emitter overrides (M214d);
                               // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                               // 6: weapons' lead physics;
@@ -143,6 +143,8 @@ constexpr u32 kVersion = 107; // 2: entities' wanted loops (M216b);
                               // 106: a hull's rock: its recoil impulse and tilt, roll damping
                               //      and stability (Unit:RecoilImpulse)
                               // 107: armies' showScore (SetArmyShowScore)
+                              // 108: units' motion target (CUnitMotion's mTargetPosition) and
+                              //      CalcMoveCommon result; a braking spline's PPS_1 nodes
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a

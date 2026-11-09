@@ -30,6 +30,8 @@
 #include "renderer/renderer.hpp"
 #include "renderer/terrain_preview.hpp"
 #include "renderer/world_shapes.hpp"
+#include "sim/bone_data.hpp"
+#include "sim/entity.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/category_expr.hpp"
 #include "sim/lua_bytes.hpp"
@@ -50,6 +52,7 @@
 #include "vfs/virtual_file_system.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <unordered_set>
 #include <optional>
@@ -345,9 +348,109 @@ static int worldview_Project(lua_State* L) {
     return 1;
 }
 
+/// WorldView:ProjectMultiple(vectors): each world point of the table where
+/// Project puts it on the view, under its own key, as a plain {x, y} (faf-re
+/// cfunc_CUIWorldViewProjectMultipleL). A view without a camera answers
+/// nothing, as Moho's does.
 static int worldview_ProjectMultiple(lua_State* L) {
-    // Return empty table for now (rarely used)
+    if (lua_gettop(L) != 2) {
+        return arg_count_error(L, "ProjectMultiple", 2, lua_gettop(L));
+    }
+    if (!lua_istable(L, 2)) {
+        luaL_argerror(L, 2, "table expected.");
+    }
+    auto* wv = check_world_view(L);
+    if (!wv || !wv->camera()) {
+        return 0;
+    }
+    size_world_view(L, wv);
     lua_newtable(L);
+    const int result = lua_gettop(L);
+    lua_pushnil(L);
+    while (lua_next(L, 2) != 0) {
+        // A value that isn't a table is the point 0, 0, 0, as Moho reads it.
+        f32 at[3] = {};
+        if (lua_istable(L, -1)) {
+            for (int i = 0; i < 3; ++i) {
+                lua_rawgeti(L, -1, i + 1);
+                at[i] = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+            }
+        }
+        f32 sx = 0, sy = 0;
+        wv->project(at[0], at[1], at[2], sx, sy);
+        lua_pushvalue(L, -2); // its key
+        lua_newtable(L);
+        lua_pushnumber(L, sx);
+        lua_rawseti(L, -2, 1);
+        lua_pushnumber(L, sy);
+        lua_rawseti(L, -2, 2);
+        lua_rawset(L, result);
+        lua_pop(L, 1); // the value; the key stays for lua_next
+    }
+    return 1;
+}
+
+/// WorldView:GetScreenPos(unit): the view's pixel under the unit, as Moho's
+/// gives it (faf-re cfunc_CUIWorldViewGetScreenPosL): its position as the
+/// UI's tick has it, projected and floored. Nil for a unit without a mesh,
+/// one whose mesh's box is outside the view's frustum, or whose point is off
+/// the view.
+static int worldview_GetScreenPos(lua_State* L) {
+    if (lua_gettop(L) != 2) {
+        return arg_count_error(L, "(vector2f|nil) = GetScreenPos(unit)", 2, lua_gettop(L));
+    }
+    auto* wv = check_world_view(L);
+    const sim::EntityRecord* r = user_unit_record(L, 2);
+    const sim::SimState* sim = r ? sim::get_sim(L) : nullptr;
+    const sim::Entity* e = sim ? sim->entity_registry().find(r->id) : nullptr;
+    const sim::BoneData* model = e ? e->bone_data() : nullptr;
+    if (!wv || !wv->camera() || !model || !model->mesh_bounds) {
+        lua_pushnil(L);
+        return 1;
+    }
+    size_world_view(L, wv);
+    const f32 w = static_cast<f32>(wv->viewport_width());
+    const f32 h = static_cast<f32>(wv->viewport_height());
+    if (w <= 0.0f || h <= 0.0f) {
+        lua_pushnil(L);
+        return 1;
+    }
+    // The mesh's box in the world (Moho's mesh instance's), from its bounds
+    // scaled, turned and placed as the tick has the unit.
+    const sim::MeshBounds& m = *model->mesh_bounds;
+    const sim::Vector3 s{model->model_scale * r->scale_x, model->model_scale * r->scale_y,
+                         model->model_scale * r->scale_z};
+    constexpr f32 kFar = std::numeric_limits<f32>::max();
+    std::array<f32, 3> lo{kFar, kFar, kFar};
+    std::array<f32, 3> hi{-kFar, -kFar, -kFar};
+    for (int corner = 0; corner < 8; ++corner) {
+        const sim::Vector3 local{((corner & 1) != 0 ? m.hi.x : m.lo.x) * s.x,
+                                 ((corner & 2) != 0 ? m.hi.y : m.lo.y) * s.y,
+                                 ((corner & 4) != 0 ? m.hi.z : m.lo.z) * s.z};
+        const sim::Vector3 turned = sim::quat_rotate(r->orientation, local);
+        const std::array<f32, 3> at{r->position.x + turned.x, r->position.y + turned.y,
+                                    r->position.z + turned.z};
+        for (size_t i = 0; i < 3; ++i) {
+            lo[i] = std::min(lo[i], at[i]);
+            hi[i] = std::max(hi[i], at[i]);
+        }
+    }
+    const renderer::Frustum frustum(wv->camera()->view_proj(w / h));
+    f32 sx = 0;
+    f32 sy = 0;
+    if (!frustum.is_box_visible(lo, hi) ||
+        !wv->project(r->position.x, r->position.y, r->position.z, sx, sy)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    sx = std::floor(sx);
+    sy = std::floor(sy);
+    if (sx < 0.0f || sx > w || sy < 0.0f || sy > h) {
+        lua_pushnil(L);
+        return 1;
+    }
+    push_vector2(L, sx, sy);
     return 1;
 }
 
@@ -2551,6 +2654,7 @@ void register_user_bindings(LuaState& state) {
                           {"__init", worldview_init},
                           {"Project", worldview_Project},
                           {"ProjectMultiple", worldview_ProjectMultiple},
+                          {"GetScreenPos", worldview_GetScreenPos},
                           {"Register", worldview_Register},
                       });
     add_class_methods(L, "camera_methods",

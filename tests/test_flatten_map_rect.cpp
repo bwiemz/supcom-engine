@@ -47,6 +47,18 @@ std::unique_ptr<osc::map::Terrain> sea() {
                                                true);
 }
 
+/// Level at 7900 units but for the corners of cell (10, 10): SCMP_013's of cell (223, 126), under
+/// the first factory of 0908222118_Winter_Duel.
+std::unique_ptr<osc::map::Terrain> winter_duel_cell() {
+    std::vector<osc::u16> heights(65 * 65, 7900);
+    heights[10 * 65 + 10] = 7909;
+    heights[10 * 65 + 11] = 7915;
+    heights[11 * 65 + 10] = 7902;
+    heights[11 * 65 + 11] = 7911;
+    return std::make_unique<osc::map::Terrain>(osc::map::Heightmap(64, 64, kScale, heights), 0.0f,
+                                               false);
+}
+
 struct World {
     osc::lua::LuaState state;
     osc::blueprints::BlueprintStore store{state.raw()};
@@ -69,6 +81,40 @@ struct World {
                                                              static_cast<osc::u32>(z));
     }
 };
+
+/// Unit blueprint `bp` (a Lua table with its BlueprintId), its units made by the script class
+/// `script` (a Lua expression).
+void add_unit_type(World& w, const std::string& bp, const std::string& script) {
+    lua_State* L = w.state.raw();
+    REQUIRE(w.state.do_string("return " + bp).ok());
+    lua_pushstring(L, "BlueprintId");
+    lua_rawget(L, -2);
+    const std::string id = lua_tostring(L, -1);
+    lua_pop(L, 1);
+    w.store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+    lua_pop(L, 1);
+    w.store.expose_to_lua(L);
+    REQUIRE(w.state.do_string("UnitClass = " + script + " UnitClass.__index = UnitClass").ok());
+    lua_pushstring(L, "__osc_unit_script_classes");
+    lua_newtable(L);
+    lua_pushstring(L, id.c_str());
+    lua_getglobal(L, "UnitClass");
+    lua_rawset(L, -3);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
+const char* const kPlain = "setmetatable({}, {__index = moho.unit_methods})";
+
+f32 unit_y(World& w) {
+    f32 y = -1.0f;
+    w.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) { y = e.pending_position().y; });
+    return y;
+}
+
+void tick(World& w) {
+    lua_settop(w.state.raw(), 0);
+    w.sim.tick();
+}
 
 } // namespace
 
@@ -101,35 +147,69 @@ TEST_CASE("FlattenMapRect stops short of the map's last points and truncates to 
     CHECK(w.sim.terrain()->flattenings().size() == 1);
 }
 
-TEST_CASE("FlattenMapRect sets a land unit about the rect on the new ground", "[terrain]") {
+TEST_CASE("FlattenMapRect sets a land unit about the rect on the new ground on its next move",
+          "[terrain]") {
+    osc::sim::GameSetup game;
+    game.scenario = "/maps/test/test_scenario.lua";
+    game.seed = 3;
     World w;
-    lua_State* L = w.state.raw();
-    REQUIRE(w.state
-                .do_string("return {BlueprintId = 'tank', Categories = {'LAND'},"
-                           " Defense = {MaxHealth = 100}, Footprint = {SizeX = 1, SizeZ = 1},"
-                           " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 1}}")
-                .ok());
-    w.store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
-    lua_pop(L, 1);
-    w.store.expose_to_lua(L);
-    REQUIRE(w.state
-                .do_string("Plain = setmetatable({}, {__index = moho.unit_methods})"
-                           " Plain.__index = Plain")
-                .ok());
-    lua_pushstring(L, "__osc_unit_script_classes");
-    lua_newtable(L);
-    lua_pushstring(L, "tank");
-    lua_getglobal(L, "Plain");
-    lua_rawset(L, -3);
-    lua_rawset(L, LUA_REGISTRYINDEX);
+    w.sim.set_game_setup(game);
+    add_unit_type(w,
+                  "{BlueprintId = 'tank', Categories = {'LAND'}, Defense = {MaxHealth = 100},"
+                  " Footprint = {SizeX = 1, SizeZ = 1}, SizeX = 1, SizeY = 1, SizeZ = 1,"
+                  " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 1}}",
+                  kPlain);
+    REQUIRE(w.state.do_string("CreateUnit('tank', 1, 30.5, 30, 30.5)").ok());
+    tick(w);
+    const f32 on_slope = unit_y(w);
+    REQUIRE(on_slope > 29.0f);
+    REQUIRE(w.state.do_string("FlattenMapRect(28, 28, 4, 4, 12)").ok());
+    CHECK(unit_y(w) == on_slope);
+    tick(w);
+    CHECK(unit_y(w) == 12.0f);
+}
+
+TEST_CASE("With the default pathing FlattenMapRect sets a land unit on the new ground at once",
+          "[terrain]") {
+    World w;
+    w.sim.set_moho_pathing(false);
+    add_unit_type(w,
+                  "{BlueprintId = 'tank', Categories = {'LAND'}, Defense = {MaxHealth = 100},"
+                  " Footprint = {SizeX = 1, SizeZ = 1}, SizeX = 1, SizeY = 1, SizeZ = 1,"
+                  " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 1}}",
+                  kPlain);
     REQUIRE(w.state.do_string("CreateUnit('tank', 1, 30.5, 30, 30.5)").ok());
     REQUIRE(w.state.do_string("FlattenMapRect(28, 28, 4, 4, 12)").ok());
-    int tanks = 0;
-    w.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
-        ++tanks;
-        CHECK(e.pending_position().y == 12.0f);
-    });
-    CHECK(tanks == 1);
+    CHECK(unit_y(w) == 12.0f);
+}
+
+TEST_CASE("FlattenMapRect warps a structure about the rect onto the new ground at once",
+          "[terrain]") {
+    World w;
+    add_unit_type(w,
+                  "{BlueprintId = 'wall', Categories = {'STRUCTURE'}, Defense = {MaxHealth = 100},"
+                  " Footprint = {SizeX = 1, SizeZ = 1}, SizeX = 1, SizeY = 1, SizeZ = 1,"
+                  " Physics = {MotionType = 'RULEUMT_None'}}",
+                  kPlain);
+    REQUIRE(w.state.do_string("CreateUnit('wall', 1, 30.5, 30, 30.5)").ok());
+    REQUIRE(unit_y(w) == 30.5f);
+    REQUIRE(w.state.do_string("FlattenMapRect(28, 28, 4, 4, 12)").ok());
+    CHECK(unit_y(w) == 12.0f);
+}
+
+TEST_CASE("A structure flattening its skirt stands at its height cut to the heightfield's unit",
+          "[terrain]") {
+    World w(winter_duel_cell());
+    add_unit_type(w,
+                  "{BlueprintId = 'factory', Categories = {'STRUCTURE'},"
+                  " Defense = {MaxHealth = 100}, Footprint = {SizeX = 1, SizeZ = 1},"
+                  " SizeX = 1, SizeY = 1, SizeZ = 1, Physics = {MotionType = 'RULEUMT_None'}}",
+                  "setmetatable({OnCreate = function(self)"
+                  " FlattenMapRect(8, 8, 5, 5, moho.entity_methods.GetPosition(self)[2]) end},"
+                  " {__index = moho.unit_methods})");
+    REQUIRE(w.sim.terrain()->get_terrain_height(10.5f, 10.5f) == 61.791015625f);
+    REQUIRE(w.state.do_string("CreateUnit('factory', 1, 10.5, 0, 10.5)").ok());
+    CHECK(unit_y(w) == 61.7890625f); // retail's, 0x42772800
 }
 
 TEST_CASE("A load restores the saved game's flattened ground over the boot's", "[terrain]") {

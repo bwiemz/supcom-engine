@@ -1034,6 +1034,7 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
         --stun_ticks_;
     }
     drove_ = false;
+    common_move_ = CommonMove::None;
     const Vector3 from = pending_position();
     const u32 snaps = snap_serial();
     const f32 crossing = layer_transition_ticks_;
@@ -1047,13 +1048,15 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
     const bool crossed = crossing != 0.0f || in_layer_transition();
     if (crossed) {
         motion_step_ = layer_transition_step_; // its velocity, kept while it crosses
+    } else if (!can_fly() && (immobile_ || is_stunned())) {
+        motion_step_ = motion_velocity_;
     } else if (snap_serial() == snaps) {
         const Vector3& to = pending_position();
         motion_step_ = {to.x - from.x, to.y - from.y, to.z - from.z};
     }
     // Moho raises the motion events at the end of CalcMove*, before UpdateManipulators.
     if (goes_on && !is_being_built()) {
-        update_motion_horz(ctx.L, crossed);
+        update_motion_horz(ctx.L, crossed, from);
         update_motion_turn(ctx.L);
         if (!in_registry()) {
             return;
@@ -1207,13 +1210,24 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     }
     // Moho's CUnitMotion::CalcMoveCommon: a unit on a layer its motion type can't be on loses 1%
     // of its health a tick, moving or not, unless being built, carried, falling or flying.
-    if (is_mobile() && !can_fly() && !is_being_built() && !is_crashing() && !parent_entity_id() &&
-        !on_valid_layer()) {
+    const bool off_layer = is_mobile() && !can_fly() && !is_being_built() && !is_crashing() &&
+                           !parent_entity_id() && !on_valid_layer();
+    if (off_layer) {
         set_health(health() - max_health() * 0.0099999998f);
         if (health() <= 0.0f && ctx.sim) {
             ctx.sim->kill_unit(*this, "");
             return false;
         }
+    }
+    // Moho's MotionTick: a stunned or immobile unit's motion only brakes (CalcMoveCommon), and
+    // doesn't MoveTo.
+    if (immobile_ || is_stunned()) {
+        if (!can_fly()) {
+            face_weapons_work(dt, ctx.registry, true);
+            const bool moved = !off_layer && brake_in_place(ctx.sim && ctx.sim->moho_pathing());
+            common_move_ = moved ? CommonMove::Moved : CommonMove::Stood;
+        }
+        return true;
     }
     bool flown = step_course(dt, ctx);
     if (!in_registry()) {
@@ -1221,7 +1235,7 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     }
 
     // Stopped, its hull turns to its weapons' work (Moho's CalcMoveCommon).
-    face_weapons_work(dt, ctx.registry);
+    face_weapons_work(dt, ctx.registry, false);
     if (turned_in_place_ && ctx.terrain && snaps_to_ground()) {
         stand_on_ground(ctx.terrain, pending_position(), pending_orientation());
     }
@@ -1254,6 +1268,9 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
                 add_impulse({back.x * scale, 0, back.z * scale}, false);
             }
         }
+    }
+    if (moho && !can_fly() && !is_air_unit()) {
+        common_move_ = moved ? CommonMove::Moved : CommonMove::Stood;
     }
     surface_collision_ = false; // CalcMoveLand has met what it touched
     // A sub dives or surfaces, moving or not (M206o).
@@ -2969,6 +2986,7 @@ void Unit::warp(const map::Terrain* terrain, const Vector3& at, lua_State* L) {
     }
     set_position(p);
     motion_pos_ = p;
+    motion_target_ = p;
     note_snap(); // a jump, not drawn sliding there
     place_now();
     // CUnitMotion::Warp advances its coords twice: no velocity is left to coast on.
@@ -3269,11 +3287,12 @@ const char* motion_horz_name(Unit::MotionHorz motion) {
 /// Moho reports a unit's horizontal motion as it starts, reaches top speed,
 /// slows and stops. Retail's Unit script plays move sounds and effects on it
 /// and passes it to every weapon (FiringRandomnessWhileMoving, packing to
-/// move). Ground units here reach full speed at once, so a start is Cruise
-/// then TopSpeed a tick later, and a stop is Stopping then Stopped.
-void Unit::update_motion_horz(lua_State* L, bool crossing) {
+/// move).
+void Unit::update_motion_horz(lua_State* L, bool crossing, const Vector3& from) {
     MotionHorz next = motion_horz_;
-    if (is_air_unit()) {
+    if (can_fly() && (immobile_ || is_stunned())) {
+        next = MotionHorz::Stopped;
+    } else if (is_air_unit()) {
         const bool moving = current_airspeed_ > 0.01f;
         const bool at_top = current_airspeed_ >= 0.99f * max_airspeed_;
         switch (motion_horz_) {
@@ -3287,6 +3306,8 @@ void Unit::update_motion_horz(lua_State* L, bool crossing) {
             break;
         case MotionHorz::Stopping: next = moving ? MotionHorz::Cruise : MotionHorz::Stopped; break;
         }
+    } else if (common_move_ != CommonMove::None) {
+        next = common_motion_horz(from);
     } else {
         // From its speed: at rest, braking to a halt, at full speed, or on
         // the way up to it.
@@ -3327,6 +3348,24 @@ void Unit::update_motion_horz(lua_State* L, bool crossing) {
         }
     }
     lua_settop(L, top);
+}
+
+Unit::MotionHorz Unit::common_motion_horz(const Vector3& at) const {
+    if (common_move_ == CommonMove::Stood) {
+        return MotionHorz::Stopped;
+    }
+    const Vector3& v = motion_velocity_;
+    if (std::sqrt((v.z * v.z + v.y * v.y) + v.x * v.x) > nav_speed() * 0.080000006f) {
+        return MotionHorz::TopSpeed;
+    }
+    const f32 dx = motion_target_.x - at.x;
+    const f32 dz = motion_target_.z - at.z;
+    const bool near = effective_speed() > std::sqrt(dx * dx + dz * dz) ||
+                      (!immobile_ && !is_stunned() && navigator_.motion_node_stops());
+    if (motion_horz_ != MotionHorz::Stopped && near) {
+        return MotionHorz::Stopping;
+    }
+    return MotionHorz::Cruise;
 }
 
 namespace {
@@ -3398,7 +3437,7 @@ void Unit::add_impulse(const Vector3& impulse, bool moving) {
 
 bool Unit::coast_moho(const map::Terrain* terrain) {
     target_speed_ = 0;
-    if (immobile_ || parent_entity_id() || !has_motion()) {
+    if (parent_entity_id() || !has_motion()) {
         ground_speed_ = 0;
         motion_velocity_ = {};
         return false;
@@ -3414,17 +3453,7 @@ bool Unit::coast_moho(const map::Terrain* terrain) {
             stand_on_ground(terrain, pending_position(), pending_orientation(), false);
         return false;
     }
-    const f32 rate = drive_.max_brake > 0 ? drive_.max_brake : drive_.max_accel;
-    const f32 brake = rate * accel_mult_ * 0.0099999998f;
-    // Its velocity damped to 0.8, and braked against by up to its brake.
-    Vector3 against{-v.x, -v.y, -v.z};
-    const f32 len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-    if (len > brake && len > 0) {
-        const f32 scale = brake / len;
-        against = {against.x * scale, against.y * scale, against.z * scale};
-    }
-    v = {against.x + v.x * 0.80000001f, against.y + v.y * 0.80000001f,
-         against.z + v.z * 0.80000001f};
+    v = braked(v);
     motion_velocity_ = v;
     Vector3 p = pending_position();
     p.x += v.x;
@@ -3440,12 +3469,58 @@ bool Unit::coast_moho(const map::Terrain* terrain) {
     return true;
 }
 
+Vector3 Unit::braked(const Vector3& v) const {
+    const f32 rate = drive_.max_brake > 0 ? drive_.max_brake : drive_.max_accel;
+    const f32 brake = rate * accel_mult_ * 0.0099999998f;
+    // Its velocity damped to 0.8, and braked against by up to its brake.
+    Vector3 against{-v.x, -v.y, -v.z};
+    const f32 len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (len > brake && len > 0) {
+        const f32 scale = brake / len;
+        against = {against.x * scale, against.y * scale, against.z * scale};
+    }
+    return {against.x + v.x * 0.80000001f, against.y + v.y * 0.80000001f,
+            against.z + v.z * 0.80000001f};
+}
+
+bool Unit::brake_in_place(bool moho) {
+    target_speed_ = 0;
+    const Vector3& v = motion_velocity_;
+    if (!moho || parent_entity_id() || !has_motion() ||
+        (v.x * v.x + v.y * v.y + v.z * v.z < 0.000001f && !turned_in_place_)) {
+        motion_velocity_ = {};
+        motion_pos_ = pending_position();
+        ground_speed_ = 0;
+        return turned_in_place_;
+    }
+    motion_velocity_ = braked(v);
+    const Vector3& p = pending_position();
+    motion_pos_ = {p.x + motion_velocity_.x, p.y + motion_velocity_.y, p.z + motion_velocity_.z};
+    const f32 heading = quat_yaw(pending_orientation());
+    ground_speed_ = (motion_velocity_.x * osc::dmath::sin(heading) +
+                     motion_velocity_.z * osc::dmath::cos(heading)) *
+                    10.0f;
+    return true;
+}
+
+void Unit::stop_motion(bool through) {
+    const Vector3& p = position();
+    const Vector3& v = motion_velocity_;
+    const f32 len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (!through || len == 0.0f) {
+        motion_target_ = p;
+        return;
+    }
+    const f32 ahead = 100.0f / len;
+    motion_target_ = {p.x + v.x * ahead, p.y + v.y * ahead, p.z + v.z * ahead};
+}
+
 bool Unit::coast(f64 dt, const map::Terrain* terrain) {
     target_speed_ = 0;
     if (ground_speed_ == 0) {
         return false;
     }
-    if (immobile_ || parent_entity_id()) {
+    if (parent_entity_id()) {
         ground_speed_ = 0;
         return false;
     }
