@@ -171,13 +171,12 @@ public:
     /// Render only the UI layer (no 3D scene, no bloom).
     /// Used during the loading screen and front end, when there is no world.
     void render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry);
-    /// The UI's frame ahead of the draw (OE-134): its controls' frame
-    /// callbacks, its events and (`world`: with a world drawn) its
-    /// animations, which run its scripts, and they may read the live sim:
-    /// run while no tick runs on the sim's thread. The frame's step is taken
-    /// here; the next render or render_ui_only draws with it and doesn't run
-    /// them again.
-    void run_ui_frame(lua_State* L, ui::UIControlRegistry* ui_registry, bool world);
+    /// The UI's frame ahead of the draw (OE-134): its controls' frames
+    /// (their callbacks and animations) and its events, which run its
+    /// scripts, and they may read the live sim: run while no tick runs on
+    /// the sim's thread. The frame's step is taken here; the next render or
+    /// render_ui_only draws with it and doesn't run them again.
+    void run_ui_frame(lua_State* L, ui::UIControlRegistry* ui_registry);
     /// A frame drawn while the sim's ticks run (its UI scripts may read the
     /// live sim): the frame's step is taken, and its UI frame callbacks,
     /// events and animations wait for the next frame that runs them.

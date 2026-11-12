@@ -3402,16 +3402,14 @@ void Renderer::skip_ui_frame() {
     ui_ran_early_ = true;
 }
 
-void Renderer::run_ui_frame(lua_State* L, ui::UIControlRegistry* ui_registry, bool world) {
+void Renderer::run_ui_frame(lua_State* L, ui::UIControlRegistry* ui_registry) {
     scripts_suspended_ = false;
     ui_ran_early_ = false;
     early_dt_ = take_frame_dt();
     ui_ran_early_ = true;
     if (!ui_registry || !L) return;
-    if (early_dt_ > 0.0f && early_dt_ < 1.0f) {
-        if (world) ui_renderer_.advance_animations(L, *ui_registry, early_dt_);
+    if (early_dt_ > 0.0f && early_dt_ < 1.0f)
         ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(early_dt_));
-    }
     ui_dispatch_.dispatch_events(L, *ui_registry);
 }
 
@@ -3463,10 +3461,8 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         const f32 dt = frame_dt_;
         total_time_ += dt;
         if (!ui_ran_early_) {
-            if (dt > 0.0f && dt < 1.0f) {
-                ui_renderer_.advance_animations(L, *ui_registry, dt);
+            if (dt > 0.0f && dt < 1.0f)
                 ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(dt));
-            }
             ui_dispatch_.dispatch_events(L, *ui_registry);
         }
         ui_ran_early_ = false;

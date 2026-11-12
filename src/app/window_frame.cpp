@@ -142,8 +142,7 @@ bool App::Window::frame() {
             // The UI's frame callbacks and events run their scripts, which
             // may read the live sim: here, before its tick starts, not in
             // the draw
-            if (drawn)
-                renderer.run_ui_frame(ui_lua_state.raw(), &ui_registry, sim_state != nullptr);
+            if (drawn) renderer.run_ui_frame(ui_lua_state.raw(), &ui_registry);
             // Every Lua-backed renderer preparation finishes before the next job.
         });
     }

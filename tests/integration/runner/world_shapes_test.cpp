@@ -177,7 +177,7 @@ void test_world_shapes(TestContext& ctx) {
         }
         t.check(red, "the busy draw retains the prepared custom line");
     }
-    r.run_ui_frame(L, registry, true);
+    r.run_ui_frame(L, registry);
     (void)shots.grab();
     t.check(counter("__osc_shapes_calls") > settled_calls && counter("__osc_shapes_layout") > 0,
             "custom rendering and dirty layout resume after the sim settles");
@@ -251,7 +251,7 @@ void test_world_shapes(TestContext& ctx) {
     (void)shots.grab();
     t.check(r.rendered_terrain()->get_terrain_height(x, z) == published_height,
             "a busy draw retains its published terrain heights");
-    r.run_ui_frame(L, registry, true);
+    r.run_ui_frame(L, registry);
     (void)shots.grab();
     t.check(r.rendered_terrain()->get_terrain_height(x, z) ==
                 ctx.sim.terrain()->get_terrain_height(x, z),
