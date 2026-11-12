@@ -52,6 +52,14 @@ inline Quaternion quat_normalized_moho(const Quaternion& q) {
     return {q.x * inv, q.y * inv, q.z * inv, q.w * inv};
 }
 
+/// MultiplyQuat (0x0054BCDC) as Moho groups each lane's sum.
+inline Quaternion quat_multiply_moho(const Quaternion& a, const Quaternion& b) {
+    return {((a.x * b.w + a.y * b.z) + a.w * b.x) - a.z * b.y,
+            ((a.z * b.x + a.y * b.w) + a.w * b.y) - a.x * b.z,
+            ((a.x * b.y + a.z * b.w) + a.w * b.z) - a.y * b.x,
+            ((a.w * b.w - a.x * b.x) - a.y * b.y) - a.z * b.z};
+}
+
 /// Multiply two quaternions (Hamilton product).
 inline Quaternion quat_multiply(const Quaternion& a, const Quaternion& b) {
     return {
