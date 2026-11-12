@@ -10,6 +10,16 @@ SetData histogram_SetData  # Moho's Histogram control draws nothing
 SetXIncrement histogram_SetXIncrement  # Moho's Histogram control draws nothing
 SetYIncrement histogram_SetYIncrement  # Moho's Histogram control draws nothing
 UpdateSteamLobby lobby_UpdateSteamLobby  # Steam lobby metadata; there is no Steam here
+BeginLoggingStats l_BeginLoggingStats  # SupComMark's stat logging, a profiling aid; no script calls it
+EndLoggingStats l_EndLoggingStats  # as BeginLoggingStats; its exit-with-a-score path has no caller
+BlueprintLoaderUpdateProgress l_BlueprintLoaderUpdateProgress  # Moho's background loader's pause/abort checkpoint; the engine loads blueprints in the foreground
+BlueprintLoaderUpdateProgress stub_noop  # the sim's: Moho's does nothing outside a blueprint load
+SpecFootprints stub_noop  # the sim's: Moho's returns outside a rules load; RuleInit's call reaches the blueprint phase's
+InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService  # Steam; there is no Steam here
+RefreshSteamGames l_RefreshSteamGames  # Steam; there is no Steam here
+IsKnownFake blip_IsKnownFake  # only a jammer's fakes carry KnownFake, and scripts get only real units' blips (GetBlip)
+PrefetchSession Command  # a background preload that only shortens the launch; the engine loads at launch
+SimConExecute stub_noop  # sim Lua driving the local console; no retail or FAF script calls it (moho-sim-console)
 #
 # Fallbacks for functions retail's and FAF's Lua define themselves: the
 # script's own wins, and these only stop a nil call where it is missing.
