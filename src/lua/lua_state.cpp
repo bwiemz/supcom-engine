@@ -74,18 +74,6 @@ LuaState::LuaState() {
     }
     lua_pop(L_, 1);
 
-    // Add debug.allocatedsize stub (FA's memory profiler uses it)
-    lua_getglobal(L_, "debug");
-    if (lua_istable(L_, -1)) {
-        lua_pushstring(L_, "allocatedsize");
-        lua_pushcfunction(L_, [](lua_State* L) -> int {
-            lua_pushnumber(L, 0);
-            return 1;
-        });
-        lua_rawset(L_, -3);
-    }
-    lua_pop(L_, 1);
-
     // LuaPlus compatibility: create per-type metatables for primitive types.
     // LuaPlus allows setting attributes on nil/bool/number/string; config.lua
     // expects getmetatable() on these to return a table (so it can lock them).

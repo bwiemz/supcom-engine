@@ -16,6 +16,9 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
+#include "lobject.h"
+#include "lstate.h"
+
 
 
 static void settabss (lua_State *L, const char *i, const char *v) {
@@ -275,7 +278,61 @@ static int errorfb (lua_State *L) {
 }
 
 
+/*
+** OpenSupCom: LuaPlus's debug.allocatedsize, as FA's exe has it
+** (0x0097DBC0, with the size of one value at 0x0097DAB0). Each argument
+** is replaced by the bytes its object takes, rounded up to 8, with
+** LuaPlus's struct sizes; a value that is not a collectable object (nil,
+** a boolean, a number, a light userdata) takes 0. Its arguments come back,
+** one size each. FAF's scripts read it: InternalSaveGame cuts a save's
+** name whose string is over 260 bytes, and repr and profile report sizes.
+*/
+static int allocated_size (const TObject *o) {
+  int bytes;
+  switch (ttype(o)) {
+    case LUA_TSTRING:  /* the TString and its characters with their '\0' */
+      bytes = (int)tsvalue(o)->tsv.len + 21;
+      break;
+    case LUA_TTABLE: {  /* the Table, its array and its own nodes */
+      const Table *h = hvalue(o);
+      bytes = 36 + 8 * h->sizearray + (h->lsizenode ? 20 * (1 << h->lsizenode) : 0);
+      break;
+    }
+    case LUA_TFUNCTION: {  /* a C closure's upvalues are values, a Lua one's pointers */
+      const Closure *cl = clvalue(o);
+      bytes = cl->c.isC ? 64 + 8 * (int)cl->c.nupvalues : 28 + 4 * (int)cl->l.nupvalues;
+      break;
+    }
+    case LUA_TUSERDATA:  /* its block and LuaPlus's header */
+      bytes = (int)uvalue(o)->uv.len + 16;
+      break;
+    case LUA_TTHREAD: {  /* the lua_State, its stack and its CallInfo array */
+      const lua_State *th = thvalue(o);
+      bytes = 72 + 8 * th->stacksize +
+              (int)((const char *)th->end_ci - (const char *)th->base_ci);
+      break;
+    }
+    default:
+      return 0;
+  }
+  return (bytes + 7) & ~7;
+}
+
+static int allocatedsize (lua_State *L) {
+  int n = lua_gettop(L);
+  int i;
+  for (i = 0; i < n; i++) {
+    TObject *o = L->base + i;
+    /* first: setnvalue makes o a number before it takes the value */
+    const lua_Number size = cast(lua_Number, allocated_size(o));
+    setnvalue(o, size);
+  }
+  return n;
+}
+
+
 static const luaL_reg dblib[] = {
+  {"allocatedsize", allocatedsize},
   {"getlocal", getlocal},
   {"getinfo", getinfo},
   {"gethook", gethook},

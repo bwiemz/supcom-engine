@@ -1,6 +1,5 @@
 # Lua bindings that do nothing, or answer a constant, yet: "<Lua name> <C++ function>"
 # (tools/check_lua_stubs.py); the user state's stand-ins as "<name> <kind>"
-allocatedsize <lambda>
 ClearFrame Command
 Destroy wlduiprovider_Destroy
 MetaImpact stub_noop
