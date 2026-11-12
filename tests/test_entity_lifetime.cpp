@@ -14,6 +14,7 @@
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
+#include "sim/prop.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -24,6 +25,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <array>
 #include <bit>
 #include <memory>
 #include <vector>
@@ -387,4 +389,130 @@ TEST_CASE("A unit's bone -1 is half its height straight up, however it is tilted
     CHECK(child->position().x == 10.0f);
     CHECK(child->position().y == 2.0f);
     CHECK(child->position().z == 20.0f);
+}
+
+namespace {
+
+osc::f32 bits(osc::u32 b) {
+    return std::bit_cast<osc::f32>(b);
+}
+
+/// Bone `index` of a mesh, its inverse bind as CAniSkel's: offset, then turn (w, x, y, z).
+osc::sim::BoneData mesh_bone(size_t index, osc::f32 scale, std::array<osc::u32, 3> at,
+                             std::array<osc::u32, 4> turn) {
+    osc::sim::BoneData bones;
+    bones.model_scale = scale;
+    bones.bones.resize(index + 1);
+    bones.bones[index].inverse_bind = {
+        {bits(at[0]), bits(at[1]), bits(at[2])},
+        {bits(turn[1]), bits(turn[2]), bits(turn[3]), bits(turn[0])}};
+    return bones;
+}
+
+template <typename T>
+T* add(SimState& sim, osc::sim::Vector3 at, osc::sim::Quaternion facing = {}) {
+    auto owned = std::make_unique<T>();
+    T* e = owned.get();
+    e->set_position(at);
+    e->set_orientation(facing);
+    sim.entity_registry().register_entity(std::move(owned));
+    return e;
+}
+
+} // namespace
+
+TEST_CASE("What hangs on a prop's bone sits as the original game's", "[sim][attach]") {
+    // Pine06_Big_GroupA's bone 3 and Cactus01_s1's root in their SCMs; the original game's
+    // GetPosition and GetOrientation of each child.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const osc::sim::BoneData pine = mesh_bone(3, 0.08f, {0xc1c23097u, 0x41e15b03u, 0xb3cfef8au},
+                                              {0x3f25f669u, 0x3f25f669u, 0x3e908f7cu, 0x3e908f7cu});
+    const osc::sim::BoneData cactus =
+        mesh_bone(0, 0.018f, {0x80000000u, 0x80000000u, 0x80000000u},
+                  {0x3f3504f3u, 0x3f3504f3u, 0x80000000u, 0x80000000u});
+    auto* group = add<osc::sim::Prop>(sim, {702.5f, 11.6523438f, 416.5f},
+                                      {0.0f, 0.258819044f, 0.0f, 0.965925813f});
+    group->set_bone_data(&pine);
+    auto* bare = add<osc::sim::Shield>(sim, {});
+    bare->set_parent(group->entity_id(), 3);
+    auto* boxed = add<osc::sim::Prop>(sim, {});
+    boxed->set_default_collision_shape(
+        {osc::sim::CollisionShapeType::BOX, 0.0f, 0.125f, 0.0f, 0.05f, 0.125f, 0.05f});
+    boxed->set_parent(group->entity_id(), 3);
+    auto* rooted = add<osc::sim::Prop>(sim, {});
+    rooted->set_bone_data(&cactus);
+    rooted->set_parent(group->entity_id(), 3, 0);
+    sim.tick();
+
+    CHECK(bare->position().x == 703.694946f);
+    CHECK(bare->position().y == 11.6523438f);
+    CHECK(bare->position().z == 419.224274f);
+    CHECK(bare->orientation().x == -0.699277401f);
+    CHECK(bare->orientation().y == -0.104933947f);
+    CHECK(bare->orientation().z == -0.104933947f);
+    CHECK(bare->orientation().w == 0.699277401f);
+    CHECK(boxed->position().x == 703.658264f);
+    CHECK(boxed->position().y == 11.6523438f);
+    CHECK(boxed->position().z == 419.343781f);
+    CHECK(rooted->position().x == 703.694946f);
+    CHECK(rooted->position().z == 419.224274f);
+    CHECK(std::bit_cast<osc::u32>(rooted->orientation().x) == 0u);
+    CHECK(rooted->orientation().y == -0.148398995f);
+    CHECK(std::bit_cast<osc::u32>(rooted->orientation().z) == 0u);
+    CHECK(rooted->orientation().w == 0.988927603f);
+}
+
+TEST_CASE("A prop hung by its own bone from a unit's sits as the original game's",
+          "[sim][attach]") {
+    // URL0001's root and Cactus01_Group1's bone 5 in their SCMs; the original game's
+    // GetPosition and GetOrientation of the group.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    osc::sim::BoneData acu;
+    acu.model_scale = 0.16f;
+    osc::sim::BoneInfo root;
+    root.local_position = root.world_position = {0.0f, bits(0x410449bau), 0.0f};
+    root.local_rotation = root.world_rotation = {bits(0xb4200000u), 0.0f, 0.0f, 1.0f};
+    acu.bones.push_back(root);
+    const osc::sim::BoneData group_bones =
+        mesh_bone(5, 0.018f, {0x3fba0a11u, 0xc16ce3f0u, 0xb29366d2u},
+                  {0x3f263cf5u, 0x3f263cf4u, 0xbe8f49d3u, 0xbe8f49d3u});
+    auto* unit = add<Unit>(sim, {672.5f, 18.6796875f, 346.5f});
+    unit->set_bone_data(&acu);
+    auto* group = add<osc::sim::Prop>(sim, {});
+    group->set_bone_data(&group_bones);
+    group->set_parent(unit->entity_id(), 0, 5);
+    sim.tick();
+
+    CHECK(group->position().x == 672.526184f);
+    CHECK(group->position().y == 19.7360649f);
+    CHECK(group->position().z == 346.5f);
+    CHECK(group->orientation().x == 0.649367452f);
+    CHECK(group->orientation().y == -0.279860139f);
+    CHECK(group->orientation().z == -0.279860079f);
+    CHECK(group->orientation().w == 0.64936775f);
+}
+
+TEST_CASE("A prop's bone in the world is its mesh's rest bone, as the original game's",
+          "[sim][attach]") {
+    // Cactus01_Group1's bones 1 and 5 in its SCM; the original game's GetPosition(bone).
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    osc::sim::BoneData bones = mesh_bone(5, 0.018f, {0x3fba0a11u, 0xc16ce3f0u, 0xb29366d2u},
+                                         {0x3f263cf5u, 0x3f263cf4u, 0xbe8f49d3u, 0xbe8f49d3u});
+    bones.bones[1].inverse_bind = {
+        {bits(0xc02fa4b2u), bits(0xc09ea6f4u), bits(0xb2a8ea1fu)},
+        {bits(0x3f326e66u), bits(0x3df401aeu), bits(0x3df401aeu), bits(0x3f326e64u)}};
+    auto* group = add<osc::sim::Prop>(sim, {722.5f, 22.0722656f, 376.5f});
+    group->set_bone_data(&bones);
+
+    const osc::sim::Vector3 one = group->bone_world_transform(1).position;
+    CHECK(one.x == 722.576233f);
+    CHECK(one.y == 22.0722656f);
+    CHECK(one.z == 376.43222f);
+    const osc::sim::Vector3 five = group->bone_world_transform(5).position;
+    CHECK(five.x == 722.28833f);
+    CHECK(five.y == 22.0722656f);
+    CHECK(five.z == 376.335999f);
 }

@@ -27,6 +27,7 @@
 #include "sim/economy_event.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/pose.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/terrain_types.hpp"
 #include "sim/script_class.hpp"
@@ -5663,35 +5664,67 @@ static int l_CreatePropHPR(lua_State* L) {
     return 1;
 }
 
-// SplitProp(prop, blueprint) -> {props}: a prop of `blueprint` at each of
-// the prop's bones but the root, as tree groups break up into trees; the
-// original goes.
+// SplitProp(prop, blueprint) -> props...: a prop of `blueprint` at each of the
+// prop's bones, as Moho's SplitPropIntoBoneChildren makes them; the original goes.
 static int l_SplitProp(lua_State* L) {
     auto* sim = get_sim(L);
     auto* prop = extract_entity(L, 1);
-    lua_newtable(L);
-    const int result = lua_gettop(L);
-    if (!sim || !prop || prop->destroyed() || lua_type(L, 2) != LUA_TSTRING) return 1;
-    const std::string bp = lua_tostring(L, 2);
-    const auto* bones = prop->bone_data();
-    const i32 count = bones ? bones->bone_count() : 0;
-    int n = 0;
-    for (i32 b = 1; b < count; ++b) {
-        const sim::BoneInfo& bone = bones->bones[static_cast<size_t>(b)];
-        const f32 s = bones->model_scale;
-        const sim::Vector3 offset = sim::quat_rotate(
-            prop->orientation(), sim::Vector3{bone.world_position.x * s, bone.world_position.y * s,
-                                              bone.world_position.z * s});
-        const sim::Vector3 at{prop->position().x + offset.x, prop->position().y + offset.y,
-                              prop->position().z + offset.z};
-        if (sim::spawn_prop(L, *sim, bp, at,
-                            sim::quat_multiply(prop->orientation(), bone.world_rotation), true)) {
-            lua_rawseti(L, result, ++n);
-        } else {
-            lua_pop(L, 1);
-        }
+    if (!sim || !prop || prop->destroyed() || lua_type(L, 2) != LUA_TSTRING) {
+        return 0;
     }
-    // The prop goes, as SplitOnBonesByName's does.
+    const std::string bp = lua_tostring(L, 2);
+    if (!blueprints::push_blueprint(L, bp)) {
+        return 0;
+    }
+    lua_pop(L, 1);
+    const sim::BoneData* bones = prop->bone_data();
+    if (!bones) {
+        return 0;
+    }
+    lua_settop(L, 2);
+    const f32 s = bones->model_scale;
+    const sim::Vector3 scale{s * prop->scale_x(), s * prop->scale_y(), s * prop->scale_z()};
+    const sim::BonePose group{prop->position(), prop->orientation()};
+    int n = 0;
+    for (const sim::BoneInfo& bone : bones->bones) {
+        sim::BonePose local = sim::inverse_moho(bone.inverse_bind);
+        local.position = {local.position.x * scale.x, local.position.y * scale.y,
+                          local.position.z * scale.z};
+        // A quarter turn about X, its zero lanes multiplied in as Moho's: they sign a zero.
+        constexpr f32 k = 0.70710677f;
+        const sim::Quaternion q = local.rotation;
+        local.rotation = {((q.y * 0.0f + q.x * k) + q.w * k) - q.z * 0.0f,
+                          ((q.y * k + q.w * 0.0f) + q.z * k) - q.x * 0.0f,
+                          ((q.x * 0.0f + q.w * 0.0f) + q.z * k) - q.y * k,
+                          ((q.w * k - q.x * k) - q.y * 0.0f) - q.z * 0.0f};
+        const sim::BonePose at = sim::compose_moho(local, group);
+        sim::Prop* child = sim::spawn_prop(L, *sim, bp, at.position, at.rotation, true);
+        if (!child) {
+            lua_pop(L, 1);
+            continue;
+        }
+        ++n;
+        const sim::BoneData* own = child->bone_data();
+        if (!own || !own->mesh_bounds) {
+            continue;
+        }
+        const sim::MeshBounds& mesh = *own->mesh_bounds;
+        const sim::MeshBounds& box = bone.box;
+        const sim::Vector3 sized{((box.hi.x - box.lo.x) * scale.x) / (mesh.hi.x - mesh.lo.x),
+                                 (scale.y * (box.hi.z - box.lo.z)) / (mesh.hi.y - mesh.lo.y),
+                                 (scale.z * (box.hi.y - box.lo.y)) / (mesh.hi.z - mesh.lo.z)};
+        if (own->is_valid(0)) {
+            const sim::Vector3& root = own->bones[0].inverse_bind.position;
+            const sim::Vector3 offset = sim::mult_quad_vec(
+                at.rotation, {sized.x * root.x, sized.y * root.z, sized.z * -root.y});
+            child->set_position(
+                {at.position.x + offset.x, at.position.y + offset.y, at.position.z + offset.z});
+            child->note_snap();
+            child->place_now();
+        }
+        const f32 unit = own->model_scale;
+        child->set_scale(sized.x / unit, sized.y / unit, sized.z / unit);
+    }
     lua_pushstring(L, "Destroy");
     lua_gettable(L, 1);
     if (lua_isfunction(L, -1)) {
@@ -5703,8 +5736,7 @@ static int l_SplitProp(lua_State* L) {
     } else {
         lua_pop(L, 1);
     }
-    lua_settop(L, result);
-    return 1;
+    return n;
 }
 
 // GetReclaimablesInRect(rect) or (x0, z0, x1, z1): the units and props

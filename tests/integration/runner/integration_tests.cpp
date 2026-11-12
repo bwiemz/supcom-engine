@@ -6633,13 +6633,28 @@ void test_prop(TestContext& ctx) {
             {'/env/evergreen/props/trees/groups/pine06_big_groupa_prop.bp', 812.5, 1, 27},
             {'/env/desert/props/trees/groups/manzanita01_group1_prop.bp', 837.5, 1, 13},
         }
-        -- The original game's, probed 2026-11-06.
+        -- The original game's GetPosition and GetOrientation of each group's first four.
         local want = {
-            [1] = {[1] = {737.576233, 386.43222, -5.96046448e-8, -0.168494821, 0, 0.985702574},
-                   [2] = {737.128967, 386.633301, 0, -0.923750579, 0, -0.382994503}},
-            [3] = {[1] = {786.84314, 386.486633, 0, 0, 0, 0.99999994}},
-            [4] = {[2] = {810.403931, 383.617859, 0, 0.00872653536, 0, 0.999961853}},
-            [5] = {[1] = {836.841919, 386.208008, 0, 0.00872653536, 0, 0.999961913}},
+            {'737.576233 13.0136719 386.43222 -5.96046448e-08 -0.168494821 0 0.985702574',
+             '737.128967 13.0136719 386.633301 0 -0.923750579 0 -0.382994503',
+             '737.262756 13.0136719 386.687317 5.96046448e-08 -0.51198256 0 0.858995795',
+             '737.745056 13.0136719 386.07663 0 -0.715209246 0 -0.698910356'},
+            {'762.575073 14.4023438 386.430908 -8.94069672e-08 -0.159886628 0 0.98713541',
+             '762.131348 14.4023438 386.639771 0 -0.927057683 0 -0.374918789',
+             '762.266052 14.4023438 386.691437 2.98023224e-08 -0.50446701 0 0.863430858',
+             '762.73761 14.4023438 386.072418 0 -0.721281111 0 -0.692642391'},
+            {'786.84314 11.3261719 386.486633 0 0 0 0.99999994',
+             '785.454529 11.3261719 383.581726 0 0 0 0.99999994',
+             '787.172729 11.3261719 389.456757 0 -0.399295688 0 0.916822135',
+             '790.64624 11.3261719 391.627167 0 0 0 0.99999994'},
+            {'811.843018 15.6230469 386.498077 0 0.00872653536 0 0.999961853',
+             '810.403931 15.6230469 383.617859 0 0.00872653536 0 0.999961853',
+             '812.224365 15.6230469 389.462006 0 -0.391279787 0 0.920271695',
+             '815.735229 15.6230469 391.571503 0 0.00872653536 0 0.999961853'},
+            {'836.841919 23.84375 386.208008 0 0.00872653536 0 0.999961913',
+             '837.125671 23.84375 386.812775 0 0.00872653536 0 0.999961913',
+             '837.359131 23.84375 385.469208 0 0.00872653536 0 0.999961913',
+             '838.014465 23.84375 384.572845 -1.11351625e-07 -0.548293233 1.01658486e-07 0.836286187'},
         }
         for i, row in groups do
             local x, z = row[2], 386.5
@@ -6655,24 +6670,101 @@ void test_prop(TestContext& ctx) {
             if table.getn(made) ~= row[4] then
                 error(string.format('group %d made %d trees, not %d', i, table.getn(made), row[4]))
             end
-            for j, t in made do
-                local q = t:GetOrientation()
-                if math.abs(q[1]) > 1e-5 or math.abs(q[3]) > 1e-5 then
-                    error(string.format('group %d tree %d is tilted: %.4f %.4f %.4f %.4f', i, j, q[1], q[2], q[3], q[4]))
+            for j, w in want[i] do
+                local p, q = made[j]:GetPosition(), made[j]:GetOrientation()
+                local got = string.format('%.9g %.9g %.9g %.9g %.9g %.9g %.9g', p[1], p[2], p[3], q[1], q[2],
+                                          q[3], q[4])
+                if got ~= w then
+                    error(string.format('group %d tree %d is %s, not %s', i, j, got, w))
                 end
-                local w = want[i] and want[i][j]
-                if w then
-                    local p = t:GetPosition()
-                    local sign = q[4] * w[6] < 0 and -1 or 1
-                    local off = 0
-                    for k = 1, 4 do
-                        off = math.max(off, math.abs(sign * q[k] - w[2 + k]))
-                    end
-                    if off > 1e-5 or math.abs(p[1] - w[1]) > 1e-3 or math.abs(p[3] - w[2]) > 1e-3 then
-                        error(string.format('group %d tree %d at %.6f %.6f turned %.6f %.6f %.6f %.6f', i, j, p[1],
-                                            p[3], q[1], q[2], q[3], q[4]))
-                    end
+            end
+        end
+    )");
+    lua_check("Test 15b: the props SplitProp makes stand as the original game's", R"(
+        local groups = {
+            {'/env/desert/props/trees/groups/cactus01_group1_prop.bp', 722.5, 0,
+             '/env/desert/props/trees/cactus01_s1_prop.bp', 42},
+            {'/env/evergreen/props/trees/groups/pine06_big_groupa_prop.bp', 742.5, 30,
+             '/env/evergreen/props/trees/pine06_big_v1_prop.bp', 28},
+            {'/env/desert/props/trees/groups/manzanita01_group1_prop.bp', 762.5, 200,
+             '/env/desert/props/trees/manzanita01_s1_prop.bp', 14},
+        }
+        -- The original game's GetPosition and GetOrientation.
+        local want = {
+            {[1] = '722.492371 14.5839109 388.61615 0 0 0 0.99999994',
+             [2] = '722.576233 14.4707031 388.43222 -5.96046448e-08 -0.168494821 0 0.985702574',
+             [3] = '722.128967 14.4707031 388.633301 0 -0.923750579 0 -0.382994503',
+             [42] = '722.859741 14.4707031 389.073425 5.96046448e-08 -0.51198256 0 0.858995795'},
+            {[1] = '743.009583 13.4616776 388.675507 0 0.258819014 0 0.965925753',
+             [2] = '741.924438 12.4980469 388.816833 0 0.258819014 0 0.965925753',
+             [3] = '739.269409 12.4980469 386.995422 0 0.258819014 0 0.965925753',
+             [28] = '742.414978 12.4980469 386.780884 0 0.258819014 0 0.965925753'},
+            {[1] = '762.670654 14.407773 389.019012 0 0.98480767 0 -0.173648179',
+             [2] = '763.217285 14.2402344 388.561829 -0.122787826 0.696364164 -0.696364284 -0.122787803',
+             [3] = '762.752075 14.2402344 388.082397 -0.122787826 0.696364164 -0.696364284 -0.122787803',
+             [14] = '761.359558 14.2402344 387.398682 -0.647222877 0.284784555 -0.284784973 -0.647223175'},
+        }
+        for i, row in groups do
+            local x, z = row[2], 388.5
+            local g = CreatePropHPR(row[1], x, GetTerrainHeight(x, z), z, row[3], 0, 0)
+            local made = {SplitProp(g, row[4])}
+            if table.getn(made) ~= row[5] then
+                error(string.format('group %d split into %d, not %d', i, table.getn(made), row[5]))
+            end
+            if not g:BeenDestroyed() then
+                error(string.format('group %d still stands', i))
+            end
+            for j, w in want[i] do
+                local p, q = made[j]:GetPosition(), made[j]:GetOrientation()
+                local got = string.format('%.9g %.9g %.9g %.9g %.9g %.9g %.9g', p[1], p[2], p[3], q[1], q[2],
+                                          q[3], q[4])
+                if got ~= w then
+                    error(string.format('group %d prop %d is %s, not %s', i, j, got, w))
                 end
+            end
+        end
+    )");
+    lua_check("Test 15c: a prop's bones are where the original game has them", R"(
+        local x, z = 722.5, 376.5
+        local g = CreatePropHPR('/env/desert/props/trees/groups/cactus01_group1_prop.bp', x,
+                                GetTerrainHeight(x, z), z, 0, 0, 0)
+        -- The original game's GetPosition(bone).
+        local want = {[0] = '722.492371 22.1854744 376.61615', [1] = '722.576233 22.0722656 376.43222',
+                      [2] = '722.128967 22.0722656 376.633301', [5] = '722.28833 22.0722656 376.335999'}
+        for b, w in want do
+            local p = g:GetPosition(b)
+            local got = string.format('%.9g %.9g %.9g', p[1], p[2], p[3])
+            if got ~= w then
+                error(string.format('bone %d is at %s, not %s', b, got, w))
+            end
+        end
+        x, z = 702.5, 416.5
+        local pine = CreatePropHPR('/env/evergreen/props/trees/groups/pine06_big_groupa_prop.bp', x,
+                                   GetTerrainHeight(x, z), z, 30, 0, 0)
+        local tree = '/env/desert/props/trees/cactus01_s1_prop.bp'
+        __osc_hung = {
+            import('/lua/sim/Entity.lua').Entity({}),
+            CreatePropHPR(tree, x + 5, GetTerrainHeight(x + 5, z), z, 0, 0, 0),
+            CreatePropHPR(tree, x + 8, GetTerrainHeight(x + 8, z), z, 0, 0, 0),
+        }
+        __osc_hung[1]:AttachBoneTo(-1, pine, 3)
+        __osc_hung[2]:AttachBoneTo(-1, pine, 3)
+        __osc_hung[3]:AttachBoneTo(0, pine, 3)
+    )");
+    ctx.sim.tick();
+    lua_check("Test 15c: what hangs on a prop's bone sits as the original game's", R"(
+        -- The original game's GetPosition and GetOrientation a tick later.
+        local want = {
+            '703.694946 11.6523438 419.224274 -0.699277401 -0.104933947 -0.104933947 0.699277401',
+            '703.658264 11.6523438 419.343781 -0.699277401 -0.104933947 -0.104933947 0.699277401',
+            '703.694946 11.6523438 419.224274 0 -0.148398995 0 0.988927603',
+        }
+        for i, w in want do
+            local p, q = __osc_hung[i]:GetPosition(), __osc_hung[i]:GetOrientation()
+            local got = string.format('%.9g %.9g %.9g %.9g %.9g %.9g %.9g', p[1], p[2], p[3], q[1], q[2], q[3],
+                                      q[4])
+            if got ~= w then
+                error(string.format('%d is %s, not %s', i, got, w))
             end
         end
     )");

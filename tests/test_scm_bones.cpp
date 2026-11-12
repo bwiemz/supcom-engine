@@ -5,6 +5,7 @@
 #include "sim/scm_parser.hpp"
 
 #include <array>
+#include <bit>
 
 #include <cstring>
 #include <string>
@@ -153,4 +154,53 @@ TEST_CASE("SCM bones: the model's bounds are its vertices' box", "[scm]") {
     CHECK(parsed->mesh_bounds->hi.z == 1.0f);
     CHECK_FALSE(osc::sim::parse_scm_bones(scm_with({{"root", 0, 0, 0, 1, 0, 0, 0, -1}}))
                     ->mesh_bounds.has_value());
+}
+
+TEST_CASE("SCM bones: a bone's rest transform and box are CAniSkel's", "[scm]") {
+    // Pine06_Big_GroupA's bone 3 in its SCM, three of its vertices, and what Moho makes of them.
+    const auto f = [](unsigned b) { return std::bit_cast<float>(b); };
+    TestBone pine{"Pine06_Big_V1_s3_01", 0, 0, 0, 1, 0, 0, 0, 0};
+    const std::array<unsigned, 16> matrix = {0x3f2e5e44u, 0x3f3b6f40u, 0x313ab606u, 0x00000000u,
+                                             0xb0353ec1u, 0xb1a61f58u, 0x3f800000u, 0x00000000u,
+                                             0x3f3b6f40u, 0xbf2e5e45u, 0x3148b3c9u, 0x00000000u,
+                                             0xc1c23097u, 0x41e15b03u, 0xb3cfef8au, 0x3f800000u};
+    for (size_t i = 0; i < matrix.size(); ++i) {
+        pine.inverse_bind[i] = f(matrix[i]);
+    }
+    auto data = scm_with({{"Group01", 0, 0, 0, 1, 0, 0, 0, -1}, pine});
+    const auto vert_offset = static_cast<unsigned>(data.size());
+    const std::vector<std::array<unsigned, 3>> positions = {
+        {0xc0870f62u, 0x3c7698ccu, 0x422886a6u},
+        {0xc075f49fu, 0x3c7698ccu, 0x41fd69c8u},
+        {0xc075f496u, 0x415bba2du, 0x41fd69c8u}};
+    for (const auto& p : positions) {
+        std::array<char, 68> vertex{};
+        std::memcpy(vertex.data(), p.data(), sizeof(p));
+        vertex[64] = 1;
+        data.insert(data.end(), vertex.begin(), vertex.end());
+    }
+    const auto count = static_cast<unsigned>(positions.size());
+    std::memcpy(data.data() + 16, &vert_offset, 4);
+    std::memcpy(data.data() + 24, &count, 4);
+
+    const auto parsed = osc::sim::parse_scm_bones(data);
+    REQUIRE(parsed.has_value());
+    const auto& rest = parsed->bones[1].inverse_bind;
+    CHECK(std::bit_cast<unsigned>(rest.position.x) == 0xc1c23097u);
+    CHECK(std::bit_cast<unsigned>(rest.position.y) == 0x41e15b03u);
+    CHECK(std::bit_cast<unsigned>(rest.position.z) == 0xb3cfef8au);
+    CHECK(std::bit_cast<unsigned>(rest.rotation.w) == 0x3f25f669u);
+    CHECK(std::bit_cast<unsigned>(rest.rotation.x) == 0x3f25f669u);
+    CHECK(std::bit_cast<unsigned>(rest.rotation.y) == 0x3e908f7cu);
+    CHECK(std::bit_cast<unsigned>(rest.rotation.z) == 0x3e908f7cu);
+    const auto& box = parsed->bones[1].box;
+    CHECK(std::bit_cast<unsigned>(box.lo.x) == 0xc06cb868u);
+    CHECK(std::bit_cast<unsigned>(box.lo.y) == 0xc06786e8u);
+    CHECK(std::bit_cast<unsigned>(box.lo.z) == 0u);
+    CHECK(std::bit_cast<unsigned>(box.hi.x) == 0x406cb868u);
+    CHECK(std::bit_cast<unsigned>(box.hi.y) == 0x4071e9e8u);
+    CHECK(std::bit_cast<unsigned>(box.hi.z) == 0x415bba2eu);
+    const auto& root_box = parsed->bones[0].box;
+    CHECK(root_box.lo.x == 0.0f);
+    CHECK(root_box.hi.y == 0.0f);
 }
