@@ -106,7 +106,7 @@ public:
             return gaussian_;
         }
         const auto signed_unit = [this] {
-            return static_cast<f32>(static_cast<double>(next_u32()) * 0x1p-31 - 1.0);
+            return static_cast<f32>(next_u32()) * 0x1p-32f * 2.0f - 1.0f;
         };
         f32 x = 0.0f;
         f32 y = 0.0f;
