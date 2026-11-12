@@ -5031,6 +5031,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetTextureDimensions", l_GetTextureDimensions);
     state.register_function("GetFrame", l_GetFrame);
     state.register_function("GetNumRootFrames", l_GetNumRootFrames);
+    state.register_function("ClearFrame", l_ClearFrame);
     state.register_function("SetCursor", l_SetCursor);
     state.register_function("GetCursor", l_GetCursor);
     state.register_function("EngineStartFrontEndUI", l_EngineStartFrontEndUI);
