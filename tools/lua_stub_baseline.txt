@@ -6,7 +6,6 @@ BeginLoggingStats l_BeginLoggingStats
 BlueprintLoaderUpdateProgress l_BlueprintLoaderUpdateProgress
 BlueprintLoaderUpdateProgress stub_noop
 ClearFrame Command
-DebugGetSelection stub_nil
 Destroy wlduiprovider_Destroy
 EndLoggingStats l_EndLoggingStats
 GetOmni shield_GetOmni

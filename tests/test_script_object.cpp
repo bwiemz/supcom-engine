@@ -227,6 +227,58 @@ TEST_CASE("A destroyed unit gives its id until its tick ends, then GetEntityId r
     )"));
 }
 
+TEST_CASE("DebugGetSelection gives the synced selection's units, as Moho's",
+          "[scriptobject][selection]") {
+    ScriptWorld w;
+    lua_State* L = w.state.raw();
+    REQUIRE(w.check(R"(
+        u1 = CreateUnit('test_plain', 1, 0, 0, 0)
+        u2 = CreateUnit('test_plain', 1, 0, 0, 0)
+        u3 = CreateUnit('test_plain', 1, 0, 0, 0)
+        e = {} _c_CreateEntity(e, {Army = 1})
+    )"));
+    const auto key_of = [L](const char* name, const char* field) {
+        lua_getglobal(L, name);
+        lua_pushstring(L, field);
+        lua_rawget(L, -2);
+        const osc::sim::EntityId id = osc::sim::to_entity_key(L, -1);
+        lua_pop(L, 2);
+        return id;
+    };
+    const osc::sim::EntityId u1 = key_of("u1", "_c_entity_id");
+    const osc::sim::EntityId u2 = key_of("u2", "_c_entity_id");
+    const osc::sim::EntityId u3 = key_of("u3", "_c_entity_id");
+    const osc::sim::EntityId e = key_of("e", "_entity_id");
+    REQUIRE((u1 && u2 && u3 && e));
+    REQUIRE(u1.key() < u2.key());
+    REQUIRE(u2.key() < u3.key());
+
+    CHECK(w.check(R"(
+        local s = DebugGetSelection()
+        assert(type(s) == 'table' and table.getn(s) == 0, 'nothing selected: an empty table')
+    )"));
+    // As the UI's Sync leaves it: unordered, a non-unit, an id nothing has
+    w.sim.set_debug_selection({u3, e, osc::sim::EntityId::of(4000, 1), u1, u2});
+    CHECK(w.check(R"(
+        local s = DebugGetSelection()
+        assert(table.getn(s) == 3, tostring(table.getn(s)))
+        assert(rawequal(s[1], u1) and rawequal(s[2], u2) and rawequal(s[3], u3),
+               'the units, in id order')
+        local ok, err = pcall(DebugGetSelection, 1)
+        assert(not ok and string.find(err, 'Get DEBUG info for UI selection\n  expected 0 args, but got 1',
+                                      1, true), tostring(err))
+        ;(moho.unit_methods.Destroy or moho.entity_methods.Destroy)(u2)
+        s = DebugGetSelection()
+        assert(table.getn(s) == 3 and rawequal(s[2], u2), 'a unit its deletion queue holds')
+    )"));
+    w.sim.tick();
+    CHECK(w.check(R"(
+        local s = DebugGetSelection()
+        assert(table.getn(s) == 2 and rawequal(s[1], u1) and rawequal(s[2], u3),
+               'a unit gone is skipped')
+    )"));
+}
+
 TEST_CASE("An entity's spec names its army as Moho's _c_CreateEntity reads it", "[scriptobject]") {
     ScriptWorld w;
     w.sim.add_army("ARMY_2", "ARMY_2");

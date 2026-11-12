@@ -6,6 +6,7 @@
 #include "lua/engine_stats.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/lua_sim.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 
 #include <spdlog/spdlog.h>
@@ -13,6 +14,8 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 extern "C" {
 #include <lauxlib.h>
@@ -116,6 +119,49 @@ void apply_focus_request(lua_State* sim_L, lua_State* ui_L, std::optional<int>& 
     lua_pop(sim_L, 1);
 }
 
+/// Take (and clear) a selection pending in the UI state's registry.
+bool take_debug_selection(lua_State* ui_L, std::vector<sim::EntityId>& out) {
+    lua_pushstring(ui_L, kDebugSelectionKey);
+    lua_rawget(ui_L, LUA_REGISTRYINDEX);
+    if (!lua_istable(ui_L, -1)) {
+        lua_pop(ui_L, 1);
+        return false;
+    }
+    const int ids = lua_gettop(ui_L);
+    out.clear();
+    for (int i = 1;; ++i) {
+        lua_rawgeti(ui_L, ids, i);
+        if (lua_isnil(ui_L, -1)) {
+            lua_pop(ui_L, 1);
+            break;
+        }
+        if (const sim::EntityId id = sim::to_entity_key(ui_L, -1)) out.push_back(id);
+        lua_pop(ui_L, 1);
+    }
+    lua_pop(ui_L, 1);
+    lua_pushstring(ui_L, kDebugSelectionKey);
+    lua_pushnil(ui_L);
+    lua_rawset(ui_L, LUA_REGISTRYINDEX);
+    return true;
+}
+
+/// Moho's Sim::Sync copying in the driver's filter: a selection pending since the last
+/// Sync becomes the sim's (Sim::mSyncFilter.maskB). Taken from ui_L, or, on the sim's
+/// thread, from what prepare_threaded took.
+void apply_debug_selection(lua_State* sim_L, lua_State* ui_L,
+                           std::optional<std::vector<sim::EntityId>>& ui_selection) {
+    std::vector<sim::EntityId> ids;
+    if (ui_L) {
+        if (!take_debug_selection(ui_L, ids)) return;
+    } else if (ui_selection) {
+        ids = std::move(*ui_selection);
+        ui_selection.reset();
+    } else {
+        return;
+    }
+    if (sim::SimState* sim = sim::get_sim(sim_L)) sim->set_debug_selection(std::move(ids));
+}
+
 /// Moho's Sim::Sync (0x00747B8x): with an army set by SetArmyStatsSyncArmy,
 /// its stats as the sim's Sync.__ArmyStats (Stats<CArmyStatItem>'s tree, by
 /// STAT_GetLuaTable), the tick on it. The engine keeps an army's stats as
@@ -159,6 +205,18 @@ int focus_army(lua_State* ui_L) {
     return registry_int(ui_L, "__osc_focus_army", 0);
 }
 
+void request_debug_selection(lua_State* ui_L, const std::vector<sim::EntityId>& ids) {
+    if (!ui_L) return;
+    lua_pushstring(ui_L, kDebugSelectionKey);
+    lua_newtable(ui_L);
+    int i = 0;
+    for (const sim::EntityId id : ids) {
+        sim::push_entity_key(ui_L, id);
+        lua_rawseti(ui_L, -2, ++i);
+    }
+    lua_rawset(ui_L, LUA_REGISTRYINDEX);
+}
+
 void set_focus_army(lua_State* sim_L, lua_State* ui_L, int army) {
     if (sim_L) set_registry_int(sim_L, "__osc_focus_army", army);
     if (ui_L) set_registry_int(ui_L, "__osc_focus_army", army);
@@ -174,7 +232,7 @@ void SyncQueue::queue(lua_State* sim_L, lua_State* ui_L) {
     if (!sim_L) {
         return;
     }
-    apply_focus_request(sim_L, ui_L, ui_request_);
+    apply_ui_filter(sim_L, ui_L);
     sync_army_stats(sim_L);
     push_sim_sync(sim_L);
     copy_lua_value(sim_L, -1, packets_state_);
@@ -197,6 +255,15 @@ void SyncQueue::prepare_threaded(lua_State* sim_L, lua_State* ui_L) {
     if (take_focus_request(ui_L, requested)) {
         ui_request_ = requested;
     }
+    std::vector<sim::EntityId> selection;
+    if (take_debug_selection(ui_L, selection)) {
+        ui_selection_ = std::move(selection);
+    }
+}
+
+void SyncQueue::apply_ui_filter(lua_State* sim_L, lua_State* ui_L) {
+    apply_debug_selection(sim_L, ui_L, ui_selection_);
+    apply_focus_request(sim_L, ui_L, ui_request_);
 }
 
 void SyncQueue::deliver(lua_State* sim_L, lua_State* ui_L) {
@@ -216,7 +283,7 @@ void SyncQueue::deliver(lua_State* sim_L, lua_State* ui_L) {
         if (sim::SimState* sim = sim::get_sim(sim_L)) {
             print_lines = sim->take_print_lines();
         }
-        apply_focus_request(sim_L, ui_L, ui_request_);
+        apply_ui_filter(sim_L, ui_L);
         sync_army_stats(sim_L);
         push_sim_sync(sim_L);
     }
@@ -262,6 +329,7 @@ void SyncQueue::clear() {
     packets_.clear();
     print_lines_.clear();
     ui_request_.reset();
+    ui_selection_.reset();
 }
 
 } // namespace osc::lua

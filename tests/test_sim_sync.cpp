@@ -2,6 +2,8 @@
 
 #include "lua/lua_state.hpp"
 #include "lua/sim_sync.hpp"
+#include "sim/lua_sim.hpp"
+#include "sim/sim_state.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -9,6 +11,7 @@ extern "C" {
 
 #include <string>
 #include <thread>
+#include <vector>
 
 using osc::lua::LuaState;
 
@@ -208,4 +211,59 @@ TEST_CASE("A beat's Sync is the table as its beat left it", "[lua][sync]") {
     sync.deliver(sim.raw(), ui.raw());
     run(ui, "as_queued = seen == 'beat1' and 1 or 0");
     CHECK(global_number(ui.raw(), "as_queued") == 1.0);
+}
+
+TEST_CASE("The UI's selection reaches the sim at a beat's Sync, threaded or not",
+          "[lua][sync][selection]") {
+    // Moho's CWldSession::SetSelection hands a changed selection to the sim
+    // driver (SetSyncFilterMaskB); the next Sim::Sync copies it in, where
+    // DebugGetSelection reads it (Sim::mSyncFilter.maskB).
+    using osc::sim::EntityId;
+    LuaState sim_lua;
+    LuaState ui;
+    osc::sim::SimState world{sim_lua.raw(), nullptr};
+    osc::sim::set_sim(sim_lua.raw(), &world);
+    run(sim_lua, "function ResetSyncTable() Sync = {} end ResetSyncTable()");
+    run(ui, "Sync = {} function OnSync() end");
+    const auto keys = [&world] {
+        std::vector<osc::u64> out;
+        for (const EntityId id : world.debug_selection()) out.push_back(id.key());
+        return out;
+    };
+    const EntityId a = EntityId::of(3, 1);
+    const EntityId b = EntityId::of(7, 1);
+    const EntityId c = EntityId::of(9, 2);
+    osc::lua::SyncQueue sync;
+
+    // Serial: the next beat's Sync takes it, in ascending ids
+    osc::lua::request_debug_selection(ui.raw(), {b, a});
+    CHECK(world.debug_selection().empty()); // not before the Sync
+    sync.queue(sim_lua.raw(), ui.raw());
+    CHECK(keys() == std::vector<osc::u64>{a.key(), b.key()});
+    lua_pushstring(ui.raw(), osc::lua::kDebugSelectionKey);
+    lua_rawget(ui.raw(), LUA_REGISTRYINDEX);
+    CHECK(lua_isnil(ui.raw(), -1)); // taken
+    lua_pop(ui.raw(), 1);
+    sync.queue(sim_lua.raw(), ui.raw()); // a beat with no change keeps it
+    CHECK(keys() == std::vector<osc::u64>{a.key(), b.key()});
+    while (sync.pending()) sync.deliver(sim_lua.raw(), ui.raw());
+    // With none queued, a delivery runs the Sync's steps itself
+    osc::lua::request_debug_selection(ui.raw(), {c});
+    sync.deliver(sim_lua.raw(), ui.raw());
+    CHECK(keys() == std::vector<osc::u64>{c.key()});
+
+    // Threaded: taken between jobs, applied by the sim thread's Sync
+    osc::lua::request_debug_selection(ui.raw(), {c, a});
+    sync.prepare_threaded(sim_lua.raw(), ui.raw());
+    osc::lua::request_debug_selection(ui.raw(), {}); // made during the job: the next job's
+    std::thread worker([&] {
+        sync.queue(sim_lua.raw(), nullptr);
+        sync.queue(sim_lua.raw(), nullptr); // a second beat, nothing new
+    });
+    worker.join();
+    CHECK(keys() == std::vector<osc::u64>{a.key(), c.key()});
+    sync.prepare_threaded(sim_lua.raw(), ui.raw());
+    std::thread next([&] { sync.queue(sim_lua.raw(), nullptr); });
+    next.join();
+    CHECK(world.debug_selection().empty());
 }
