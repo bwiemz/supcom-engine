@@ -46,6 +46,7 @@
 #include "ui/font_metrics_provider.hpp"
 #include "ui/keymap.hpp"
 #include "ui/wld_ui_provider.hpp"
+#include "lua/arg_count.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "map/terrain.hpp"
 #include "vfs/virtual_file_system.hpp"
@@ -86,7 +87,54 @@ namespace osc::lua {
 // loading-dialog methods: those are names the engine *calls* on the Lua
 // object (ui::WldUIProvider::call_method). Defining them here too would
 // recurse through the engine for any provider that doesn't override one.
-static int wlduiprovider_Destroy(lua_State* /*L*/) { return 0; }
+
+// Moho's WldUIProvider:Destroy (faf-re cfunc_CLuaWldUIProviderDestroyL,
+// 0x0086AAD0): the provider goes, and the session's provider with it, so
+// the engine calls no provider method after (no loading dialog, no game
+// interface, no OnStart). One already destroyed does nothing, and so does
+// one a newer provider replaced: Moho deleted that one as the newer was
+// set (UiMisc's provider swap). No retail or FAF script calls it; a mod's
+// UI may.
+static int wlduiprovider_Destroy(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "WldUIProvider:Destroy() - destroy the wldUIProvider", 1,
+                               lua_gettop(L));
+    }
+    if (!lua_istable(L, 1)) {
+        return luaL_error(L, "Expected a game object. (Did you call with '.' instead of ':'?)");
+    }
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, 1);
+    if (lua_type(L, -1) != LUA_TLIGHTUSERDATA) {
+        return luaL_error(L, "Expected a game object. (Did you call with '.' instead of ':'?)");
+    }
+    const void* const object = lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    if (!object) {
+        return 0;
+    }
+    lua_pushstring(L, "__osc_wld_ui_provider");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const bool provider = lua_touserdata(L, -1) == object;
+    lua_pop(L, 1);
+    if (!provider) {
+        return luaL_error(L, "Incorrect type of game object.  (Did you call with '.' instead of "
+                             "':'?)");
+    }
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, nullptr);
+    lua_rawset(L, 1);
+    lua_pushstring(L, ui::WldUIProvider::kLuaObjectKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const bool current = lua_rawequal(L, -1, 1) != 0;
+    lua_pop(L, 1);
+    if (current) {
+        lua_pushstring(L, ui::WldUIProvider::kLuaObjectKey);
+        lua_pushnil(L);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    return 0;
+}
 
 // clang-format off
 const MethodEntry ui_wlduiprovider_methods[] = {

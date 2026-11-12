@@ -23,6 +23,7 @@
 #include "sim/weapon.hpp"
 #include "ui/key_codes.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/wld_ui_provider.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -293,4 +294,58 @@ TEST_CASE("SoundIsPrepared answers as Moho's for a cue that never waits to prepa
               .ends_with("bool = SoundIsPrepared(handle)\n  expected 1 args, but got 0"));
     CHECK(run(g.ui, "SoundIsPrepared(1, 2)")
               .ends_with("bool = SoundIsPrepared(handle)\n  expected 1 args, but got 2"));
+}
+
+TEST_CASE("WldUIProvider:Destroy drops the provider, so the engine calls it no more, as Moho's",
+          "[ui][lua]") {
+    // faf-re cfunc_CLuaWldUIProviderDestroyL: the provider and the session's
+    // go; one already destroyed does nothing; Moho's argument and game-object
+    // errors otherwise
+    UiGame g;
+    lua_State* L = g.ui.raw();
+    osc::ui::WldUIProvider provider;
+    lua_pushstring(L, "__osc_wld_ui_provider");
+    lua_pushlightuserdata(L, &provider);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    REQUIRE(run(g.ui, R"(
+        heard = ''
+        provider = setmetatable({
+            CreateGameInterface = function(self) heard = heard .. 'create;' end,
+        }, { __index = moho.WldUIProvider_methods })
+        InternalCreateWldUIProvider(provider)
+    )")
+                .empty());
+    // Before: the engine reaches it
+    CHECK(provider.create_game_interface(L, false));
+    provider.destroy_game_interface(L); // its interface gone, as when a game ends
+    CHECK(run(g.ui, "assert(heard == 'create;') heard = ''").empty());
+
+    CHECK(run(g.ui, "provider:Destroy(1)")
+              .find("WldUIProvider:Destroy() - destroy the wldUIProvider\n  expected 1 args, but "
+                    "got 2") != std::string::npos);
+    CHECK(run(g.ui, "moho.WldUIProvider_methods.Destroy({})").find("Expected a game object.") !=
+          std::string::npos);
+    CHECK(run(g.ui, "moho.WldUIProvider_methods.Destroy({_c_object = rawget(GetFrame(0), "
+                    "'_c_object')})")
+              .find("Incorrect type of game object.") != std::string::npos);
+
+    // A provider a newer one replaced is gone in Moho: its Destroy leaves
+    // the newer one alone
+    REQUIRE(run(g.ui, R"(
+        older = provider
+        provider = setmetatable({
+            CreateGameInterface = function(self) heard = heard .. 'newer;' end,
+        }, { __index = moho.WldUIProvider_methods })
+        InternalCreateWldUIProvider(provider)
+        older:Destroy()
+    )")
+                .empty());
+    CHECK(provider.create_game_interface(L, false));
+    provider.destroy_game_interface(L);
+    CHECK(run(g.ui, "assert(heard == 'newer;', heard) heard = ''").empty());
+
+    CHECK(run(g.ui, "provider:Destroy()").empty());
+    CHECK(run(g.ui, "provider:Destroy()").empty()); // already gone: nothing
+    CHECK_FALSE(provider.create_game_interface(L, false));
+    CHECK(run(g.ui, "assert(heard == '', heard)").empty());
 }
