@@ -7,6 +7,7 @@
 #include "lua/moho_bindings_internal.hpp"
 #include "ui/keyboard_focus.hpp"
 #include "lua/lua_stubs.hpp"
+#include "lua/arg_count.hpp"
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
@@ -541,13 +542,32 @@ static int frame_GetTopmostDepth(lua_State* L) {
     return 1;
 }
 
+// The head the frame stands for (faf-re cfunc_CMauiFrameGetTargetHeadL)
 static int frame_GetTargetHead(lua_State* L) {
-    lua_pushnumber(L, 0); // single monitor
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "int GetTargetHead()", 1, lua_gettop(L));
+    }
+    auto* frame = check_control(L);
+    lua_pushnumber(L, frame ? static_cast<lua_Number>(frame->target_head()) : 0);
     return 1;
 }
 
+// Moho's CMauiFrame:SetTargetHead (faf-re cfunc_CMauiFrameSetTargetHeadL,
+// 0x00796C10): a number, truncated, stored for GetTargetHead; the frame is
+// returned. Scripts read it as GetFrame(GetRootFrame():GetTargetHead()).
 static int frame_SetTargetHead(lua_State* L) {
-    return 0; // no-op, single monitor
+    if (lua_gettop(L) != 2) {
+        return arg_count_error(L, "CMauiFrame:SetTargetHead(targetHead)", 2, lua_gettop(L));
+    }
+    auto* frame = check_control(L);
+    if (lua_type(L, 2) != LUA_TNUMBER) {
+        return arg_type_error(L, 2, "number");
+    }
+    if (frame) {
+        frame->set_target_head(static_cast<i32>(lua_tonumber(L, 2)));
+    }
+    lua_settop(L, 1);
+    return 1;
 }
 
 // clang-format off

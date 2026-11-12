@@ -57,6 +57,13 @@ public:
     i32 render_pass() const { return render_pass_; }
     void set_render_pass(i32 p) { render_pass_ = p; }
 
+    // --- A Frame's head (CMauiFrame::mTargetHead): 0 for a frame made by
+    // InternalCreateFrame, the head's index for a head's root frame, else
+    // what SetTargetHead stored. Moho's world views take their viewport's
+    // head from their root frame's; the engine draws one head.
+    i32 target_head() const { return target_head_; }
+    void set_target_head(i32 h) { target_head_ = h; }
+
     // --- Frame update ---
     bool needs_frame_update() const { return needs_frame_update_; }
     void set_needs_frame_update(bool n) { needs_frame_update_ = n; }
@@ -368,6 +375,7 @@ private:
     f32 alpha_ = 1.0f;
     bool hit_test_disabled_ = false;
     i32 render_pass_ = 0;
+    i32 target_head_ = 0;
     bool needs_frame_update_ = false;
     bool has_keyboard_focus_ = false;
     bool destroyed_ = false;

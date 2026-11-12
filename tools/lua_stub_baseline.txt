@@ -4,4 +4,3 @@ allocatedsize <lambda>
 ClearFrame Command
 Destroy wlduiprovider_Destroy
 MetaImpact stub_noop
-SetTargetHead frame_SetTargetHead
