@@ -92,6 +92,12 @@ enum class MeshTechnique : u32 {
     GlassAlpha = 44, ///< GlassAlphaPS (Medium's at High): lit, blended, no depth written
     BloatingNormalMappedAlpha = 45, ///< NormalMappedAlpha, swelling; its shadow swaying
     NormalMappedAlphaNoShadow = 46, ///< NormalMappedAlpha after the water, casting no shadow
+    // The clutter props' (ClutterPS, one lane): lit by the normal map,
+    // unshadowed, alpha-tested over 0x70 by the albedo's alpha and the
+    // dissolve noise; colour only, no shadow (no STAGE_DEPTH).
+    Clutter = 47,           ///< ClutterVS: after the effects above the water
+    UnderwaterClutter = 48, ///< ClutterVS: after the effects under the water, before it
+    UndulatingClutter = 49, ///< UndulatingClutterVS: Clutter, swaying in FA's wind
     /// ExplosionPS (TMeshExplosion, by EffectVS): the albedo and specular
     /// scrolling, fading out; the normals fading in, dissolving them. Blended,
     /// colour only, depth tested strictly less and written; alpha-tested over 0x40.
@@ -180,11 +186,12 @@ inline bool is_post_water_technique(MeshTechnique t) {
 /// A technique of the POSTWATER + POSTEFFECT stage, the last meshes Moho
 /// draws: after the water and the beams, particles and trails above it
 /// (WRenViewport::Render's RenderMeshes(0x28)). The shields' (M211k), UnitPlace,
-/// Effect, Cloud, NukeQuantum, GlassAlpha and Explosion.
+/// Effect, Cloud, NukeQuantum, GlassAlpha, Explosion, Clutter and UndulatingClutter.
 inline bool is_post_effect_technique(MeshTechnique t) {
     return is_shield_technique(t) || t == MeshTechnique::UnitPlace || t == MeshTechnique::Effect ||
            t == MeshTechnique::Cloud || t == MeshTechnique::NukeQuantum ||
-           t == MeshTechnique::GlassAlpha || t == MeshTechnique::Explosion;
+           t == MeshTechnique::GlassAlpha || t == MeshTechnique::Explosion ||
+           t == MeshTechnique::Clutter || t == MeshTechnique::UndulatingClutter;
 }
 
 /// A technique some pass draws. Moho's MeshRenderer::Render lets a material
@@ -197,6 +204,14 @@ inline bool is_post_effect_technique(MeshTechnique t) {
 /// Shield (TMeshShield: retail's sphere_prop alone) is such a name.
 inline bool has_render_stage(MeshTechnique t) {
     return t != MeshTechnique::Shield;
+}
+
+/// A technique of the PREWATER + POSTEFFECT stage (RenderMeshes(0x18)): drawn
+/// after the effects under the water and before the water itself, so the
+/// water refracts it as it does the meshes before them. UnderwaterClutter's
+/// (the kelp), alone.
+inline bool is_pre_water_post_effect_technique(MeshTechnique t) {
+    return t == MeshTechnique::UnderwaterClutter;
 }
 
 /// The mesh.fx states the shields' passes draw with (M211k): blended
@@ -231,7 +246,8 @@ inline ShieldPasses shield_passes(MeshTechnique t) {
 /// slices, cast none (M211f/g); nor do shields (M211k), nor the map's
 /// border (MapImager_LowFi is PREWATER + PREEFFECT alone), nor the effects'
 /// (Effect names a depthTechnique but, like NormalMappedAlphaNoShadow, no
-/// STAGE_DEPTH), nor Explosion or EditorMarker, nor Shield (no stage at all).
+/// STAGE_DEPTH), nor Explosion or EditorMarker, nor Shield (no stage at all), nor the
+/// clutter's (no depthTechnique or STAGE_DEPTH).
 inline bool has_depth_stage(MeshTechnique t) {
     return t != MeshTechnique::AeonBuild && t != MeshTechnique::AlphaFade &&
            t != MeshTechnique::UnitPlace && t != MeshTechnique::MapImager &&
@@ -242,7 +258,9 @@ inline bool has_depth_stage(MeshTechnique t) {
            t != MeshTechnique::UEFQuantumGate && t != MeshTechnique::CommandFeedback3 &&
            t != MeshTechnique::CommandFeedback4 && t != MeshTechnique::GlassAlpha &&
            t != MeshTechnique::NormalMappedAlphaNoShadow && t != MeshTechnique::Explosion &&
-           t != MeshTechnique::EditorMarker && has_render_stage(t);
+           t != MeshTechnique::EditorMarker && t != MeshTechnique::Clutter &&
+           t != MeshTechnique::UnderwaterClutter && t != MeshTechnique::UndulatingClutter &&
+           has_render_stage(t);
 }
 
 /// What a technique reads as its instance's material.y (its `parameter`

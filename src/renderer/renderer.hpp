@@ -1340,9 +1340,17 @@ private:
     /// Which meshes a draw_meshes call draws (M213b): Moho's buckets
     /// before and after the water, or the units in its reflection.
     /// Moho's mesh stages: before the water, after it, into its reflection,
-    /// and after the effects above it, the shields' (M211k). Dry maps use
-    /// the same stages.
-    enum class MeshPass { All, BeforeWater, AfterWater, Reflection, AfterEffects };
+    /// after the effects above it, the shields' (M211k), and after the
+    /// effects under it but before it, UnderwaterClutter's (RenderMeshes(0x18)).
+    /// Dry maps use the same stages.
+    enum class MeshPass {
+        All,
+        BeforeWater,
+        AfterWater,
+        Reflection,
+        AfterEffects,
+        BeforeWaterAfterEffects
+    };
     /// The mesh instances' draws, with the scene's pipelines, seen by `vp`
     /// (for the reflection, already mirrored).
     void draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp, MeshPass stage);

@@ -58,7 +58,8 @@ TEST_CASE("Order marks, ghosts, builds and shields", "[cartographic]") {
 TEST_CASE("What has no annotation, or no technique, isn't drawn", "[cartographic]") {
     for (const char* s : {"AlphaFade", "AeonBuildPuddle", "UEFBuildCube", "GlassAlpha",
                           "ShieldFill", "ShieldImpact", "CybranShieldImpact", "Effect", "Explosion",
-                          "Cloud", "NukeEMP", "Flat", "EditorMarker", "Shield", "NoSuchShader"})
+                          "Cloud", "NukeEMP", "Flat", "Clutter", "UnderwaterClutter",
+                          "UndulatingClutter", "EditorMarker", "Shield", "NoSuchShader"})
         CHECK(lanes(s, CT::None, CT::None, CT::None));
     // Out of range, the nearest fidelity
     CHECK(cartographic_technique("NormalMappedAlphaNoShadow", -1) == CT::Unit);

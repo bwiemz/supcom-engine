@@ -70,10 +70,16 @@ TEST_CASE("mesh_technique: a LOD's ShaderName picks FA's technique", "[renderer]
     // TMeshShield names a technique mesh.fx lacks, which no pass draws.
     CHECK(mesh_technique("Shield") == MeshTechnique::Shield);
     CHECK(mesh_technique("TMeshShield") == MeshTechnique::Shield);
-    // Anything unported draws as Unit.
+    // The clutter props' (env/Common/Props: Clutter01-03, Kelp_01).
+    CHECK(mesh_technique("Clutter") == MeshTechnique::Clutter);
+    CHECK(mesh_technique("UnderwaterClutter") == MeshTechnique::UnderwaterClutter);
+    CHECK(mesh_technique("UndulatingClutter") == MeshTechnique::UndulatingClutter);
+    // Anything unported draws as Unit: mesh.fx's UnderwaterUndulatingClutter,
+    // which no retail blueprint names, too.
     CHECK(mesh_technique("") == MeshTechnique::Unit);
-    CHECK(mesh_technique("Clutter") == MeshTechnique::Unit);
+    CHECK(mesh_technique("UnderwaterUndulatingClutter") == MeshTechnique::Unit);
     CHECK(mesh_technique("uefbuild") == MeshTechnique::Unit);
+    CHECK(mesh_technique("clutter") == MeshTechnique::Unit);
 }
 
 TEST_CASE("resolve_shader_name: Moho's legacy ShaderNames", "[renderer][mesh]") {
@@ -186,6 +192,51 @@ TEST_CASE("Explosion, EditorMarker and Shield: mesh.fx's stages, or none", "[ren
          {MeshTechnique::Unit, MeshTechnique::ShieldUEF, MeshTechnique::ShieldFill,
           MeshTechnique::UnitPlace, MeshTechnique::NormalMappedAlphaNoShadow}) {
         CHECK(has_render_stage(t));
+    }
+}
+
+TEST_CASE("The clutter's techniques: mesh.fx's stages, opaque, casting no shadow",
+          "[renderer][mesh]") {
+    // Clutter and UndulatingClutter: STAGE_POSTWATER + STAGE_POSTEFFECT, the
+    // last meshes drawn, with the shields
+    for (const MeshTechnique t : {MeshTechnique::Clutter, MeshTechnique::UndulatingClutter}) {
+        CHECK(is_post_effect_technique(t));
+        CHECK_FALSE(is_post_water_technique(t));
+        CHECK_FALSE(is_pre_water_post_effect_technique(t));
+    }
+    // UnderwaterClutter: STAGE_PREWATER + STAGE_POSTEFFECT, after the effects
+    // under the water and before it, so refracted by it
+    CHECK(is_pre_water_post_effect_technique(MeshTechnique::UnderwaterClutter));
+    CHECK_FALSE(is_post_effect_technique(MeshTechnique::UnderwaterClutter));
+    CHECK_FALSE(is_post_water_technique(MeshTechnique::UnderwaterClutter));
+    for (const MeshTechnique t : {MeshTechnique::Clutter, MeshTechnique::UnderwaterClutter,
+                                  MeshTechnique::UndulatingClutter}) {
+        // AlphaBlend_Disable_Write_RGB: alpha-tested, not blended
+        CHECK_FALSE(is_blended_technique(t));
+        // No depthTechnique, no STAGE_DEPTH: no shadow
+        CHECK_FALSE(has_depth_stage(t));
+        CHECK_FALSE(is_shield_technique(t));
+        CHECK_FALSE(is_build_technique(t));
+        CHECK_FALSE(is_feedback_technique(t));
+        CHECK_FALSE(is_personal_shield_technique(t));
+        CHECK(base_technique(t) == t);
+        // PARAM_UNUSED: the fraction complete, which ClutterPS doesn't read
+        CHECK(mesh_parameter(t) == MeshParameter::FractionComplete);
+        // No cartographicTechnique: a cartographic view draws none
+        for (int lane = 0; lane < 3; ++lane)
+            CHECK(cartographic_technique(mesh_technique_name(t), lane) ==
+                  CartographicTechnique::None);
+    }
+    // No other technique draws in the under-water bucket after the effects
+    for (osc::u32 id = 0; id <= static_cast<osc::u32>(MeshTechnique::EditorMarker); ++id) {
+        const auto t = static_cast<MeshTechnique>(id);
+        INFO(mesh_technique_name(t));
+        CHECK(is_pre_water_post_effect_technique(t) == (t == MeshTechnique::UnderwaterClutter));
+        // and none is in two buckets
+        CHECK(static_cast<int>(is_post_water_technique(t)) +
+                  static_cast<int>(is_post_effect_technique(t)) +
+                  static_cast<int>(is_pre_water_post_effect_technique(t)) <=
+              1);
     }
 }
 
@@ -399,8 +450,7 @@ TEST_CASE("mesh technique dump names round trip", "[renderer][mesh]") {
     constexpr std::array engine_internal = {MeshTechnique::UnitPlace};
     for (const auto technique : engine_internal)
         CHECK(mesh_technique(mesh_technique_name(technique)) == MeshTechnique::Unit);
-    for (osc::u32 id = 0; id <= static_cast<osc::u32>(MeshTechnique::NormalMappedAlphaNoShadow);
-         ++id) {
+    for (osc::u32 id = 0; id <= static_cast<osc::u32>(MeshTechnique::UndulatingClutter); ++id) {
         const auto technique = static_cast<MeshTechnique>(id);
         if (std::find(engine_internal.begin(), engine_internal.end(), technique) !=
             engine_internal.end())

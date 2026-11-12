@@ -70,6 +70,9 @@ const char* mesh_technique_name(MeshTechnique technique) {
     case MeshTechnique::GlassAlpha: return "GlassAlpha";
     case MeshTechnique::BloatingNormalMappedAlpha: return "BloatingNormalMappedAlpha";
     case MeshTechnique::NormalMappedAlphaNoShadow: return "NormalMappedAlphaNoShadow";
+    case MeshTechnique::Clutter: return "Clutter";
+    case MeshTechnique::UnderwaterClutter: return "UnderwaterClutter";
+    case MeshTechnique::UndulatingClutter: return "UndulatingClutter";
     case MeshTechnique::Explosion: return "Explosion";
     case MeshTechnique::Shield: return "Shield";
     case MeshTechnique::EditorMarker: return "EditorMarker";
@@ -372,6 +375,15 @@ MeshTechnique mesh_technique(const std::string& shader) {
     }
     if (shader_name == "NormalMappedAlphaNoShadow") {
         return MeshTechnique::NormalMappedAlphaNoShadow;
+    }
+    if (shader_name == "Clutter") {
+        return MeshTechnique::Clutter;
+    }
+    if (shader_name == "UnderwaterClutter") {
+        return MeshTechnique::UnderwaterClutter;
+    }
+    if (shader_name == "UndulatingClutter") {
+        return MeshTechnique::UndulatingClutter;
     }
     if (shader_name == "Explosion") {
         return MeshTechnique::Explosion;
