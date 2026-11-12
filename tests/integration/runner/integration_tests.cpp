@@ -13632,6 +13632,7 @@ void test_stun(TestContext& ctx) {
             WaitTicks(5)
             local L = {96, 656}
             local n2 = CreateUnitHPR('uel0201', 'ARMY_1', L[1] - 30, GetTerrainHeight(L[1] - 30, L[2] - 12), L[2] - 12, 0, 0, 0)
+            __osc_stun_n2 = n2
             local t0 = GetGameTick()
             __osc_ev.n2 = {}
             local on = n2.OnMotionHorzEventChange
@@ -13654,6 +13655,50 @@ void test_stun(TestContext& ctx) {
     }
     lua_check("Test 6: stunned on its last stretch, a tank brakes Stopping, then Stopped", R"(
         __osc_expect('n2', 40, 54, '40 TopSpeed>Cruise, 41 Cruise>Stopping, 46 Stopping>Stopped')
+    )");
+
+    // The scene of the retail probe stun-events2 (its lone tanks on long moves): stopped in the
+    // first seconds of the move.
+    lua_check("events setup 3", R"(
+        __osc_stun_n2:Destroy()
+        ForkThread(function()
+            WaitTicks(5)
+            local L = {96, 656}
+            local t0
+            local function make(tag, x, z)
+                local u = CreateUnitHPR('uel0201', 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+                __osc_ev[tag] = {}
+                local on = u.OnMotionHorzEventChange
+                rawset(u, 'OnMotionHorzEventChange', function(s, new, old)
+                    table.insert(__osc_ev[tag], {GetGameTick() - (t0 or GetGameTick()), old .. '>' .. new})
+                    return on(s, new, old)
+                end)
+                return u
+            end
+            local s1 = make('s1', L[1] - 30, L[2] - 12)
+            local s2 = make('s2', L[1] - 30, L[2])
+            t0 = GetGameTick()
+            WaitTicks(2)
+            IssueMove({s1}, {L[1] + 60, 0, L[2] - 12})
+            IssueMove({s2}, {L[1] + 60, 0, L[2]})
+            for i = 1, 40 do
+                WaitTicks(1)
+                local t = GetGameTick() - t0
+                if t == 17 then
+                    s1:SetStunned(1.5)
+                    s2:SetImmobile(true)
+                elseif t == 30 then
+                    s2:SetImmobile(false)
+                end
+            end
+        end)
+    )");
+    for (int i = 0; i < 50; ++i) {
+        ctx.sim.tick();
+    }
+    lua_check("Test 6b: stopped early on a long move, a tank brakes Cruising, then Stopped", R"(
+        __osc_expect('s1', 17, 32, '22 Cruise>Stopped, 32 Stopped>Cruise')
+        __osc_expect('s2', 17, 31, '20 Cruise>Stopped, 31 Stopped>Cruise')
     )");
 
     if (osc::test_status::failure_count() - fail != failures_before) {

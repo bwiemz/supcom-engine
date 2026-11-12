@@ -327,12 +327,14 @@ void Navigator::navigate(Unit& unit) {
     // Then the steering, at the target: a new target replaces its waypoint
     // (and any sidestep); one outside the goal it drives through.
     const path::Cell target = moho_.target();
-    if (target != moho_waypoint_cell_ || waypoints_.empty()) {
+    if (st != State::Thinking && (target != moho_waypoint_cell_ || waypoints_.empty())) {
         if (target != moho_waypoint_cell_ && sim_->steer_log()) {
             *sim_->steer_log() << "STEER t=" << sim_->tick_count() << ' ' << unit.blueprint_id()
                                << " waypoints " << moho_.target_x() << ',' << moho_.target_z()
                                << " #" << EntityRegistry::moho_id(unit.entity_id()) << '\n';
         }
+        // CAiNavigatorLand::Execute's mStatus is Thinking till it hands its first waypoint.
+        const bool first = moho_waypoint_cell_ == path::Cell{-32768, -32768};
         moho_waypoint_cell_ = target;
         // CAiSteeringImpl::DriveToNextWaypoint takes it after this tick's spline: its
         // destination, but no motion target when the unit is at it (Unit::IsAtPosition).
@@ -342,10 +344,9 @@ void Navigator::navigate(Unit& unit) {
         sidestep_ = false;
         // UseTopSpeed(IsCellInGoal) picks the flag GetVal reads: in the goal, the
         // order's speed through it (CalcAtTopSpeed1); short of it, none left of its
-        // path and not thinking (CalcAtTopSpeed2), CAiNavigatorLand::Execute.
-        through_target_ = moho_.cell_in_goal(target)
-                              ? speed_through_goal_
-                              : status_ != Status::WaitingForPath && moho_.last_node_index() < 0;
+        // path and not its first waypoint (CalcAtTopSpeed2), CAiNavigatorLand::Execute.
+        through_target_ = moho_.cell_in_goal(target) ? speed_through_goal_
+                                                     : !first && moho_.last_node_index() < 0;
     }
     status_ = st == State::HasPath ? Status::Moving : Status::WaitingForPath;
 }

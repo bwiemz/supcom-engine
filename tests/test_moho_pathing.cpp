@@ -940,6 +940,37 @@ TEST_CASE("With Moho pathing a tank's move is Cruising the tick its motion takes
     CHECK(seen.back() == Horz::Stopped);
 }
 
+TEST_CASE("With Moho pathing a long move drives through its target from its second waypoint on, a "
+          "short one not",
+          "[pathing]") {
+    const f32 to = GENERATE(60.0f, 4.0f);
+    INFO("a move of " << to);
+    World w(true);
+    Unit* tank = w.make("tank", 20.5f, 30.5f);
+    w.sim.tick();
+    World::move(*tank, 20.5f + to, 30.5f);
+    std::vector<bool> through;
+    osc::sim::Vector3 last{-1, -1, -1};
+    for (int t = 0; t < 30 && through.size() < 2; ++t) {
+        w.sim.tick();
+        const osc::sim::Vector3* wp = tank->navigator().waypoint();
+        if (wp && (wp->x != last.x || wp->z != last.z)) {
+            last = *wp;
+            through.push_back(tank->navigator().through_target());
+        }
+    }
+    REQUIRE_FALSE(through.empty());
+    CHECK_FALSE(through[0]);
+    if (to > 30.0f) {
+        REQUIRE(through.size() == 2);
+        CHECK(through[1]);
+    } else {
+        for (const bool b : through) {
+            CHECK_FALSE(b);
+        }
+    }
+}
+
 TEST_CASE("A move whose navigator aborts ends as Moho's move task hears AINAVEVENT_Aborted",
           "[pathing]") {
     const bool moho = GENERATE(false, true);
