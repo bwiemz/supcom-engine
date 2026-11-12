@@ -1,4 +1,3 @@
 # Callbacks retail runs that src/ doesn't name yet (tools/check_retail_hooks.py)
 method OnAssignedFocusEntity
 method OnSpecialAction
-module /lua/user/prefs.lua:GetOption

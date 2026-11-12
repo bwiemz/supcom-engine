@@ -164,6 +164,7 @@ add_executable(osc_tests
     test_camera_ortho.cpp
     test_scene_views.cpp
     test_window_mode.cpp
+    test_user_options.cpp
     test_console_vars.cpp
     test_team_color_lookup.cpp
     test_economy_overlay.cpp

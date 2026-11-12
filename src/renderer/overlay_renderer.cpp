@@ -231,12 +231,13 @@ void OverlayRenderer::emit_lifebars(const sim::EntityRecord& e, const sim::Vecto
     // than ui_LifebarLOD, not dead, its blueprint's LifeBarRender; the
     // player's and allies' units, another's only while hovered (its health
     // known: the caller drew only seen ones); none for a unit being upgraded
-    // (the upgrade's own progress shows), one on a transport, or one whose
+    // (the upgrade's own progress shows), one on a transport unless the
+    // show_attached_unit_lifebars option says, or one whose
     // Display.HideLifebars.
     if (!unit_bars_ || camera.zoom() >= kLifebarLod || e.is_dying || !e.life_bar_render) return;
     const bool friendly = !recon_ || recon_->friendly(e.army);
     if (!friendly && e.id != hovered_) return;
-    if (e.being_upgraded || e.attached || e.hide_lifebars) return;
+    if (e.being_upgraded || (e.attached && !attached_lifebars_) || e.hide_lifebars) return;
 
     // Its size in world units at its own depth, so bars shrink as the
     // camera pulls back; the stack hangs below the unit along the camera's

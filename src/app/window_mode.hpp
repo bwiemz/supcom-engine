@@ -65,7 +65,8 @@ struct WindowPrefs {
 /// The startup head: the command line's windowed/fullscreen/maximize/
 /// position (any of Moho's prefixes /, -, +, \, or the engine's --), else
 /// the primary_adapter option: "windowed" at the prefs' size and place, a
-/// mode full screen.
+/// mode full screen, anything else ("", junk) full screen at the default
+/// size, as CScApp's head.
 WindowMode startup_window_mode(const std::vector<std::string>& args, const WindowPrefs& prefs);
 
 /// One of an option's states, as options.lua lists them.
