@@ -1488,27 +1488,6 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
         lua_pop(L, 1); // builder_tbl
     }
 
-    // Call target:OnStartBeingBuilt(builder, layer)
-    lua_pushstring(L, "OnStartBeingBuilt");
-    lua_gettable(L, target_tbl);
-    if (frame) {
-        lua_pop(L, 1);
-    } else if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, target_tbl); // self
-        if (lua_table_ref() >= 0) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-        } else {
-            lua_pushnil(L);
-        }
-        lua_pushstring(L, layer().c_str());
-        if (lua_pcall(L, 3, 0, 0) != 0) {
-            spdlog::warn("OnStartBeingBuilt error: {}", lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
-
     lua_pop(L, 2); // pop entity_id + target_tbl from create_building_unit
     work_progress_ = frame ? frame->fraction_complete() : 0.0f;
     build_progress_seen_ = 0.0f;

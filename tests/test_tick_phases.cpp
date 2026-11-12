@@ -435,6 +435,39 @@ TEST_CASE("A thread OnStartBuild forks runs in the tick of OnStartBuild", "[tick
     CHECK(w.number("ran") == w.number("started"));
 }
 
+TEST_CASE("A unit made for a build hears OnStartBeingBuilt on its own layer before its builder's "
+          "OnStartBuild, and their threads run in that order",
+          "[tick-phases]") {
+    const std::string builder_layer = GENERATE(as<std::string>{}, "Land", "Water");
+    CAPTURE(builder_layer);
+    Phases w;
+    Unit& fac = w.make("fac", "fac", 1, 60.0f, 60.0f);
+    fac.economy().production_mass = 100.0;
+    fac.economy().production_energy = 100.0;
+    fac.economy().production_active = true;
+    fac.set_layer(builder_layer);
+    REQUIRE(w.run("heard = {}"
+                  " function fac:OnStartBuild(u, order)"
+                  "   table.insert(heard, 'OnStartBuild')"
+                  "   ForkThread(function() table.insert(heard, 'its thread') end)"
+                  " end"
+                  " function Plain:OnStartBeingBuilt(builder, layer)"
+                  "   table.insert(heard, 'OnStartBeingBuilt ' .. tostring(builder == fac)"
+                  "     .. ' ' .. layer .. '/' .. self:GetCurrentLayer())"
+                  "   ForkThread(function() table.insert(heard, 'its own thread') end)"
+                  " end"));
+    UnitCommand build;
+    build.type = CommandType::BuildFactory;
+    build.blueprint_id = "t1";
+    fac.push_command(build, false);
+    tick_until([&] { w.sim.tick(); }, "both threads run", 20,
+               [&] { return w.run("n = table.getn(heard)") && w.number("n") >= 4; });
+    REQUIRE(w.run("said = table.concat(heard, ', ')"));
+    CHECK(w.text("said") ==
+          "OnStartBeingBuilt true Land/Land, OnStartBuild, its own thread, its thread");
+    CHECK(fac.layer() == builder_layer);
+}
+
 TEST_CASE("A unit attached to another starts no order until it is let go", "[tick-phases]") {
     Phases w;
     const Unit& fac = w.make("fac", "fac", 1, 60.0f, 60.0f);

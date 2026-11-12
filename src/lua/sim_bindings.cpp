@@ -229,6 +229,34 @@ static void count_made(sim::SimState& sim, sim::EntityId id) {
     }
 }
 
+/// Moho's Unit ctor: OnStartBeingBuilt(creator, its own layer) after OnCreate,
+/// before the builder's OnStartBuild.
+static void tell_start_being_built(lua_State* L, sim::SimState& sim, sim::EntityId id, int tbl) {
+    const auto* made = sim.entity_registry().find(id);
+    if (!made || !made->is_unit()) {
+        return;
+    }
+    const auto& unit = *static_cast<const sim::Unit*>(made);
+    lua_pushstring(L, "OnStartBeingBuilt");
+    lua_gettable(L, tbl);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_pushvalue(L, tbl);
+    const auto* creator = sim.entity_registry().find(unit.creator_id());
+    if (creator && creator->lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, creator->lua_table_ref());
+    } else {
+        lua_pushnil(L);
+    }
+    lua_pushstring(L, unit.layer().c_str());
+    if (lua_pcall(L, 3, 0, 0) != 0) {
+        spdlog::warn("Building OnStartBeingBuilt error: {}", lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+}
+
 /// Moho's Unit ctor: UpdateTerrainType after OnPreCreate, so its script hears
 /// the type it is made on.
 static void tell_terrain_type(lua_State* L, sim::SimState& sim, sim::EntityId id) {
@@ -751,6 +779,7 @@ static int l_create_building_unit(lua_State* L) {
     }
     if (auto* sim = get_sim(L)) {
         count_made(*sim, id);
+        tell_start_being_built(L, *sim, id, tbl);
     }
 
     // Do NOT call OnStopBeingBuilt — that happens when construction finishes
