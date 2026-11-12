@@ -2550,7 +2550,36 @@ static int brain_PickBestAttackVector(lua_State* L) {
     push_attack_vector(L, *best);
     return 1;
 }
-static int brain_SetGreaterOf(lua_State*) { return 0; }
+// brain:SetGreaterOf(statName, value): the army stat raised to `value` if
+// that is greater -- Moho's CAiBrain::SetGreaterOf (faf-re
+// cfunc_CAiBrainSetGreaterOfL; Steam exe 0x58DDF0). A number goes through the
+// stat's int lane, truncated toward zero as _ftol2 does (cvttsd2si: a NaN or
+// one past an int is INT32_MIN), and is stored as that integer. GPG's float
+// lane tests the same "is a number" again, so it is dead: anything else does
+// nothing, and makes no stat. (Moho compares with the stat's bits read as an
+// int, so a float stat -- an Economy_ one -- holding more than 0 is past any
+// small integer; the engine keeps no stat types and compares the numbers.)
+static int brain_SetGreaterOf(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 3) {
+        return arg_count_error(L, "SetGreaterOf(statname,val)", 3, n);
+    }
+    auto* brain = check_brain(L);
+    if (!brain) return 0;
+    const char* stat_name = lua_tostring(L, 2);
+    if (!stat_name) {
+        return arg_type_error(L, 2, "string");
+    }
+    if (lua_type(L, 3) != LUA_TNUMBER) {
+        return 0;
+    }
+    const lua_Number value = lua_tonumber(L, 3);
+    const i32 truncated = value >= -2147483648.0 && value < 2147483648.0
+                              ? static_cast<i32>(value)
+                              : std::numeric_limits<i32>::min();
+    brain->set_stat_greater_of(stat_name, truncated);
+    return 0;
+}
 
 // brain:CheckBlockingTerrain(startPos, endPos, arcType): whether the terrain
 // stands between two points for a shot along a straight line ('none') or a
