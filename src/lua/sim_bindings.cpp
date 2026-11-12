@@ -772,7 +772,7 @@ static int l_CreateUnitHPR(lua_State* L) {
     const auto angle = [L](int idx) {
         return lua_isnumber(L, idx) ? static_cast<f32>(lua_tonumber(L, idx)) : 0.0f;
     };
-    return create_complete_unit(L, sim::euler_to_quat(angle(7), angle(6), angle(8)),
+    return create_complete_unit(L, sim::hpr_orientation(angle(7), angle(6), angle(8)),
                                 "CreateUnitHPR");
 }
 
@@ -5438,7 +5438,7 @@ static int l_CreatePropHPR(lua_State* L) {
     f32 y = lua_isnumber(L, 3) ? static_cast<f32>(lua_tonumber(L, 3)) : 0;
     f32 z = lua_isnumber(L, 4) ? static_cast<f32>(lua_tonumber(L, 4)) : 0;
 
-    sim::spawn_prop(L, *sim, bp_path, {x, y, z}, sim::euler_to_quat(angle(5), angle(6), angle(7)),
+    sim::spawn_prop(L, *sim, bp_path, {x, y, z}, sim::hpr_orientation(angle(5), angle(6), angle(7)),
                     true);
     return 1;
 }

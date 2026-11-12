@@ -30,6 +30,7 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -90,6 +91,47 @@ Projectile* add_shot(EntityRegistry& reg, const Vector3& at, const Vector3& velo
 void fly(EntityRegistry& reg, Projectile& p) {
     p.update(0.1, reg, nullptr);
     reg.advance_coords();
+}
+
+
+/// A Cybran ACU's bones from its root to its MLG muzzle (URL0001_lod0.scm), at its UniformScale,
+/// their model-space rest as the SCM parser sums it.
+osc::sim::BoneData acu_mlg_bones() {
+    struct Bone {
+        osc::i32 parent;
+        u32 pos[3];
+        u32 rot[4]; // w, x, y, z
+    };
+    const Bone bones[] = {
+        {-1, {0, 0x410449ba, 0}, {0x3f800000, 0xb4200000, 0, 0}},
+        {0, {0xb624f882, 0x3e4d3380, 0xbebb9aa9}, {0x3f800000, 0x34800000, 0, 0}},
+        {1, {0xbca8a77b, 0x401ba4f0, 0x3f09d54f}, {0x3f800000, 0, 0, 0}},
+        {2, {0x3ca8a731, 0xbbddb800, 0x3f54a2f4}, {0x3f800000, 0, 0, 0}},
+    };
+    const auto f = [](u32 b) { return std::bit_cast<f32>(b); };
+    osc::sim::BoneData bd;
+    bd.model_scale = 0.16f;
+    for (const Bone& b : bones) {
+        osc::sim::BoneInfo info;
+        info.parent_index = b.parent;
+        info.local_position = {f(b.pos[0]), f(b.pos[1]), f(b.pos[2])};
+        info.local_rotation = {f(b.rot[1]), f(b.rot[2]), f(b.rot[3]), f(b.rot[0])};
+        info.world_position = info.local_position;
+        info.world_rotation = info.local_rotation;
+        if (b.parent >= 0) {
+            const osc::sim::BoneInfo& up = bd.bones[static_cast<size_t>(b.parent)];
+            const Vector3 turned = osc::sim::quat_rotate(up.world_rotation, info.local_position);
+            info.world_position = {up.world_position.x + turned.x, up.world_position.y + turned.y,
+                                   up.world_position.z + turned.z};
+            info.world_rotation = osc::sim::quat_multiply(up.world_rotation, info.local_rotation);
+        }
+        bd.bones.push_back(info);
+    }
+    return bd;
+}
+
+u32 bits(f32 v) {
+    return std::bit_cast<u32>(v);
 }
 
 } // namespace
@@ -306,6 +348,56 @@ TEST_CASE("a beam passes what has no OnCollisionCheckWeapon or fails it", "[coll
     const EntityId beam_id = reg.register_entity(std::move(beam));
     osc::sim::check_collision_beam(sim, L, beam_id, false);
     CHECK(reg.find(beam_id)->beam_endpoint().z == Approx(109.0f));
+}
+
+TEST_CASE("a beam sits on its muzzle as Moho attaches it, bit for bit", "[collision]") {
+    // A Cybran ACU's MLG beam in retail 3599's /synclog, at rest and with the torso turned.
+    struct Case {
+        u32 at[3];
+        u32 torso_degrees;
+        u32 pos[3];
+        u32 rot[4]; // w, x, y, z
+    };
+    const Case cases[] = {
+        {{0x421a0000, 0x418bc000, 0x43258000},
+         0,
+         {0x421a0000, 0x4199b19a, 0x4325a912},
+         {0x3f800000, 0x33c00000, 0, 0}},
+        {{0x42bb0000, 0x41bacc33, 0x42a50000},
+         0xc2bf6bd3,
+         {0x42ba9068, 0x41c8bdcd, 0x42a4d6d3},
+         {0x3f2bc702, 0x3380d542, 0xbf3dcfd6, 0xb38e5be1}},
+    };
+    const osc::sim::BoneData bones = acu_mlg_bones();
+    for (const Case& c : cases) {
+        EntityRegistry reg;
+        const auto f = [](u32 b) { return std::bit_cast<f32>(b); };
+        const EntityId acu = add_unit(reg, {f(c.at[0]), f(c.at[1]), f(c.at[2])}, CollisionShape{});
+        auto& unit = *static_cast<Unit*>(reg.find(acu));
+        unit.set_bone_data(&bones);
+        unit.init_animated_bones();
+        auto& torso = static_cast<osc::sim::RotateManipulator&>(
+            *unit.add_manipulator(std::make_unique<osc::sim::RotateManipulator>()));
+        torso.set_bone_index(1);
+        torso.set_axis('y');
+        torso.set_current_angle(f(c.torso_degrees));
+        unit.tick_manipulators(0.0f, nullptr);
+        auto made = std::make_unique<osc::sim::Entity>();
+        made->set_collision_beam(true);
+        made->set_beam_launcher_id(acu);
+        made->beam_setup().muzzle_bone = 3;
+        osc::sim::Entity& beam = *reg.find(reg.register_entity(std::move(made)));
+        osc::sim::repose_collision_beam(reg, beam);
+        const Vector3& p = beam.pending_position();
+        const Quaternion& q = beam.pending_orientation();
+        CHECK(bits(p.x) == c.pos[0]);
+        CHECK(bits(p.y) == c.pos[1]);
+        CHECK(bits(p.z) == c.pos[2]);
+        CHECK(bits(q.w) == c.rot[0]);
+        CHECK(bits(q.x) == c.rot[1]);
+        CHECK(bits(q.y) == c.rot[2]);
+        CHECK(bits(q.z) == c.rot[3]);
+    }
 }
 
 TEST_CASE("a shot with entity collision off flies through", "[collision]") {

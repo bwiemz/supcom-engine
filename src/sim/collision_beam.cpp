@@ -42,15 +42,13 @@ std::optional<Vector3> pose(EntityRegistry& registry, Entity& beam) {
         weapon >= 0 && static_cast<size_t>(weapon) >= launcher.weapons().size()) {
         return std::nullopt;
     }
-    const i32 bone = beam.beam_setup().muzzle_bone;
-    Vector3 dir = launcher.bone_world_forward(bone);
-    const f32 len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-    dir = len > 1e-4f ? Vector3{dir.x / len, dir.y / len, dir.z / len} : Vector3{0, 0, 1};
-    beam.set_position(launcher.bone_world_position(bone));
-    const f32 across = std::sqrt(dir.x * dir.x + dir.z * dir.z);
-    beam.set_orientation(
-        euler_to_quat(osc::dmath::atan2(dir.x, dir.z), osc::dmath::atan2(-dir.y, across), 0.0f));
-    return dir;
+    const BonePose at = attached_moho(
+        {}, compose_moho({}, launcher.bone_world_transform(beam.beam_setup().muzzle_bone)));
+    beam.set_position(at.position);
+    beam.set_orientation(at.rotation);
+    const Quaternion& q = at.rotation;
+    return Vector3{(q.w * q.y + q.z * q.x) * 2.0f, (q.z * q.y - q.w * q.x) * 2.0f,
+                   1.0f - (q.y * q.y + q.x * q.x) * 2.0f};
 }
 
 void reach_on(Entity& beam, const Vector3& facing) {
