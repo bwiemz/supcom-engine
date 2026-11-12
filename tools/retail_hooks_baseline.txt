@@ -4,6 +4,5 @@ method OnAnimationFrame
 method OnAssignedFocusEntity
 method OnIconsVisible
 method OnSpecialAction
-method OnStart
 method OnSubtitle
 module /lua/user/prefs.lua:GetOption
