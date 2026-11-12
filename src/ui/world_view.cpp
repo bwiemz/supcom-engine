@@ -20,6 +20,21 @@ void WorldView::set_default_mini_lod(f32 scale) {
     g_default_mini_lod = scale;
 }
 
+bool WorldView::icons_visible() const {
+    if (!camera_) return true;
+    // (a minimap's camera() is the WorldCamera it tracks: its spin is the
+    // main view's, its cam_Free everyone's)
+    if (is_minimap_) return !camera_->free();
+    return camera_->icons_visible();
+}
+
+bool WorldView::take_icons_visible_change() {
+    const bool visible = icons_visible();
+    if (visible == icons_shown_) return false;
+    icons_shown_ = visible;
+    return true;
+}
+
 void WorldView::register_camera(const std::string& name,
                                 renderer::Camera* cam) {
     camera_name_ = name;

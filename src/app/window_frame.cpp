@@ -868,6 +868,9 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
         if (input_handler.cursor_world() && !renderer.mouse_scrubbing()) {
             osc::lua::update_world_view_cursor(ui_lua_state.raw());
         }
+        // Then, the camera's input taken (poll_events), each view's script
+        // hears its strategic icons turn off or on (CUIWorldView::Frame)
+        osc::lua::update_world_view_icons(ui_lua_state.raw());
     }
 
     // Selections are a game's: at the front end (after a return to the
