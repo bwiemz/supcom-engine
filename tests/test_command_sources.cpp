@@ -201,10 +201,9 @@ TEST_CASE("A script sees the source running a callback", "[sources]") {
     // Outside a source's command, none runs
     CHECK(w.value_of("GetCurrentCommandSource()") == "nil");
     CHECK(w.value_of("OkayToMessWithArmy(1)") == "false");
-    // An army that doesn't exist, no one may
     w.callback(0);
     CHECK(w.value_of("seen.okay[1]") == "true");
-    CHECK(w.value_of("OkayToMessWithArmy(9)") == "false");
+    CHECK(w.run("OkayToMessWithArmy(9)").find("Invalid army 8") != std::string::npos);
 }
 
 TEST_CASE("Union army: SetCommandSource shares an ally's control, and takes it back",

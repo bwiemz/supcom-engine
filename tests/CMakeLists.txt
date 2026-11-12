@@ -190,6 +190,7 @@ add_executable(osc_tests
     test_smoke_test.cpp
     test_smoke_harness.cpp
     test_army_stats.cpp
+    test_army_args.cpp
     test_unit_stats.cpp
     test_kill_stats.cpp
     test_match_telemetry.cpp

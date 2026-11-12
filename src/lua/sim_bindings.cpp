@@ -45,6 +45,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -60,18 +61,80 @@ namespace osc::lua {
 
 using sim::get_sim;
 
-/// Resolve an army argument that can be either a 1-based number or a name string.
-/// Returns 0-based index, or -1 if not found.
-static i32 resolve_army(lua_State* L, int arg, sim::SimState* sim) {
-    if (lua_isnumber(L, arg)) {
-        return static_cast<i32>(lua_tonumber(L, arg)) - 1;
+/// A Lua number as LuaPlus's GetInteger has it: truncated, and out of an
+/// int's range the x87's integer indefinite.
+static int lua_integer(lua_State* L, int arg) {
+    const lua_Number v = lua_tonumber(L, arg);
+    if (!(v > static_cast<lua_Number>(std::numeric_limits<int>::min()) - 1 &&
+          v < static_cast<lua_Number>(std::numeric_limits<int>::max()) + 1)) {
+        return std::numeric_limits<int>::min();
     }
-    if (lua_isstring(L, arg) && sim) {
-        const char* name = lua_tostring(L, arg);
-        auto* brain = sim->get_army_by_name(name);
-        if (brain) return brain->index();
+    return static_cast<int>(v);
+}
+
+static i32 named_army(lua_State* L, int arg, sim::SimState* sim) {
+    const char* name = lua_tostring(L, arg);
+    if (auto* brain = sim->get_army_by_name(name)) {
+        return brain->index();
+    }
+    return luaL_error(L, "Unknown army: %s", name);
+}
+
+/// Moho's ARMY_FromLuaState: the 0-based index of the army a 1-based number
+/// or a name names, and an error for anything else.
+static i32 resolve_army(lua_State* L, int arg, sim::SimState* sim) {
+    if (!sim) {
+        return -1;
+    }
+    if (lua_type(L, arg) == LUA_TNUMBER) {
+        const int requested = lua_integer(L, arg);
+        if (requested >= 1 && requested <= static_cast<int>(sim->army_count())) {
+            return requested - 1;
+        }
+        if (requested >= 1) {
+            return luaL_error(L, "Invalid army %d", requested - 1);
+        }
+        return luaL_error(L, "Invalid army %d. (Use a 1-based index)", requested);
+    }
+    if (lua_type(L, arg) == LUA_TSTRING) {
+        return named_army(L, arg, sim);
+    }
+    return luaL_error(L, "Unexpected type for army object");
+}
+
+/// Moho's ARMY_IndexFromLuaState, the decals' and splats'.
+static i32 army_index(lua_State* L, int arg, sim::SimState* sim) {
+    if (!sim) {
+        return -1;
+    }
+    if (lua_type(L, arg) == LUA_TNUMBER) {
+        const int requested = lua_integer(L, arg);
+        if (requested > 0) {
+            return requested - 1;
+        }
+        if (requested == 0) {
+            return luaL_error(L, "Invalid army %d, (Use a 1-based index)", 0);
+        }
+        return -1;
+    }
+    if (lua_type(L, arg) == LUA_TSTRING) {
+        return named_army(L, arg, sim);
     }
     return -1;
+}
+
+/// CreateUnit's and CreateUnit2's army: a 1-based number, as Moho's reads it.
+static i32 unit_army(lua_State* L, int arg, sim::SimState* sim) {
+    if (lua_type(L, arg) != LUA_TNUMBER) {
+        return arg_type_error(L, arg, "integer");
+    }
+    const int count = static_cast<int>(sim->army_count());
+    const int requested = lua_integer(L, arg);
+    if (requested < 1 || requested > count) {
+        return luaL_error(L, "Invalid army index; must be >= 1 and < %d but got %d.", count,
+                          requested);
+    }
+    return requested - 1;
 }
 
 // ====================================================================
@@ -509,6 +572,7 @@ static void set_up_initial_rally(sim::SimState& sim, sim::EntityId id) {
 /// OnStopBeingBuilt). Over the army's unit cap it is an error, "<what>(<bp>)
 /// failed", as Moho's is.
 static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation,
+                                i32 (*army_of)(lua_State*, int, sim::SimState*),
                                 const char* what = "CreateUnit", CapGate gate = CapGate::Tell);
 
 // CreateUnit(bp, army, x, y, z, qx, qy, qz, qw[, layer])
@@ -524,7 +588,7 @@ static int l_CreateUnit(lua_State* L) {
                            orientation.w / len};
         else orientation = {};
     }
-    return create_complete_unit(L, orientation);
+    return create_complete_unit(L, orientation, unit_army);
 }
 
 /// A complete unit of `bp_id` for `army` (0-based) at `pos` facing
@@ -644,18 +708,14 @@ static sim::EntityId spawn_complete_unit(lua_State* L, sim::SimState& sim, const
     return id; // its table on the stack
 }
 
-static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation, const char* what,
+static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation,
+                                i32 (*army_of)(lua_State*, int, sim::SimState*), const char* what,
                                 CapGate gate) {
     auto* sim = get_sim(L);
     if (!sim) return luaL_error(L, "CreateUnit: no SimState");
 
     const char* bp_id = luaL_checkstring(L, 1);
-    int army = resolve_army(L, 2, sim);
-    if (army < 0 || army >= static_cast<int>(sim->army_count())) {
-        spdlog::warn("CreateUnit: invalid army index");
-        lua_pushnil(L);
-        return 1;
-    }
+    const int army = army_of(L, 2, sim);
 
     sim::Vector3 pos{};
     if (lua_gettop(L) >= 5) {
@@ -772,7 +832,7 @@ static int l_CreateUnitHPR(lua_State* L) {
     const auto angle = [L](int idx) {
         return lua_isnumber(L, idx) ? static_cast<f32>(lua_tonumber(L, idx)) : 0.0f;
     };
-    return create_complete_unit(L, sim::hpr_orientation(angle(7), angle(6), angle(8)),
+    return create_complete_unit(L, sim::hpr_orientation(angle(7), angle(6), angle(8)), resolve_army,
                                 "CreateUnitHPR");
 }
 
@@ -783,7 +843,7 @@ static int l_CreateUnit2(lua_State* L) {
 
     // Copy string before clearing stack (bp_id points into Lua-managed memory)
     std::string bp_id_str(luaL_checkstring(L, 1));
-    int army = resolve_army(L, 2, sim);
+    const int army = unit_army(L, 2, sim);
     // layer at 3 (ignored for now)
     f32 x = static_cast<f32>(lua_tonumber(L, 4));
     f32 z = static_cast<f32>(lua_tonumber(L, 5));
@@ -793,7 +853,7 @@ static int l_CreateUnit2(lua_State* L) {
     const f32 y = sim::structure_elevation(*sim, structure_rules(L, *sim, bp_id_str), x, z);
     lua_settop(L, 0);
     lua_pushstring(L, bp_id_str.c_str());
-    lua_pushnumber(L, army + 1); // re-encode as 1-based; l_CreateUnit calls resolve_army
+    lua_pushnumber(L, army + 1);
     lua_pushnumber(L, x);
     lua_pushnumber(L, y);
     lua_pushnumber(L, z);
@@ -805,26 +865,19 @@ static int l_CreateInitialArmyUnit(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) return luaL_error(L, "CreateInitialArmyUnit: no SimState");
 
-    std::string army_str(luaL_checkstring(L, 1));
+    const i32 army_idx = resolve_army(L, 1, sim);
     std::string bp_id(luaL_checkstring(L, 2));
-
-    i32 army_idx = resolve_army(L, 1, sim);
     auto* brain = sim->get_army(army_idx);
-    if (!brain) {
-        spdlog::warn("CreateInitialArmyUnit: army '{}' not found", army_str);
-        lua_pushnil(L);
-        return 1;
-    }
 
     const auto& pos = brain->start_position();
     lua_settop(L, 0);
     lua_pushstring(L, bp_id.c_str());
-    lua_pushnumber(L, army_idx + 1); // 1-based for resolve_army
+    lua_pushnumber(L, army_idx + 1);
     lua_pushnumber(L, pos.x);
     lua_pushnumber(L, pos.y);
     lua_pushnumber(L, pos.z);
     // Not held to the unit cap (Moho makes it without Sim::CreateUnit's gate).
-    return create_complete_unit(L, {}, "CreateInitialArmyUnit", CapGate::None);
+    return create_complete_unit(L, {}, resolve_army, "CreateInitialArmyUnit", CapGate::None);
 }
 
 // ====================================================================
@@ -1097,9 +1150,7 @@ static int l_IsEntity(lua_State* L) {
 static int l_ArmyGetHandicap(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnumber(L, 0); return 1; }
-    i32 idx = resolve_army(L, 1, sim);
-    if (idx < 0 || static_cast<size_t>(idx) >= sim->army_count()) { lua_pushnumber(L, 0); return 1; }
-    auto* brain = sim->get_army(idx);
+    auto* brain = sim->get_army(resolve_army(L, 1, sim));
     lua_pushnumber(L, brain ? brain->handicap() : 0.0);
     return 1;
 }
@@ -2472,7 +2523,7 @@ static int l_CreateDecal(lua_State* L) {
     spec.texture2 = luaL_optstring(L, 4, "");
     spec.type = luaL_optstring(L, 5, "");
     spec.lod = static_cast<f32>(luaL_optnumber(L, 8, 0));
-    spec.army = resolve_army(L, 10, sim);
+    spec.army = army_index(L, 10, sim);
     spec.fidelity = decal_fidelity_arg(L, 11);
     push_ieffect_table(L, make_decal_effect(*sim, sim::EffectType::DECAL, std::move(spec)));
     return 1;
@@ -2490,7 +2541,7 @@ static int l_CreateSplat(lua_State* L) {
     spec.splat = true;
     spec.texture1 = luaL_optstring(L, 3, "");
     spec.lod = static_cast<f32>(luaL_optnumber(L, 6, 0));
-    spec.army = resolve_army(L, 8, sim);
+    spec.army = army_index(L, 8, sim);
     spec.fidelity = decal_fidelity_arg(L, 9);
     (void)make_decal_effect(*sim, sim::EffectType::SPLAT, std::move(spec));
     return 0;
@@ -2522,7 +2573,7 @@ static int l_CreateSplatOnBone(lua_State* L) {
     spec.splat = true;
     spec.texture1 = luaL_optstring(L, 4, "");
     spec.lod = static_cast<f32>(luaL_optnumber(L, 7, 0));
-    spec.army = resolve_army(L, 9, sim);
+    spec.army = army_index(L, 9, sim);
     (void)make_decal_effect(*sim, sim::EffectType::SPLAT, std::move(spec));
     return 0;
 }
@@ -3108,12 +3159,7 @@ static int l_RemoveEconomyEvent(lua_State* L) {
 static int l_ArmyIsCivilian(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushboolean(L, 0); return 1; }
-    i32 idx = resolve_army(L, 1, sim);
-    if (idx < 0 || static_cast<size_t>(idx) >= sim->army_count()) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    auto* brain = sim->get_army(idx);
+    auto* brain = sim->get_army(resolve_army(L, 1, sim));
     lua_pushboolean(L, brain && brain->is_civilian() ? 1 : 0);
     return 1;
 }
@@ -3122,12 +3168,7 @@ static int l_ArmyIsCivilian(lua_State* L) {
 static int l_ArmyIsOutOfGame(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushboolean(L, 0); return 1; }
-    i32 idx = resolve_army(L, 1, sim);
-    if (idx < 0 || static_cast<size_t>(idx) >= sim->army_count()) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    auto* brain = sim->get_army(idx);
+    auto* brain = sim->get_army(resolve_army(L, 1, sim));
     lua_pushboolean(L, brain && brain->is_defeated() ? 1 : 0);
     return 1;
 }
@@ -5088,8 +5129,6 @@ static int l_ChangeUnitArmy(lua_State* L) {
     }
     auto* unit = static_cast<sim::Unit*>(e);
     const int army = resolve_army(L, 2, sim);
-    if (army < 0 || army >= static_cast<int>(sim->army_count()))
-        return luaL_error(L, "Invalid army %d", static_cast<int>(lua_tonumber(L, 2)));
     if (unit->army() == army) return luaL_error(L, "Unit already belongs to army %d", army);
     if (!sim->faf_exe() && (unit->is_being_built() || unit->has_category("COMMAND"))) {
         lua_pushnil(L);
