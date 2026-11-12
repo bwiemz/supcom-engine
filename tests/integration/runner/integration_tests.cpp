@@ -23585,7 +23585,7 @@ void test_anim_render(TestContext& ctx) {
         lua_pop(L, 1);
     }
 
-    // --- Test 6: advance_animations advances frame ---
+    // --- Test 6: a frame update advances the animation a frame ---
     {
         lua_pushstring(L, "_test_anim");
         lua_rawget(L, LUA_GLOBALSINDEX);
@@ -23596,23 +23596,26 @@ void test_anim_render(TestContext& ctx) {
 
         if (ctrl && ui_reg) {
             ctrl->set_current_frame(0);
-            ctrl->set_pattern_index(0);
             ctrl->set_anim_accumulator(0.0f);
             ctrl->set_frame_rate(10.0f);
             ctrl->set_anim_playing(true);
+            ctrl->set_needs_frame_update(true);
             ctrl->set_anim_looping(false);
             ctrl->set_frame_pattern({0, 1, 2, 3});
 
-            osc::renderer::UIRenderer renderer;
-            renderer.advance_animations(L, *ui_reg, 0.15f);
+            osc::ui::UIDispatch dispatch;
+            dispatch.update_controls(L, *ui_reg, 0.15);
 
-            bool ok = ctrl->pattern_index() == 1 &&
-                      ctrl->current_frame() == 1 &&
+            bool ok = ctrl->current_frame() == 1 && ctrl->frame_texture() == "/t1.dds" &&
                       ctrl->anim_playing();
-            if (ok) { pass++; spdlog::info("[PASS] Test 6: advance 0.15s@10fps → frame 1"); }
-            else { fail++; osc::test_status::fail("[FAIL] Test 6: advance (pi={} cf={} playing={})",
-                                          ctrl->pattern_index(), ctrl->current_frame(),
-                                          ctrl->anim_playing()); }
+            if (ok) {
+                pass++;
+                spdlog::info("[PASS] Test 6: advance 0.15s@10fps → frame 1");
+            } else {
+                fail++;
+                osc::test_status::fail("[FAIL] Test 6: advance (cf={} playing={})",
+                                       ctrl->current_frame(), ctrl->anim_playing());
+            }
         } else {
             fail++;
             osc::test_status::fail("[FAIL] Test 6: ctrl or registry is null");
@@ -23630,20 +23633,26 @@ void test_anim_render(TestContext& ctx) {
 
         if (ctrl && ui_reg) {
             ctrl->set_current_frame(3);
-            ctrl->set_pattern_index(3);
             ctrl->set_anim_accumulator(0.0f);
             ctrl->set_frame_rate(10.0f);
             ctrl->set_anim_playing(true);
+            ctrl->set_needs_frame_update(true);
             ctrl->set_anim_looping(false);
             ctrl->set_frame_pattern({0, 1, 2, 3});
 
-            osc::renderer::UIRenderer renderer;
-            renderer.advance_animations(L, *ui_reg, 0.15f);
+            osc::ui::UIDispatch dispatch;
+            dispatch.update_controls(L, *ui_reg, 0.15);
 
-            bool ok = !ctrl->anim_playing() && ctrl->pattern_index() == 3;
-            if (ok) { pass++; spdlog::info("[PASS] Test 7: Auto-stop at end of pattern"); }
-            else { fail++; osc::test_status::fail("[FAIL] Test 7: auto-stop (playing={} pi={})",
-                                          ctrl->anim_playing(), ctrl->pattern_index()); }
+            bool ok =
+                !ctrl->anim_playing() && !ctrl->needs_frame_update() && ctrl->current_frame() == 3;
+            if (ok) {
+                pass++;
+                spdlog::info("[PASS] Test 7: Auto-stop at end of pattern");
+            } else {
+                fail++;
+                osc::test_status::fail("[FAIL] Test 7: auto-stop (playing={} cf={})",
+                                       ctrl->anim_playing(), ctrl->current_frame());
+            }
         } else {
             fail++;
             osc::test_status::fail("[FAIL] Test 7: ctrl or registry is null");
@@ -23661,23 +23670,25 @@ void test_anim_render(TestContext& ctx) {
 
         if (ctrl && ui_reg) {
             ctrl->set_current_frame(3);
-            ctrl->set_pattern_index(3);
             ctrl->set_anim_accumulator(0.0f);
             ctrl->set_frame_rate(10.0f);
             ctrl->set_anim_playing(true);
+            ctrl->set_needs_frame_update(true);
             ctrl->set_anim_looping(true);
             ctrl->set_frame_pattern({0, 1, 2, 3});
 
-            osc::renderer::UIRenderer renderer;
-            renderer.advance_animations(L, *ui_reg, 0.15f);
+            osc::ui::UIDispatch dispatch;
+            dispatch.update_controls(L, *ui_reg, 0.15);
 
-            bool ok = ctrl->anim_playing() &&
-                      ctrl->pattern_index() == 0 &&
-                      ctrl->current_frame() == 0;
-            if (ok) { pass++; spdlog::info("[PASS] Test 8: Loop wraps to frame 0"); }
-            else { fail++; osc::test_status::fail("[FAIL] Test 8: loop (playing={} pi={} cf={})",
-                                          ctrl->anim_playing(), ctrl->pattern_index(),
-                                          ctrl->current_frame()); }
+            bool ok = ctrl->anim_playing() && ctrl->current_frame() == 0;
+            if (ok) {
+                pass++;
+                spdlog::info("[PASS] Test 8: Loop wraps to frame 0");
+            } else {
+                fail++;
+                osc::test_status::fail("[FAIL] Test 8: loop (playing={} cf={})",
+                                       ctrl->anim_playing(), ctrl->current_frame());
+            }
         } else {
             fail++;
             osc::test_status::fail("[FAIL] Test 8: ctrl or registry is null");

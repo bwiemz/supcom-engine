@@ -1627,6 +1627,137 @@ TEST_CASE("An Edit's caret fades from alpha 62 up to 255 and back every 1.5 s as
     CHECK_THAT(alpha_after(0.5), WithinAbs(128.0, 1e-3));
 }
 
+namespace {
+/// The test's Lua `calls` log as 'a,b,c', emptied.
+std::string took(InputFixture& f) {
+    f.run("__took = table.concat(calls, ',') calls = {}");
+    lua_State* L = f.lua.raw();
+    lua_getglobal(L, "__took");
+    std::string s = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+    return s;
+}
+} // namespace
+
+TEST_CASE("A playing Bitmap shows each frame until past its duration, telling "
+          "OnAnimationFrame(frame), and ends on its last after OnAnimationFinished, as Moho's",
+          "[ui][lua][bitmap]") {
+    // faf-re CMauiBitmap::Frame and OnPatternEnd (checked against the
+    // binary, 0x00780160/0x00780270): OnFrame, then the frame's time runs;
+    // once past the frame's duration (not at it) the time starts over and
+    // the next frame comes, one a frame at most. At the end, not looping,
+    // it stays on the last frame and stops wanting frame updates, then
+    // OnAnimationFinished and OnAnimationFrame(last) run.
+    InputFixture f;
+    f.run(R"(
+        calls = {}
+        local Class = setmetatable({
+            OnFrame = function(self, dt) table.insert(calls, 'onframe') end,
+            OnAnimationFrame = function(self, frame) table.insert(calls, 'frame ' .. frame) end,
+            OnAnimationFinished = function(self)
+                table.insert(calls, 'finished ' .. self:GetFrame())
+            end,
+        }, { __index = moho.bitmap_methods })
+        b = setmetatable({}, { __index = Class })
+        InternalCreateBitmap(b, GetFrame(0))
+        b:SetNewTexture({'/a.dds', '/b.dds', '/c.dds'})
+        b:SetFrameRate(10)
+        b:Play()
+    )");
+    const auto frame = [&](double dt) {
+        f.dispatch.update_controls(f.lua.raw(), f.registry, dt);
+        return took(f);
+    };
+    auto* b = control_of(f.lua.raw(), "b");
+    REQUIRE(b);
+    CHECK(b->needs_frame_update()); // Play wants frame updates
+    CHECK(b->frame_texture() == "/a.dds");
+    CHECK(frame(0.05) == "onframe");
+    CHECK(frame(0.05) == "onframe"); // exactly its duration: not past it
+    CHECK(frame(0.05) == "onframe,frame 1");
+    CHECK(b->frame_texture() == "/b.dds");
+    CHECK(frame(0.35) == "onframe,frame 2"); // one frame, the time over dropped
+    CHECK(frame(0.1) == "onframe");
+    CHECK(frame(0.05) == "onframe,finished 2,frame 2");
+    CHECK_FALSE(b->anim_playing());
+    CHECK_FALSE(b->needs_frame_update());
+    CHECK(frame(0.5).empty()); // no frame updates now, OnFrame neither
+    CHECK(b->frame_texture() == "/c.dds");
+}
+
+TEST_CASE("A looping Bitmap starts its pattern over after OnAnimationFinished; SetFrame and Stop "
+          "move no frame, as Moho's",
+          "[ui][lua][bitmap]") {
+    InputFixture f;
+    f.run(R"(
+        calls = {}
+        local Class = setmetatable({
+            OnAnimationFrame = function(self, frame) table.insert(calls, 'frame ' .. frame) end,
+            OnAnimationFinished = function(self) table.insert(calls, 'finished') end,
+            OnAnimationStopped = function(self) table.insert(calls, 'stopped') end,
+        }, { __index = moho.bitmap_methods })
+        b = setmetatable({}, { __index = Class })
+        InternalCreateBitmap(b, GetFrame(0))
+        b:SetNewTexture({'/a.dds', '/b.dds', '/c.dds'})
+        b:SetLoopPingPongPattern() -- 0 1 2 1, and no looping by itself
+        b:Loop(true)
+        b:SetFrame(9)              -- clamped into the pattern: its last frame
+        b:Play()
+    )");
+    // 1/12 s a frame until SetFrameRate: 0.1 s is past it
+    const auto frame = [&] {
+        f.dispatch.update_controls(f.lua.raw(), f.registry, 0.1);
+        return took(f);
+    };
+    auto* b = control_of(f.lua.raw(), "b");
+    REQUIRE(b);
+    CHECK(took(f).empty());
+    CHECK(b->current_frame() == 3);
+    CHECK(b->frame_texture() == "/b.dds");
+    CHECK(frame() == "finished,frame 0");
+    CHECK(b->frame_texture() == "/a.dds");
+    CHECK(frame() == "frame 1");
+    CHECK(frame() == "frame 2");
+    CHECK(b->frame_texture() == "/c.dds");
+    CHECK(frame() == "frame 3");
+    CHECK(frame() == "finished,frame 0");
+    CHECK(b->anim_playing());
+
+    f.run("b:Stop()");
+    CHECK(took(f) == "stopped");
+    CHECK_FALSE(b->needs_frame_update());
+    CHECK(frame().empty());
+    CHECK(f.check("b:GetFrame() == 0"));
+
+    // A pattern's texture indices are clamped into its textures
+    f.run("b:SetFramePattern({0, 5, -1})");
+    CHECK(b->frame_pattern() == std::vector<osc::i32>{0, 2, 0});
+}
+
+TEST_CASE("A Bitmap of one texture neither plays nor is told it stopped, as Moho's",
+          "[ui][lua][bitmap]") {
+    // Moho's Play and Stop act only with more than one texture: retail's
+    // Button plays each texture it is given.
+    InputFixture f;
+    f.run(R"(
+        calls = {}
+        b = setmetatable({
+            OnAnimationFrame = function(self, frame) table.insert(calls, 'frame ' .. frame) end,
+            OnAnimationStopped = function(self) table.insert(calls, 'stopped') end,
+        }, { __index = moho.bitmap_methods })
+        InternalCreateBitmap(b, GetFrame(0))
+        b:SetNewTexture('/a.dds')
+        b:Play()
+        b:Stop()
+    )");
+    auto* b = control_of(f.lua.raw(), "b");
+    REQUIRE(b);
+    CHECK_FALSE(b->anim_playing());
+    CHECK_FALSE(b->needs_frame_update());
+    f.dispatch.update_controls(f.lua.raw(), f.registry, 1.0);
+    CHECK(took(f).empty());
+}
+
 TEST_CASE("A focused Edit takes typed text and calls its On* methods, as Moho's does",
           "[ui][lua][input][edit]") {
     InputFixture f;

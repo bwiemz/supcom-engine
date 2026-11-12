@@ -10,14 +10,11 @@ namespace osc::ui {
 UIControl::~UIControl() = default;
 
 const std::string& UIControl::frame_texture() const {
-    if (textures_.size() > 1) {
-        i32 frame = current_frame_;
-        if (pattern_index_ >= 0 && pattern_index_ < static_cast<i32>(frame_pattern_.size())) {
-            frame = frame_pattern_[pattern_index_];
-        }
-        if (frame >= 0 && frame < static_cast<i32>(textures_.size())) {
-            return textures_[frame];
-        }
+    if (textures_.size() > 1 && current_frame_ >= 0 &&
+        current_frame_ < static_cast<i32>(frame_pattern_.size())) {
+        const i32 texture = frame_pattern_[static_cast<size_t>(current_frame_)];
+        if (texture >= 0 && texture < static_cast<i32>(textures_.size()))
+            return textures_[static_cast<size_t>(texture)];
     }
     return texture_path_;
 }

@@ -969,58 +969,6 @@ void UIRenderer::emit_cursor_quad(lua_State* L, TextureCache& tex_cache,
     quads_.push_back(entry);
 }
 
-void UIRenderer::advance_animations(lua_State* L,
-                                     const ui::UIControlRegistry& registry,
-                                     f32 delta_time) {
-    for (auto& uptr : registry.all()) {
-        auto* ctrl = uptr.get();
-        if (!ctrl || !ctrl->anim_playing()) continue;
-        if (ctrl->textures().size() <= 1) continue;
-
-        f32 rate = ctrl->frame_rate();
-        if (rate <= 0.0f) continue;
-
-        f32 accum = ctrl->anim_accumulator() + delta_time;
-        f32 frame_dur = 1.0f / rate;
-
-        while (accum >= frame_dur) {
-            accum -= frame_dur;
-
-            if (!ctrl->frame_pattern().empty()) {
-                i32 pi = ctrl->pattern_index() + 1;
-                i32 ps = static_cast<i32>(ctrl->frame_pattern().size());
-                if (pi >= ps) {
-                    if (ctrl->anim_looping()) {
-                        pi = 0;
-                    } else {
-                        // Stays on the last pattern frame.
-                        ctrl->set_anim_playing(false);
-                        accum = 0.0f;
-                        break;
-                    }
-                }
-                ctrl->set_pattern_index(pi);
-                ctrl->set_current_frame(ctrl->frame_pattern()[pi]);
-            } else {
-                i32 f = ctrl->current_frame() + 1;
-                i32 n = ctrl->num_frames();
-                if (f >= n) {
-                    if (ctrl->anim_looping()) {
-                        f = 0;
-                    } else {
-                        // Stays on the last frame.
-                        ctrl->set_anim_playing(false);
-                        accum = 0.0f;
-                        break;
-                    }
-                }
-                ctrl->set_current_frame(f);
-            }
-        }
-        ctrl->set_anim_accumulator(accum);
-    }
-}
-
 void UIRenderer::destroy(VkDevice device, VmaAllocator allocator) {
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
         if (instance_buf_[i].buffer) {
