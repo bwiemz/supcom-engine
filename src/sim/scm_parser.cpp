@@ -1,4 +1,6 @@
 #include "sim/scm_parser.hpp"
+#include "sim/flight_math.hpp"
+#include "sim/pose.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -198,6 +200,10 @@ std::optional<BoneData> parse_scm_bones(const std::vector<char>& file_data) {
         reader.skip(4);
         bone.parent_index = reader.read_i32();
         reader.skip(8);
+
+        const auto& m = bone.inverse_bind_pose;
+        const f32 rows[3][3] = {{m[0], m[4], m[8]}, {m[1], m[5], m[9]}, {m[2], m[6], m[10]}};
+        bone.inverse_bind = {{m[12], m[13], m[14]}, matrix_rows_to_quat_canonical(rows)};
     }
 
     // Build name_to_index map (lowercase keys for case-insensitive lookup)
@@ -239,14 +245,30 @@ std::optional<BoneData> parse_scm_bones(const std::vector<char>& file_data) {
         vert_offset + static_cast<size_t>(vert_count) * kVertexSize <= file_data.size()) {
         reader.seek(vert_offset);
         MeshBounds box;
+        bool bones_boxed = true;
         for (u32 i = 0; i < vert_count; ++i) {
             const Vector3 p{reader.read_f32(), reader.read_f32(), reader.read_f32()};
-            reader.skip(kVertexSize - 12);
+            reader.skip(kVertexSize - 16);
+            const auto skinned = static_cast<u8>(file_data[reader.position()]);
+            reader.skip(4);
             if (i == 0) {
                 box = {p, p};
             }
             box.lo = {std::min(box.lo.x, p.x), std::min(box.lo.y, p.y), std::min(box.lo.z, p.z)};
             box.hi = {std::max(box.hi.x, p.x), std::max(box.hi.y, p.y), std::max(box.hi.z, p.z)};
+            if (skinned >= bone_count) {
+                bones_boxed = false;
+            }
+            if (!bones_boxed) {
+                continue;
+            }
+            const BonePose& own = result.bones[skinned].inverse_bind;
+            const Vector3 turned = mult_quad_vec(own.rotation, p);
+            const Vector3 at{own.position.x + turned.x, own.position.y + turned.y,
+                             own.position.z + turned.z};
+            MeshBounds& b = result.bones[skinned].box;
+            b.lo = {std::min(b.lo.x, at.x), std::min(b.lo.y, at.y), std::min(b.lo.z, at.z)};
+            b.hi = {std::max(b.hi.x, at.x), std::max(b.hi.y, at.y), std::max(b.hi.z, at.z)};
         }
         result.mesh_bounds = box;
     }
