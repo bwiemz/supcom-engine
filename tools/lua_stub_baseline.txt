@@ -1,6 +1,5 @@
 # Lua bindings that do nothing, or answer a constant, yet: "<Lua name> <C++ function>"
 # (tools/check_lua_stubs.py); the user state's stand-ins as "<name> <kind>"
-AITarget l_AITarget
 allocatedsize <lambda>
 BeginLoggingStats l_BeginLoggingStats
 BlueprintLoaderUpdateProgress l_BlueprintLoaderUpdateProgress

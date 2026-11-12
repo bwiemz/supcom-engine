@@ -3860,6 +3860,58 @@ static int l_MATH_Lerp(lua_State* L) {
     return 1;
 }
 
+/// Field `i` of the table at `table` as LuaPlus's LuaObject::GetNumber reads
+/// it, for Moho's SCR_FromLuaCopy<Wm3::Vector3f>: a number, or FA's
+/// luaG_typeerror for a value off the stack, "get as number expected but got
+/// <type>" (a numeric string is no number to it).
+static f32 object_number(lua_State* L, int table, int i) {
+    lua_rawgeti(L, table, i);
+    if (lua_type(L, -1) != LUA_TNUMBER)
+        luaL_error(L, "get as number expected but got %s", lua_typename(L, lua_type(L, -1)));
+    const auto v = static_cast<f32>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    return v;
+}
+
+/// AITarget([target]): an AI target as a table -- Moho's cfunc_AITargetL makes
+/// a CAiTarget of its argument and SCR_ToLua<CAiTarget> writes it (faf-re
+/// ai/AITarget_LuaFuncDef.cpp, ai/CAiTarget.cpp), a Core function both states
+/// have. An entity (a blip too, dead or destroyed this beat alike) is
+/// {Type = 'Entity', Entity = its object}; any other table is a point on the
+/// ground, {Type = 'Ground', Position = Vector(t[1], t[2], t[3])}, each a
+/// number or a Lua error, so a handle whose entity is gone raises; anything
+/// else, or nothing, is {Type = 'None'}. More than one argument raises.
+static int l_AITarget(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n > 1) return arg_range_error(L, "Create a target object", 0, 1, n);
+    const auto target = [L](const char* type) {
+        lua_newtable(L);
+        lua_pushstring(L, "Type");
+        lua_pushstring(L, type);
+        lua_rawset(L, -3);
+    };
+    if (extract_entity(L, 1)) {
+        // The entity's own object (Moho's Entity::mLuaObj): the handle given
+        target("Entity");
+        lua_pushstring(L, "Entity");
+        lua_pushvalue(L, 1);
+        lua_rawset(L, -3);
+        return 1;
+    }
+    if (lua_type(L, 1) == LUA_TTABLE) {
+        const f32 x = object_number(L, 1, 1);
+        const f32 y = object_number(L, 1, 2);
+        const f32 z = object_number(L, 1, 3);
+        target("Ground");
+        lua_pushstring(L, "Position");
+        push_vec3(L, x, y, z);
+        lua_rawset(L, -3);
+        return 1;
+    }
+    target("None");
+    return 1;
+}
+
 // Sim scripts' randomness all comes from the session's SimRandom: seeded
 // per game (and shared by lockstep peers), drawn with our own distributions
 // so every platform rolls the same numbers.
@@ -5727,6 +5779,7 @@ void register_core_bindings(LuaState& state) {
     state.register_function("VPerpDot", l_VPerpDot);
     state.register_function("MATH_IRound", l_MATH_IRound);
     state.register_function("MATH_Lerp", l_MATH_Lerp);
+    state.register_function("AITarget", l_AITarget);
     // The game's alliances (the UI's state reads the sim it shows, as the
     // sim's own does: both hold it under osc_sim_state)
     state.register_function("IsAlly", l_IsAlly);
