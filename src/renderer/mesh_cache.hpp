@@ -92,6 +92,10 @@ enum class MeshTechnique : u32 {
     GlassAlpha = 44, ///< GlassAlphaPS (Medium's at High): lit, blended, no depth written
     BloatingNormalMappedAlpha = 45, ///< NormalMappedAlpha, swelling; its shadow swaying
     NormalMappedAlphaNoShadow = 46, ///< NormalMappedAlpha after the water, casting no shadow
+    /// ExplosionPS (TMeshExplosion, by EffectVS): the albedo and specular
+    /// scrolling, fading out; the normals fading in, dissolving them. Blended,
+    /// colour only, depth tested strictly less and written; alpha-tested over 0x40.
+    Explosion = 50,
 };
 
 /// Stable names for render dumps.
@@ -127,7 +131,7 @@ inline bool is_blended_technique(MeshTechnique t) {
            t == MeshTechnique::NukeEMP || t == MeshTechnique::NukeQuantum ||
            t == MeshTechnique::PhalanxEffect || t == MeshTechnique::UEFQuantumGate ||
            t == MeshTechnique::CommandFeedback3 || t == MeshTechnique::CommandFeedback4 ||
-           t == MeshTechnique::GlassAlpha;
+           t == MeshTechnique::GlassAlpha || t == MeshTechnique::Explosion;
 }
 
 /// A shield's technique (M211k), which the shield shaders draw.
@@ -169,11 +173,11 @@ inline bool is_post_water_technique(MeshTechnique t) {
 /// A technique of the POSTWATER + POSTEFFECT stage, the last meshes Moho
 /// draws: after the water and the beams, particles and trails above it
 /// (WRenViewport::Render's RenderMeshes(0x28)). The shields' (M211k), UnitPlace,
-/// Effect, Cloud, NukeQuantum and GlassAlpha.
+/// Effect, Cloud, NukeQuantum, GlassAlpha and Explosion.
 inline bool is_post_effect_technique(MeshTechnique t) {
     return is_shield_technique(t) || t == MeshTechnique::UnitPlace || t == MeshTechnique::Effect ||
            t == MeshTechnique::Cloud || t == MeshTechnique::NukeQuantum ||
-           t == MeshTechnique::GlassAlpha;
+           t == MeshTechnique::GlassAlpha || t == MeshTechnique::Explosion;
 }
 
 /// The mesh.fx states the shields' passes draw with (M211k): blended
@@ -208,7 +212,7 @@ inline ShieldPasses shield_passes(MeshTechnique t) {
 /// slices, cast none (M211f/g); nor do shields (M211k), nor the map's
 /// border (MapImager_LowFi is PREWATER + PREEFFECT alone), nor the effects'
 /// (Effect names a depthTechnique but, like NormalMappedAlphaNoShadow, no
-/// STAGE_DEPTH).
+/// STAGE_DEPTH), nor Explosion.
 inline bool has_depth_stage(MeshTechnique t) {
     return t != MeshTechnique::AeonBuild && t != MeshTechnique::AlphaFade &&
            t != MeshTechnique::UnitPlace && t != MeshTechnique::MapImager &&
@@ -218,7 +222,7 @@ inline bool has_depth_stage(MeshTechnique t) {
            t != MeshTechnique::NukeQuantum && t != MeshTechnique::PhalanxEffect &&
            t != MeshTechnique::UEFQuantumGate && t != MeshTechnique::CommandFeedback3 &&
            t != MeshTechnique::CommandFeedback4 && t != MeshTechnique::GlassAlpha &&
-           t != MeshTechnique::NormalMappedAlphaNoShadow;
+           t != MeshTechnique::NormalMappedAlphaNoShadow && t != MeshTechnique::Explosion;
 }
 
 /// What a technique reads as its instance's material.y (its `parameter`

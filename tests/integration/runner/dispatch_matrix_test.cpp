@@ -56,10 +56,16 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     ctx.vfs.mount(root, std::make_unique<vfs::DirectoryMount>(dir));
     map::Terrain ground(map::Heightmap(512, 512, 1.0f, std::vector<u16>(513 * 513, 0)), 0.0f, true);
     ground.set_lighting(white_fill(), {});
-    constexpr u32 techniques = static_cast<u32>(MeshTechnique::NormalMappedAlphaNoShadow) + 1;
+    constexpr u32 techniques = static_cast<u32>(MeshTechnique::Explosion) + 1;
+    // An id between the techniques names none ("Unknown"): no plate, no coverage.
+    const auto named = [](u32 id) {
+        return std::string(renderer::mesh_technique_name(static_cast<MeshTechnique>(id))) !=
+               "Unknown";
+    };
     bool shared = true;
     for (u32 id = 0; id <= techniques; ++id) {
         if (id == static_cast<u32>(MeshTechnique::UnitPlace)) continue;
+        if (id < techniques && !named(id)) continue;
         Plate plate;
         plate.shader = renderer::mesh_technique_name(
             id < techniques ? static_cast<MeshTechnique>(id) : MeshTechnique::Unit);
@@ -191,7 +197,8 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     std::sort(matrix.begin(), matrix.end());
     std::string all;
     for (const auto& line : matrix) all += line + '\n';
-    for (u32 id = 0; id <= static_cast<u32>(MeshTechnique::NormalMappedAlphaNoShadow); ++id) {
+    for (u32 id = 0; id < techniques; ++id) {
+        if (!named(id)) continue;
         const std::string name = renderer::mesh_technique_name(static_cast<MeshTechnique>(id));
         for (int lane = 0; lane < 3; ++lane)
             for (const char* view : {"world", "cartographic-main", "cartographic-minimap"}) {
@@ -226,6 +233,10 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
         fact(fidelity, "technique=CybranBuild stage=pre-water pass=1 pipeline=overlay");
         fact(fidelity, "technique=AeonBuild stage=pre-water pass=1", fidelity > 0);
         fact(fidelity, "technique=ShieldCybran stage=post-effect pass=1", fidelity > 0);
+        // One technique, whatever the fidelity: no lanes
+        fact(fidelity, fmt::format("technique=Explosion stage=post-effect pass=0 "
+                                   "pipeline=explosion drawn=Explosion lane={} ",
+                                   fidelity));
     }
     fact(1, "drawn=Seraphim lane=0 shader_id=4 shadow=0");
     fact(0, "technique=AeonCZAR stage=pre-water pass=0 pipeline=mesh drawn=Aeon lane=0");
@@ -305,7 +316,7 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     };
     for (const char* role :
          {"mesh", "fade", "overlay", "cube", "outer_cloud", "nuke_emp", "nuke_quantum", "phalanx",
-          "quantum_gate", "feedback", "glow", "shield:Blend", "shield:BlendUnculled",
+          "quantum_gate", "explosion", "feedback", "glow", "shield:Blend", "shield:BlendUnculled",
           "shield:AddRGB", "shield:AddRGBA", "shield:Fill", "shield:BlendDepthWrite"}) {
         t.check(role_in(role, {"reflection", "pre-water", "post-water", "post-effect"}),
                 std::string("dispatch world role coverage: ") + role);

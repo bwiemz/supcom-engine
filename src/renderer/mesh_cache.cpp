@@ -70,6 +70,7 @@ const char* mesh_technique_name(MeshTechnique technique) {
     case MeshTechnique::GlassAlpha: return "GlassAlpha";
     case MeshTechnique::BloatingNormalMappedAlpha: return "BloatingNormalMappedAlpha";
     case MeshTechnique::NormalMappedAlphaNoShadow: return "NormalMappedAlphaNoShadow";
+    case MeshTechnique::Explosion: return "Explosion";
     }
     return "Unknown";
 }
@@ -369,6 +370,9 @@ MeshTechnique mesh_technique(const std::string& shader) {
     }
     if (shader_name == "NormalMappedAlphaNoShadow") {
         return MeshTechnique::NormalMappedAlphaNoShadow;
+    }
+    if (shader_name == "Explosion") {
+        return MeshTechnique::Explosion;
     }
     if (shader_name != "Unit" && !is_wreckage_shader(shader_name)) {
         static std::mutex mutex;

@@ -64,6 +64,8 @@ TEST_CASE("mesh_technique: a LOD's ShaderName picks FA's technique", "[renderer]
     CHECK(mesh_technique("GlassAlpha") == MeshTechnique::GlassAlpha);
     CHECK(mesh_technique("BloatingNormalMappedAlpha") == MeshTechnique::BloatingNormalMappedAlpha);
     CHECK(mesh_technique("NormalMappedAlphaNoShadow") == MeshTechnique::NormalMappedAlphaNoShadow);
+    CHECK(mesh_technique("Explosion") == MeshTechnique::Explosion);
+    CHECK(mesh_technique("TMeshExplosion") == MeshTechnique::Explosion);
     // Anything unported draws as Unit.
     CHECK(mesh_technique("") == MeshTechnique::Unit);
     CHECK(mesh_technique("Clutter") == MeshTechnique::Unit);
@@ -150,6 +152,15 @@ TEST_CASE("The explosions' techniques: mesh.fx's stages and blending", "[rendere
     CHECK_FALSE(has_depth_stage(MeshTechnique::NormalMappedAlphaNoShadow));
     CHECK_FALSE(is_blended_technique(MeshTechnique::BloatingNormalMappedAlpha));
     CHECK_FALSE(is_blended_technique(MeshTechnique::NormalMappedAlphaNoShadow));
+}
+
+TEST_CASE("Explosion: mesh.fx's stage and blending", "[renderer][mesh]") {
+    // Explosion: STAGE_POSTWATER + STAGE_POSTEFFECT, blended (SrcAlpha,
+    // InvSrcAlpha), no STAGE_DEPTH
+    CHECK(is_post_effect_technique(MeshTechnique::Explosion));
+    CHECK_FALSE(is_post_water_technique(MeshTechnique::Explosion));
+    CHECK(is_blended_technique(MeshTechnique::Explosion));
+    CHECK_FALSE(has_depth_stage(MeshTechnique::Explosion));
 }
 
 TEST_CASE("The pings' and ferry beacons' techniques: after the water, blended, no shadow",
@@ -322,7 +333,8 @@ TEST_CASE("mesh_technique: a ShaderName with no technique warns once and draws a
     CHECK(log.count("no technique for ShaderName 'NoSuchShaderA'") == 1);
     CHECK(log.count("no technique for ShaderName 'NoSuchShaderB'") == 1);
 
-    for (const char* quiet : {"TMeshAlpha", "Aeon", "", "Unit", "Simple", "Wreckage"})
+    for (const char* quiet :
+         {"TMeshAlpha", "Aeon", "", "Unit", "Simple", "Wreckage", "TMeshExplosion"})
         mesh_technique(quiet);
     CHECK(log.count("no technique") == 2);
 }
@@ -367,6 +379,10 @@ TEST_CASE("mesh technique dump names round trip", "[renderer][mesh]") {
         if (std::find(engine_internal.begin(), engine_internal.end(), technique) !=
             engine_internal.end())
             continue;
+        INFO(mesh_technique_name(technique));
+        CHECK(mesh_technique(mesh_technique_name(technique)) == technique);
+    }
+    for (const MeshTechnique technique : {MeshTechnique::Explosion}) {
         INFO(mesh_technique_name(technique));
         CHECK(mesh_technique(mesh_technique_name(technique)) == technique);
     }

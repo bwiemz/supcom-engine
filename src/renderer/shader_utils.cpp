@@ -1444,7 +1444,8 @@ layout(push_constant) uniform PushConstants {
     // 16 NormalMappedTerrain, 17 UndulatingNormalMappedAlpha (M211i); ...;
     // 32 Effect, 33 Cloud, 34 OuterCloud, 35 NukeUEF, 36 NukeEMP, 37 NukeQuantum,
     // 38 PhalanxEffect, 39 UEFQuantumGate, 40 CommandFeedback3, 41 CommandFeedback4,
-    // 42 AeonCZAR (High; below it, Aeon), 43 Flat, 44 GlassAlpha, 45 BloatingNormalMappedAlpha
+    // 42 AeonCZAR (High; below it, Aeon), 43 Flat, 44 GlassAlpha, 45 BloatingNormalMappedAlpha;
+    // 50 Explosion
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
@@ -1814,6 +1815,27 @@ vec4 explosionColor() {
         vec4 second = texture(texNormal, fragUV * 4.0 + vec2(age * 0.025));
         return vec4(clamp(albedo.rgb - second.rgb, 0.0, 1.0), 0.4 * texture(texAlbedo, fragUV).a);
     }
+    if (pc.technique == 50u) {
+        // ExplosionPS(true, Greater, 0x40): the albedo scrolling up, the
+        // specular faster over it by its alpha, fading out from 0.375 ticks
+        // old; the normals, read with the specular, fading in from 10 ticks
+        // old, when the alpha starts falling and the normals' alpha
+        // dissolves what it outweighs. Alpha-tested over 0x40.
+        float fade = age - 10.0;
+        vec2 t = vec2(fragUV.x, fragUV.y + age * 0.0036);
+        vec4 c = texture(texAlbedo, t);
+        t.y += age * 0.018;
+        vec4 d = texture(texSpecTeam, t);
+        c = mix(c, d, d.a);
+        c.rgb *= fadeAfter(age, 0.375, 0.035);
+        vec4 e = texture(texNormal, t);
+        e.rgb *= clamp(fade * 0.035, 0.0, 1.0);
+        float alpha = fadeAfter(fade, 0.0, 0.12);
+        if (fade >= 0.0) alpha = e.a <= alpha ? alpha + e.a : 0.0;
+        alpha = clamp(alpha, 0.0, 1.0);
+        if (alpha <= 64.0 / 255.0) discard;
+        return vec4(clamp(c.rgb + e.rgb, 0.0, 1.0), alpha);
+    }
     // NukeHeadPS(1, 0.018, 50, 0.015): the normals are noise, read thrice
     // at three scales scrolling up; a grey from them, halfway to the albedo,
     // brightened by the noise. From 20 ticks old it dissolves where the
@@ -1853,7 +1875,7 @@ void main() {
         outColor = texture(texAlbedo, fragUV);
         return;
     }
-    if (pc.technique >= 32u && pc.technique <= 39u) {
+    if ((pc.technique >= 32u && pc.technique <= 39u) || pc.technique == 50u) {
         outColor = explosionColor();
         return;
     }
