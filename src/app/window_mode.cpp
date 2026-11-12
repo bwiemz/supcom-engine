@@ -88,12 +88,14 @@ WindowMode startup_window_mode(const std::vector<std::string>& args, const Windo
         m.fullscreen = true;
         m.size = {at_least(kDefaultWidth, (*f)[0]), at_least(kDefaultHeight, (*f)[1]), 60};
         m.overridden = true;
-    } else if (const auto r = parse_resolution(prefs.primary_adapter);
-               r && !same_no_case(prefs.primary_adapter, "windowed")) {
+    } else if (!same_no_case(prefs.primary_adapter, "windowed")) {
+        // A mode: full screen at it. Anything else too ("", what a failed
+        // GetOption answers): CScApp's head keeps the default size it was
+        // made with
         m.fullscreen = true;
-        m.size = *r;
+        if (const auto r = parse_resolution(prefs.primary_adapter)) m.size = *r;
     } else {
-        // "windowed" (or anything else): the size and place it last had
+        // "windowed": the size and place it last had
         m.size = {prefs.width.value_or(kDefaultWidth), prefs.height.value_or(kDefaultHeight), 60};
         if (prefs.x && prefs.y) m.position = std::array<i32, 2>{*prefs.x, *prefs.y};
         m.maximized = prefs.maximized;

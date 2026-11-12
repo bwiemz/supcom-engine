@@ -57,6 +57,17 @@ TEST_CASE("The window opens as the options and prefs say (M217h)", "[window]") {
     CHECK((*m.position)[0] == -20);
     CHECK((*m.position)[1] == 40);
     CHECK(m.maximized);
+
+    // Neither "windowed" nor a mode ("" is what a failed GetOption answers):
+    // CScApp's head stays the borderless one at the default size it was made
+    for (const char* other : {"", "overridden", "12,x,60"}) {
+        prefs.primary_adapter = other;
+        m = startup_window_mode({}, prefs);
+        CHECK(m.fullscreen);
+        CHECK(m.size == Resolution{1024, 768, 60});
+        CHECK_FALSE(m.maximized);
+        CHECK_FALSE(m.position);
+    }
 }
 
 TEST_CASE("The command line overrides the options, with Moho's prefixes (M217h)", "[window]") {

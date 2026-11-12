@@ -411,6 +411,9 @@ public:
     /// ui_RenderUnitBars, ui_NisRenderIcons and ren_SelectBoxes.
     void set_unit_bars(bool on) { overlay_renderer_.set_unit_bars(on); }
     bool unit_bars() const { return overlay_renderer_.unit_bars(); }
+    /// The show_attached_unit_lifebars option, as each frame reads it.
+    void set_attached_lifebars(bool on) { overlay_renderer_.set_attached_lifebars(on); }
+    bool attached_lifebars() const { return overlay_renderer_.attached_lifebars(); }
     void set_nis_icons(bool on) { strategic_icon_renderer_.set_nis_icons(on); }
     bool nis_icons() const { return strategic_icon_renderer_.nis_icons(); }
     /// FAF's patched game's icon scales (ui_StrategicIconScale,

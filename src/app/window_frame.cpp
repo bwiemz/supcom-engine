@@ -17,6 +17,7 @@
 #include "lua/mp_net_state.hpp"
 #include "lua/sim_sync.hpp"
 #include "lua/user_bindings.hpp"
+#include "lua/user_options.hpp"
 #include "renderer/frustum.hpp"
 #include "sim/lockstep_session.hpp"
 
@@ -784,6 +785,11 @@ void App::Window::update_ui(double dt) {
                                             sim_state->playable_x1(), sim_state->playable_z1());
     }
     renderer.set_nis_mode(osc::core::ui_nis_mode(ui_lua_state.raw()));
+    // A transported unit's lifebar, as the player's option says: Moho's
+    // RenderStrategicIcons asks prefs.lua's GetOption each frame it draws
+    if (sim_state)
+        renderer.set_attached_lifebars(
+            osc::lua::options_get_bool(ui_lua_state.raw(), "show_attached_unit_lifebars"));
     renderer.poll_events(dt);
     // While the pointer is pinned FA's cursor is hidden, every frame
     // (func_ProcessMouseScrubbing), and let go, it is shown again

@@ -7,6 +7,7 @@
 
 #include "core/fullscreen.hpp"
 #include "core/preferences.hpp"
+#include "lua/user_options.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/camera.hpp"
 #include "ui/console.hpp"
@@ -86,8 +87,6 @@ void set_custom_data(lua_State* L, const char* key, const std::vector<OptionStat
 
 WindowPrefs read_window_prefs(const core::Preferences& prefs) {
     WindowPrefs w;
-    if (const std::string key = option_key(prefs, "primary_adapter"); !key.empty())
-        w.primary_adapter = prefs.get_string(key, w.primary_adapter);
     if (const int width = prefs.get_int("Windows.Main.width", 0); width > 0)
         w.width = static_cast<u32>(width);
     if (const int height = prefs.get_int("Windows.Main.height", 0); height > 0)
@@ -102,20 +101,32 @@ WindowPrefs read_window_prefs(const core::Preferences& prefs) {
     return w;
 }
 
-bool vsync_option(const core::Preferences& prefs) {
-    const std::string key = option_key(prefs, "vsync");
-    return key.empty() || prefs.get_int(key, 1) == 1;
+WindowPrefs startup_window_prefs(lua_State* uL, const core::Preferences& prefs,
+                                 const std::vector<std::string>& args) {
+    WindowPrefs w = read_window_prefs(prefs);
+    // (CScApp asks for the option only when the command line doesn't choose)
+    if (!startup_window_mode(args, w).overridden)
+        w.primary_adapter = osc::lua::options_get_string(uL, "primary_adapter");
+    return w;
 }
 
 WindowMode open_window(renderer::Renderer& r, const std::vector<std::string>& args,
-                       const core::Preferences& prefs) {
-    const WindowMode m = startup_window_mode(args, read_window_prefs(prefs));
+                       const core::Preferences& prefs, lua_State* uL) {
+    // CScApp's device, from prefs.lua's GetOption: the vsync option, the
+    // head (the command line, else the primary_adapter option), then the
+    // antialiasing option. One head here: the secondary_adapter option,
+    // which CScApp reads with the primary's, chooses none.
+    const bool vsync = osc::lua::options_get_int(uL, "vsync") == 1;
+    const WindowMode m = startup_window_mode(args, startup_window_prefs(uL, prefs, args));
+    const int antialiasing = osc::lua::options_get_int(uL, "antialiasing");
     if (m.fullscreen) {
         r.set_fullscreen(m.size.width, m.size.height, m.size.rate);
     } else {
         r.set_windowed(m.size.width, m.size.height, m.position, m.maximized);
     }
-    r.set_vsync(vsync_option(prefs));
+    r.set_vsync(vsync);
+    // (kept: the engine draws without multisampling yet)
+    r.video_options().antialiasing = antialiasing;
     spdlog::info("Window: {} {}x{}{}", m.fullscreen ? "full screen" : "windowed", m.size.width,
                  m.size.height, m.overridden ? " (the command line's)" : "");
     return m;
@@ -238,11 +249,13 @@ void register_window_commands(ui::Console& console, core::Preferences& prefs, bo
             set_custom_data(L, "secondary_adapter", {{"<LOC _Disabled>", "disabled"}}, "disabled");
         }
     });
-    // SC_VerticalSync <n>: the device again, with the vsync option (Moho
-    // reads the option, not the argument; the options screen has stored it)
-    console.add("SC_VerticalSync", [&prefs](lua_State* L, const Args& args) {
+    // SC_VerticalSync <n>: the device again, vsync on for "1" (Moho's
+    // atoi(args[1]) == 1 at 0x008D3C60; it asks no option)
+    console.add("SC_VerticalSync", [](lua_State* L, const Args& args) {
         if (args.size() != 2) return;
-        if (renderer::Renderer* r = renderer_of(L)) r->set_vsync(vsync_option(prefs));
+        if (renderer::Renderer* r = renderer_of(L)) {
+            r->set_vsync(std::strtol(args[1].c_str(), nullptr, 10) == 1);
+        }
     });
 }
 
