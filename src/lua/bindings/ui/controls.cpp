@@ -158,7 +158,9 @@ static ui::UIControl* root_frame(lua_State* L) {
 /// Destroy each of `ctrl`'s children, as Moho's CMauiControl::ClearChildren
 /// does: every one, each with its OnDestroy.
 static void destroy_children(lua_State* L, ui::UIControlRegistry* reg, ui::UIControl* ctrl) {
-    const std::vector<ui::UIControl*> children = ctrl->children();
+    // A snapshot: each child leaves ctrl's list as it is destroyed.
+    const auto& live = ctrl->children();
+    const std::vector<ui::UIControl*> children(live.begin(), live.end());
     for (auto* child : children)
         if (child && !child->destroyed() && !child->destroying())
             destroy_control_tree(L, reg, child);
