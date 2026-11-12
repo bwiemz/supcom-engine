@@ -377,6 +377,11 @@ Unit::LandStep Unit::carrier_land_step(Unit& carrier, bool refuel, SimContext& c
     }
 
     if (landing_.phase == LandPhase::None) {
+        // The landing begins: CUnitCarrierLand's constructor makes the
+        // carrier its unit's focus (Unit::SetFocusEntity), and the script
+        // hears OnAssignedFocusEntity before the task first looks for room.
+        notify_focus_assigned(ctx.L);
+        if (destroyed() || !in_registry()) return LandStep::Failed;
         // A place in storage, and the point to come in from: 20 (and its
         // turn's wait) back from it, along the way it faces.
         if (!carrier.transport_has_available_storage()) {

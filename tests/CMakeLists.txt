@@ -128,6 +128,7 @@ add_executable(osc_tests
     test_ui_layout.cpp
     test_user_decals.cpp
     test_world_view.cpp
+    test_wld_ui_provider.cpp
     test_user_stand_ins.cpp
     test_resource_icons.cpp
     test_ui_controls.cpp
@@ -163,6 +164,7 @@ add_executable(osc_tests
     test_camera_ortho.cpp
     test_scene_views.cpp
     test_window_mode.cpp
+    test_user_options.cpp
     test_console_vars.cpp
     test_team_color_lookup.cpp
     test_economy_overlay.cpp
@@ -190,6 +192,7 @@ add_executable(osc_tests
     test_smoke_test.cpp
     test_smoke_harness.cpp
     test_army_stats.cpp
+    test_army_args.cpp
     test_unit_stats.cpp
     test_kill_stats.cpp
     test_match_telemetry.cpp

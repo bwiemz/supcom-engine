@@ -1323,7 +1323,8 @@ bool has_target(const UnitCommand& command) {
     case CommandType::Upgrade:
     case CommandType::Enhance:
     case CommandType::SiloBuildNuke:
-    case CommandType::SiloBuildTactical: return false;
+    case CommandType::SiloBuildTactical:
+    case CommandType::Pause: return false;
     default:
         return static_cast<bool>(command.target_id) || command.target_pos.x != 0.0f ||
                command.target_pos.y != 0.0f || command.target_pos.z != 0.0f;
@@ -1501,6 +1502,9 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     }
     if (command.type == CommandType::Overcharge) {
         return unit.has_command_cap("RULEUCC_Overcharge");
+    }
+    if (command.type == CommandType::SpecialAction) {
+        return unit.has_command_cap("RULEUCC_SpecialAction");
     }
     if (command.type == CommandType::Ferry) {
         return !carrier && unit.has_category("TRANSPORTATION") && has_transport_ai(unit);
@@ -1974,6 +1978,12 @@ std::vector<u32> SimState::army_command_sources(i32 army) const {
     const auto it = army_sources_.find(army);
     if (it == army_sources_.end()) return {};
     return {it->second.begin(), it->second.end()};
+}
+
+void SimState::set_debug_selection(std::vector<EntityId> ids) {
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    debug_selection_ = std::move(ids);
 }
 
 bool SimState::cheats_enabled() {

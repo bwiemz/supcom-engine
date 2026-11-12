@@ -1,9 +1,1 @@
 # Callbacks retail runs that src/ doesn't name yet (tools/check_retail_hooks.py)
-method OnAnimationFinished
-method OnAnimationFrame
-method OnAssignedFocusEntity
-method OnIconsVisible
-method OnSpecialAction
-method OnStart
-method OnSubtitle
-module /lua/user/prefs.lua:GetOption

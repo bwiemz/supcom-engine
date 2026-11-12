@@ -22,6 +22,7 @@
 namespace osc::sim {
 
 class Entity;
+struct Fnv;
 
 class EntityRegistry {
     friend struct StateIO; // snapshots (state_io.hpp)
@@ -61,11 +62,23 @@ public:
     /// Moho's IdPool::Update on every pool, the tail of EntityDB::Purge: a serial released
     /// kIdHeldBeats updates ago is free again.
     void update_id_pools();
+    static constexpr size_t kIdHeldBeats = 99;
 
     /// Moho's stage A list (CTaskStage): the order the entities step in, kept from walk to walk.
     std::vector<EntityId>& walk() { return walk_; }
     const std::vector<EntityId>& walk() const { return walk_; }
     void wake(Entity& entity);
+
+    /// Into the sync checksum: the registry's own state that decides what
+    /// comes next though no entity shows it.
+    /// - The collision cells' link count. Each entity's link is mixed with
+    ///   the entity, and the links' order is the order a rect query (and
+    ///   crowd steering) finds entities in.
+    /// - The walk's order, as a snapshot keeps it.
+    /// - The deletion queue.
+    /// - Each id pool: its next serial, the serials free again, those held
+    ///   by beat, and each serial's generation, which decide the next ids.
+    void fingerprint(Fnv& f) const;
 
     /// Called for each entity just before it is removed. SimState uses it to
     /// release what the entity owns outside the registry (its Lua table's
@@ -272,7 +285,6 @@ private:
         /// Each serial's last generation, of the ids in this pool's range.
         std::vector<u32> generations;
     };
-    static constexpr size_t kIdHeldBeats = 99;
     std::map<u32, IdPool> id_pools_;
     EntityId reserve_id(const Entity& e);
     void index_slots();

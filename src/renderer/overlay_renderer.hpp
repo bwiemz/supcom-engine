@@ -134,6 +134,10 @@ public:
     /// drawn with them); a campaign's NIS turns them off.
     void set_unit_bars(bool on) { unit_bars_ = on; }
     bool unit_bars() const { return unit_bars_; }
+    /// The show_attached_unit_lifebars option (on, options.lua's default):
+    /// a unit riding a transport has its lifebar too.
+    void set_attached_lifebars(bool on) { attached_lifebars_ = on; }
+    bool attached_lifebars() const { return attached_lifebars_; }
     /// ren_SelectBoxes: the selection's marks; a NIS turns them off too.
     void set_select_boxes(bool on) { select_boxes_ = on; }
     bool select_boxes() const { return select_boxes_; }
@@ -158,6 +162,7 @@ public:
 private:
     std::unordered_set<std::string> intel_ring_types_ = kAllIntelRingTypes;
     bool unit_bars_ = true;
+    bool attached_lifebars_ = true;
     bool select_boxes_ = true;
     const ReconView* recon_ = nullptr;
     sim::EntityId hovered_{};

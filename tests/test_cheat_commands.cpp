@@ -1,7 +1,8 @@
 // The console's cheat commands, as Moho's (faf-re console/CConCommand.cpp):
 // CreateUnit, PopupCreateUnitMenu, TeleportSelectedUnits and
 // DestroySelectedUnits, which retail's debug key map binds with cheats on;
-// and the saved lines behind ConExecuteSave and CON_ExecuteLastCommand.
+// the saved lines behind ConExecuteSave and CON_ExecuteLastCommand; and
+// IssueCommand's Pause.
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -251,4 +252,28 @@ TEST_CASE("DestroySelectedUnits gives the selection a DestroySelf order, refused
     CHECK((gone == nullptr || gone->destroyed()));
     CHECK_FALSE(b.destroyed());
     CHECK(osc::sim::moho_command_number(osc::sim::CommandType::DestroySelf, false) == 31);
+}
+
+TEST_CASE("The console's IssueCommand Pause clears the selection's queues and toggles its pause",
+          "[console]") {
+    // faf-re CON_IssueCommand (0x008335F0): ISSUE_Command(selection, UNITCOMMAND_Pause, clear)
+    CheatWorld w;
+    Unit& a = w.make(1, 20, 20);
+    Unit& b = w.make(1, 30, 20);
+    a.add_command_cap("RULEUCC_Pause");
+    b.add_command_cap("RULEUCC_Pause");
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    move.target_pos = {100.0f, 10.0f, 20.0f};
+    a.push_command(move, false);
+    w.input.set_selected({a.entity_id()});
+    w.run("IssueCommand Pause");
+    w.ticks(3);
+    CHECK(a.is_paused());
+    CHECK(a.command_queue().empty());
+    CHECK_FALSE(b.is_paused());
+    w.run("IssueCommand Pause");
+    w.ticks(3);
+    CHECK_FALSE(a.is_paused());
+    CHECK(osc::sim::moho_command_number(osc::sim::CommandType::Pause, false) == 33);
 }

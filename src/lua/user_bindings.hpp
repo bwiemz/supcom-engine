@@ -35,6 +35,12 @@ void register_user_bindings(LuaState& state);
 /// the command mode and GetRightMouseButtonOrder
 void update_world_view_cursor(lua_State* L);
 
+/// Each world view's OnIconsVisible(self, areIconsVisible), as Moho's
+/// CUIWorldView::Frame runs it while the view's input isn't locked: when its
+/// strategic icons turn off (its Space spin starts, or cam_Free is set) or on
+/// again, once per change; never at creation, where they show.
+void update_world_view_icons(lua_State* L);
+
 /// The world views made before the window published its renderer (FA's
 /// game interface, which a --map launch builds at boot), bound to its
 /// camera as a new one is: their projections, picking and cartographic mode

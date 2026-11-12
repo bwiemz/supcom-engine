@@ -64,7 +64,9 @@ public:
     /// Called once per frame from the main loop.
     void dispatch_events(lua_State* L, UIControlRegistry& registry);
 
-    /// Call OnFrame on all controls with NeedsFrameUpdate.
+    /// Each control with NeedsFrameUpdate has its frame (Moho's
+    /// CMauiControl::Frame): its OnFrame, then a Bitmap's animation, an
+    /// Edit's caret or a Movie's movie.
     void update_controls(lua_State* L, UIControlRegistry& registry, f64 dt);
 
     // GLFW input events: a window's callbacks, and tests, call these
@@ -142,6 +144,8 @@ private:
     /// `arg`, then `event`, if given; false if it has none.
     bool run_script(lua_State* L, UIControl* ctrl, const char* name, const f64* arg = nullptr,
                     const UIEvent* event = nullptr);
+    /// The same with a string argument (Moho's CallbackStr).
+    bool run_script_text(lua_State* L, UIControl* ctrl, const char* name, const std::string& text);
     /// A key going down with no control focused and no capture: the key
     /// map's action, run through the console (CUIKeyHandler::OnKeyDown).
     void handle_key(lua_State* L, const UIEvent& ev);
@@ -151,8 +155,17 @@ private:
     /// shown or hidden.
     void toggle_console(lua_State* L);
     /// A Movie control's frame (Moho's CMauiMovie::Frame): OnFrame, then
-    /// OnStopped, its movie's clock and frame, or OnFinished at its end.
+    /// OnStopped, its movie's clock, frame and subtitle (OnSubtitle when
+    /// it changes), or OnFinished at its end.
     void movie_frame(lua_State* L, UIControl* ctrl, f64 dt);
+    /// A Bitmap's animation, after its OnFrame (Moho's CMauiBitmap::Frame):
+    /// while it plays, its frame's time runs, and past the frame's
+    /// duration the next frame comes.
+    void bitmap_frame(lua_State* L, UIControl* ctrl, f64 dt);
+    /// The animation's next frame (CMauiBitmap::OnPatternEnd): at the
+    /// pattern's end it loops or stops, and OnAnimationFinished runs; then
+    /// OnAnimationFrame(frame), 0-based.
+    void next_bitmap_frame(lua_State* L, UIControl* ctrl);
     /// A press on a scrollbar (Moho's CMauiScrollbar): its thumb taken to
     /// drag, or a page toward the press on its track
     void press_scrollbar(lua_State* L, UIControl* bar, const UIEvent& ev);

@@ -227,6 +227,58 @@ TEST_CASE("A destroyed unit gives its id until its tick ends, then GetEntityId r
     )"));
 }
 
+TEST_CASE("DebugGetSelection gives the synced selection's units, as Moho's",
+          "[scriptobject][selection]") {
+    ScriptWorld w;
+    lua_State* L = w.state.raw();
+    REQUIRE(w.check(R"(
+        u1 = CreateUnit('test_plain', 1, 0, 0, 0)
+        u2 = CreateUnit('test_plain', 1, 0, 0, 0)
+        u3 = CreateUnit('test_plain', 1, 0, 0, 0)
+        e = {} _c_CreateEntity(e, {Army = 1})
+    )"));
+    const auto key_of = [L](const char* name, const char* field) {
+        lua_getglobal(L, name);
+        lua_pushstring(L, field);
+        lua_rawget(L, -2);
+        const osc::sim::EntityId id = osc::sim::to_entity_key(L, -1);
+        lua_pop(L, 2);
+        return id;
+    };
+    const osc::sim::EntityId u1 = key_of("u1", "_c_entity_id");
+    const osc::sim::EntityId u2 = key_of("u2", "_c_entity_id");
+    const osc::sim::EntityId u3 = key_of("u3", "_c_entity_id");
+    const osc::sim::EntityId e = key_of("e", "_entity_id");
+    REQUIRE((u1 && u2 && u3 && e));
+    REQUIRE(u1.key() < u2.key());
+    REQUIRE(u2.key() < u3.key());
+
+    CHECK(w.check(R"(
+        local s = DebugGetSelection()
+        assert(type(s) == 'table' and table.getn(s) == 0, 'nothing selected: an empty table')
+    )"));
+    // As the UI's Sync leaves it: unordered, a non-unit, an id nothing has
+    w.sim.set_debug_selection({u3, e, osc::sim::EntityId::of(4000, 1), u1, u2});
+    CHECK(w.check(R"(
+        local s = DebugGetSelection()
+        assert(table.getn(s) == 3, tostring(table.getn(s)))
+        assert(rawequal(s[1], u1) and rawequal(s[2], u2) and rawequal(s[3], u3),
+               'the units, in id order')
+        local ok, err = pcall(DebugGetSelection, 1)
+        assert(not ok and string.find(err, 'Get DEBUG info for UI selection\n  expected 0 args, but got 1',
+                                      1, true), tostring(err))
+        ;(moho.unit_methods.Destroy or moho.entity_methods.Destroy)(u2)
+        s = DebugGetSelection()
+        assert(table.getn(s) == 3 and rawequal(s[2], u2), 'a unit its deletion queue holds')
+    )"));
+    w.sim.tick();
+    CHECK(w.check(R"(
+        local s = DebugGetSelection()
+        assert(table.getn(s) == 2 and rawequal(s[1], u1) and rawequal(s[2], u3),
+               'a unit gone is skipped')
+    )"));
+}
+
 TEST_CASE("An entity's spec names its army as Moho's _c_CreateEntity reads it", "[scriptobject]") {
     ScriptWorld w;
     w.sim.add_army("ARMY_2", "ARMY_2");
@@ -250,4 +302,61 @@ TEST_CASE("An entity's spec names its army as Moho's _c_CreateEntity reads it", 
     CHECK(army_of("{Owner = 255}") == -1);
     CHECK(army_of("{}") == -1);
     CHECK_FALSE(w.state.do_string("e = {} _c_CreateEntity(e, {Army = 0})").ok());
+}
+
+TEST_CASE("AITarget makes Moho's target table of an entity, a point or nothing",
+          "[scriptobject][aitarget]") {
+    ScriptWorld w;
+    lua_State* L = w.state.raw();
+    REQUIRE(w.check("u = CreateUnit('test_plain', 1, 0, 0, 0)"));
+    // Another script object's table (a platoon's, a brain's): not an entity
+    static int other_stand_in = 0;
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, &other_stand_in);
+    lua_rawset(L, -3);
+    lua_setglobal(L, "other");
+    CHECK(w.check(R"(
+        local t = AITarget(u)
+        assert(t.Type == 'Entity', tostring(t.Type))
+        assert(rawequal(t.Entity, u), 'the unit itself')
+        assert(t.Position == nil, 'an entity has no position')
+
+        t = AITarget({1, 2.5, -3})
+        assert(t.Type == 'Ground', tostring(t.Type))
+        assert(t.Entity == nil, 'a point has no entity')
+        assert(t.Position[1] == 1 and t.Position[2] == 2.5 and t.Position[3] == -3,
+               'the point')
+        assert(t.Position.x == 1 and t.Position.z == -3, 'as a vector')
+
+        local function none(t)
+            return t.Type == 'None' and t.Entity == nil and t.Position == nil
+        end
+        assert(none(AITarget()), 'nothing')
+        assert(none(AITarget(nil)), 'nil')
+        assert(none(AITarget(7)), 'a number')
+        assert(none(AITarget('u')), 'a string')
+        assert(none(AITarget(true)), 'a boolean')
+
+        local function raises(text, ...)
+            local ok, err = pcall(AITarget, unpack(arg))
+            assert(not ok, 'answered')
+            assert(string.find(err, text, 1, true), tostring(err))
+        end
+        raises('Create a target object\n  expected between 0 and 1 args, but got 2', u, u)
+        raises('get as number expected but got nil', {1, 2})
+        raises('get as number expected but got string', {'1', 2, 3})
+        raises('get as number expected but got nil', other)
+
+        ;(moho.unit_methods.Destroy or moho.entity_methods.Destroy)(u)
+        t = AITarget(u)
+        assert(t.Type == 'Entity' and rawequal(t.Entity, u), 'a unit its deletion queue holds')
+    )"));
+    w.sim.tick();
+    // Gone, its table is just a table: a point with no numbers
+    CHECK(w.check(R"(
+        local ok, err = pcall(AITarget, u)
+        assert(not ok and string.find(err, 'get as number expected but got nil', 1, true),
+               tostring(err))
+    )"));
 }

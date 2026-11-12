@@ -1,24 +1,3 @@
 # Lua bindings that do nothing, or answer a constant, yet: "<Lua name> <C++ function>"
 # (tools/check_lua_stubs.py); the user state's stand-ins as "<name> <kind>"
-AITarget l_AITarget
-allocatedsize <lambda>
-BeginLoggingStats l_BeginLoggingStats
-BlueprintLoaderUpdateProgress l_BlueprintLoaderUpdateProgress
-BlueprintLoaderUpdateProgress stub_noop
-ClearFrame Command
-DebugGetSelection stub_nil
-Destroy wlduiprovider_Destroy
-EndLoggingStats l_EndLoggingStats
-GetOmni shield_GetOmni
-InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService
-IsKnownFake blip_IsKnownFake
-IsRestricted <lambda>
-IssuePause stub_noop
 MetaImpact stub_noop
-PrefetchSession Command
-RefreshSteamGames l_RefreshSteamGames
-SetGreaterOf brain_SetGreaterOf
-SetTargetHead frame_SetTargetHead
-SimConExecute stub_noop
-SpecFootprints stub_noop
-SubmitXMLArmyStats stub_noop

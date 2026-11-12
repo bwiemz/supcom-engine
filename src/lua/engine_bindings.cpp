@@ -364,7 +364,8 @@ bool is_thread_stand_in(lua_CFunction f) {
 static int l_Trace(lua_State*) { return 0; }
 static int l_BeginLoggingStats(lua_State*) { return 0; }
 static int l_EndLoggingStats(lua_State*) { return 0; }
-static int l_AITarget(lua_State*) { return 0; }
+// AITarget: a Core function both game states have (sim_bindings.cpp's
+// register_core_bindings)
 static int l_SecondsPerTick(lua_State* L) { lua_pushnumber(L, 0.1); return 1; }
 
 /// STR_GetTokens(string, delimiter)
@@ -609,7 +610,6 @@ void register_blueprint_bindings(LuaState& state) {
     state.register_function("Trace", l_Trace);
     state.register_function("BeginLoggingStats", l_BeginLoggingStats);
     state.register_function("EndLoggingStats", l_EndLoggingStats);
-    state.register_function("AITarget", l_AITarget);
 
     // Pre-set globals expected by the Lua code
     state.set_global_table("__diskwatch");

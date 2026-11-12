@@ -111,11 +111,6 @@ static int shield_IsOn(lua_State* L) {
     lua_pushboolean(L, (s && s->is_on) ? 1 : 0);
     return 1;
 }
-static int shield_GetOmni(lua_State* L) {
-    // No fog of war / omni detection yet
-    lua_pushboolean(L, 0);
-    return 1;
-}
 static int shield_GetType(lua_State* L) {
     auto* s = check_shield(L);
     if (s && !s->shield_type.empty()) {
@@ -135,7 +130,6 @@ static int shield_SetSize(lua_State* L) {
 
 // clang-format off
 const MethodEntry shield_methods[] = {
-    {"GetOmni",                     shield_GetOmni},
     {"TurnOn",                      shield_TurnOn},
     {"TurnOff",                     shield_TurnOff},
     {"IsOn",                        shield_IsOn},

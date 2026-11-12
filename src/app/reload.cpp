@@ -363,9 +363,10 @@ void finish_world_load(osc::sim::SimState& sim_state, osc::lua::LuaState& sim_lu
     // first, as a lobby gives the player the slot taken (its start spot)
     osc::lua::set_focus_army(sim_lua_state.raw(), uiL, human_army(sim_lua_state.raw(), sim_state));
 
-    // 17. Clear selection
+    // 17. Clear selection: the new sim's is none, not one the last game left pending
     if (input_handler) input_handler->set_selected({});
     if (prev_selection) prev_selection->clear();
+    osc::lua::request_debug_selection(uiL, {});
 
     // 18. Reset game state
     game_state_mgr.set_game_over(false);

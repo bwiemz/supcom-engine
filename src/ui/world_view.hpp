@@ -73,6 +73,20 @@ public:
     bool gets_global_camera_commands() const { return global_cam_cmds_; }
     void set_global_camera_commands(bool g) { global_cam_cmds_ = g; }
 
+    /// Whether its strategic icons draw now: CUIWorldView::Render's gate,
+    /// neither its Space spin on (mCameraRotationActive) nor cam_Free. A
+    /// minimap's own view takes no spin, so only cam_Free (the WorldCamera's,
+    /// everyone's) turns its icons off. A view not bound to a camera yet
+    /// shows them.
+    bool icons_visible() const;
+    /// CUIWorldView's mIconsVisible: what its script was last told, true as
+    /// made (so a view isn't told at creation).
+    bool icons_shown() const { return icons_shown_; }
+    /// CUIWorldView::Frame's check: when icons_visible() differs from what
+    /// its script was last told, takes it and answers true (OnIconsVisible
+    /// is due); else false.
+    bool take_icons_visible_change();
+
     bool is_minimap() const { return is_minimap_; }
     /// Made a minimap (UIWorldView's isMiniMap): its camera takes the LOD
     /// scale cam_DefaultMiniLOD holds now, as CUIWorldView's does when made;
@@ -115,6 +129,7 @@ private:
     bool input_locked_ = false;
     bool highlight_enabled_ = true;
     bool global_cam_cmds_ = false;
+    bool icons_shown_ = true;
     bool is_minimap_ = false;
     f32 lod_scale_ = kDefaultLod;
     bool resource_rendering_ = true;

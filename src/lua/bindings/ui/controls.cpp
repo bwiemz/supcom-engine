@@ -7,6 +7,7 @@
 #include "lua/moho_bindings_internal.hpp"
 #include "ui/keyboard_focus.hpp"
 #include "lua/lua_stubs.hpp"
+#include "lua/arg_count.hpp"
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
@@ -154,6 +155,17 @@ static ui::UIControl* root_frame(lua_State* L) {
     return root;
 }
 
+/// Destroy each of `ctrl`'s children, as Moho's CMauiControl::ClearChildren
+/// does: every one, each with its OnDestroy.
+static void destroy_children(lua_State* L, ui::UIControlRegistry* reg, ui::UIControl* ctrl) {
+    // A snapshot: each child leaves ctrl's list as it is destroyed.
+    const auto& live = ctrl->children();
+    const std::vector<ui::UIControl*> children(live.begin(), live.end());
+    for (auto* child : children)
+        if (child && !child->destroyed() && !child->destroying())
+            destroy_control_tree(L, reg, child);
+}
+
 static int control_Destroy(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl || ctrl->destroyed() || ctrl->destroying()) return 0;
@@ -163,13 +175,35 @@ static int control_Destroy(lua_State* L) {
     // destroy the control they were opened over as they leave for the next
     // game, and in a game that is GetFrame(0). What it holds goes.
     if (ctrl == root_frame(L)) {
-        const std::vector<ui::UIControl*> children = ctrl->children();
-        for (auto* child : children)
-            if (child && !child->destroyed() && !child->destroying())
-                destroy_control_tree(L, reg, child);
+        destroy_children(L, reg, ctrl);
         return 0;
     }
     destroy_control_tree(L, reg, ctrl);
+    return 0;
+}
+
+// Moho's ClearFrame(head) (faf-re cfunc_ClearFrameL; CUIManager::
+// ClearChildren): every control in the head's root frame is destroyed, or in
+// every head's for nil. A head that isn't one does nothing; the engine draws
+// head 0 alone (retail's multihead.lua clears head 1).
+int l_ClearFrame(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n >= 2) {
+        return arg_range_error(
+            L,
+            "ClearFrame(int head) - destroy all controls in frame, nil head will clear all frames",
+            0, 1, n);
+    }
+    lua_settop(L, 1);
+    auto* reg = get_ui_registry(L);
+    ui::UIControl* root = reg ? root_frame(L) : nullptr;
+    if (!root) {
+        return luaL_error(L, "UI layer has not been initialized.");
+    }
+    const int head = lua_isnil(L, 1) ? -1 : static_cast<int>(lua_tonumber(L, 1));
+    if (head == -1 || head == 0) {
+        destroy_children(L, reg, root);
+    }
     return 0;
 }
 
@@ -541,13 +575,32 @@ static int frame_GetTopmostDepth(lua_State* L) {
     return 1;
 }
 
+// The head the frame stands for (faf-re cfunc_CMauiFrameGetTargetHeadL)
 static int frame_GetTargetHead(lua_State* L) {
-    lua_pushnumber(L, 0); // single monitor
+    if (lua_gettop(L) != 1) {
+        return arg_count_error(L, "int GetTargetHead()", 1, lua_gettop(L));
+    }
+    auto* frame = check_control(L);
+    lua_pushnumber(L, frame ? static_cast<lua_Number>(frame->target_head()) : 0);
     return 1;
 }
 
+// Moho's CMauiFrame:SetTargetHead (faf-re cfunc_CMauiFrameSetTargetHeadL,
+// 0x00796C10): a number, truncated, stored for GetTargetHead; the frame is
+// returned. Scripts read it as GetFrame(GetRootFrame():GetTargetHead()).
 static int frame_SetTargetHead(lua_State* L) {
-    return 0; // no-op, single monitor
+    if (lua_gettop(L) != 2) {
+        return arg_count_error(L, "CMauiFrame:SetTargetHead(targetHead)", 2, lua_gettop(L));
+    }
+    auto* frame = check_control(L);
+    if (lua_type(L, 2) != LUA_TNUMBER) {
+        return arg_type_error(L, 2, "number");
+    }
+    if (frame) {
+        frame->set_target_head(static_cast<i32>(lua_tonumber(L, 2)));
+    }
+    lua_settop(L, 1);
+    return 1;
 }
 
 // clang-format off
@@ -579,6 +632,14 @@ static void set_bitmap_size(lua_State* L, int self_idx, i32 width, i32 height) {
         }
         lua_pop(L, 1); // the LazyVar
     }
+}
+
+/// Moho's CMauiBitmap::SetForwardPattern: each of `textures` in turn.
+static std::vector<i32> forward_pattern(i32 textures) {
+    std::vector<i32> pattern;
+    pattern.reserve(textures > 0 ? static_cast<size_t>(textures) : 0);
+    for (i32 i = 0; i < textures; ++i) pattern.push_back(i);
+    return pattern;
 }
 
 static int bitmap_SetNewTexture(lua_State* L) {
@@ -615,6 +676,11 @@ static int bitmap_SetNewTexture(lua_State* L) {
         ctrl->set_bitmap_height(h);
         ctrl->set_has_solid_color(false);
     }
+    // From the first frame, through the textures in turn (Moho's
+    // SetNewTexture: SetFrame(0), then SetForwardPattern). Whether it plays,
+    // and its frame's time, are left as they were.
+    ctrl->set_current_frame(0);
+    ctrl->set_frame_pattern(forward_pattern(ctrl->num_frames()));
 
     // The texture's size into its BitmapWidth/BitmapHeight LazyVars, as
     // CMauiBitmap::SetTexture sets them; Width and Height follow them
@@ -639,6 +705,7 @@ static int bitmap_InternalSetSolidColor(lua_State* L) {
         ctrl->set_texture_path("");
         ctrl->set_textures({});
         ctrl->set_current_frame(0);
+        ctrl->set_frame_pattern({0}); // the colour's one texture, in Moho
         ctrl->set_solid_color(color);
         ctrl->set_has_solid_color(true);
     }
@@ -690,13 +757,14 @@ static int bitmap_BitmapHeight(lua_State* L) {
     return 1;
 }
 
+/// SetFrame(int): Moho's CMauiBitmap::SetFrame, the frame of its pattern
+/// shown (0-based), clamped into the pattern. No callback runs, and the
+/// frame's clock runs on.
 static int bitmap_SetFrame(lua_State* L) {
     auto* ctrl = check_control(L);
     if (ctrl) {
-        i32 f = static_cast<i32>(lua_tonumber(L, 2));
-        i32 n = ctrl->num_frames();
-        if (n > 0) f = std::max(0, std::min(f, n - 1));
-        ctrl->set_current_frame(f);
+        const i32 last = std::max(static_cast<i32>(ctrl->frame_pattern().size()) - 1, 0);
+        ctrl->set_current_frame(std::clamp(static_cast<i32>(lua_tonumber(L, 2)), 0, last));
     }
     return 0;
 }
@@ -713,21 +781,38 @@ static int bitmap_GetNumFrames(lua_State* L) {
     return 1;
 }
 
+/// SetFrameRate(fps): a frame shows 1/fps seconds (Moho's
+/// mFrameDurationSeconds, 1/12 until set).
 static int bitmap_SetFrameRate(lua_State* L) {
     auto* ctrl = check_control(L);
     if (ctrl) ctrl->set_frame_rate(static_cast<f32>(lua_tonumber(L, 2)));
     return 0;
 }
 
+/// SetFramePattern({texture, ...}): Moho's CMauiBitmap::SetFramePattern
+/// clamps each texture index into its textures, warning of one outside.
 static int bitmap_SetFramePattern(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (!ctrl || !lua_istable(L, 2)) return 0;
+    if (!ctrl) return 0;
+    if (!lua_istable(L, 2)) {
+        spdlog::warn("Bitmap:SetFramePattern requires an array of integers!");
+        return 0;
+    }
+    const i32 textures = ctrl->num_frames();
     std::vector<i32> pattern;
     int n = luaL_getn(L, 2);
     for (int i = 1; i <= n; i++) {
         lua_rawgeti(L, 2, i);
-        pattern.push_back(static_cast<i32>(lua_tonumber(L, -1)));
+        const i32 frame = static_cast<i32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
+        if (frame < 0)
+            spdlog::warn("Bitmap:SetFramePattern - Negative frame index {} found in frame pattern.",
+                         frame);
+        else if (frame > textures - 1)
+            spdlog::warn("Bitmap:SetFramePattern - Frame index {} found in frame pattern which is "
+                         "larger than number of textures({}).",
+                         frame, textures);
+        pattern.push_back(std::max(std::min(frame, textures - 1), 0));
     }
     ctrl->set_frame_pattern(std::move(pattern));
     return 0;
@@ -735,54 +820,62 @@ static int bitmap_SetFramePattern(lua_State* L) {
 
 static int bitmap_SetForwardPattern(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (!ctrl || ctrl->num_frames() <= 0) return 0;
-    i32 n = ctrl->num_frames();
-    std::vector<i32> pat(n);
-    for (i32 i = 0; i < n; i++) pat[i] = i;
-    ctrl->set_frame_pattern(std::move(pat));
+    if (ctrl) ctrl->set_frame_pattern(forward_pattern(ctrl->num_frames()));
     return 0;
 }
 
 static int bitmap_SetBackwardPattern(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (!ctrl || ctrl->num_frames() <= 0) return 0;
-    i32 n = ctrl->num_frames();
-    std::vector<i32> pat(n);
-    for (i32 i = 0; i < n; i++) pat[i] = n - 1 - i;
-    ctrl->set_frame_pattern(std::move(pat));
+    if (!ctrl) return 0;
+    std::vector<i32> pattern;
+    for (i32 i = ctrl->num_frames() - 1; i >= 0; i--) pattern.push_back(i);
+    ctrl->set_frame_pattern(std::move(pattern));
     return 0;
 }
 
+/// SetPingPongPattern(): forward, then back to the first (0..n-1, n-2..0).
 static int bitmap_SetPingPongPattern(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (!ctrl || ctrl->num_frames() <= 0) return 0;
-    i32 n = ctrl->num_frames();
-    std::vector<i32> pat;
-    pat.reserve(2 * static_cast<size_t>(n));
-    for (i32 i = 0; i < n; i++) pat.push_back(i);
-    for (i32 i = n - 2; i >= 0; i--) pat.push_back(i);
-    ctrl->set_frame_pattern(std::move(pat));
+    if (!ctrl) return 0;
+    const i32 n = ctrl->num_frames();
+    std::vector<i32> pattern = forward_pattern(n);
+    for (i32 i = n - 2; i >= 0; i--) pattern.push_back(i);
+    ctrl->set_frame_pattern(std::move(pattern));
     return 0;
 }
 
+/// SetLoopPingPongPattern(): forward, then back short of the first, so
+/// that looping repeats neither end (0..n-1, n-2..1). It sets no looping:
+/// retail's Button calls Loop(true) after it.
 static int bitmap_SetLoopPingPongPattern(lua_State* L) {
-    // Same as PingPong but sets looping
-    bitmap_SetPingPongPattern(L);
     auto* ctrl = check_control(L);
-    if (ctrl) ctrl->set_anim_looping(true);
+    if (!ctrl) return 0;
+    const i32 n = ctrl->num_frames();
+    std::vector<i32> pattern = forward_pattern(n);
+    for (i32 i = n - 2; i > 0; i--) pattern.push_back(i);
+    ctrl->set_frame_pattern(std::move(pattern));
     return 0;
 }
 
+/// Play(): Moho's plays only a bitmap of more than one texture (retail's
+/// Button plays each texture it is given), and wants frame updates, where
+/// UIDispatch runs its animation (CMauiBitmap::Frame).
 static int bitmap_Play(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl) ctrl->set_anim_playing(true);
+    if (ctrl && ctrl->textures().size() > 1) {
+        ctrl->set_anim_playing(true);
+        ctrl->set_needs_frame_update(true);
+    }
     return 0;
 }
 
+/// Stop(): of more than one texture, Moho's stops playing and wanting
+/// frame updates, then runs OnAnimationStopped.
 static int bitmap_Stop(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl) {
+    if (ctrl && ctrl->textures().size() > 1) {
         ctrl->set_anim_playing(false);
+        ctrl->set_needs_frame_update(false);
         // Call OnAnimationStopped callback
         lua_pushstring(L, "OnAnimationStopped");
         lua_gettable(L, 1);

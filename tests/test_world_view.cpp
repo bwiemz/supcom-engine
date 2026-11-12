@@ -17,6 +17,7 @@
 #include "ui/world_view.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
@@ -268,4 +269,111 @@ TEST_CASE("WorldView:GetScreenPos and ProjectMultiple put world points on the vi
     r = ui.do_string("moho.UIWorldView.ProjectMultiple(view, 5)");
     REQUIRE_FALSE(r.ok());
     CHECK(r.error().message.find("table expected.") != std::string::npos);
+}
+
+TEST_CASE("A world view's script hears OnIconsVisible as its icons turn off and on, and only then",
+          "[ui][worldview][lua]") {
+    // CUIWorldView::Frame, while the view's input isn't locked: OnIconsVisible(self,
+    // !mCameraRotationActive && !cam_Free) when that differs from what it last told the
+    // script (true as made, so nothing at creation). A minimap's own view takes no spin.
+    osc::renderer::Camera camera;
+    camera.set_viewport(1280.0f, 720.0f);
+    camera.init(512.0f, 512.0f);
+    camera.set_target(200.0f, 300.0f);
+    camera.set_zoom(60.0f); // near: Space spins it
+
+    osc::lua::LuaState sim_lua;
+    osc::sim::SimState sim{sim_lua.raw(), nullptr};
+    osc::lua::LuaState ui;
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_blueprint_bindings(ui);
+    osc::lua::register_moho_bindings(ui, sim);
+    osc::lua::register_ui_bindings(ui, registry);
+    osc::lua::register_user_bindings(ui);
+    lua_State* L = ui.raw();
+    const auto made = ui.do_string(R"(
+        told = ''
+        views = {}
+        local function view_named(name)
+            local view = {}
+            view.OnIconsVisible = function(...)
+                told = told .. name .. '=' .. tostring(arg[2])
+                if arg[1] ~= view then told = told .. '(not self)' end
+                if arg.n ~= 2 then told = told .. '(' .. arg.n .. ' args)' end
+                told = told .. ';'
+            end
+            views[name] = view
+        end
+        view_named('main')
+        view_named('mini')
+    )");
+    INFO((made.ok() ? std::string() : made.error().message));
+    REQUIRE(made.ok());
+
+    const auto add_view = [&](const char* name, bool minimap) {
+        auto owned = std::make_unique<osc::ui::WorldView>();
+        osc::ui::WorldView* view = owned.get();
+        registry.add(std::move(owned));
+        view->set_minimap(minimap);
+        view->register_camera("WorldCamera", &camera);
+        lua_getglobal(L, "views");
+        lua_pushstring(L, name);
+        lua_gettable(L, -2);
+        view->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+        lua_pop(L, 1); // views
+        return view;
+    };
+    osc::ui::WorldView* main_view = add_view("main", false);
+    add_view("mini", true);
+
+    // What the views' scripts were told since the last look.
+    const auto told = [L] {
+        lua_getglobal(L, "told");
+        const char* text = lua_tostring(L, -1);
+        std::string out = text ? text : "";
+        lua_pop(L, 1);
+        lua_pushstring(L, "");
+        lua_setglobal(L, "told");
+        return out;
+    };
+    const auto frame = [L] { osc::lua::update_world_view_icons(L); };
+
+    // Made, its icons showing: nothing to tell
+    frame();
+    CHECK(told().empty());
+
+    // The Space spin's first motion: the main view's icons go; the minimap's
+    // stay. Told once, not each frame after.
+    osc::renderer::CameraInput in;
+    in.space = true;
+    camera.apply(in, 0.0);
+    in.mouse_x = 100.0f;
+    camera.apply(in, 0.0);
+    REQUIRE(camera.spinning());
+    frame();
+    CHECK(told() == "main=false;");
+    frame();
+    CHECK(told().empty());
+
+    // While its input is locked, nothing: the spin's end is told once it's
+    // unlocked
+    main_view->set_input_locked(true);
+    in.space = false;
+    camera.apply(in, 0.0);
+    REQUIRE_FALSE(camera.spinning());
+    frame();
+    CHECK(told().empty());
+    main_view->set_input_locked(false);
+    frame();
+    CHECK(told() == "main=true;");
+
+    // cam_Free turns every view's icons off, the minimap's too, and back
+    camera.set_free(true);
+    frame();
+    CHECK(told() == "main=false;mini=false;");
+    camera.set_free(false);
+    frame();
+    CHECK(told() == "main=true;mini=true;");
+    frame();
+    CHECK(told().empty());
 }

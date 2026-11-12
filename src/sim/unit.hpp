@@ -668,6 +668,11 @@ public:
 
     /// Lua callback helpers: call self:method() or self:method(entity)
     void call_lua_method(lua_State* L, const char* method_name);
+    /// Moho's Unit::SetFocusEntity, its script's half, as its tasks and
+    /// Unit:SetFocusEntity run it whenever the focus they set is a live
+    /// entity: self:OnAssignedFocusEntity(), no other arguments (retail's
+    /// and FAF's are empty). Clearing the focus calls nothing.
+    void notify_focus_assigned(lua_State* L);
     /// OnHealthChanged(new, old) when its health falls into another quarter,
     /// as Moho reports it: each value the quarter it is in, rounded down
     void report_health_band(lua_State* L);
@@ -718,7 +723,9 @@ public:
     void begin_reclaim(EntityId target_id, lua_State* L, EntityRegistry& registry);
     void stop_reclaiming(lua_State* L = nullptr, EntityRegistry* registry = nullptr);
     bool progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L);
-    bool progress_reclaim_assist(f64 dt, EntityRegistry& registry);
+    /// A guard's help with its guarded unit's reclaim. A unit it wears down
+    /// is its focus each tick it does (OnAssignedFocusEntity, through `L`).
+    bool progress_reclaim_assist(f64 dt, EntityRegistry& registry, lua_State* L);
     static bool reclaim_wears_down(const Entity& target);
     bool reclaim_arm_ready(const Entity& target) const;
     bool awaits_arm();
@@ -1885,6 +1892,11 @@ private:
     OrderStep order_transport_unload(UnitCommand& cmd, SimContext& ctx);
     /// A cheat's DestroySelf order: the unit destroyed.
     OrderStep order_destroy_self(SimContext& ctx);
+    /// A SpecialAction order: its script hears OnSpecialAction(location), and
+    /// the order ends (IAiCommandDispatchImpl, Moho's dispatch of it).
+    OrderStep order_special_action(UnitCommand& cmd, SimContext& ctx);
+    /// A Pause order: the unit's pause toggled, if it can pause.
+    OrderStep order_pause(lua_State* L);
     /// An aircraft's refuel at a staging platform (M206r, Moho's CUnitRefuel):
     /// a slot, the flight to its bone, docking, and the climb away once full.
     OrderStep order_refuel(UnitCommand& cmd, SimContext& ctx);

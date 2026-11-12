@@ -5,6 +5,7 @@
 #include "ui/console.hpp"
 #include "ui/edit_text.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <functional>
@@ -979,10 +980,53 @@ void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,
             lua_pop(L, 1);
         }
         lua_pop(L, 1); // control table
-        if (!ctrl->destroyed() && ctrl->control_type() == UIControl::ControlType::Edit) {
+        if (ctrl->destroyed()) continue;
+        if (ctrl->control_type() == UIControl::ControlType::Edit) {
             ctrl->advance_caret_cycle(static_cast<f32>(dt));
+        } else {
+            bitmap_frame(L, ctrl, dt);
         }
     }
+}
+
+void UIDispatch::bitmap_frame(lua_State* L, UIControl* ctrl, f64 dt) {
+    // Moho's CMauiBitmap::Frame, after its OnFrame: a playing animation's
+    // frame shows until its time is past the frame's duration, then the
+    // next follows. One frame a frame at most: the time over is dropped.
+    if (!ctrl->anim_playing()) return;
+    const f32 shown = ctrl->anim_accumulator() + static_cast<f32>(dt);
+    ctrl->set_anim_accumulator(shown);
+    if (shown <= ctrl->frame_duration()) return;
+    ctrl->set_anim_accumulator(0.0f);
+    next_bitmap_frame(L, ctrl);
+}
+
+void UIDispatch::next_bitmap_frame(lua_State* L, UIControl* ctrl) {
+    // Moho's CMauiBitmap::OnPatternEnd. A pattern of one frame, or none,
+    // has nowhere to go.
+    const i32 frames = static_cast<i32>(ctrl->frame_pattern().size());
+    if (frames <= 1) return;
+    const i32 next = std::max(ctrl->current_frame() + 1, 0);
+    if (next < frames) {
+        ctrl->set_current_frame(next);
+    } else {
+        // Its end. Looping, it starts over; else it stays on the last frame
+        // and stops, wanting no more frame updates. OnAnimationFinished
+        // runs either way.
+        if (ctrl->anim_looping()) {
+            ctrl->set_current_frame(0);
+        } else {
+            ctrl->set_current_frame(frames - 1);
+            ctrl->set_anim_playing(false);
+            ctrl->set_needs_frame_update(false);
+        }
+        run_script(L, ctrl, "OnAnimationFinished");
+    }
+    // Then OnAnimationFrame(frame), the frame now shown: 0-based, read
+    // after OnAnimationFinished ran (CallbackInt takes mCurrentFrame by
+    // reference).
+    const f64 frame = ctrl->current_frame();
+    run_script(L, ctrl, "OnAnimationFrame", &frame);
 }
 
 void UIDispatch::handle_key(lua_State* L, const UIEvent& ev) {
@@ -1090,6 +1134,27 @@ bool UIDispatch::run_script(lua_State* L, UIControl* ctrl, const char* name, con
     return true;
 }
 
+bool UIDispatch::run_script_text(lua_State* L, UIControl* ctrl, const char* name,
+                                 const std::string& text) {
+    if (ctrl->destroyed() || ctrl->lua_table_ref() < 0) return false;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
+    lua_pushstring(L, name);
+    lua_gettable(L, -2); // through the class, as Moho's CallbackStr looks
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        return false;
+    }
+    lua_pushvalue(L, -2); // self
+    lua_pushstring(L, text.c_str());
+    if (lua_pcall(L, 2, 0, 0) != 0) {
+        report_ui_callback_error(fmt::format("{} error for control #{}: {}", name,
+                                             ctrl->control_id(), lua_tostring(L, -1)));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1); // control table
+    return true;
+}
+
 void UIDispatch::movie_frame(lua_State* L, UIControl* ctrl, f64 dt) {
     // Moho's CMauiMovie::Frame. A control not playing (its movie ended, or
     // Play found none) finishes.
@@ -1122,6 +1187,14 @@ void UIDispatch::movie_frame(lua_State* L, UIControl* ctrl, f64 dt) {
         return;
     }
     if (ctrl->movie_on_screen()) movie->update_frame();
+    // UpdatePlaybackFrame takes the subtitle due too (on screen or off),
+    // and when it isn't the one the script was told last, the script is
+    // told: OnSubtitle(text), "" once none is due.
+    movie->update_subtitle();
+    if (movie->subtitle() != ctrl->movie_subtitle()) {
+        ctrl->set_movie_subtitle(movie->subtitle());
+        run_script_text(L, ctrl, "OnSubtitle", ctrl->movie_subtitle());
+    }
 }
 
 } // namespace osc::ui

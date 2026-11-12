@@ -415,6 +415,124 @@ TEST_CASE("An IssueMove from a Lua thread runs at the next tick's orders", "[tic
     CHECK(tank.position().x > x);
 }
 
+// faf-re cfunc_IssuePauseL; IAiCommandDispatchImpl's UNITCOMMAND_Pause.
+TEST_CASE("An IssuePause from a Lua thread toggles its unit's pause at the next tick's orders",
+          "[tick-phases][commands]") {
+    Phases w;
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    tank.add_command_cap("RULEUCC_Pause");
+    REQUIRE(
+        w.run("heard = ''"
+              " function tank:OnPaused() heard = heard .. 'paused ' .. GetGameTick() .. ' ' end"
+              " function tank:OnUnpaused() heard = heard .. 'unpaused ' .. GetGameTick() .. ' ' end"
+              " ForkThread(function() IssuePause({tank}) end)"));
+    w.sim.tick();
+    REQUIRE(tank.command_queue().size() == 1);
+    CHECK(tank.command_queue().front().type == CommandType::Pause);
+    CHECK_FALSE(tank.is_paused());
+    CHECK(w.text("heard").empty());
+    w.sim.tick();
+    CHECK(tank.is_paused());
+    CHECK(tank.command_queue().empty());
+    const std::string first = std::to_string(w.sim.tick_count());
+    CHECK(w.text("heard") == "paused " + first + " ");
+    // Each toggles as it comes up; the order makes no task, so the next one
+    // runs in the same tick
+    REQUIRE(w.run("IssuePause({tank}) IssuePause({tank})"));
+    REQUIRE(tank.command_queue().size() == 2);
+    w.sim.tick();
+    const std::string next = std::to_string(w.sim.tick_count());
+    CHECK(tank.is_paused());
+    CHECK(tank.command_queue().empty());
+    CHECK(w.text("heard") == "paused " + first + " unpaused " + next + " paused " + next + " ");
+}
+
+TEST_CASE("An IssuePause waits behind its unit's orders", "[tick-phases][commands]") {
+    Phases w;
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    tank.add_command_cap("RULEUCC_Pause");
+    Phases::drive_east(tank);
+    REQUIRE(w.run("IssuePause({tank})"));
+    REQUIRE(tank.command_queue().size() == 2);
+    CHECK(tank.command_queue().back().type == CommandType::Pause);
+    for (int i = 0; i < 5; ++i) {
+        w.sim.tick();
+    }
+    CHECK_FALSE(tank.is_paused());
+    REQUIRE(tank.command_queue().size() == 2);
+    CHECK(tank.command_queue().front().type == CommandType::Move);
+    tick_until([&] { w.sim.tick(); }, "the tank's move ends and it pauses", 300,
+               [&] { return tank.is_paused(); });
+    CHECK(tank.command_queue().empty());
+    CHECK(tank.position().x > 125.0f);
+}
+
+TEST_CASE("Any unit takes an IssuePause; only one with RULEUCC_Pause or RULEUTC_GenericToggle "
+          "pauses",
+          "[tick-phases][commands]") {
+    // Moho's ProcessIssuedUnitCommand lets any unit have the order; Unit::SetPaused does
+    // nothing for one without either cap
+    const std::string cap = GENERATE("none", "RULEUCC_Pause", "RULEUTC_GenericToggle");
+    CAPTURE(cap);
+    Phases w;
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    if (cap == "RULEUCC_Pause") {
+        tank.add_command_cap(cap);
+    } else if (cap == "RULEUTC_GenericToggle") {
+        tank.add_toggle_cap(cap);
+    }
+    REQUIRE(w.run("heard = 0 function tank:OnPaused() heard = heard + 1 end"
+                  " IssuePause({tank})"));
+    REQUIRE(tank.command_queue().size() == 1);
+    CHECK(tank.command_queue().front().type == CommandType::Pause);
+    w.sim.tick();
+    CHECK(tank.command_queue().empty());
+    CHECK(tank.is_paused() == (cap != "none"));
+    CHECK(w.number("heard") == (cap != "none" ? 1.0f : 0.0f));
+}
+
+TEST_CASE("IssuePause reads its one list of units as Moho's func_GetUnitList does",
+          "[lua][commands]") {
+    Phases w;
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    tank.add_command_cap("RULEUCC_Pause");
+    w.brain("brain", 0);
+    // A destroyed unit's handle: its _c_object is null
+    lua_State* L = w.state.raw();
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, nullptr);
+    lua_rawset(L, -3);
+    lua_setglobal(L, "gone");
+    const auto error_of = [&](const char* code) {
+        auto r = w.state.do_string(code);
+        return r.ok() ? std::string() : r.error().message;
+    };
+    CHECK(error_of("IssuePause()").ends_with("IssuePause\n  expected 1 args, but got 0"));
+    CHECK(
+        error_of("IssuePause({tank}, true)").ends_with("IssuePause\n  expected 1 args, but got 2"));
+    CHECK(error_of("IssuePause(5)")
+              .ends_with("Invalid unit set in IssuePause; expected a table but got a number"));
+    CHECK(error_of("IssuePause(nil)")
+              .ends_with("Invalid unit set in IssuePause; expected a table but got a nil"));
+    constexpr const char* kNoObject =
+        "Expected a game object. (Did you call with '.' instead of ':'?)";
+    CHECK(error_of("IssuePause({tank, 5})").ends_with(kNoObject));
+    CHECK(error_of("IssuePause({tank, {}})").ends_with(kNoObject));
+    CHECK(error_of("IssuePause({tank, brain})")
+              .ends_with("Incorrect type of game object.  (Did you call with '.' instead of "
+                         "':'?)"));
+    // The list is read whole before any unit is given the order
+    CHECK(tank.command_queue().empty());
+    // A destroyed unit is left out, and so are the list's other keys
+    CHECK(error_of("IssuePause({gone, tank, x = 5})").empty());
+    REQUIRE(tank.command_queue().size() == 1);
+    CHECK(tank.command_queue().front().type == CommandType::Pause);
+    // A unit on its own is a table with no entries: no units
+    CHECK(error_of("IssuePause(tank)").empty());
+    CHECK(tank.command_queue().size() == 1);
+}
+
 TEST_CASE("A thread OnStartBuild forks runs in the tick of OnStartBuild", "[tick-phases]") {
     Phases w;
     Unit& fac = w.make("fac", "fac", 1, 60.0f, 60.0f);
@@ -433,6 +551,39 @@ TEST_CASE("A thread OnStartBuild forks runs in the tick of OnStartBuild", "[tick
     tick_until([&] { w.sim.tick(); }, "the factory starts its build", 20,
                [&] { return w.number("started") != 0; });
     CHECK(w.number("ran") == w.number("started"));
+}
+
+TEST_CASE("A unit made for a build hears OnStartBeingBuilt on its own layer before its builder's "
+          "OnStartBuild, and their threads run in that order",
+          "[tick-phases]") {
+    const std::string builder_layer = GENERATE(as<std::string>{}, "Land", "Water");
+    CAPTURE(builder_layer);
+    Phases w;
+    Unit& fac = w.make("fac", "fac", 1, 60.0f, 60.0f);
+    fac.economy().production_mass = 100.0;
+    fac.economy().production_energy = 100.0;
+    fac.economy().production_active = true;
+    fac.set_layer(builder_layer);
+    REQUIRE(w.run("heard = {}"
+                  " function fac:OnStartBuild(u, order)"
+                  "   table.insert(heard, 'OnStartBuild')"
+                  "   ForkThread(function() table.insert(heard, 'its thread') end)"
+                  " end"
+                  " function Plain:OnStartBeingBuilt(builder, layer)"
+                  "   table.insert(heard, 'OnStartBeingBuilt ' .. tostring(builder == fac)"
+                  "     .. ' ' .. layer .. '/' .. self:GetCurrentLayer())"
+                  "   ForkThread(function() table.insert(heard, 'its own thread') end)"
+                  " end"));
+    UnitCommand build;
+    build.type = CommandType::BuildFactory;
+    build.blueprint_id = "t1";
+    fac.push_command(build, false);
+    tick_until([&] { w.sim.tick(); }, "both threads run", 20,
+               [&] { return w.run("n = table.getn(heard)") && w.number("n") >= 4; });
+    REQUIRE(w.run("said = table.concat(heard, ', ')"));
+    CHECK(w.text("said") ==
+          "OnStartBeingBuilt true Land/Land, OnStartBuild, its own thread, its thread");
+    CHECK(fac.layer() == builder_layer);
 }
 
 TEST_CASE("A unit attached to another starts no order until it is let go", "[tick-phases]") {
@@ -2303,6 +2454,55 @@ TEST_CASE("Production reports reset before tick threads and survive paused beats
     CHECK(producer.economy().energy_produced() == 5.0);
 }
 
+TEST_CASE("A special action's script hears where the order aims as it comes up, and the next "
+          "order starts in the same tick",
+          "[tick-phases][special-action]") {
+    // IAiCommandDispatchImpl's UNITCOMMAND_SpecialAction:
+    // OnSpecialAction(location), the order's CAiTarget::GetTargetPosGun(false)
+    // as a vector; no task follows, so the dispatch takes the order off and
+    // dispatches the next at once
+    Phases w;
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    const Unit& other = w.make("other", "tank", 2, 120.0f, 100.0f);
+    REQUIRE(w.run("heard = 0 vector_mt = getmetatable(EM.GetPosition(tank))"
+                  " function Plain:OnSpecialAction(location, ...)"
+                  "   heard = heard + 1 extra = arg.n"
+                  "   at_x, at_y, at_z = location[1], location[2], location[3]"
+                  "   named = vector_mt ~= nil and getmetatable(location) == vector_mt"
+                  "     and location.x == at_x and location.z == at_z"
+                  " end"));
+    UnitCommand action;
+    action.type = CommandType::SpecialAction;
+    action.target_pos = {110.0f, 10.0f, 105.0f};
+    tank.push_command(action, false);
+    UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {150.0f, 10.0f, 100.0f};
+    tank.push_command(move, false);
+    w.sim.tick();
+    CHECK(w.number("heard") == 1.0f);
+    CHECK(w.number("extra") == 0.0f);
+    CHECK(w.number("at_x") == 110.0f);
+    CHECK(w.number("at_y") == 10.0f);
+    CHECK(w.number("at_z") == 105.0f);
+    CHECK(w.run("assert(named, 'location is no vector')"));
+    REQUIRE(tank.command_queue().size() == 1);
+    CHECK(tank.command_queue().front().type == CommandType::Move);
+    CHECK(tank.command_queue().front().begun);
+    w.sim.tick();
+    CHECK(w.number("heard") == 1.0f);
+
+    // At a unit: its target point
+    tank.push_command(order(CommandType::SpecialAction, other.entity_id()), true);
+    w.sim.tick();
+    CHECK(w.number("heard") == 2.0f);
+    const osc::sim::Vector3 aim = other.target_point(-1);
+    CHECK(w.number("at_x") == Catch::Approx(aim.x));
+    CHECK(w.number("at_y") == Catch::Approx(aim.y));
+    CHECK(w.number("at_z") == Catch::Approx(aim.z));
+    CHECK(tank.command_queue().empty());
+}
+
 TEST_CASE("A weapon holds a target off its layers till its next check, not firing at it",
           "[tick-phases]") {
     Phases w;
@@ -2323,4 +2523,48 @@ TEST_CASE("A weapon holds a target off its layers till its next check, not firin
     }
     CHECK(gun.target_entity_id == rival.entity_id());
     CHECK(w.number("fired") == fired);
+}
+
+TEST_CASE("A capture, a wait for a ferry and a carrier landing make their target the unit's "
+          "focus as the order comes up",
+          "[tick-phases][focus]") {
+    // CUnitCaptureTask's, CUnitWaitForFerryTask's and CUnitCarrierLand's
+    // constructors (Unit::SetFocusEntity): OnAssignedFocusEntity, self alone,
+    // in the tick the order comes up, before the task's first step
+    Phases w;
+    Unit& eng = w.make("eng", "tank", 1, 100.0f, 100.0f);
+    eng.set_build_rate(10.0f);
+    eng.set_max_build_distance(10.0f);
+    REQUIRE(w.run("heard = ''"
+                  " function Plain:OnAssignedFocusEntity(...)"
+                  "   heard = heard .. 'focus ' .. arg.n .. ' '"
+                  " end"
+                  " function Plain:OnStartCapture() heard = heard .. 'start ' end"));
+    SECTION("a capture") {
+        const Unit& target = w.make("target", "t1", 2, 102.0f, 100.0f);
+        eng.push_command(order(CommandType::Capture, target.entity_id()), false);
+        w.sim.tick();
+        CHECK(w.text("heard").rfind("focus 0 ", 0) == 0);
+        tick_until([&] { w.sim.tick(); }, "the capture starts", 10,
+                   [&] { return eng.is_capturing(); });
+        CHECK(w.text("heard") == "focus 0 start ");
+    }
+    SECTION("a wait at a ferry beacon") {
+        Unit& beacon = w.make("beacon", "block", 1, 120.0f, 100.0f);
+        beacon.add_category("FERRYBEACON");
+        eng.push_command(order(CommandType::WaitForFerry, beacon.entity_id()), false);
+        w.sim.tick();
+        CHECK(w.text("heard") == "focus 0 ");
+        w.sim.tick();
+        CHECK(w.text("heard") == "focus 0 ");
+    }
+    SECTION("a landing on a carrier") {
+        // This one has no room: the landing still began, and then ends
+        Unit& carrier = w.make("carrier", "tank", 1, 110.0f, 100.0f);
+        carrier.add_category("CARRIER");
+        eng.push_command(order(CommandType::TransportLoad, carrier.entity_id()), false);
+        w.sim.tick();
+        CHECK(w.text("heard") == "focus 0 ");
+        CHECK(eng.command_queue().empty());
+    }
 }

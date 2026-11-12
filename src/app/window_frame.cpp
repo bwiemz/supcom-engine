@@ -17,6 +17,7 @@
 #include "lua/mp_net_state.hpp"
 #include "lua/sim_sync.hpp"
 #include "lua/user_bindings.hpp"
+#include "lua/user_options.hpp"
 #include "renderer/frustum.hpp"
 #include "sim/lockstep_session.hpp"
 
@@ -55,6 +56,12 @@ bool App::Window::frame() {
     // from here until this frame starts its own, nothing else runs the sim
     collect_sim();
     world_interp.staged = threaded;
+    // The world plays: the game's UI provider hears OnStart, once, the
+    // frame after its interface was made and before this frame's ticks
+    // (Moho's WLD_DoPostInitializing entering Playing). The engine has no
+    // ready handshake to wait on: a network game's lockstep holds its first
+    // tick for every peer instead.
+    wld_provider.start_game(ui_lua_state.raw());
     sim_held = sim_state && (sim_state->paused() || sim_state->game_over());
     if (tracking_notice && sim_state) {
         osc::core::call_on_track_unit(ui_lua_state.raw(), *tracking_notice);
@@ -142,8 +149,7 @@ bool App::Window::frame() {
             // The UI's frame callbacks and events run their scripts, which
             // may read the live sim: here, before its tick starts, not in
             // the draw
-            if (drawn)
-                renderer.run_ui_frame(ui_lua_state.raw(), &ui_registry, sim_state != nullptr);
+            if (drawn) renderer.run_ui_frame(ui_lua_state.raw(), &ui_registry);
             // Every Lua-backed renderer preparation finishes before the next job.
         });
     }
@@ -784,6 +790,11 @@ void App::Window::update_ui(double dt) {
                                             sim_state->playable_x1(), sim_state->playable_z1());
     }
     renderer.set_nis_mode(osc::core::ui_nis_mode(ui_lua_state.raw()));
+    // A transported unit's lifebar, as the player's option says: Moho's
+    // RenderStrategicIcons asks prefs.lua's GetOption each frame it draws
+    if (sim_state)
+        renderer.set_attached_lifebars(
+            osc::lua::options_get_bool(ui_lua_state.raw(), "show_attached_unit_lifebars"));
     renderer.poll_events(dt);
     // While the pointer is pinned FA's cursor is hidden, every frame
     // (func_ProcessMouseScrubbing), and let go, it is shown again
@@ -869,6 +880,9 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
         if (input_handler.cursor_world() && !renderer.mouse_scrubbing()) {
             osc::lua::update_world_view_cursor(ui_lua_state.raw());
         }
+        // Then, the camera's input taken (poll_events), each view's script
+        // hears its strategic icons turn off or on (CUIWorldView::Frame)
+        osc::lua::update_world_view_icons(ui_lua_state.raw());
     }
 
     // Selections are a game's: at the front end (after a return to the

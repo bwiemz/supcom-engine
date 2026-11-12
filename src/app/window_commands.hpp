@@ -25,17 +25,22 @@ class Console;
 
 namespace osc::app {
 
-/// What the startup choice reads: the primary_adapter option (the current
-/// profile's, else options.lua's default) and Windows.Main.*.
+/// The windowed geometry Moho saves (Windows.Main.*); its primary_adapter
+/// the default.
 WindowPrefs read_window_prefs(const core::Preferences& prefs);
 
-/// The vsync option (the current profile's, else on).
-bool vsync_option(const core::Preferences& prefs);
+/// What the startup choice reads: Windows.Main.*, and, unless the command
+/// line chooses the window, the primary_adapter option as the UI state's
+/// /lua/user/prefs.lua GetOption gives it (CScApp's OPTIONS_GetString: ""
+/// when the call fails).
+WindowPrefs startup_window_prefs(lua_State* uL, const core::Preferences& prefs,
+                                 const std::vector<std::string>& args);
 
 /// Open `r`'s window as CScApp does (the command line, else the options),
-/// with the vsync option. Returns the mode it chose.
+/// with the vsync and antialiasing options, each asked of prefs.lua's
+/// GetOption in `uL`. Returns the mode it chose.
 WindowMode open_window(renderer::Renderer& r, const std::vector<std::string>& args,
-                       const core::Preferences& prefs);
+                       const core::Preferences& prefs, lua_State* uL);
 
 /// Keep the window's place and size while windowed (Windows.Main.*), for
 /// the next start and for SC_PrimaryAdapter "windowed".

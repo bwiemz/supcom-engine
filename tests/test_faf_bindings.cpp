@@ -151,7 +151,8 @@ TEST_CASE("An order's commandType is Moho's UNITCOMMAND number", "[faf][orders]"
         {CommandType::Upgrade, 27},      {CommandType::Script, 28},
         {CommandType::Enhance, 28},      {CommandType::Sacrifice, 32},
         {CommandType::Overcharge, 34},   {CommandType::AggressiveMove, 35},
-        {CommandType::Dock, 39},
+        {CommandType::Dock, 39},         {CommandType::SpecialAction, 38},
+        {CommandType::Pause, 33},
     };
     for (const auto& [type, number] : plain) {
         INFO(static_cast<int>(type));
@@ -196,13 +197,18 @@ TEST_CASE("A UI unit's queue numbers its orders as Moho does", "[faf][orders]") 
     repair.type = CommandType::Repair;
     repair.target_pos = {40, 0, 40};
     w.give(repair, false);
+    osc::sim::UnitCommand pause;
+    pause.type = CommandType::Pause;
+    w.give(pause, false);
     const std::string error = run(w.ui, R"(
         local q = units[1]:GetCommandQueue()
         local got = {}
         for i, c in q do got[i] = c.commandType end
-        if got[1] ~= 8 or got[2] ~= 4 or got[3] ~= 20 then
-            error(tostring(got[1]) .. ' ' .. tostring(got[2]) .. ' ' .. tostring(got[3]))
+        if got[1] ~= 8 or got[2] ~= 4 or got[3] ~= 20 or got[4] ~= 33 then
+            error(tostring(got[1]) .. ' ' .. tostring(got[2]) .. ' ' .. tostring(got[3]) .. ' '
+                .. tostring(got[4]))
         end
+        if q[4].type ~= 'Pause' then error('type ' .. tostring(q[4].type)) end
     )");
     INFO(error);
     CHECK(error.empty());

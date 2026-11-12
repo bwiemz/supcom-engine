@@ -305,6 +305,44 @@ TEST_CASE("GetArmyStat makes a stat the army doesn't have at 0, whatever its def
     CHECK(w.sim.get_army(0)->take_fired_triggers() == std::vector<std::string>{"T"});
 }
 
+TEST_CASE("SetGreaterOf raises a stat to a greater value through its int lane, as Moho's",
+          "[army][stats]") {
+    StatsWorld w;
+    const auto& stats = w.sim.get_army(0)->stats();
+    REQUIRE(w.run("brain:SetArmyStat('OSC_Peak', 5) brain:SetGreaterOf('OSC_Peak', 3)"));
+    CHECK(w.stat(1, "OSC_Peak") == 5);
+    // Truncated toward zero before the comparison: 7.9 is 7, which 7.5 doesn't pass
+    REQUIRE(w.run("brain:SetGreaterOf('OSC_Peak', 7.9)"));
+    CHECK(w.stat(1, "OSC_Peak") == 7);
+    REQUIRE(w.run("brain:SetGreaterOf('OSC_Peak', 7.5)"));
+    CHECK(w.stat(1, "OSC_Peak") == 7);
+
+    // A stat the army doesn't have is made at 0, raised or not
+    REQUIRE(w.run("brain:SetGreaterOf('OSC_Low', -2.5) brain:SetGreaterOf('OSC_Up', 2.5)"));
+    REQUIRE(stats.contains("OSC_Low"));
+    CHECK(stats.at("OSC_Low") == 0);
+    CHECK(w.stat(1, "OSC_Up") == 2);
+    REQUIRE(w.run("brain:SetGreaterOf('OSC_Up', -1.5)"));
+    CHECK(w.stat(1, "OSC_Up") == 2);
+
+    // The float lane is dead: a value that is no number does nothing, not even make the stat
+    REQUIRE(w.run("brain:SetGreaterOf('OSC_Text', '9') brain:SetGreaterOf('OSC_Text', nil)"));
+    CHECK_FALSE(stats.contains("OSC_Text"));
+    // A number names a stat as its string
+    REQUIRE(w.run("brain:SetGreaterOf(12, 4)"));
+    CHECK(w.stat(1, "12") == 4);
+
+    const auto error = [&](const char* code) {
+        auto r = w.state.do_string(code);
+        return r.ok() ? std::string() : r.error().message;
+    };
+    const std::string count = "SetGreaterOf(statname,val)\n  expected 3 args, but got 2";
+    CHECK(error("brain:SetGreaterOf('OSC_Peak')").find(count) != std::string::npos);
+    CHECK(error("brain:SetGreaterOf({}, 9)").find("attempt to use as string a table value") !=
+          std::string::npos);
+    CHECK(w.stat(1, "OSC_Peak") == 7);
+}
+
 TEST_CASE("GetBlueprintStat sums a stat's per-blueprint counts over a category, and 0 for "
           "a stat without them",
           "[army][stats]") {

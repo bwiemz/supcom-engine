@@ -53,6 +53,15 @@ enum class CommandType : u8 {
     // DestroySelectedUnits): the unit destroyed as the order comes up. The
     // sim refuses it without cheats.
     DestroySelf = 82,
+    // Moho's UNITCOMMAND_SpecialAction (a command mode's RULEUCC_SpecialAction,
+    // at a unit or the ground): as the order comes up, the unit's script hears
+    // OnSpecialAction(location), and the order ends. Only a unit with
+    // RULEUCC_SpecialAction takes one.
+    SpecialAction = 83,
+    // Moho's UNITCOMMAND_Pause (IssuePause, the console's IssueCommand
+    // Pause): as the order comes up the unit's pause is toggled, and the
+    // order is done.
+    Pause = 84,
 };
 
 /// Moho's CommandIsInstant: an order that takes no move of its own.
@@ -104,10 +113,12 @@ inline int moho_command_number(CommandType type, bool formed) {
     case CommandType::Script:
     case CommandType::Enhance: return 28;
     case CommandType::Sacrifice: return 32;
+    case CommandType::Pause: return 33;
     case CommandType::Overcharge: return 34;
     case CommandType::AggressiveMove: return formed ? 36 : 35;
     case CommandType::Dock: return 39;
     case CommandType::DestroySelf: return 31;
+    case CommandType::SpecialAction: return 38;
     }
     return 0;
 }

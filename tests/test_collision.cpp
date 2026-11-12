@@ -913,7 +913,7 @@ TEST_CASE("a projectile spins at its blueprint's RotationalVelocity about a rand
     shell.set_blueprint_id("/shell");
     (void)shell.apply_blueprint_physics(lua.raw(), &rng);
     CHECK(rate(shell) == 0.0f);
-    CHECK(rng.state() == before);
+    CHECK(rng.state() != before);
 }
 
 namespace {

@@ -308,6 +308,13 @@ public:
         return it != stats_.end() ? it->second : default_val;
     }
     void add_stat(const std::string& key, f64 delta) { stats_[key] += delta; }
+    /// SetGreaterOf's: the stat becomes `value` if that is greater than it.
+    /// Moho's CArmyStats int lane (Steam exe 0x599D90): GetItem makes the
+    /// stat at 0 if the army has none, whether or not it is raised.
+    void set_stat_greater_of(const std::string& key, i32 value) {
+        f64& stat = stats_[key];
+        if (static_cast<f64>(value) > stat) stat = static_cast<f64>(value);
+    }
 
     /// GetArmyStat's: the stat, made at 0 (whatever its default) if the army has none yet
     f64 make_stat(const std::string& key) { return stats_[key]; }

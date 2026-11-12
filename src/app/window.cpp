@@ -7,7 +7,9 @@
 #include "app/window_loop.hpp"
 #include "lua/sim_bindings.hpp"
 #include "lua/user_bindings.hpp"
+#include "lua/user_options.hpp"
 #include "app/window_commands.hpp"
+#include "core/fullscreen.hpp"
 #include "lua/lua_thread_check.hpp"
 #include "lua/mp_net_state.hpp"
 #include "core/test_status.hpp"
@@ -98,7 +100,7 @@ std::optional<int> App::Window::set_up() {
     renderer.share_range_overlays(app.range_overlays);
     if (!offscreen_capture) {
         const std::vector<std::string> args(argv, argv + argc);
-        const WindowMode mode = open_window(renderer, args, prefs);
+        const WindowMode mode = open_window(renderer, args, prefs, ui_lua_state.raw());
         adapter_overridden = mode.overridden;
         shown_fullscreen = renderer.fullscreen();
         root_width = mode.size.width;
@@ -318,8 +320,12 @@ void App::Window::publish_window_objects() {
     // The UI's root frame is the window's, and the options screen
     // lists the display's modes (M217h)
     size_root_frame(uL, root_width, root_height);
+    // (macOS keys its one full-screen state as the option holds it, an
+    // engine read Moho has no counterpart of)
     publish_adapter_options(uL, display_modes, adapter_overridden,
-                            read_window_prefs(prefs).primary_adapter);
+                            osc::core::kNativeFullscreen
+                                ? osc::lua::options_get_string(uL, "primary_adapter")
+                                : std::string(kDefaultAdapterMode));
     publish_fidelity_options(uL);
     app.held_convars.replay(console, uL);
 }

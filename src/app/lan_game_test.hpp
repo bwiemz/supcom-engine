@@ -112,6 +112,12 @@ private:
     bool save_sent_ = false;        ///< it asked to
     bool pinged_ = false;           ///< the host's ping in the saved beat went
     std::string resume_;            ///< the host's lobby resumes this saved game (none: new)
+    /// The game pauses, chats and changes its speed at the check, unless it
+    /// saves or resumes: a pause's beats are part of a game (each beat's
+    /// Sync runs EntityDB::Purge, which ages the id pools, as Moho's does),
+    /// and its length in beats is the frames the joiner waits, so a saved
+    /// game that paused could never be met by its resumed one.
+    bool plays_session_checks() const { return resume_.empty() && save_as_.empty(); }
     std::optional<u32> first_tick_; ///< the first tick seen in the game
 
     u32 frames_ = 0;

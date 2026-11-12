@@ -171,13 +171,12 @@ public:
     /// Render only the UI layer (no 3D scene, no bloom).
     /// Used during the loading screen and front end, when there is no world.
     void render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry);
-    /// The UI's frame ahead of the draw (OE-134): its controls' frame
-    /// callbacks, its events and (`world`: with a world drawn) its
-    /// animations, which run its scripts, and they may read the live sim:
-    /// run while no tick runs on the sim's thread. The frame's step is taken
-    /// here; the next render or render_ui_only draws with it and doesn't run
-    /// them again.
-    void run_ui_frame(lua_State* L, ui::UIControlRegistry* ui_registry, bool world);
+    /// The UI's frame ahead of the draw (OE-134): its controls' frames
+    /// (their callbacks and animations) and its events, which run its
+    /// scripts, and they may read the live sim: run while no tick runs on
+    /// the sim's thread. The frame's step is taken here; the next render or
+    /// render_ui_only draws with it and doesn't run them again.
+    void run_ui_frame(lua_State* L, ui::UIControlRegistry* ui_registry);
     /// A frame drawn while the sim's ticks run (its UI scripts may read the
     /// live sim): the frame's step is taken, and its UI frame callbacks,
     /// events and animations wait for the next frame that runs them.
@@ -411,6 +410,9 @@ public:
     /// ui_RenderUnitBars, ui_NisRenderIcons and ren_SelectBoxes.
     void set_unit_bars(bool on) { overlay_renderer_.set_unit_bars(on); }
     bool unit_bars() const { return overlay_renderer_.unit_bars(); }
+    /// The show_attached_unit_lifebars option, as each frame reads it.
+    void set_attached_lifebars(bool on) { overlay_renderer_.set_attached_lifebars(on); }
+    bool attached_lifebars() const { return overlay_renderer_.attached_lifebars(); }
     void set_nis_icons(bool on) { strategic_icon_renderer_.set_nis_icons(on); }
     bool nis_icons() const { return strategic_icon_renderer_.nis_icons(); }
     /// FAF's patched game's icon scales (ui_StrategicIconScale,
@@ -954,6 +956,10 @@ private:
     VkPipelineLayout mesh_phalanx_layout_ = VK_NULL_HANDLE;
     VkPipeline mesh_quantum_gate_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_quantum_gate_layout_ = VK_NULL_HANDLE;
+    /// Explosion: the fading pipeline's state, but depth tested strictly less
+    /// (Depth_Enable_Less, its depth written).
+    VkPipeline mesh_explosion_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout mesh_explosion_layout_ = VK_NULL_HANDLE;
     /// The shields' pipelines (M211k), one per ShieldState: blended (Cybran,
     /// Aeon), blended unculled (UEF, Cybran's impact), added colour
     /// (Seraphim), added colour and glow (the impact), the fill's depth, and
@@ -966,8 +972,7 @@ private:
     std::array<VkPipeline, kCartographicMeshStates> cartographic_mesh_pipelines_{};
     std::array<VkPipelineLayout, kCartographicMeshStates> cartographic_mesh_layouts_{};
     /// This frame's mesh draw calls by technique (mesh_draws).
-    std::array<u32, static_cast<size_t>(MeshTechnique::NormalMappedAlphaNoShadow) + 1>
-        mesh_draws_{};
+    std::array<u32, static_cast<size_t>(MeshTechnique::EditorMarker) + 1> mesh_draws_{};
     /// And a cartographic view's, by CartographicTechnique, a pass each
     std::array<u32, 7> cartographic_mesh_draws_{};
     /// The cartographic minimap's mesh pipelines (its output's pass), and
@@ -1337,9 +1342,17 @@ private:
     /// Which meshes a draw_meshes call draws (M213b): Moho's buckets
     /// before and after the water, or the units in its reflection.
     /// Moho's mesh stages: before the water, after it, into its reflection,
-    /// and after the effects above it, the shields' (M211k). Dry maps use
-    /// the same stages.
-    enum class MeshPass { All, BeforeWater, AfterWater, Reflection, AfterEffects };
+    /// after the effects above it, the shields' (M211k), and after the
+    /// effects under it but before it, UnderwaterClutter's (RenderMeshes(0x18)).
+    /// Dry maps use the same stages.
+    enum class MeshPass {
+        All,
+        BeforeWater,
+        AfterWater,
+        Reflection,
+        AfterEffects,
+        BeforeWaterAfterEffects
+    };
     /// The mesh instances' draws, with the scene's pipelines, seen by `vp`
     /// (for the reflection, already mirrored).
     void draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp, MeshPass stage);

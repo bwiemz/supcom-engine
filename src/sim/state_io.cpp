@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 109; // 2: entities' wanted loops (M216b);
+constexpr u32 kVersion = 110; // 2: entities' wanted loops (M216b);
                               // 3: emitter overrides (M214d);
                               // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                               // 6: weapons' lead physics;
@@ -147,6 +147,7 @@ constexpr u32 kVersion = 109; // 2: entities' wanted loops (M216b);
                               //      CalcMoveCommon result; a braking spline's PPS_1 nodes
                               // 109: units' pose locals (each bone's local transform and
                               //      model-space flag)
+                              // 110: the sim random's spare FRandGaussian draw
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -458,6 +459,10 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     // sync_army_: whose stats each beat's Sync carries, a debug window's (Moho's mSyncArmy isn't
     // saved)
     // print_lines_: the beat's console lines, which its sync takes (Moho's mPrintField isn't saved)
+    // xml_army_stats_requested_: SubmitXMLArmyStats's request, which the beat's sync takes
+    // (Moho's mRequestXMLArmyStatsSubmit isn't saved)
+    // debug_selection_: the local UI's selection, each peer's own (Moho's mSyncFilter.maskB
+    // isn't saved)
     {
         std::vector<std::string> armor;
         armor.reserve(sim.armor_def_.table_.size());
@@ -583,6 +588,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         w.u32v(rng.mt_seed_);
         w.u64v(rng.mt_drawn_);
     }
+    w.f32v(rng.gaussian_);
+    w.b(rng.has_gaussian_);
     save_path_maps(w, sim);
 }
 
@@ -857,6 +864,8 @@ void StateIO::load(StateReader& r, SimState& sim) {
         rng.mt_drawn_ = r.u64v();
         rng.mt_engine_->discard(rng.mt_drawn_);
     }
+    rng.gaussian_ = r.f32v();
+    rng.has_gaussian_ = r.b();
     load_path_maps(r, sim);
 }
 

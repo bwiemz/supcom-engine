@@ -239,6 +239,51 @@ TEST_CASE("LuaState table size hints (LuaPlus patch)", "[lua]") {
     lua_pop(state.raw(), 1);
 }
 
+TEST_CASE("debug.allocatedsize answers each argument's bytes as LuaPlus counts them", "[lua]") {
+    // FA's exe 0x0097DBC0/0x0097DAB0: each argument becomes its object's
+    // size with LuaPlus's struct sizes, rounded up to 8; a value that isn't
+    // an object takes 0. FAF's InternalSaveGame cuts a name over 260 bytes.
+    LuaState state;
+    auto result = state.do_string(R"(
+        local size = debug.allocatedsize
+        empty, abc, long, name240 = size('', 'abc', string.rep('x', 260), string.rep('x', 240))
+        nothing, yes, number = size(nil, true, 3.5)
+        count = table.getn({size(1, 2, 3)})
+        no_args = table.getn({size()})
+        table0, table4 = size({}, {1, 2, 3, 4})
+        local a, b = 1, 2
+        lua0, lua2, c0 = size(function() end, function() return a + b end, tostring)
+        local co = coroutine.create(function() end)
+        thread = size(co)
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    lua_State* L = state.raw();
+    const auto number = [L](const char* name) {
+        lua_getglobal(L, name);
+        const double v = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return v;
+    };
+    CHECK(number("empty") == 24);    // 0 + 21, rounded up
+    CHECK(number("abc") == 24);      // 3 + 21
+    CHECK(number("long") == 288);    // 260 + 21
+    CHECK(number("name240") == 264); // over FAF's 260: a 240-character name is cut
+    CHECK(number("nothing") == 0);
+    CHECK(number("yes") == 0);
+    CHECK(number("number") == 0);
+    CHECK(number("count") == 3);
+    CHECK(number("no_args") == 0);
+    CHECK(number("table0") == 40); // 36, no array, the shared empty node
+    CHECK(number("table4") == 72); // 36 + 8 * 4
+    CHECK(number("lua0") == 32);   // 28
+    CHECK(number("lua2") == 40);   // 28 + 4 * 2
+    CHECK(number("c0") == 64);     // a C function: 64
+    const double thread = number("thread");
+    CHECK(thread > 72);
+    CHECK(static_cast<long>(thread) % 8 == 0);
+}
+
 TEST_CASE("LuaState bitwise operators (LuaPlus patch)", "[lua]") {
     LuaState state;
 

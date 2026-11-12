@@ -102,6 +102,14 @@ void mix_entity(Fnv& entities, const Entity& e) {
     }
     entities.mix_f32(e.health());
     entities.mix_f32(e.fraction_complete());
+    // Its collision-cell link: the cells it is in, and the link's order,
+    // which decides the order a rect query and crowd steering find it in,
+    // though its place is the same (EntityRegistry::fingerprint has the count)
+    const CellLink& link = e.cell_link();
+    entities.mix(link.seq);
+    if (link.seq != 0) {
+        entities.mix((u64{link.x} << 48) | (u64{link.z} << 32) | (u64{link.w} << 16) | link.h);
+    }
 }
 
 /// A projectile's flight: its velocity, its target and where it homes,
@@ -624,6 +632,9 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         weapons.mix(e.entity_id());
         for (const auto& w : u.weapons()) mix_weapon(weapons, *w);
     });
+    // What the registry keeps beside its entities: the next link's order,
+    // the walk's order and the id pools (who gets which id next)
+    entity_registry_.fingerprint(entities);
     // Each army's searches, waiting and in flight, and each footprint
     // class's dirty clusters: Moho pathing's, only with it on (the tables'
     // background work runs either way, but only its searches read them).

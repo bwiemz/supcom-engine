@@ -57,11 +57,15 @@ bool WldUIProvider::create_game_interface(lua_State* L, bool is_replay) {
     // beat functions, so it exists until DestroyGameInterface.
     game_interface_created_ = true;
     set_world_ui_active(L, true);
+    // The world starts next (Moho's RunScript logs a script's error and goes
+    // on to Playing)
+    start_due_ = true;
     return ok;
 }
 
 bool WldUIProvider::destroy_game_interface(lua_State* L) {
     set_world_ui_active(L, false);
+    start_due_ = false; // a game left before it started
     if (!game_interface_created_) return true;
     game_interface_created_ = false;
     return call_method(L, "DestroyGameInterface", 0);
@@ -78,6 +82,12 @@ bool WldUIProvider::update_loading_dialog(lua_State* L, f32 elapsed_seconds) {
 
 bool WldUIProvider::stop_loading_dialog(lua_State* L) {
     return call_method(L, "StopLoadingDialog", 0);
+}
+
+bool WldUIProvider::start_game(lua_State* L) {
+    if (!start_due_) return false;
+    start_due_ = false;
+    return call_method(L, "OnStart", 0);
 }
 
 } // namespace osc::ui

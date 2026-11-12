@@ -383,6 +383,19 @@ void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
     if (cmd.type == CommandType::Patrol || cmd.type == CommandType::AggressiveMove) {
         cmd.patrol_from = position();
     }
+    // Moho's capture task, and its wait at a ferry beacon, make the order's
+    // target their unit's focus as they are made (CUnitCaptureTask's and
+    // CUnitWaitForFerryTask's constructors), so its script hears
+    // OnAssignedFocusEntity as the order comes up, before the task's first
+    // step (a capture's OnStartCapture). Any target still in the sim counts
+    // (a weak pointer resolves until the deletion queue drains). The script
+    // may change the queue: `cmd` is not touched after it.
+    if (cmd.type == CommandType::Capture || cmd.type == CommandType::WaitForFerry) {
+        if (cmd.target_id && registry() && registry()->find(cmd.target_id)) {
+            notify_focus_assigned(L);
+        }
+        return;
+    }
     // Moho's move, patrol, guard and attack tasks, as they are made: an
     // Immobile NeedUnpack unit's attacker drops its desired target, and with
     // it every weapon's (CAiAttackerImpl::SetDesiredTarget). Retail's
@@ -461,10 +474,85 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     case CommandType::Ferry: return order_ferry(cmd, ctx);
     case CommandType::WaitForFerry: return order_wait_for_ferry(cmd, ctx);
     case CommandType::DestroySelf: return order_destroy_self(ctx);
+    case CommandType::SpecialAction: return order_special_action(cmd, ctx);
+    case CommandType::Pause: return order_pause(ctx.L);
     default: // an order no handler runs: dropped
         command_queue_.pop_front();
         return OrderStep::Next;
     }
+}
+
+namespace {
+
+/// `v` as a script's vector, as Moho's SCR_ToLua<Vector3f> makes one: {x, y,
+/// z}, with the vector metatable every engine vector carries (v.x), once
+/// the Lua side has made it.
+void push_script_vector(lua_State* L, const Vector3& v) {
+    lua_newtable(L);
+    lua_pushnumber(L, v.x);
+    lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, v.y);
+    lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, v.z);
+    lua_rawseti(L, -2, 3);
+    lua_pushstring(L, "__osc_vector_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1)) {
+        lua_setmetatable(L, -2);
+    } else {
+        lua_pop(L, 1);
+    }
+}
+
+} // namespace
+
+OrderStep Unit::order_special_action(UnitCommand& cmd, SimContext& ctx) {
+    // IAiCommandDispatchImpl's UNITCOMMAND_SpecialAction (faf-re
+    // DispatchQueuedCommand, 0x00608EF0): as the order comes up, the unit's
+    // script hears OnSpecialAction(location), `location` where the order
+    // aims as CAiTarget::GetTargetPosGun(false) gives it: a unit's target
+    // point, another entity's place, the ground's point; NaNs for a target
+    // gone from the sim. No task follows, so the dispatch takes the order
+    // off and runs the next one in the same tick.
+    Vector3 location = cmd.target_pos;
+    if (cmd.target_id) {
+        const Entity* target = ctx.registry.find(cmd.target_id);
+        if (!target) {
+            const f32 nan = std::numeric_limits<f32>::quiet_NaN();
+            location = {nan, nan, nan};
+        } else if (target->is_unit()) {
+            location = static_cast<const Unit*>(target)->target_point(cmd.target_point);
+        } else {
+            location = target->position();
+        }
+    }
+    const u32 order_id = cmd.command_id;
+    lua_State* L = ctx.L;
+    if (L && lua_table_ref() >= 0) {
+        const int top = lua_gettop(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+        const int self = lua_gettop(L);
+        lua_pushstring(L, "OnSpecialAction");
+        lua_gettable(L, self);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, self);
+            push_script_vector(L, location);
+            if (lua_pcall(L, 2, 0, 0) != 0) {
+                spdlog::warn("OnSpecialAction error: {}", lua_tostring(L, -1));
+            }
+        }
+        lua_settop(L, top);
+    }
+    if (destroyed() || !in_registry()) {
+        return OrderStep::Gone;
+    }
+    // The script may have changed the queue (Moho's dispatch then starts
+    // over at its new head); otherwise the order is done.
+    if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+        command_queue_.front().command_id == order_id) {
+        command_queue_.pop_front();
+    }
+    return OrderStep::Next;
 }
 
 OrderStep Unit::order_destroy_self(SimContext& ctx) {
@@ -488,6 +576,23 @@ OrderStep Unit::order_destroy_self(SimContext& ctx) {
         ctx.registry.destroy(*this);
     }
     return OrderStep::Gone;
+}
+
+OrderStep Unit::order_pause(lua_State* L) {
+    // IAiCommandDispatchImpl's UNITCOMMAND_Pause: SetPaused(!IsPaused()) as
+    // the order comes up. It makes no task, so the order is done and the next
+    // one starts in the same tick. A unit without RULEUCC_Pause or
+    // RULEUTC_GenericToggle takes the order but stays as it is (SetPaused's
+    // check). Its script hears OnPaused or OnUnpaused, and may change the
+    // queue: the order goes only if it is still the head.
+    const UnitCommand* head = &command_queue_.front();
+    const u32 order_id = head->command_id;
+    pause(L, !paused_);
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    if (!command_queue_.empty() && &command_queue_.front() == head &&
+        command_queue_.front().command_id == order_id)
+        command_queue_.pop_front();
+    return OrderStep::Next;
 }
 
 OrderStep Unit::order_stop(lua_State* L) {
@@ -1076,6 +1181,11 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
                 command_queue_.pop_front();
             return OrderStep::Next;
         }
+        // OnAssignedFocusEntity and OnStartBuild may have taken the order
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
+        if (command_queue_.empty() || &command_queue_.front() != &cmd ||
+            command_queue_.front().command_id != building)
+            return OrderStep::Next;
     }
     bool built = false;
     const u32 order_id = cmd.command_id;
@@ -1388,6 +1498,29 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         if (!reclaim_arm_ready(*reclaimed)) {
             return OrderStep::Hold;
         }
+        // Each tick it wears the unit down, the task makes it its focus
+        // (Unit::SetFocusEntity in CUnitReclaimTask's Starting state):
+        // OnAssignedFocusEntity, before the unit loses its health.
+        // (`cmd` is the head order, or a build's own clearing of its site.)
+        const bool queued = !command_queue_.empty() && &command_queue_.front() == &cmd;
+        const u32 order_id = cmd.command_id;
+        const EntityId reclaimed_id = cmd.target_id;
+        notify_focus_assigned(L);
+        if (destroyed() || !in_registry()) {
+            return OrderStep::Gone;
+        }
+        // The script may have changed the queue, or ended the target.
+        if (queued && (command_queue_.empty() || &command_queue_.front() != &cmd ||
+                       cmd.command_id != order_id)) {
+            return OrderStep::Hold;
+        }
+        if (cmd.target_id != reclaimed_id) {
+            return OrderStep::Hold;
+        }
+        reclaimed = registry.find(reclaimed_id);
+        if (!reclaimed || reclaimed->destroyed() || !reclaim_wears_down(*reclaimed)) {
+            return OrderStep::Hold;
+        }
         if (wear_down(static_cast<Unit&>(*reclaimed))) {
             return OrderStep::Hold;
         }
@@ -1406,6 +1539,12 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         reclaim_target_id_ = wreck_id;
         reclaim_rate_ = static_cast<f32>(1.0 / reclaim_time);
         reclaim_wait_ = 1;
+        // The wreck is its focus now (SetFocusEntity on what
+        // CreateWreckageProp returned).
+        notify_focus_assigned(L);
+        if (destroyed() || !in_registry()) {
+            return OrderStep::Gone;
+        }
         return OrderStep::Hold;
     }
 
@@ -1560,6 +1699,9 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
         economy_.consumption_mass = costs.mass * static_cast<f64>(build_rate_) / costs.time;
         economy_.consumption_energy = costs.energy * static_cast<f64>(build_rate_) / costs.time;
         economy_.consumption_active = true;
+        // CBuildTaskHelper::SetFocus: the focus, OnAssignedFocusEntity, then
+        // OnStartBuild
+        notify_focus_assigned(ctx.L);
         call_build_callback(ctx.L, "OnStartBuild", registry.find(tid), "Repair");
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
@@ -2012,6 +2154,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                     spdlog::info("Guard assist: entity #{} assisting #{} "
                                  "building target #{}",
                                  entity_id(), cmd.target_id, target_build_id);
+                    notify_focus_assigned(ctx.L); // CBuildTaskHelper::SetFocus
                     call_build_callback(ctx.L, "OnStartBuild", registry.find(target_build_id),
                                         build_order_.c_str());
                     if (destroyed() || !in_registry()) {
@@ -2069,7 +2212,10 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
 
             if (reclaim_target_id_) {
                 const bool held = reclaim_held_by_pause(*this, guarded_reclaim, ctx);
-                if (!progress_reclaim_assist(held ? 0.0 : dt, registry)) {
+                const bool reclaiming_on =
+                    progress_reclaim_assist(held ? 0.0 : dt, registry, ctx.L);
+                if (destroyed() || !in_registry()) return OrderStep::Gone; // its focus' script
+                if (!reclaiming_on) {
                     stop_reclaiming(ctx.L, &ctx.registry);
                 }
             }
@@ -2104,6 +2250,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                         end_silo_assist(ctx.L, registry);
                     }
                     silo_assist_id_ = cmd.target_id;
+                    notify_focus_assigned(ctx.L);
                     call_build_callback(ctx.L, "OnStartBuild", target_unit, "Repair");
                     if (destroyed() || !in_registry()) {
                         return OrderStep::Gone;

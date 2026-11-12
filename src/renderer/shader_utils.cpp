@@ -1389,6 +1389,14 @@ void main() {
         float sway = sin(0.05 * pc.time - dot(wind, inModel[3].xyz));
         worldPos.xyz += 0.003 * inPosition.y * sway * sway * wind;
     }
+    if (pc.technique == 49u) {
+        // UndulatingClutterVS: the same wind, faster (0.0625 of FA's time)
+        // and farther (0.1 of the vertex's height in its mesh), at every
+        // fidelity (UndulatingClutter has one lane).
+        const vec3 wind = vec3(0.707, 0.0, 0.707);
+        float sway = sin(0.0625 * pc.time - dot(wind, inModel[3].xyz));
+        worldPos.xyz += 0.1 * inPosition.y * sway * sway * wind;
+    }
     if (inColor.r < 0.0 && pc.lane > 0u) {
         // A wreck (WreckageVS, mesh.fx) crumples: each vertex shifts by up to
         // 0.15, by its place in the world and the instance's.
@@ -1444,7 +1452,9 @@ layout(push_constant) uniform PushConstants {
     // 16 NormalMappedTerrain, 17 UndulatingNormalMappedAlpha (M211i); ...;
     // 32 Effect, 33 Cloud, 34 OuterCloud, 35 NukeUEF, 36 NukeEMP, 37 NukeQuantum,
     // 38 PhalanxEffect, 39 UEFQuantumGate, 40 CommandFeedback3, 41 CommandFeedback4,
-    // 42 AeonCZAR (High; below it, Aeon), 43 Flat, 44 GlassAlpha, 45 BloatingNormalMappedAlpha
+    // 42 AeonCZAR (High; below it, Aeon), 43 Flat, 44 GlassAlpha, 45 BloatingNormalMappedAlpha,
+    // 46 NormalMappedAlphaNoShadow (drawn as 9), 47 Clutter, 48 UnderwaterClutter,
+    // 49 UndulatingClutter, 50 Explosion, 52 EditorMarker
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
@@ -1479,6 +1489,9 @@ layout(set = 4, binding = 3) uniform samplerCube aeonEnvironment; // "<aeon>"
 layout(set = 4, binding = 4) uniform samplerCube seraphimEnvironment; // "<seraphim>"
 layout(set = 4, binding = 5) uniform sampler2D anisotropicLookup;
 layout(set = 4, binding = 6) uniform sampler2D insectLookup;
+// MeshRenderer's dissolve noise (/textures/environment/dissolve.dds), which
+// the clutter's alpha reads (ClutterPS's dissolveSampler: linear, wrapped)
+layout(set = 4, binding = 9) uniform sampler2D dissolveMap;
 // The mesh's own lookup, its LOD's LookupName (Seraphim's falloff, M211c)
 layout(set = 5, binding = 0) uniform sampler2D texLookup;
 // The mesh's SecondaryName: its faction's build overlay (M211f)
@@ -1575,6 +1588,25 @@ vec4 fallOffAt(float across) {
     ivec2 size = textureSize(texLookup, 0);
     ivec2 at = clamp(ivec2(vec2(across, fragColorLookup) * vec2(size)), ivec2(0), size - 1);
     return texelFetch(texLookup, at, 0);
+}
+
+// ClutterPS (mesh.fx's Clutter, UnderwaterClutter and UndulatingClutter, one
+// lane each, so at every fidelity): the albedo lit by the normal map, the
+// sun unshadowed, and nothing else: no tint, highlight, environment or glow.
+// Its alpha is the albedo's times the dissolve, tested over 0x70 (the passes'
+// AlphaRef on D3D9; ClutterPS's own 0x03 is D3D10's). The dissolve is the
+// instance's LOD fade (anim.z / 255; Moho's MeshRenderer::Batch sets it below
+// 1 only past the last LOD's cutoff, which the engine draws no LOD beyond)
+// times MeshRenderer's noise, read at the albedo's coordinates. The passes
+// write colour alone: alpha 0 here, as for the other colour-only techniques.
+vec4 clutterColor() {
+    vec4 albedo = texture(texAlbedo, fragUV);
+    const float instanceDissolve = 1.0;
+    float dissolve =
+        clamp(instanceDissolve * (0.5 * texture(dissolveMap, fragUV).a + 0.5), 0.0, 1.0);
+    if (dissolve * albedo.a <= 112.0 / 255.0) discard;
+    vec3 N = computeNormal(fragUV);
+    return vec4(albedo.rgb * computeLight(dot(sunDirection(), N), 1.0, 1.0, 1.0), 0.0);
 }
 )glsl" // split in two: MSVC caps one string literal at 16380 bytes (C2026)
                         R"glsl(
@@ -1814,6 +1846,27 @@ vec4 explosionColor() {
         vec4 second = texture(texNormal, fragUV * 4.0 + vec2(age * 0.025));
         return vec4(clamp(albedo.rgb - second.rgb, 0.0, 1.0), 0.4 * texture(texAlbedo, fragUV).a);
     }
+    if (pc.technique == 50u) {
+        // ExplosionPS(true, Greater, 0x40): the albedo scrolling up, the
+        // specular faster over it by its alpha, fading out from 0.375 ticks
+        // old; the normals, read with the specular, fading in from 10 ticks
+        // old, when the alpha starts falling and the normals' alpha
+        // dissolves what it outweighs. Alpha-tested over 0x40.
+        float fade = age - 10.0;
+        vec2 t = vec2(fragUV.x, fragUV.y + age * 0.0036);
+        vec4 c = texture(texAlbedo, t);
+        t.y += age * 0.018;
+        vec4 d = texture(texSpecTeam, t);
+        c = mix(c, d, d.a);
+        c.rgb *= fadeAfter(age, 0.375, 0.035);
+        vec4 e = texture(texNormal, t);
+        e.rgb *= clamp(fade * 0.035, 0.0, 1.0);
+        float alpha = fadeAfter(fade, 0.0, 0.12);
+        if (fade >= 0.0) alpha = e.a <= alpha ? alpha + e.a : 0.0;
+        alpha = clamp(alpha, 0.0, 1.0);
+        if (alpha <= 64.0 / 255.0) discard;
+        return vec4(clamp(c.rgb + e.rgb, 0.0, 1.0), alpha);
+    }
     // NukeHeadPS(1, 0.018, 50, 0.015): the normals are noise, read thrice
     // at three scales scrolling up; a grey from them, halfway to the albedo,
     // brightened by the noise. From 20 ticks old it dissolves where the
@@ -1830,6 +1883,14 @@ vec4 explosionColor() {
     alpha *= n2.g;
     if (alpha <= 15.0 / 255.0) discard;
     return vec4(clamp(head, 0.0, 1.0), alpha);
+}
+
+// EditorMarkerPS by VertexNormalVS: the instance's colour (white but a
+// unit's) lit by the vertex's normal, unshadowed. FA writes it colour only:
+// no glow.
+vec4 editorMarkerColor() {
+    vec3 tint = fragColor.g < 0.0 ? vec3(1.0) : fragColor.rgb;
+    return vec4(tint * computeLight(dot(sunDirection(), fragVertexNormal), 1.0, 1.0, 1.0), 0.0);
 }
 )glsl" // split again: MSVC caps one literal at 16380 bytes (C2026)
                         R"glsl(
@@ -1849,12 +1910,20 @@ void main() {
         outColor = vec4(tint * albedo.rgb, pc.mirrored != 0u ? 0.5 : 0.0);
         return;
     }
+    if (pc.technique >= 47u && pc.technique <= 49u) {
+        outColor = clutterColor(); // the clutter's
+        return;
+    }
     if (pc.technique == 40u || pc.technique == 41u) {
         outColor = texture(texAlbedo, fragUV);
         return;
     }
-    if (pc.technique >= 32u && pc.technique <= 39u) {
+    if ((pc.technique >= 32u && pc.technique <= 39u) || pc.technique == 50u) {
         outColor = explosionColor();
+        return;
+    }
+    if (pc.technique == 52u) {
+        outColor = editorMarkerColor();
         return;
     }
     if (pc.technique == 28u || pc.technique == 29u || pc.technique == 30u) {

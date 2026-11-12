@@ -2568,6 +2568,41 @@ void update_world_view_cursor(lua_State* L) {
     lua_settop(L, top);
 }
 
+void update_world_view_icons(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) {
+        return;
+    }
+    // (the views first: a script may make controls)
+    std::vector<ui::WorldView*> views;
+    for (const auto& control : reg->all()) {
+        auto* wv = dynamic_cast<ui::WorldView*>(control.get());
+        if (wv && !wv->destroyed() && wv->lua_table_ref() >= 0) {
+            views.push_back(wv);
+        }
+    }
+    for (ui::WorldView* wv : views) {
+        // Not while its input is locked (CUIWorldView::Frame skips it all)
+        if (wv->destroyed() || wv->lua_table_ref() < 0 || wv->is_input_locked() ||
+            !wv->take_icons_visible_change()) {
+            continue;
+        }
+        const int top = lua_gettop(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, wv->lua_table_ref());
+        lua_pushstring(L, "OnIconsVisible");
+        lua_gettable(L, -2);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, -2);
+            lua_pushboolean(L, wv->icons_shown() ? 1 : 0);
+            if (lua_pcall(L, 2, 0, 0) != 0) {
+                const char* err = lua_tostring(L, -1);
+                spdlog::warn("OnIconsVisible: {}", err ? err : "(unknown)");
+            }
+        }
+        lua_settop(L, top);
+    }
+}
+
 void register_user_bindings(LuaState& state) {
     lua_State* L = state.raw();
     // Globals of the UI state.
@@ -2953,9 +2988,9 @@ int l_UISelectionByCategory(lua_State* L) {
     return 0;
 }
 
-/// CON_IssueCommand: `IssueCommand Stop|Dive|SiloBuildTactical|
-/// SiloBuildNuke` to the selection (Stop clears the queues and announces the
-/// selection again).
+/// CON_IssueCommand: `IssueCommand Stop|Pause|Dive|SiloBuildTactical|
+/// SiloBuildNuke` to the selection (Stop and Pause clear the queues and
+/// announce the selection again).
 void issue_command(lua_State* L, const std::vector<std::string>& args) {
     auto* sim = get_sim(L);
     auto* ih = get_input_handler(L);
@@ -2976,7 +3011,8 @@ void issue_command(lua_State* L, const std::vector<std::string>& args) {
     } else if (iequal(order, "SiloBuildNuke")) {
         issue_targetless_order(L, ids, "BuildSiloNuke", 0, false);
     } else if (iequal(order, "Pause")) {
-        spdlog::info("IssueCommand Pause: the engine has no pause order yet");
+        issue_targetless_order(L, ids, "Pause", 0, true);
+        ih->set_selected(ih->selected());
     }
 }
 

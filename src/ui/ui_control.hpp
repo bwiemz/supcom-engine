@@ -6,6 +6,7 @@
 #include "video/movie_player.hpp"
 
 #include <array>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -55,6 +56,13 @@ public:
     // --- Render pass ---
     i32 render_pass() const { return render_pass_; }
     void set_render_pass(i32 p) { render_pass_ = p; }
+
+    // --- A Frame's head (CMauiFrame::mTargetHead): 0 for a frame made by
+    // InternalCreateFrame, the head's index for a head's root frame, else
+    // what SetTargetHead stored. Moho's world views take their viewport's
+    // head from their root frame's; the engine draws one head.
+    i32 target_head() const { return target_head_; }
+    void set_target_head(i32 h) { target_head_ = h; }
 
     // --- Frame update ---
     bool needs_frame_update() const { return needs_frame_update_; }
@@ -110,23 +118,30 @@ public:
     bool alpha_hit_test() const { return alpha_hit_test_; }
     void set_alpha_hit_test(bool a) { alpha_hit_test_ = a; }
 
-    // Animation
+    // Animation (Moho's CMauiBitmap): its frame pattern names a texture
+    // for each frame, and the current frame is an index into the pattern
+    // (0-based, as GetFrame, SetFrame and OnAnimationFrame give it).
     i32 current_frame() const { return current_frame_; }
     void set_current_frame(i32 f) { current_frame_ = f; }
     i32 num_frames() const { return num_frames_; }
     void set_num_frames(i32 n) { num_frames_ = n; }
-    f32 frame_rate() const { return frame_rate_; }
-    void set_frame_rate(f32 r) { frame_rate_ = r; }
+    /// How long a frame shows, in seconds (Moho's mFrameDurationSeconds):
+    /// 1/12 until SetFrameRate makes it 1/fps.
+    f32 frame_duration() const { return frame_duration_; }
+    void set_frame_duration(f32 d) { frame_duration_ = d; }
+    /// SetFrameRate(fps): 1/fps (0 holds a frame for good).
+    void set_frame_rate(f32 fps) {
+        frame_duration_ = fps != 0.0f ? 1.0f / fps : std::numeric_limits<f32>::infinity();
+    }
     bool anim_playing() const { return anim_playing_; }
     void set_anim_playing(bool p) { anim_playing_ = p; }
     bool anim_looping() const { return anim_looping_; }
     void set_anim_looping(bool l) { anim_looping_ = l; }
     const std::vector<i32>& frame_pattern() const { return frame_pattern_; }
     void set_frame_pattern(std::vector<i32> p) { frame_pattern_ = std::move(p); }
+    /// How long the current frame has shown (Moho's mCurrentFrameTimeSeconds).
     f32 anim_accumulator() const { return anim_accumulator_; }
     void set_anim_accumulator(f32 a) { anim_accumulator_ = a; }
-    i32 pattern_index() const { return pattern_index_; }
-    void set_pattern_index(i32 i) { pattern_index_ = i; }
 
     // Multi-texture support (SetNewTexture can take multiple filenames)
     const std::vector<std::string>& textures() const { return textures_; }
@@ -134,6 +149,8 @@ public:
         textures_ = std::move(t);
         num_frames_ = static_cast<i32>(textures_.size());
     }
+    /// The texture drawn: of several, the one its pattern gives at the
+    /// current frame (Moho's CMauiBitmap::Draw), else its texture.
     const std::string& frame_texture() const;
 
     // --- Text state ---
@@ -315,6 +332,10 @@ public:
     /// hidden under the world view, for the whole game.
     bool movie_on_screen() const { return movie_on_screen_; }
     void set_movie_on_screen(bool v) { movie_on_screen_ = v; }
+    /// The subtitle its script was told last (Moho's mSubtitleCache): kept
+    /// for the control's life, through new movies and Play.
+    const std::string& movie_subtitle() const { return movie_subtitle_; }
+    void set_movie_subtitle(const std::string& s) { movie_subtitle_ = s; }
 
     // --- WorldMesh state (Moho's CUIWorldMesh and its MeshInstance) ---
     struct WorldMesh {
@@ -354,6 +375,7 @@ private:
     f32 alpha_ = 1.0f;
     bool hit_test_disabled_ = false;
     i32 render_pass_ = 0;
+    i32 target_head_ = 0;
     bool needs_frame_update_ = false;
     bool has_keyboard_focus_ = false;
     bool destroyed_ = false;
@@ -372,11 +394,10 @@ private:
     bool alpha_hit_test_ = false;
     i32 current_frame_ = 0;
     i32 num_frames_ = 0;
-    f32 frame_rate_ = 10.0f;
+    f32 frame_duration_ = 1.0f / 12.0f;
     bool anim_playing_ = false;
     bool anim_looping_ = false;
     f32 anim_accumulator_ = 0.0f;
-    i32 pattern_index_ = 0;
     std::vector<i32> frame_pattern_;
     std::vector<std::string> textures_;
 
@@ -460,6 +481,7 @@ private:
     bool movie_looping_ = false;
     bool movie_stopped_ = false;
     bool movie_on_screen_ = true;
+    std::string movie_subtitle_;
 
     std::optional<WorldMesh> world_mesh_;
 };

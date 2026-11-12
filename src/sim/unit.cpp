@@ -1464,11 +1464,25 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
     // engine's: clearing them when the build ended broke factory rolloff,
     // which still reads UnitBeingBuilt afterwards.
 
-    // Call builder:OnStartBuild(target, order_type)
+    // builder:OnStartBuild(target, order_type)'s order, from `cmd` while it
+    // is sure to be there: the scripts called from here on can change the
+    // queue it is in
+    const bool upgrade = cmd.type == CommandType::Upgrade;
     const char* order_str = "FactoryBuild";
     if (cmd.type == CommandType::BuildMobile) order_str = "MobileBuild";
-    else if (cmd.type == CommandType::Upgrade) order_str = "Upgrade";
+    else if (upgrade) order_str = "Upgrade";
     build_order_ = order_str;
+
+    // The new unit is the builder's focus (CBuildTaskHelper::SetFocus): its
+    // script hears OnAssignedFocusEntity just before OnStartBuild. An upgrade
+    // hears it twice, as CUnitUpgradeTask::TaskTick sets the focus itself
+    // before its build helper sets it again.
+    if (upgrade) {
+        notify_focus_assigned(L);
+    }
+    notify_focus_assigned(L);
+
+    // Call builder:OnStartBuild(target, order_type)
     if (lua_table_ref() >= 0) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
         int builder_tbl = lua_gettop(L);
@@ -1486,27 +1500,6 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
             lua_pop(L, 1);
         }
         lua_pop(L, 1); // builder_tbl
-    }
-
-    // Call target:OnStartBeingBuilt(builder, layer)
-    lua_pushstring(L, "OnStartBeingBuilt");
-    lua_gettable(L, target_tbl);
-    if (frame) {
-        lua_pop(L, 1);
-    } else if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, target_tbl); // self
-        if (lua_table_ref() >= 0) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-        } else {
-            lua_pushnil(L);
-        }
-        lua_pushstring(L, layer().c_str());
-        if (lua_pcall(L, 3, 0, 0) != 0) {
-            spdlog::warn("OnStartBeingBuilt error: {}", lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
     }
 
     lua_pop(L, 2); // pop entity_id + target_tbl from create_building_unit
@@ -2037,7 +2030,7 @@ bool Unit::progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L) {
     return true; // still reclaiming
 }
 
-bool Unit::progress_reclaim_assist(f64 dt, EntityRegistry& registry) {
+bool Unit::progress_reclaim_assist(f64 dt, EntityRegistry& registry, lua_State* L) {
     auto* target = registry.find(reclaim_target_id_);
     if (!target || target->destroyed())
         return false;
@@ -2054,7 +2047,20 @@ bool Unit::progress_reclaim_assist(f64 dt, EntityRegistry& registry) {
 
     if (reclaim_wears_down(*target)) {
         if (reclaim_arm_ready(*target)) {
-            wear_down(static_cast<Unit&>(*target));
+            // Its reclaim task's Starting state, a guard's as anyone's: the
+            // unit is its focus each tick it wears it down.
+            const EntityId target_id = reclaim_target_id_;
+            notify_focus_assigned(L);
+            if (destroyed() || !in_registry() || reclaim_target_id_ != target_id) {
+                return true;
+            }
+            target = registry.find(target_id);
+            if (!target || target->destroyed()) {
+                return false;
+            }
+            if (reclaim_wears_down(*target)) {
+                wear_down(static_cast<Unit&>(*target));
+            }
         }
         return true;
     }
@@ -2196,6 +2202,10 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
         const Vector3 at = target->position();
         aim_builder_arms(&at, L);
     }
+
+    // The repaired unit is its focus (CBuildTaskHelper::SetFocus, from
+    // CUnitRepairTask): OnAssignedFocusEntity, then OnStartBuild
+    notify_focus_assigned(L);
 
     // Call builder:OnStartBuild(target, "Repair")
     // FA Lua detects order=="Repair" and routes to OnStartRepair internally
@@ -4440,6 +4450,12 @@ void Unit::call_lua_method(lua_State* L, const char* method_name) {
         lua_pop(L, 1); // non-function
     }
     lua_pop(L, 1); // tbl
+}
+
+void Unit::notify_focus_assigned(lua_State* L) {
+    if (L) {
+        call_lua_method(L, "OnAssignedFocusEntity");
+    }
 }
 
 void Unit::report_health_band(lua_State* L) {

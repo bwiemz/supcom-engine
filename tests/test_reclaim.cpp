@@ -247,3 +247,63 @@ TEST_CASE("On FAF's data a paused engineer's reclaim of a prop holds, as FAF's e
     CHECK(w.wreck->fraction_complete() < 1.0f);
     CHECK(eng->economy().reclaimed_mass == 30.0);
 }
+
+TEST_CASE("A reclaimer hears OnAssignedFocusEntity each tick it wears a unit down, and once "
+          "more for the unit's wreck",
+          "[reclaim][focus]") {
+    // CUnitReclaimTask's Starting state calls Unit::SetFocusEntity on the
+    // unit every tick it wears it down, after OnStartReclaim and before the
+    // health goes, and once more on the wreck that replaces it; a prop's
+    // reclaim sets no focus
+    ReclaimSim w;
+    const std::string code = R"(
+        function Reclaimer:OnStartReclaim(target) table.insert(log, 'start') end
+        function Reclaimer:OnAssignedFocusEntity(...)
+            table.insert(log, 'focus ' .. arg.n .. ' ' .. tostring(health()))
+        end
+    )";
+    REQUIRE(luaL_loadbuffer(w.L, code.c_str(), code.size(), "focus") == 0);
+    REQUIRE(lua_pcall(w.L, 0, 0, 0) == 0);
+    // health(): the reclaimed unit's, nil once it has left the sim
+    EntityId target_id = w.target->entity_id();
+    lua_pushlightuserdata(w.L, &w.sim);
+    lua_pushlightuserdata(w.L, &target_id);
+    lua_pushcclosure(
+        w.L,
+        [](lua_State* L) -> int {
+            auto* sim = static_cast<SimState*>(lua_touserdata(L, lua_upvalueindex(1)));
+            const auto* id = static_cast<const EntityId*>(lua_touserdata(L, lua_upvalueindex(2)));
+            const osc::sim::Entity* target = sim->entity_registry().find(*id);
+            if (target) {
+                lua_pushnumber(L, target->health());
+            } else {
+                lua_pushnil(L);
+            }
+            return 1;
+        },
+        2);
+    lua_setglobal(w.L, "health");
+    const auto heard = [&] {
+        const std::string take = "local s = table.concat(log, ',') log = {} return s";
+        REQUIRE(luaL_loadbuffer(w.L, take.c_str(), take.size(), "take") == 0);
+        REQUIRE(lua_pcall(w.L, 0, 1, 0) == 0);
+        std::string s = lua_tostring(w.L, -1);
+        lua_pop(w.L, 1);
+        return s;
+    };
+    Unit* eng = w.engineer(10.0f);
+    eng->push_command(order(CommandType::Reclaim, target_id), true);
+    w.sim.tick();
+    CHECK(heard() == "start,focus 0 100");
+    for (const char* tick : {"focus 0 80", "focus 0 60", "focus 0 40"}) {
+        w.sim.tick();
+        CHECK(heard() == tick);
+    }
+    w.sim.tick();
+    CHECK(heard() == "focus 0 20,reclaimed,wreck 0,focus 0 20");
+    REQUIRE(eng->reclaim_target_id() == w.wreck->entity_id());
+    for (int i = 0; i < 3; ++i) {
+        w.sim.tick();
+        CHECK(heard().empty());
+    }
+}

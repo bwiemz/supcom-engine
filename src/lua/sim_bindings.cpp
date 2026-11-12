@@ -45,6 +45,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -60,18 +61,80 @@ namespace osc::lua {
 
 using sim::get_sim;
 
-/// Resolve an army argument that can be either a 1-based number or a name string.
-/// Returns 0-based index, or -1 if not found.
-static i32 resolve_army(lua_State* L, int arg, sim::SimState* sim) {
-    if (lua_isnumber(L, arg)) {
-        return static_cast<i32>(lua_tonumber(L, arg)) - 1;
+/// A Lua number as LuaPlus's GetInteger has it: truncated, and out of an
+/// int's range the x87's integer indefinite.
+static int lua_integer(lua_State* L, int arg) {
+    const lua_Number v = lua_tonumber(L, arg);
+    if (!(v > static_cast<lua_Number>(std::numeric_limits<int>::min()) - 1 &&
+          v < static_cast<lua_Number>(std::numeric_limits<int>::max()) + 1)) {
+        return std::numeric_limits<int>::min();
     }
-    if (lua_isstring(L, arg) && sim) {
-        const char* name = lua_tostring(L, arg);
-        auto* brain = sim->get_army_by_name(name);
-        if (brain) return brain->index();
+    return static_cast<int>(v);
+}
+
+static i32 named_army(lua_State* L, int arg, sim::SimState* sim) {
+    const char* name = lua_tostring(L, arg);
+    if (auto* brain = sim->get_army_by_name(name)) {
+        return brain->index();
+    }
+    return luaL_error(L, "Unknown army: %s", name);
+}
+
+/// Moho's ARMY_FromLuaState: the 0-based index of the army a 1-based number
+/// or a name names, and an error for anything else.
+static i32 resolve_army(lua_State* L, int arg, sim::SimState* sim) {
+    if (!sim) {
+        return -1;
+    }
+    if (lua_type(L, arg) == LUA_TNUMBER) {
+        const int requested = lua_integer(L, arg);
+        if (requested >= 1 && requested <= static_cast<int>(sim->army_count())) {
+            return requested - 1;
+        }
+        if (requested >= 1) {
+            return luaL_error(L, "Invalid army %d", requested - 1);
+        }
+        return luaL_error(L, "Invalid army %d. (Use a 1-based index)", requested);
+    }
+    if (lua_type(L, arg) == LUA_TSTRING) {
+        return named_army(L, arg, sim);
+    }
+    return luaL_error(L, "Unexpected type for army object");
+}
+
+/// Moho's ARMY_IndexFromLuaState, the decals' and splats'.
+static i32 army_index(lua_State* L, int arg, sim::SimState* sim) {
+    if (!sim) {
+        return -1;
+    }
+    if (lua_type(L, arg) == LUA_TNUMBER) {
+        const int requested = lua_integer(L, arg);
+        if (requested > 0) {
+            return requested - 1;
+        }
+        if (requested == 0) {
+            return luaL_error(L, "Invalid army %d, (Use a 1-based index)", 0);
+        }
+        return -1;
+    }
+    if (lua_type(L, arg) == LUA_TSTRING) {
+        return named_army(L, arg, sim);
     }
     return -1;
+}
+
+/// CreateUnit's and CreateUnit2's army: a 1-based number, as Moho's reads it.
+static i32 unit_army(lua_State* L, int arg, sim::SimState* sim) {
+    if (lua_type(L, arg) != LUA_TNUMBER) {
+        return arg_type_error(L, arg, "integer");
+    }
+    const int count = static_cast<int>(sim->army_count());
+    const int requested = lua_integer(L, arg);
+    if (requested < 1 || requested > count) {
+        return luaL_error(L, "Invalid army index; must be >= 1 and < %d but got %d.", count,
+                          requested);
+    }
+    return requested - 1;
 }
 
 // ====================================================================
@@ -226,6 +289,34 @@ static void count_made(sim::SimState& sim, sim::EntityId id) {
     auto* brain = e ? sim.get_army(e->army()) : nullptr;
     if (brain && e->is_unit()) {
         brain->record_unit_made(*static_cast<sim::Unit*>(e));
+    }
+}
+
+/// Moho's Unit ctor: OnStartBeingBuilt(creator, its own layer) after OnCreate,
+/// before the builder's OnStartBuild.
+static void tell_start_being_built(lua_State* L, sim::SimState& sim, sim::EntityId id, int tbl) {
+    const auto* made = sim.entity_registry().find(id);
+    if (!made || !made->is_unit()) {
+        return;
+    }
+    const auto& unit = *static_cast<const sim::Unit*>(made);
+    lua_pushstring(L, "OnStartBeingBuilt");
+    lua_gettable(L, tbl);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_pushvalue(L, tbl);
+    const auto* creator = sim.entity_registry().find(unit.creator_id());
+    if (creator && creator->lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, creator->lua_table_ref());
+    } else {
+        lua_pushnil(L);
+    }
+    lua_pushstring(L, unit.layer().c_str());
+    if (lua_pcall(L, 3, 0, 0) != 0) {
+        spdlog::warn("Building OnStartBeingBuilt error: {}", lua_tostring(L, -1));
+        lua_pop(L, 1);
     }
 }
 
@@ -509,6 +600,7 @@ static void set_up_initial_rally(sim::SimState& sim, sim::EntityId id) {
 /// OnStopBeingBuilt). Over the army's unit cap it is an error, "<what>(<bp>)
 /// failed", as Moho's is.
 static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation,
+                                i32 (*army_of)(lua_State*, int, sim::SimState*),
                                 const char* what = "CreateUnit", CapGate gate = CapGate::Tell);
 
 // CreateUnit(bp, army, x, y, z, qx, qy, qz, qw[, layer])
@@ -524,7 +616,7 @@ static int l_CreateUnit(lua_State* L) {
                            orientation.w / len};
         else orientation = {};
     }
-    return create_complete_unit(L, orientation);
+    return create_complete_unit(L, orientation, unit_army);
 }
 
 /// A complete unit of `bp_id` for `army` (0-based) at `pos` facing
@@ -644,18 +736,14 @@ static sim::EntityId spawn_complete_unit(lua_State* L, sim::SimState& sim, const
     return id; // its table on the stack
 }
 
-static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation, const char* what,
+static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation,
+                                i32 (*army_of)(lua_State*, int, sim::SimState*), const char* what,
                                 CapGate gate) {
     auto* sim = get_sim(L);
     if (!sim) return luaL_error(L, "CreateUnit: no SimState");
 
     const char* bp_id = luaL_checkstring(L, 1);
-    int army = resolve_army(L, 2, sim);
-    if (army < 0 || army >= static_cast<int>(sim->army_count())) {
-        spdlog::warn("CreateUnit: invalid army index");
-        lua_pushnil(L);
-        return 1;
-    }
+    const int army = army_of(L, 2, sim);
 
     sim::Vector3 pos{};
     if (lua_gettop(L) >= 5) {
@@ -751,6 +839,7 @@ static int l_create_building_unit(lua_State* L) {
     }
     if (auto* sim = get_sim(L)) {
         count_made(*sim, id);
+        tell_start_being_built(L, *sim, id, tbl);
     }
 
     // Do NOT call OnStopBeingBuilt — that happens when construction finishes
@@ -772,7 +861,7 @@ static int l_CreateUnitHPR(lua_State* L) {
     const auto angle = [L](int idx) {
         return lua_isnumber(L, idx) ? static_cast<f32>(lua_tonumber(L, idx)) : 0.0f;
     };
-    return create_complete_unit(L, sim::hpr_orientation(angle(7), angle(6), angle(8)),
+    return create_complete_unit(L, sim::hpr_orientation(angle(7), angle(6), angle(8)), resolve_army,
                                 "CreateUnitHPR");
 }
 
@@ -783,7 +872,7 @@ static int l_CreateUnit2(lua_State* L) {
 
     // Copy string before clearing stack (bp_id points into Lua-managed memory)
     std::string bp_id_str(luaL_checkstring(L, 1));
-    int army = resolve_army(L, 2, sim);
+    const int army = unit_army(L, 2, sim);
     // layer at 3 (ignored for now)
     f32 x = static_cast<f32>(lua_tonumber(L, 4));
     f32 z = static_cast<f32>(lua_tonumber(L, 5));
@@ -793,7 +882,7 @@ static int l_CreateUnit2(lua_State* L) {
     const f32 y = sim::structure_elevation(*sim, structure_rules(L, *sim, bp_id_str), x, z);
     lua_settop(L, 0);
     lua_pushstring(L, bp_id_str.c_str());
-    lua_pushnumber(L, army + 1); // re-encode as 1-based; l_CreateUnit calls resolve_army
+    lua_pushnumber(L, army + 1);
     lua_pushnumber(L, x);
     lua_pushnumber(L, y);
     lua_pushnumber(L, z);
@@ -805,26 +894,19 @@ static int l_CreateInitialArmyUnit(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) return luaL_error(L, "CreateInitialArmyUnit: no SimState");
 
-    std::string army_str(luaL_checkstring(L, 1));
+    const i32 army_idx = resolve_army(L, 1, sim);
     std::string bp_id(luaL_checkstring(L, 2));
-
-    i32 army_idx = resolve_army(L, 1, sim);
     auto* brain = sim->get_army(army_idx);
-    if (!brain) {
-        spdlog::warn("CreateInitialArmyUnit: army '{}' not found", army_str);
-        lua_pushnil(L);
-        return 1;
-    }
 
     const auto& pos = brain->start_position();
     lua_settop(L, 0);
     lua_pushstring(L, bp_id.c_str());
-    lua_pushnumber(L, army_idx + 1); // 1-based for resolve_army
+    lua_pushnumber(L, army_idx + 1);
     lua_pushnumber(L, pos.x);
     lua_pushnumber(L, pos.y);
     lua_pushnumber(L, pos.z);
     // Not held to the unit cap (Moho makes it without Sim::CreateUnit's gate).
-    return create_complete_unit(L, {}, "CreateInitialArmyUnit", CapGate::None);
+    return create_complete_unit(L, {}, resolve_army, "CreateInitialArmyUnit", CapGate::None);
 }
 
 // ====================================================================
@@ -870,6 +952,19 @@ static int l_SetArmyStatsSyncArmy(lua_State* L) {
     const lua_Number army = lua_tonumber(L, 1);
     if (auto* sim = get_sim(L))
         sim->set_sync_army(army > -1e9 && army < 1e9 ? static_cast<i32>(army) : -1);
+    return 0;
+}
+
+/// SubmitXMLArmyStats(): the game's army stats asked for, for the online
+/// service -- Moho's cfunc_SubmitXMLArmyStats (faf-re SimLuaFunctions.cpp;
+/// Steam exe 0x765010) only sets the sim's flag. The beat's sync builds the
+/// <GameStats> document (army_stats_xml) and the user side hands it to GPGNet
+/// as Stats, if linked. Retail's victory.lua asks when an army is defeated
+/// and when the game is won or drawn.
+static int l_SubmitXMLArmyStats(lua_State* L) {
+    constexpr const char* kHelp = "Request that we submit xml army stats to gpg.net.";
+    if (lua_gettop(L) != 0) return arg_count_error(L, kHelp, 0, lua_gettop(L));
+    if (auto* sim = get_sim(L)) sim->request_xml_army_stats();
     return 0;
 }
 
@@ -1097,9 +1192,7 @@ static int l_IsEntity(lua_State* L) {
 static int l_ArmyGetHandicap(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnumber(L, 0); return 1; }
-    i32 idx = resolve_army(L, 1, sim);
-    if (idx < 0 || static_cast<size_t>(idx) >= sim->army_count()) { lua_pushnumber(L, 0); return 1; }
-    auto* brain = sim->get_army(idx);
+    auto* brain = sim->get_army(resolve_army(L, 1, sim));
     lua_pushnumber(L, brain ? brain->handicap() : 0.0);
     return 1;
 }
@@ -1815,7 +1908,6 @@ static int l_sim_ResumeSim(lua_State* L) {
 // Stub functions — shared definitions in lua_stubs.hpp, local aliases for brevity
 #include "lua/lua_stubs.hpp"
 static int (*const stub_noop)(lua_State*) = lua_stubs::noop;
-static int (*const stub_nil)(lua_State*) = lua_stubs::return_nil;
 
 // Returns a dummy object (table) whose methods are no-ops that return self
 // for chaining (e.g., CreateAnimator(self):PlayAnim(anim):SetRate(1)).
@@ -2472,7 +2564,7 @@ static int l_CreateDecal(lua_State* L) {
     spec.texture2 = luaL_optstring(L, 4, "");
     spec.type = luaL_optstring(L, 5, "");
     spec.lod = static_cast<f32>(luaL_optnumber(L, 8, 0));
-    spec.army = resolve_army(L, 10, sim);
+    spec.army = army_index(L, 10, sim);
     spec.fidelity = decal_fidelity_arg(L, 11);
     push_ieffect_table(L, make_decal_effect(*sim, sim::EffectType::DECAL, std::move(spec)));
     return 1;
@@ -2490,7 +2582,7 @@ static int l_CreateSplat(lua_State* L) {
     spec.splat = true;
     spec.texture1 = luaL_optstring(L, 3, "");
     spec.lod = static_cast<f32>(luaL_optnumber(L, 6, 0));
-    spec.army = resolve_army(L, 8, sim);
+    spec.army = army_index(L, 8, sim);
     spec.fidelity = decal_fidelity_arg(L, 9);
     (void)make_decal_effect(*sim, sim::EffectType::SPLAT, std::move(spec));
     return 0;
@@ -2522,7 +2614,7 @@ static int l_CreateSplatOnBone(lua_State* L) {
     spec.splat = true;
     spec.texture1 = luaL_optstring(L, 4, "");
     spec.lod = static_cast<f32>(luaL_optnumber(L, 7, 0));
-    spec.army = resolve_army(L, 9, sim);
+    spec.army = army_index(L, 9, sim);
     (void)make_decal_effect(*sim, sim::EffectType::SPLAT, std::move(spec));
     return 0;
 }
@@ -3108,12 +3200,7 @@ static int l_RemoveEconomyEvent(lua_State* L) {
 static int l_ArmyIsCivilian(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushboolean(L, 0); return 1; }
-    i32 idx = resolve_army(L, 1, sim);
-    if (idx < 0 || static_cast<size_t>(idx) >= sim->army_count()) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    auto* brain = sim->get_army(idx);
+    auto* brain = sim->get_army(resolve_army(L, 1, sim));
     lua_pushboolean(L, brain && brain->is_civilian() ? 1 : 0);
     return 1;
 }
@@ -3122,12 +3209,7 @@ static int l_ArmyIsCivilian(lua_State* L) {
 static int l_ArmyIsOutOfGame(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushboolean(L, 0); return 1; }
-    i32 idx = resolve_army(L, 1, sim);
-    if (idx < 0 || static_cast<size_t>(idx) >= sim->army_count()) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    auto* brain = sim->get_army(idx);
+    auto* brain = sim->get_army(resolve_army(L, 1, sim));
     lua_pushboolean(L, brain && brain->is_defeated() ? 1 : 0);
     return 1;
 }
@@ -3728,6 +3810,28 @@ static int l_DrawCircle(lua_State* L) {
     return 0;
 }
 
+/// DebugGetSelection(): the local UI's selected units, as the last beat's Sync
+/// gave the sim them (Moho's cfunc_DebugGetSelectionL over Sim::mSyncFilter.maskB,
+/// SimState::debug_selection): in ascending ids, each one still found and a unit
+/// (the binary tests IsUnit; faf-re's text keeps any entity), one its deletion
+/// queue holds too. No arguments. Each peer's own player's selection, as Moho's,
+/// so only debug scripts read it: FAF's AI state-machine view, retail's PrintBuffs.
+static int l_DebugGetSelection(lua_State* L) {
+    if (const int n = lua_gettop(L); n != 0)
+        return arg_count_error(L, "Get DEBUG info for UI selection", 0, n);
+    lua_newtable(L);
+    const auto* sim = get_sim(L);
+    if (!sim) return 1;
+    int i = 0;
+    for (const sim::EntityId id : sim->debug_selection()) {
+        const sim::Entity* e = sim->entity_registry().find(id);
+        if (!e || !e->is_unit() || e->lua_table_ref() < 0) continue;
+        lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
+        lua_rawseti(L, -2, ++i);
+    }
+    return 1;
+}
+
 static int l_Vector(lua_State* L) {
     f32 x = static_cast<f32>(lua_tonumber(L, 1));
     f32 y = static_cast<f32>(lua_tonumber(L, 2));
@@ -3857,6 +3961,58 @@ static int l_MATH_Lerp(lua_State* L) {
     } else {
         lua_pushnil(L);
     }
+    return 1;
+}
+
+/// Field `i` of the table at `table` as LuaPlus's LuaObject::GetNumber reads
+/// it, for Moho's SCR_FromLuaCopy<Wm3::Vector3f>: a number, or FA's
+/// luaG_typeerror for a value off the stack, "get as number expected but got
+/// <type>" (a numeric string is no number to it).
+static f32 object_number(lua_State* L, int table, int i) {
+    lua_rawgeti(L, table, i);
+    if (lua_type(L, -1) != LUA_TNUMBER)
+        luaL_error(L, "get as number expected but got %s", lua_typename(L, lua_type(L, -1)));
+    const auto v = static_cast<f32>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    return v;
+}
+
+/// AITarget([target]): an AI target as a table -- Moho's cfunc_AITargetL makes
+/// a CAiTarget of its argument and SCR_ToLua<CAiTarget> writes it (faf-re
+/// ai/AITarget_LuaFuncDef.cpp, ai/CAiTarget.cpp), a Core function both states
+/// have. An entity (a blip too, dead or destroyed this beat alike) is
+/// {Type = 'Entity', Entity = its object}; any other table is a point on the
+/// ground, {Type = 'Ground', Position = Vector(t[1], t[2], t[3])}, each a
+/// number or a Lua error, so a handle whose entity is gone raises; anything
+/// else, or nothing, is {Type = 'None'}. More than one argument raises.
+static int l_AITarget(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n > 1) return arg_range_error(L, "Create a target object", 0, 1, n);
+    const auto target = [L](const char* type) {
+        lua_newtable(L);
+        lua_pushstring(L, "Type");
+        lua_pushstring(L, type);
+        lua_rawset(L, -3);
+    };
+    if (extract_entity(L, 1)) {
+        // The entity's own object (Moho's Entity::mLuaObj): the handle given
+        target("Entity");
+        lua_pushstring(L, "Entity");
+        lua_pushvalue(L, 1);
+        lua_rawset(L, -3);
+        return 1;
+    }
+    if (lua_type(L, 1) == LUA_TTABLE) {
+        const f32 x = object_number(L, 1, 1);
+        const f32 y = object_number(L, 1, 2);
+        const f32 z = object_number(L, 1, 3);
+        target("Ground");
+        lua_pushstring(L, "Position");
+        push_vec3(L, x, y, z);
+        lua_rawset(L, -3);
+        return 1;
+    }
+    target("None");
     return 1;
 }
 
@@ -4525,6 +4681,54 @@ static std::vector<sim::EntityId> collect_unit_ids(lua_State* L, int table_idx) 
     return ids;
 }
 
+// Moho's func_GetUnitList (faf-re CollectLiveUnitsFromLuaTable, 0x006EEE40):
+// the live units of the list at `idx`, read from its entries 1 to n, a
+// destroyed or dead one left out. Anything but a table, and an entry that is
+// no game object (SCR_ScriptObjectSlot) or no unit, raise its errors. `help`
+// is the calling function's help text.
+static std::vector<sim::EntityId> live_unit_list(lua_State* L, int idx, const char* help) {
+    if (!lua_istable(L, idx)) {
+        luaL_error(L, "Invalid unit set in %s; expected a table but got a %s", help,
+                   lua_typename(L, lua_type(L, idx)));
+        return {};
+    }
+    if (idx < 0) idx = lua_gettop(L) + idx + 1;
+    std::vector<sim::EntityId> ids;
+    auto* sim = get_sim(L);
+    if (!sim) return ids;
+    const int count = luaL_getn(L, idx);
+    for (int i = 1; i <= count; ++i) {
+        lua_rawgeti(L, idx, i);
+        const int entry = lua_gettop(L);
+        // (a blip names its entity by id alone: a game object, but no unit)
+        if (!lua_istable(L, entry) || !is_object_handle(L, entry)) {
+            luaL_error(L, "Expected a game object. (Did you call with '.' instead of ':'?)");
+            return {};
+        }
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, entry);
+        const bool held = lua_isuserdata(L, -1) != 0;
+        void* object = held ? lua_touserdata(L, -1) : nullptr;
+        lua_settop(L, entry - 1);
+        if (held && !object) {
+            continue; // its entity is gone, as Moho's null script object
+        }
+        const sim::Entity* e = object && sim->entity_registry().holds(object)
+                                   ? static_cast<const sim::Entity*>(object)
+                                   : nullptr;
+        if (!e || !e->is_unit()) {
+            luaL_error(L, "Incorrect type of game object.  (Did you call with '.' instead of "
+                          "':'?)");
+            return {};
+        }
+        const auto& unit = static_cast<const sim::Unit&>(*e);
+        if (!unit.destroyed() && !unit.is_dying()) {
+            ids.push_back(unit.entity_id());
+        }
+    }
+    return ids;
+}
+
 // Route a command for a table of units through SimState. In single-player (and
 // for deterministic AI/sim orders under multiplayer) this applies the order
 // directly; a networked client's *local human* orders are instead handed to the
@@ -4668,6 +4872,24 @@ static int l_IssueStop(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Stop;
     route_units_command(L, 1, cmd, false);
+    return 0;
+}
+
+// IssuePause(units): a Pause at the back of each unit's queue, as Moho's
+// (faf-re cfunc_IssuePauseL 0x006F1C50: IssueSimpleUnitCommand, which issues
+// without clearing). As the order comes up, a unit that can pause toggles its
+// pause (Unit::order_pause). Retail's and FAF's scripts never call it: their
+// pause button is the UI's SetPaused.
+static int l_IssuePause(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 1) return arg_count_error(L, "IssuePause", 1, n);
+    const auto ids = live_unit_list(L, 1, "IssuePause");
+    auto* sim = get_sim(L);
+    if (sim && !ids.empty()) {
+        sim::UnitCommand cmd;
+        cmd.type = sim::CommandType::Pause;
+        sim->route_command(ids, cmd, false);
+    }
     return 0;
 }
 
@@ -5088,8 +5310,6 @@ static int l_ChangeUnitArmy(lua_State* L) {
     }
     auto* unit = static_cast<sim::Unit*>(e);
     const int army = resolve_army(L, 2, sim);
-    if (army < 0 || army >= static_cast<int>(sim->army_count()))
-        return luaL_error(L, "Invalid army %d", static_cast<int>(lua_tonumber(L, 2)));
     if (unit->army() == army) return luaL_error(L, "Unit already belongs to army %d", army);
     if (!sim->faf_exe() && (unit->is_being_built() || unit->has_category("COMMAND"))) {
         lua_pushnil(L);
@@ -5727,6 +5947,7 @@ void register_core_bindings(LuaState& state) {
     state.register_function("VPerpDot", l_VPerpDot);
     state.register_function("MATH_IRound", l_MATH_IRound);
     state.register_function("MATH_Lerp", l_MATH_Lerp);
+    state.register_function("AITarget", l_AITarget);
     // The game's alliances (the UI's state reads the sim it shows, as the
     // sim's own does: both hold it under osc_sim_state)
     state.register_function("IsAlly", l_IsAlly);
@@ -5782,10 +6003,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueFormPatrol", l_IssuePatrol);
     state.register_function("IssueFormAttack", l_IssueFormAttack);
 
-    // SubmitXMLArmyStats(): uploads end-of-game stats to the online service
-    // (GPGNet). Offline there is nowhere to send them, so this is faithfully
-    // a no-op; retail victory.lua calls it on every defeat.
-    state.register_function("SubmitXMLArmyStats", stub_noop);
+    state.register_function("SubmitXMLArmyStats", l_SubmitXMLArmyStats);
     state.register_function("SetArmyStatsSyncArmy", l_SetArmyStatsSyncArmy);
 
     // Game state
@@ -5904,7 +6122,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("DrawCircle", l_DrawCircle);
     state.register_function("DrawLinePop", l_DrawLinePop);
     state.register_function("DrawLine", l_DrawLine);
-    state.register_function("DebugGetSelection", stub_nil);
+    state.register_function("DebugGetSelection", l_DebugGetSelection);
 
     // Effects — real IEffect creation (state tracking, rendering deferred)
     state.register_function("CreateEmitterAtBone", l_CreateEmitterAtBone);
@@ -6027,7 +6245,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueTeleport", l_IssueTeleport);
     state.register_function("IssueUpgrade", l_IssueUpgrade);
     state.register_function("IssueKillSelf", l_IssueKillSelf);
-    state.register_function("IssuePause", stub_noop);  // unused in FA
+    state.register_function("IssuePause", l_IssuePause);
     state.register_function("IssueScript", l_IssueScript);
     state.register_function("IssueDive", l_IssueDive);
     state.register_function("IssueEnhancement", l_IssueEnhancement);
@@ -6118,21 +6336,6 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("CreateResourceDeposit", l_CreateResourceDeposit);
     state.register_function("ArmyIsCivilian", l_ArmyIsCivilian);
     state.register_function("ArmyIsOutOfGame", l_ArmyIsOutOfGame);
-
-    // Game global — FA uses Game.IsRestricted(bp_id, army_index) in OnStopBeingBuilt
-    {
-        lua_newtable(L);
-        lua_pushstring(L, "IsRestricted");
-        lua_pushcfunction(L, [](lua_State* Ls) -> int {
-            lua_pushboolean(Ls, 0);
-            return 1;
-        });
-        lua_rawset(L, -3);
-        lua_pushstring(L, "Game");
-        lua_pushvalue(L, -2);
-        lua_rawset(L, LUA_GLOBALSINDEX);
-        lua_pop(L, 1);
-    }
 
     // The game's mods, which its launch set before the blueprints loaded
     // (none if it didn't)

@@ -17,6 +17,8 @@
 #include "vfs/directory_mount.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "support/temp_path.hpp"
+#include "support/tiny_movie.hpp"
+#include "video/movie_player.hpp"
 
 #include <GLFW/glfw3.h>
 
@@ -425,6 +427,60 @@ TEST_CASE("Hiding a control hides its children, each told by OnHide, as Moho's",
     CHECK(check.ok());
 }
 
+TEST_CASE("ClearFrame destroys every control in the head's root frame, as Moho's", "[ui][lua]") {
+    // faf-re cfunc_ClearFrameL and CUIManager::ClearChildren: each child of
+    // the head's root frame destroyed, its own children first, each told
+    // OnDestroy; nil clears every head; a head that isn't one does nothing
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+    auto result = lua.do_string(R"(
+        log = {}
+        local function group(parent, name)
+            local c = setmetatable({OnDestroy = function(self) table.insert(log, name) end},
+                                   { __index = moho.control_methods })
+            InternalCreateGroup(c, parent)
+            return c
+        end
+        local frame = GetFrame(0)
+        local a = group(frame, 'a')
+        group(a, 'a1')
+        group(frame, 'b')
+        ClearFrame(1)
+        not_a_head = table.concat(log, ',')
+        ClearFrame(0)
+        head0 = table.concat(log, ',')
+        log = {}
+        group(frame, 'c')
+        ClearFrame()
+        all = table.concat(log, ',')
+        local ok
+        ok, too_many = pcall(ClearFrame, 0, 1)
+        assert(not ok)
+        frame_left = GetFrame(0) == frame and frame:GetTopmostDepth() == 0
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    lua_State* L = lua.raw();
+    const auto global = [L](const char* name) {
+        lua_getglobal(L, name);
+        std::string s = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+        if (lua_isboolean(L, -1)) s = lua_toboolean(L, -1) ? "true" : "false";
+        lua_pop(L, 1);
+        return s;
+    };
+    CHECK(global("not_a_head").empty());
+    CHECK(global("head0") == "a1,a,b");
+    CHECK(global("all") == "c");
+    CHECK(global("too_many")
+              .find("ClearFrame(int head) - destroy all controls in frame, nil head "
+                    "will clear all frames\n  expected between 0 and 1 args, but got 2") !=
+          std::string::npos);
+    CHECK(global("frame_left") == "true");
+}
+
 TEST_CASE("A frame's topmost depth is its deepest live control's, as Moho's", "[ui][lua]") {
     osc::lua::LuaState lua;
     osc::sim::SimState sim(lua.raw(), nullptr);
@@ -464,6 +520,52 @@ TEST_CASE("A frame's topmost depth is its deepest live control's, as Moho's", "[
     CHECK(global("hidden") == 5000);
     CHECK(global("with_child") == 7000);
     CHECK(global("destroyed") == 0);
+}
+
+TEST_CASE("A frame keeps the head SetTargetHead gives it, truncated, and returns itself, as Moho's",
+          "[ui][lua]") {
+    // faf-re cfunc_CMauiFrameSetTargetHeadL and GetTargetHeadL: a number,
+    // stored as an int; exactly the frame and the number, else Moho's errors
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+    auto result = lua.do_string(R"(
+        local frame = GetFrame(0)
+        before = frame:GetTargetHead()
+        returned = frame:SetTargetHead(1.75) == frame
+        after = frame:GetTargetHead()
+        local ok
+        ok, too_few = pcall(frame.SetTargetHead, frame)
+        assert(not ok)
+        ok, not_number = pcall(frame.SetTargetHead, frame, 'one')
+        assert(not ok)
+        ok, get_extra = pcall(frame.GetTargetHead, frame, 2)
+        assert(not ok)
+        kept = frame:GetTargetHead()
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    lua_State* L = lua.raw();
+    const auto global = [L](const char* name) {
+        lua_getglobal(L, name);
+        std::string s = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+        if (lua_isboolean(L, -1)) s = lua_toboolean(L, -1) ? "true" : "false";
+        lua_pop(L, 1);
+        return s;
+    };
+    CHECK(global("before") == "0");
+    CHECK(global("returned") == "true");
+    CHECK(global("after") == "1");
+    CHECK(global("kept") == "1");
+    CHECK(global("too_few").find(
+              "CMauiFrame:SetTargetHead(targetHead)\n  expected 2 args, but got 1") !=
+          std::string::npos);
+    CHECK(global("not_number").find("attempt to use as number a string value") !=
+          std::string::npos);
+    CHECK(global("get_extra").find("int GetTargetHead()\n  expected 1 args, but got 2") !=
+          std::string::npos);
 }
 
 namespace {
@@ -1627,6 +1729,137 @@ TEST_CASE("An Edit's caret fades from alpha 62 up to 255 and back every 1.5 s as
     CHECK_THAT(alpha_after(0.5), WithinAbs(128.0, 1e-3));
 }
 
+namespace {
+/// The test's Lua `calls` log as 'a,b,c', emptied.
+std::string took(InputFixture& f) {
+    f.run("__took = table.concat(calls, ',') calls = {}");
+    lua_State* L = f.lua.raw();
+    lua_getglobal(L, "__took");
+    std::string s = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+    return s;
+}
+} // namespace
+
+TEST_CASE("A playing Bitmap shows each frame until past its duration, telling "
+          "OnAnimationFrame(frame), and ends on its last after OnAnimationFinished, as Moho's",
+          "[ui][lua][bitmap]") {
+    // faf-re CMauiBitmap::Frame and OnPatternEnd (checked against the
+    // binary, 0x00780160/0x00780270): OnFrame, then the frame's time runs;
+    // once past the frame's duration (not at it) the time starts over and
+    // the next frame comes, one a frame at most. At the end, not looping,
+    // it stays on the last frame and stops wanting frame updates, then
+    // OnAnimationFinished and OnAnimationFrame(last) run.
+    InputFixture f;
+    f.run(R"(
+        calls = {}
+        local Class = setmetatable({
+            OnFrame = function(self, dt) table.insert(calls, 'onframe') end,
+            OnAnimationFrame = function(self, frame) table.insert(calls, 'frame ' .. frame) end,
+            OnAnimationFinished = function(self)
+                table.insert(calls, 'finished ' .. self:GetFrame())
+            end,
+        }, { __index = moho.bitmap_methods })
+        b = setmetatable({}, { __index = Class })
+        InternalCreateBitmap(b, GetFrame(0))
+        b:SetNewTexture({'/a.dds', '/b.dds', '/c.dds'})
+        b:SetFrameRate(10)
+        b:Play()
+    )");
+    const auto frame = [&](double dt) {
+        f.dispatch.update_controls(f.lua.raw(), f.registry, dt);
+        return took(f);
+    };
+    auto* b = control_of(f.lua.raw(), "b");
+    REQUIRE(b);
+    CHECK(b->needs_frame_update()); // Play wants frame updates
+    CHECK(b->frame_texture() == "/a.dds");
+    CHECK(frame(0.05) == "onframe");
+    CHECK(frame(0.05) == "onframe"); // exactly its duration: not past it
+    CHECK(frame(0.05) == "onframe,frame 1");
+    CHECK(b->frame_texture() == "/b.dds");
+    CHECK(frame(0.35) == "onframe,frame 2"); // one frame, the time over dropped
+    CHECK(frame(0.1) == "onframe");
+    CHECK(frame(0.05) == "onframe,finished 2,frame 2");
+    CHECK_FALSE(b->anim_playing());
+    CHECK_FALSE(b->needs_frame_update());
+    CHECK(frame(0.5).empty()); // no frame updates now, OnFrame neither
+    CHECK(b->frame_texture() == "/c.dds");
+}
+
+TEST_CASE("A looping Bitmap starts its pattern over after OnAnimationFinished; SetFrame and Stop "
+          "move no frame, as Moho's",
+          "[ui][lua][bitmap]") {
+    InputFixture f;
+    f.run(R"(
+        calls = {}
+        local Class = setmetatable({
+            OnAnimationFrame = function(self, frame) table.insert(calls, 'frame ' .. frame) end,
+            OnAnimationFinished = function(self) table.insert(calls, 'finished') end,
+            OnAnimationStopped = function(self) table.insert(calls, 'stopped') end,
+        }, { __index = moho.bitmap_methods })
+        b = setmetatable({}, { __index = Class })
+        InternalCreateBitmap(b, GetFrame(0))
+        b:SetNewTexture({'/a.dds', '/b.dds', '/c.dds'})
+        b:SetLoopPingPongPattern() -- 0 1 2 1, and no looping by itself
+        b:Loop(true)
+        b:SetFrame(9)              -- clamped into the pattern: its last frame
+        b:Play()
+    )");
+    // 1/12 s a frame until SetFrameRate: 0.1 s is past it
+    const auto frame = [&] {
+        f.dispatch.update_controls(f.lua.raw(), f.registry, 0.1);
+        return took(f);
+    };
+    auto* b = control_of(f.lua.raw(), "b");
+    REQUIRE(b);
+    CHECK(took(f).empty());
+    CHECK(b->current_frame() == 3);
+    CHECK(b->frame_texture() == "/b.dds");
+    CHECK(frame() == "finished,frame 0");
+    CHECK(b->frame_texture() == "/a.dds");
+    CHECK(frame() == "frame 1");
+    CHECK(frame() == "frame 2");
+    CHECK(b->frame_texture() == "/c.dds");
+    CHECK(frame() == "frame 3");
+    CHECK(frame() == "finished,frame 0");
+    CHECK(b->anim_playing());
+
+    f.run("b:Stop()");
+    CHECK(took(f) == "stopped");
+    CHECK_FALSE(b->needs_frame_update());
+    CHECK(frame().empty());
+    CHECK(f.check("b:GetFrame() == 0"));
+
+    // A pattern's texture indices are clamped into its textures
+    f.run("b:SetFramePattern({0, 5, -1})");
+    CHECK(b->frame_pattern() == std::vector<osc::i32>{0, 2, 0});
+}
+
+TEST_CASE("A Bitmap of one texture neither plays nor is told it stopped, as Moho's",
+          "[ui][lua][bitmap]") {
+    // Moho's Play and Stop act only with more than one texture: retail's
+    // Button plays each texture it is given.
+    InputFixture f;
+    f.run(R"(
+        calls = {}
+        b = setmetatable({
+            OnAnimationFrame = function(self, frame) table.insert(calls, 'frame ' .. frame) end,
+            OnAnimationStopped = function(self) table.insert(calls, 'stopped') end,
+        }, { __index = moho.bitmap_methods })
+        InternalCreateBitmap(b, GetFrame(0))
+        b:SetNewTexture('/a.dds')
+        b:Play()
+        b:Stop()
+    )");
+    auto* b = control_of(f.lua.raw(), "b");
+    REQUIRE(b);
+    CHECK_FALSE(b->anim_playing());
+    CHECK_FALSE(b->needs_frame_update());
+    f.dispatch.update_controls(f.lua.raw(), f.registry, 1.0);
+    CHECK(took(f).empty());
+}
+
 TEST_CASE("A focused Edit takes typed text and calls its On* methods, as Moho's does",
           "[ui][lua][input][edit]") {
     InputFixture f;
@@ -1689,6 +1922,56 @@ TEST_CASE("Enter and Esc clear an Edit, or on an empty one drop the focus, unles
     f.dispatch.on_key(GLFW_KEY_ESCAPE, GLFW_PRESS, 0);
     f.deliver();
     CHECK(f.registry.keyboard_focus() == nullptr);
+}
+
+TEST_CASE("A playing Movie tells OnSubtitle(text) when its subtitle changes, and \"\" once none "
+          "is due, as Moho's",
+          "[ui][lua][movie]") {
+    // Moho's CMauiMovie::Frame (0x0079F1C0): after the movie's frame update
+    // (CMovie::UpdatePlaybackFrame, which takes the subtitle due or clears
+    // it), a subtitle unlike the one the script was told last is told:
+    // OnSubtitle(self, text). Not at the movie's end, where OnFinished runs.
+    InputFixture f;
+    f.run(R"(
+        calls = {}
+        m = setmetatable({
+            OnSubtitle = function(self, text)
+                table.insert(calls, (self == m and 'self' or '?') .. ' ' .. type(text) ..
+                                    ' [' .. text .. ']')
+            end,
+            OnFinished = function(self) table.insert(calls, 'finished') end,
+        }, { __index = moho.movie_methods })
+        InternalCreateMovie(m, GetFrame(0))
+    )");
+    auto* movie = control_of(f.lua.raw(), "m");
+    REQUIRE(movie);
+    auto player = std::make_unique<osc::video::MoviePlayer>();
+    REQUIRE(player->open(osc::test::tiny_movie(30))); // 1 s
+    player->set_subtitles({{0.25, 0.5, "first"}, {0.5, 0.75, "second"}, {0.75, 0.85, "second"}});
+    movie->set_movie_player(std::move(player));
+    f.run("m:Play()");
+    // The script's `calls` log as 'a,b,c', emptied
+    const auto told = [&f] {
+        f.run("__took = table.concat(calls, ',') calls = {}");
+        lua_State* L = f.lua.raw();
+        lua_getglobal(L, "__took");
+        std::string s = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+        lua_pop(L, 1);
+        return s;
+    };
+    const auto frame = [&] {
+        f.dispatch.update_controls(f.lua.raw(), f.registry, 0.125);
+        return told();
+    };
+    CHECK(frame().empty()); // 0.125 s: none yet, and none told
+    CHECK(frame() == "self string [first]");
+    CHECK(frame().empty());
+    CHECK(frame() == "self string [second]");
+    CHECK(frame().empty());
+    CHECK(frame().empty()); // 0.75 s: another subtitle, the same text
+    CHECK(frame() == "self string []");
+    CHECK(frame() == "finished");
+    CHECK(movie->movie_subtitle().empty());
 }
 
 TEST_CASE("A press reaches uimain's OnMouseButtonPress, a module function", "[ui][lua][input]") {
