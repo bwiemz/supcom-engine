@@ -1,17 +1,7 @@
 # Lua bindings that do nothing, or answer a constant, yet: "<Lua name> <C++ function>"
 # (tools/check_lua_stubs.py); the user state's stand-ins as "<name> <kind>"
 allocatedsize <lambda>
-BeginLoggingStats l_BeginLoggingStats
-BlueprintLoaderUpdateProgress l_BlueprintLoaderUpdateProgress
-BlueprintLoaderUpdateProgress stub_noop
 ClearFrame Command
 Destroy wlduiprovider_Destroy
-EndLoggingStats l_EndLoggingStats
-InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService
-IsKnownFake blip_IsKnownFake
 MetaImpact stub_noop
-PrefetchSession Command
-RefreshSteamGames l_RefreshSteamGames
 SetTargetHead frame_SetTargetHead
-SimConExecute stub_noop
-SpecFootprints stub_noop
