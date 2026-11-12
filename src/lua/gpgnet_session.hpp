@@ -47,6 +47,15 @@ void gpgnet_send(const sim::GpgNetCommand& command);
 /// the peer's), each checksum its domains folded, in hex.
 sim::GpgNetCommand gpgnet_desync_report(const sim::LockstepSession& session, i32 army);
 
+/// What the game's army stats tell the client (Moho's GPGNET_SubmitArmyStats,
+/// faf-re CGpgNetInterface.cpp): Stats(document), the <GameStats> document
+/// SubmitXMLArmyStats asked for (army_stats_xml) as one string.
+sim::GpgNetCommand gpgnet_stats_report(const std::string& army_stats);
+
+/// Send the client that, if linked; unlinked, nothing goes (the Steam build
+/// has no GPGNet, and builds the document for no one).
+void gpgnet_submit_army_stats(const std::string& army_stats);
+
 /// GpgNetActive() and GpgNetSend(cmd, args...) in the UI state.
 void register_gpgnet_bindings(LuaState& state);
 

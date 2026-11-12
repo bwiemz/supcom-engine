@@ -7,6 +7,7 @@
 #include "sim/collision.hpp"
 #include "core/game_state.hpp"
 #include "lua/game_mods.hpp"
+#include "lua/gpgnet_session.hpp"
 #include "sim/lua_bytes.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/script_loader.hpp"
@@ -429,11 +430,13 @@ void begin_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld) {
 /// One Moho sim beat on the user side: the sync channel (sim -> UI data and
 /// focus changes, OnSync), the selection's refresh
 /// (CWldSession::CheckForNecessaryUIRefresh), then the factory queue and the
-/// game UI's beat functions (CUIManager::DoBeat).
+/// game UI's beat functions (CUIManager::DoBeat); last, the beat's army stats
+/// document, if it has one, goes to GPGNet (GPGNET_SubmitArmyStats).
 void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua_State* uiL,
                 osc::lua::SyncQueue& sync, const std::function<void()>& refresh_selection) {
+    std::string army_stats;
     if (sim_lua) {
-        sync.deliver(sim_lua->raw(), uiL);
+        army_stats = sync.deliver(sim_lua->raw(), uiL);
     }
     if (refresh_selection) {
         refresh_selection();
@@ -447,6 +450,9 @@ void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua_State*
     }
     if (sim) osc::lua::notify_focus_army_damage(uiL, *sim);
     osc::core::call_game_beat(uiL);
+    if (!army_stats.empty()) {
+        osc::lua::gpgnet_submit_army_stats(army_stats);
+    }
 }
 
 /// Game over, as Moho reports it: once the sim has ended the session

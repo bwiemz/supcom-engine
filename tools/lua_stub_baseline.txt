@@ -21,4 +21,3 @@ SetGreaterOf brain_SetGreaterOf
 SetTargetHead frame_SetTargetHead
 SimConExecute stub_noop
 SpecFootprints stub_noop
-SubmitXMLArmyStats stub_noop

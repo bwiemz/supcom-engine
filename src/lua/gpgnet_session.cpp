@@ -283,6 +283,14 @@ sim::GpgNetCommand gpgnet_desync_report(const sim::LockstepSession& session, i32
              GpgNetArg::string(fmt::format("{:016x}", theirs))}};
 }
 
+sim::GpgNetCommand gpgnet_stats_report(const std::string& army_stats) {
+    return {"Stats", {GpgNetArg::string(army_stats)}};
+}
+
+void gpgnet_submit_army_stats(const std::string& army_stats) {
+    gpgnet_send(gpgnet_stats_report(army_stats));
+}
+
 bool gpgnet_attach(const std::string& endpoint) {
     const auto colon = endpoint.rfind(':');
     if (colon == std::string::npos || colon == 0 || colon + 1 >= endpoint.size()) return false;

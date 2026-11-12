@@ -380,3 +380,27 @@ TEST_CASE("The client's GPGNet commands reach the lobby as Moho's do (M220a)", "
     CHECK(osc::lua::gpgnet_state() == osc::lua::GpgNetState::Closed);
     REQUIRE(state.do_string("assert(not GpgNetActive()) GpgNetSend('GameState', 'Ended')"));
 }
+
+TEST_CASE("The game's army stats go to the client as one Stats string, if linked", "[gpgnet]") {
+    // Moho's GPGNET_SubmitArmyStats: the <GameStats> document a beat's sync
+    // built for SubmitXMLArmyStats, as Stats(document)
+    Detach detach;
+    const std::string doc = "<?xml version=\"1.0\" ?>\n<GameStats>\n</GameStats>\n";
+    const GpgNetCommand report = osc::lua::gpgnet_stats_report(doc);
+    CHECK(same(report, GpgNetCommand{"Stats", {GpgNetArg::string(doc)}}));
+    CHECK(report.args.at(0).type == GpgNetArg::Type::String);
+
+    // Unlinked, nothing goes
+    osc::lua::gpgnet_submit_army_stats(doc);
+
+    osc::lua::LuaState state;
+    FakeClient client;
+    REQUIRE(osc::lua::gpgnet_attach("127.0.0.1:" + std::to_string(client.port)));
+    client.accept_game();
+    REQUIRE(pump_game(state, [&] { return client.has_data(); }));
+    REQUIRE(client.read(1).size() == 1); // GameState Idle
+    osc::lua::gpgnet_submit_army_stats(doc);
+    const auto heard = client.read(1);
+    REQUIRE(heard.size() == 1);
+    CHECK(same(heard[0], report));
+}

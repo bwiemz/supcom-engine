@@ -9,6 +9,10 @@
 
 struct lua_State;
 
+namespace osc::sim {
+class SimState;
+}
+
 namespace osc::lua {
 
 /// Registry key (UI state, or the sim's) of a pending SetFocusArmy request:
@@ -27,6 +31,13 @@ void set_focus_army(lua_State* sim_L, lua_State* ui_L, int army);
 /// Plain-data deep copy between states (see core/lua_copy.hpp).
 using core::copy_lua_value;
 
+/// The <GameStats> document SubmitXMLArmyStats asks for, as Moho's Sim::Sync
+/// builds it (faf-re SimTick.cpp; Steam exe 0x74EF7B): every army's
+/// CArmyStats::ArmyXmlStatsNode in turn, indented two spaces. Built from the
+/// army stats and the blueprints in `sim_L`, the sim's state; it changes
+/// neither.
+std::string army_stats_xml(lua_State* sim_L, const sim::SimState& sim);
+
 /// The sim -> user channel's beats (Moho's mSyncDataQueue): each beat's Sync table, copied out
 /// of the sim state as the beat ends, waits here for the user side; a save holds none of them.
 class SyncQueue {
@@ -37,20 +48,24 @@ public:
     SyncQueue& operator=(const SyncQueue&) = delete;
 
     /// Moho's Sim::Sync, after each beat: the pending focus request applied, a copy of the
-    /// sim's Sync queued, ResetSyncTable(). A null ui_L leaves the UI state alone.
+    /// sim's Sync queued, with the army stats document if SubmitXMLArmyStats asked for one
+    /// (army_stats_xml), then ResetSyncTable(). A null ui_L leaves the UI state alone.
     void queue(lua_State* sim_L, lua_State* ui_L);
     /// Between jobs, take the UI's focus request for the sim thread's next queue().
     void prepare_threaded(lua_State* sim_L, lua_State* ui_L);
     bool pending() const { return !packets_.empty(); }
     /// Moho's CWldSession::DoBeat: the oldest queued Sync becomes the user state's, then its
-    /// OnSync(); with none queued, queue's steps run on the sim's Sync now.
-    void deliver(lua_State* sim_L, lua_State* ui_L);
+    /// OnSync(); with none queued, queue's steps run on the sim's Sync now. Answers the beat's
+    /// army stats document (Moho's SSyncData::mSubmitArmyStats), empty for none: the session
+    /// hands it to GPGNet after the UI's beat (gpgnet_submit_army_stats).
+    std::string deliver(lua_State* sim_L, lua_State* ui_L);
     void clear();
 
 private:
     lua_State* packets_state_ = nullptr;
     std::deque<int> packets_;
     std::deque<std::vector<std::string>> print_lines_;
+    std::deque<std::string> army_stats_; ///< each queued beat's army stats document, or empty
     std::optional<int> ui_request_;
 };
 
