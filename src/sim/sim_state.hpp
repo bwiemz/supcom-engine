@@ -348,6 +348,8 @@ public:
 
     // Army/Brain management
     ArmyBrain& add_army(const std::string& name, const std::string& nickname);
+    /// Moho's CArmyImpl::GenerateArmyStart, which its constructor runs for every army.
+    void generate_army_start(ArmyBrain& brain);
     ArmyBrain* get_army(i32 index);
     ArmyBrain* get_army_by_name(const std::string& name);
     size_t army_count() const { return armies_.size(); }

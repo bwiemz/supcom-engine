@@ -4533,23 +4533,13 @@ static int l_SetArmyStart(lua_State* L) {
 }
 
 /// GenerateArmyStart(army): a start for an army with no marker (a
-/// campaign's), as Moho's CArmyImpl::GenerateArmyStart: two draws of the
-/// sim's random stream put it in the middle 80% of the map on each axis
-/// (faf-re: the draw's scale is 0.8/2^32, then + 0.1), on the surface.
+/// campaign's), as Moho's CArmyImpl::GenerateArmyStart.
 static int l_GenerateArmyStart(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) return 0;
     auto* brain = sim->get_army(resolve_army(L, 1, sim));
     if (!brain) return 0;
-    constexpr f32 kSpan = 0.8f / 4294967296.0f; // 0.8 of a u32's range
-    constexpr f32 kMargin = 0.1f;
-    const f32 fx = static_cast<f32>(sim->random().next_u32()) * kSpan + kMargin;
-    const f32 fz = static_cast<f32>(sim->random().next_u32()) * kSpan + kMargin;
-    const auto* terrain = sim->terrain();
-    const f32 x = terrain ? static_cast<f32>(terrain->map_width()) * fx : 0.0f;
-    const f32 z = terrain ? static_cast<f32>(terrain->map_height()) * fz : 0.0f;
-    const f32 y = terrain ? terrain->get_surface_height(x, z) : 0.0f;
-    brain->set_start_position({x, y, z});
+    sim->generate_army_start(*brain);
     return 0;
 }
 

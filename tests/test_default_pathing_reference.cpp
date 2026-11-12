@@ -358,7 +358,7 @@ Scene crowd_scene(FitWatch& fits) {
         "crowd",
         900,
         150,
-        0xbca546beu,
+        0x01d57282u,
         [](Game& g) {
             make_crowd(g);
             order_crowd(g, 0);
@@ -394,7 +394,7 @@ Scene id_scene(IdHistory& history) {
         "id histories",
         kRefillBeat + 600,
         kCrowdBeat + 150,
-        0xaeaa49aau,
+        0x7e58f271u,
         [](Game&) {},
         [&history](Game& g, int t) {
             if (t < static_cast<int>(kSpent)) {
@@ -484,7 +484,7 @@ Scene stun_scene(StunWatch& watch) {
         "stun",
         600,
         kStunBeat + 10,
-        0x6bbf7201u,
+        0x8160099au,
         [](Game& g) {
             for (size_t c = 0; c < 2; ++c) {
                 for (size_t i = 0; i < kRow; ++i) {
@@ -566,7 +566,7 @@ Scene water_scene(WaterWatch& watch) {
         "water",
         900,
         200,
-        0x10b6d100u,
+        0x5ddfc845u,
         [](Game& g) {
             g.make("frigate", 1, 78.5f, 10.5f);
             g.make("frigate", 1, 84.5f, 14.5f);

@@ -8,6 +8,9 @@
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
+#include "map/heightmap.hpp"
+#include "map/terrain.hpp"
+#include "sim/army_brain.hpp"
 #include "sim/sim_state.hpp"
 
 extern "C" {
@@ -16,8 +19,11 @@ extern "C" {
 
 #include <bit>
 #include <cstdint>
+#include <memory>
 #include <random>
 #include <string>
+#include <utility>
+#include <vector>
 
 using osc::sim::SimRandom;
 
@@ -251,4 +257,27 @@ TEST_CASE("Moho's random stream is in the sync checksum's rng part", "[simrand][
         b.sim.random().next_u32();
         REQUIRE(a.sim.checksum_parts().rng == b.sim.checksum_parts().rng);
     }
+}
+
+TEST_CASE("Each army made takes its start from two words of Moho's stream, and GenerateArmyStart "
+          "two more",
+          "[simrand][lua]") {
+    SimLua s(42);
+    s.sim.set_moho_random(true);
+    std::vector<osc::u16> heights(static_cast<size_t>(257) * 257, 1280);
+    osc::map::Heightmap hm(256, 256, 1.0f / 128.0f, std::move(heights));
+    s.sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
+    s.sim.add_army("ARMY_1", "ARMY_1");
+    s.sim.add_army("ARMY_2", "ARMY_2");
+    const auto bits = [](float v) { return std::bit_cast<osc::u32>(v); };
+    CHECK(s.sim.random().words_drawn() == 4);
+    CHECK(bits(s.sim.get_army(0)->start_position().x) == 0x42cc9c93u);
+    CHECK(bits(s.sim.get_army(0)->start_position().z) == 0x433cbb65u);
+    CHECK(bits(s.sim.get_army(1)->start_position().x) == 0x435c4e68u);
+    CHECK(bits(s.sim.get_army(1)->start_position().z) == 0x427cab76u);
+
+    s.number("GenerateArmyStart(1) return 0");
+    CHECK(s.sim.random().words_drawn() == 6);
+    CHECK(bits(s.sim.get_army(0)->start_position().x) == 0x432f8329u);
+    CHECK(bits(s.sim.get_army(0)->start_position().z) == 0x433947ddu);
 }
