@@ -2357,3 +2357,47 @@ TEST_CASE("A weapon holds a target off its layers till its next check, not firin
     CHECK(gun.target_entity_id == rival.entity_id());
     CHECK(w.number("fired") == fired);
 }
+
+TEST_CASE("A capture, a wait for a ferry and a carrier landing make their target the unit's "
+          "focus as the order comes up",
+          "[tick-phases][focus]") {
+    // CUnitCaptureTask's, CUnitWaitForFerryTask's and CUnitCarrierLand's
+    // constructors (Unit::SetFocusEntity): OnAssignedFocusEntity, self alone,
+    // in the tick the order comes up, before the task's first step
+    Phases w;
+    Unit& eng = w.make("eng", "tank", 1, 100.0f, 100.0f);
+    eng.set_build_rate(10.0f);
+    eng.set_max_build_distance(10.0f);
+    REQUIRE(w.run("heard = ''"
+                  " function Plain:OnAssignedFocusEntity(...)"
+                  "   heard = heard .. 'focus ' .. arg.n .. ' '"
+                  " end"
+                  " function Plain:OnStartCapture() heard = heard .. 'start ' end"));
+    SECTION("a capture") {
+        const Unit& target = w.make("target", "t1", 2, 102.0f, 100.0f);
+        eng.push_command(order(CommandType::Capture, target.entity_id()), false);
+        w.sim.tick();
+        CHECK(w.text("heard").rfind("focus 0 ", 0) == 0);
+        tick_until([&] { w.sim.tick(); }, "the capture starts", 10,
+                   [&] { return eng.is_capturing(); });
+        CHECK(w.text("heard") == "focus 0 start ");
+    }
+    SECTION("a wait at a ferry beacon") {
+        Unit& beacon = w.make("beacon", "block", 1, 120.0f, 100.0f);
+        beacon.add_category("FERRYBEACON");
+        eng.push_command(order(CommandType::WaitForFerry, beacon.entity_id()), false);
+        w.sim.tick();
+        CHECK(w.text("heard") == "focus 0 ");
+        w.sim.tick();
+        CHECK(w.text("heard") == "focus 0 ");
+    }
+    SECTION("a landing on a carrier") {
+        // This one has no room: the landing still began, and then ends
+        Unit& carrier = w.make("carrier", "tank", 1, 110.0f, 100.0f);
+        carrier.add_category("CARRIER");
+        eng.push_command(order(CommandType::TransportLoad, carrier.entity_id()), false);
+        w.sim.tick();
+        CHECK(w.text("heard") == "focus 0 ");
+        CHECK(eng.command_queue().empty());
+    }
+}

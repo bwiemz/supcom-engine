@@ -1695,6 +1695,107 @@ TEST_CASE("A factory's build and an upgrade tell OnStartBuild and OnStopBuild th
     lua_pop(L, 1);
 }
 
+TEST_CASE("A factory's build hears OnAssignedFocusEntity before OnStartBuild, and an upgrade "
+          "hears it twice",
+          "[session][rules][focus]") {
+    // CBuildTaskHelper::SetFocus calls it, self alone, before OnStartBuild;
+    // CUnitUpgradeTask::TaskTick sets the focus itself first
+    const auto [type, bp, heard] = GENERATE(
+        std::tuple{osc::sim::CommandType::BuildFactory, "t1", "focus 0 start FactoryBuild "},
+        std::tuple{osc::sim::CommandType::Upgrade, "f2", "focus 0 focus 0 start Upgrade "});
+    CAPTURE(heard);
+    UpgradeHarness h;
+    lua_State* L = h.state.raw();
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    REQUIRE(h.state
+                .do_string("__heard = ''\n"
+                           "function __f:OnAssignedFocusEntity(...)\n"
+                           "  __heard = __heard .. 'focus ' .. arg.n .. ' '\n"
+                           "end\n"
+                           "function __f:OnStartBuild(u, order)\n"
+                           "  __heard = __heard .. 'start ' .. tostring(order) .. ' '\n"
+                           "end")
+                .ok());
+    h.queue(type, bp);
+    tick_until([&] { h.sim.tick(); }, "the factory starts its order", 20,
+               [&] { return h.factory->is_building(); });
+    lua_pushstring(L, "__heard");
+    lua_gettable(L, LUA_GLOBALSINDEX);
+    CHECK(std::string(lua_tostring(L, -1)) == heard);
+    lua_pop(L, 1);
+}
+
+TEST_CASE("A factory whose script clears its orders as it hears OnAssignedFocusEntity is still "
+          "told the order it started, and builds nothing",
+          "[session][rules][focus]") {
+    // The callback runs inside the build's start, and IssueClearCommands
+    // takes the order (and the start's `cmd` with it) at once: the start
+    // reads nothing of the order after its scripts, nor does its caller
+    const auto [type, bp, heard] =
+        GENERATE(std::tuple{osc::sim::CommandType::BuildFactory, "t1", "focus start FactoryBuild "},
+                 std::tuple{osc::sim::CommandType::Upgrade, "f2", "focus focus start Upgrade "});
+    CAPTURE(heard);
+    UpgradeHarness h;
+    lua_State* L = h.state.raw();
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    REQUIRE(h.state
+                .do_string("__heard = ''\n"
+                           "function __f:OnAssignedFocusEntity()\n"
+                           "  __heard = __heard .. 'focus '\n"
+                           "  IssueClearCommands({self})\n"
+                           "end\n"
+                           "function __f:OnStartBuild(u, order)\n"
+                           "  __heard = __heard .. 'start ' .. tostring(order) .. ' '\n"
+                           "end")
+                .ok());
+    const auto told = [&] {
+        lua_pushstring(L, "__heard");
+        lua_gettable(L, LUA_GLOBALSINDEX);
+        std::string s = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        return s;
+    };
+    h.queue(type, bp);
+    tick_until([&] { h.sim.tick(); }, "the factory starts its order", 20,
+               [&] { return told().find("start") != std::string::npos; });
+    CHECK(told() == heard);
+    CHECK(h.factory->command_queue().empty());
+    for (int i = 0; i < 3; ++i) h.sim.tick();
+    CHECK(told() == heard);
+    CHECK_FALSE(h.factory->is_building());
+    CHECK(h.factory->command_queue().empty());
+}
+
+TEST_CASE("Unit:SetFocusEntity tells the unit's script, and ClearFocusEntity doesn't",
+          "[session][rules][focus]") {
+    // faf-re cfunc_UnitSetFocusEntityL and cfunc_UnitClearFocusEntityL
+    UpgradeHarness h;
+    lua_State* L = h.state.raw();
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    REQUIRE(h.state
+                .do_string("__t = CreateUnit('t1', 1, 5, 0, 5)\n"
+                           "__heard = ''\n"
+                           "function __f:OnAssignedFocusEntity(...)\n"
+                           "  __heard = __heard .. 'focus ' .. arg.n .. ' '\n"
+                           "end\n"
+                           "moho.unit_methods.SetFocusEntity(__f, __t)\n"
+                           "__heard = __heard .. 'set '\n"
+                           "moho.unit_methods.ClearFocusEntity(__f)\n"
+                           "moho.unit_methods.SetFocusEntity(__f, nil)\n"
+                           "__heard = __heard .. 'cleared'")
+                .ok());
+    lua_pushstring(L, "__heard");
+    lua_gettable(L, LUA_GLOBALSINDEX);
+    CHECK(std::string(lua_tostring(L, -1)) == "focus 0 set cleared");
+    lua_pop(L, 1);
+}
+
 TEST_CASE("A platoon's AttackTarget and GuardTarget go behind its units' orders",
           "[session][rules]") {
     const std::string call = GENERATE("AttackTarget", "GuardTarget");
