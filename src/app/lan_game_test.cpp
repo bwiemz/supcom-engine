@@ -228,7 +228,7 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
             eject_pressed_at_ = frames_;
         }
     }
-    if (checked_at_ && resume_.empty()) pause_frame(ui, *sim);
+    if (checked_at_ && plays_session_checks()) pause_frame(ui, *sim);
     if (!checked_at_ && sim->tick_count() >= kCheckTick) {
         check(ui, *sim);
         checked_at_ = frames_;
@@ -281,7 +281,7 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
             }
             if (disconnect_dialog_open(ui)) fail("retail's disconnect dialog stayed open");
         }
-        if (resume_.empty()) {
+        if (plays_session_checks()) {
             check_chat(ui);
             check_pause(ui);
             check_speed(ui);
@@ -588,8 +588,8 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
     lua_pushstring(L, "__osc_lan_me");
     lua_pushstring(L, host_ ? "LanHost" : "LanJoiner");
     lua_rawset(L, LUA_GLOBALSINDEX);
-    lua_pushstring(L, "__osc_lan_resuming");
-    lua_pushboolean(L, resume_.empty() ? 0 : 1);
+    lua_pushstring(L, "__osc_lan_quiet");
+    lua_pushboolean(L, plays_session_checks() ? 0 : 1);
     lua_rawset(L, LUA_GLOBALSINDEX);
     // A joiner whose commander self-destructed is defeated about now, and
     // retail's DoGameResult makes a defeated player an observer where the game
@@ -626,7 +626,7 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
         assert(focus and focus.authorizedCommandSources[1] == mine or
                    __osc_lan_observing and GetFocusArmy() == -1,
                'this player\'s army, focus ' .. GetFocusArmy())
-        if __osc_lan_me == 'LanHost' and not __osc_lan_resuming then
+        if __osc_lan_me == 'LanHost' and not __osc_lan_quiet then
             SessionRequestPause()
             SessionSendChatMessage({LanGameTest = true, text = 'glhf'})
         end

@@ -10,8 +10,10 @@ flow), the two players keeping their user folders between them:
      launches from their own copy, and both play in lockstep from the saved
      tick to tick 150.
 
-The players give no orders, so the resumed game must arrive where the saved
-one did: all four checksums at tick 150 the same. And each player must play
+The players give no orders and neither game pauses (a pause's beats age the
+id pools, as Moho's do, so its length would be part of the game), so the
+resumed game must arrive where the saved one did: all four checksums at tick
+150 the same. And each player must play
 the army they played before, though the second lobby draws spawns again.
 
 Usage:
