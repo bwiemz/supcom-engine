@@ -121,23 +121,6 @@ bool is_underwater(const std::string& layer) {
 
 /// The water's surface, as Moho's target points compare to it: -10000 on a
 /// map without water (or with no terrain).
-/// `d` (of unit length) turned `heading` across and `pitch` up in its own
-/// frame, radians: the launch jitter of Moho's CreateProjectile.
-Vector3 turned(const Vector3& d, f32 heading, f32 pitch) {
-    const Vector3 up0 = std::fabs(d.y) < 0.99f ? Vector3{0, 1, 0} : Vector3{1, 0, 0};
-    Vector3 side{up0.y * d.z - up0.z * d.y, up0.z * d.x - up0.x * d.z, up0.x * d.y - up0.y * d.x};
-    const f32 sl = std::sqrt(side.x * side.x + side.y * side.y + side.z * side.z);
-    side = {side.x / sl, side.y / sl, side.z / sl};
-    const Vector3 up{d.y * side.z - d.z * side.y, d.z * side.x - d.x * side.z,
-                     d.x * side.y - d.y * side.x};
-    const f32 ch = osc::dmath::cos(heading);
-    const f32 sh = osc::dmath::sin(heading);
-    const f32 cp = osc::dmath::cos(pitch);
-    const f32 sp = osc::dmath::sin(pitch);
-    return {cp * (ch * d.x + sh * side.x) + sp * up.x, cp * (ch * d.y + sh * side.y) + sp * up.y,
-            cp * (ch * d.z + sh * side.z) + sp * up.z};
-}
-
 f32 water_surface(const SimState* sim) {
     const map::Terrain* terrain = sim ? sim->terrain() : nullptr;
     return terrain && terrain->has_water() ? terrain->water_elevation() : -10000.0f;
@@ -1180,15 +1163,15 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry, lua_State* L, const
     // Resolve muzzle bone position for projectile spawn
     // From the muzzle as the turret is posed now.
     Vector3 spawn_pos = owner.pending_position();
-    std::optional<Vector3> muzzle_dir;
+    std::optional<Quaternion> muzzle;
     if (const i32 bone = find_muzzle_bone(owner, muzzle_bone_name); bone >= 0) {
         spawn_pos = owner.bone_world_position(bone);
-        muzzle_dir = owner.bone_world_forward(bone);
+        muzzle = owner.bone_world_rotation(bone);
     }
 
     const std::string& layer = owner.layer();
-    Projectile* fired = launch(owner, spawn_pos, target, registry, L,
-                               layer == "Sub" || layer == "Seabed", muzzle_dir);
+    Projectile* fired =
+        launch(owner, spawn_pos, target, registry, L, layer == "Sub" || layer == "Seabed", muzzle);
     if (!fired) {
         return false;
     }
@@ -1280,7 +1263,11 @@ Vector3 Weapon::aim_point(const Entity& target, const Unit& owner, const Vector3
 
 Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* target,
                            EntityRegistry& registry, lua_State* L, bool in_water,
-                           std::optional<Vector3> muzzle_dir) {
+                           std::optional<Quaternion> muzzle) {
+    std::optional<Vector3> muzzle_dir;
+    if (muzzle) {
+        muzzle_dir = quat_rotate(*muzzle, Vector3{0.0f, 0.0f, 1.0f});
+    }
     // Where the shot goes: the target (where it will be, for a weapon that
     // leads), its ground target, where a manual weapon's last order sent it,
     // or along the owner's facing to its reach with none.
@@ -1312,9 +1299,6 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     // acceleration and turn rate and its script fly it.
     Vector3 vel;
     const bool arcs = ballistic_arc != Arc::None && !need_compute_bomb_drop;
-    // The speed it leaves at, for its target's distance (Moho's
-    // GetMuzzleVelocity, drawing MuzzleVelocityRandom).
-    const f32 speed = muzzle_speed_at(std::sqrt(dist * dist + dy * dy), &registry.sim_random());
     std::optional<f32> pitch;
     if (arcs) {
         pitch = launch_elevation(dist, dy);
@@ -1329,39 +1313,58 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
                               : Vector3{0.0f, 1.0f, 0.0f};
         vel = {facing.x * muzzle_velocity, facing.y * muzzle_velocity, facing.z * muzzle_velocity};
     } else if (pitch) {
-        const f32 across = speed * osc::dmath::cos(*pitch);
-        vel = {dx / dist * across, speed * osc::dmath::sin(*pitch), dz / dist * across};
+        const f32 across = osc::dmath::cos(*pitch);
+        vel = {dx / dist * across, osc::dmath::sin(*pitch), dz / dist * across};
     } else if (need_compute_bomb_drop) {
         vel = {dx / dist * muzzle_velocity, 0.0f, dz / dist * muzzle_velocity};
     } else {
         const f32 span = std::sqrt(dist * dist + dy * dy);
-        vel = {dx / span * speed, dy / span * speed, dz / span * speed};
+        vel = {dx / span, dy / span, dz / span};
     }
     // Which way it leaves (Moho's CreateProjectile): above is its firing
-    // solution, but a shell leaves along its muzzle as the aim controller
-    // has posed it -- a turret still turning, or one within its
-    // FiringTolerance, misses by as much -- unless its weapon fires along
-    // its solution (UseFiringSolutionInsteadOfAimBone) or it drops straight
-    // down (StraightDownOrdinance). Then FiringRandomness r turns it by a
-    // heading and a pitch each drawn N(0, r) degrees. Silo missiles and
-    // bombs keep their own rules.
-    if (!counted_projectile && !need_compute_bomb_drop) {
+    // solution, but a shell leaves as its muzzle bone is turned, roll and all,
+    // as the aim controller has posed it -- a turret still turning, or one
+    // within its FiringTolerance, misses by as much -- unless its weapon fires
+    // along its solution (UseFiringSolutionInsteadOfAimBone) or it drops
+    // straight down (StraightDownOrdinance). FiringRandomness r then turns that
+    // facing by a pitch and a heading, drawn in that order, each N(0, r) degrees.
+    Quaternion launch;
+    if (counted_projectile) {
+        const f32 across = std::sqrt(facing.x * facing.x + facing.z * facing.z);
+        launch = muzzle ? *muzzle
+                        : euler_to_quat(osc::dmath::atan2(facing.x, facing.z),
+                                        osc::dmath::atan2(-facing.y, across), 0.0f);
+    } else {
         const f32 vl = std::sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
         Vector3 dir = vl > 0.0f ? Vector3{vel.x / vl, vel.y / vl, vel.z / vl} : owner_facing(owner);
+        bool along_muzzle = false;
         if (projectile_physics && projectile_physics->straight_down) {
             dir = {0.0f, -1.0f, 0.0f};
         } else if (!use_firing_solution && muzzle_dir) {
             const Vector3& m = *muzzle_dir;
             const f32 ml = std::sqrt(m.x * m.x + m.y * m.y + m.z * m.z);
-            if (ml > 0.001f) dir = {m.x / ml, m.y / ml, m.z / ml};
+            if (ml > 0.001f) {
+                dir = {m.x / ml, m.y / ml, m.z / ml};
+                along_muzzle = true;
+            }
         }
-        if (firing_randomness > 0.0f) {
-            constexpr f32 kDegToRad = kPi / 180.0f;
-            const f32 heading = registry.sim_random().gaussian() * firing_randomness * kDegToRad;
-            const f32 pitch = registry.sim_random().gaussian() * firing_randomness * kDegToRad;
-            dir = turned(dir, heading, pitch);
+        launch = along_muzzle ? *muzzle : coords_orient_moho(dir);
+        if (!need_compute_bomb_drop) {
+            vel = dir;
         }
-        vel = {dir.x * speed, dir.y * speed, dir.z * speed};
+    }
+    if (firing_randomness > 0.0f) {
+        constexpr f32 kDegToRad = kPi / 180.0f;
+        const f32 pitch_jitter = registry.sim_random().gaussian() * firing_randomness * kDegToRad;
+        const f32 heading_jitter = registry.sim_random().gaussian() * firing_randomness * kDegToRad;
+        launch = quat_multiply(launch, euler_to_quat(heading_jitter, pitch_jitter, 0.0f));
+        if (counted_projectile) {
+            facing = forward_moho(launch);
+            vel = {facing.x * muzzle_velocity, facing.y * muzzle_velocity,
+                   facing.z * muzzle_velocity};
+        } else if (!need_compute_bomb_drop) {
+            vel = forward_moho(launch);
+        }
     }
 
     // Create projectile
@@ -1396,6 +1399,14 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
 
     const Projectile::BlueprintPhysics physics =
         proj->apply_blueprint_physics(L, &registry.sim_random());
+    // Moho draws MuzzleVelocityRandom after the projectile's own draws.
+    const f32 speed = muzzle_velocity != 0.0f ? muzzle_speed_at(std::sqrt(dist * dist + dy * dy),
+                                                                &registry.sim_random())
+                                              : physics.initial_speed;
+    if (!counted_projectile && !need_compute_bomb_drop) {
+        vel = {vel.x * speed, vel.y * speed, vel.z * speed};
+        proj->velocity = vel;
+    }
     proj->set_lifetime(physics.lifetime, registry.tick());
     if (physics.realistic_ordinance) {
         // A bomb (RealisticOrdinance) leaves with its launcher's speed,
@@ -1427,16 +1438,7 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     } else if (projectile_lifetime > 0) {
         proj->set_lifetime(projectile_lifetime, registry.tick());
     }
-    if (counted_projectile) {
-        // Facing along its muzzle, even at rest: it accelerates that way.
-        const f32 across = std::sqrt(facing.x * facing.x + facing.z * facing.z);
-        proj->set_orientation(euler_to_quat(osc::dmath::atan2(facing.x, facing.z),
-                                            osc::dmath::atan2(-facing.y, across), 0.0f));
-    } else {
-        // Facing the way it leaves: it thrusts and turns from there (Moho's
-        // launch transform)
-        proj->set_orientation(coords_orient(vel));
-    }
+    proj->set_orientation(launch);
     proj->arm_lost_target_aim(registry);
 
     // An arc is gravity's: its shot falls whatever its blueprint says.
