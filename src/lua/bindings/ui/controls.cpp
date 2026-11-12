@@ -155,6 +155,17 @@ static ui::UIControl* root_frame(lua_State* L) {
     return root;
 }
 
+/// Destroy each of `ctrl`'s children, as Moho's CMauiControl::ClearChildren
+/// does: every one, each with its OnDestroy.
+static void destroy_children(lua_State* L, ui::UIControlRegistry* reg, ui::UIControl* ctrl) {
+    // A snapshot: each child leaves ctrl's list as it is destroyed.
+    const auto& live = ctrl->children();
+    const std::vector<ui::UIControl*> children(live.begin(), live.end());
+    for (auto* child : children)
+        if (child && !child->destroyed() && !child->destroying())
+            destroy_control_tree(L, reg, child);
+}
+
 static int control_Destroy(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl || ctrl->destroyed() || ctrl->destroying()) return 0;
@@ -164,13 +175,35 @@ static int control_Destroy(lua_State* L) {
     // destroy the control they were opened over as they leave for the next
     // game, and in a game that is GetFrame(0). What it holds goes.
     if (ctrl == root_frame(L)) {
-        const std::vector<ui::UIControl*> children = ctrl->children();
-        for (auto* child : children)
-            if (child && !child->destroyed() && !child->destroying())
-                destroy_control_tree(L, reg, child);
+        destroy_children(L, reg, ctrl);
         return 0;
     }
     destroy_control_tree(L, reg, ctrl);
+    return 0;
+}
+
+// Moho's ClearFrame(head) (faf-re cfunc_ClearFrameL; CUIManager::
+// ClearChildren): every control in the head's root frame is destroyed, or in
+// every head's for nil. A head that isn't one does nothing; the engine draws
+// head 0 alone (retail's multihead.lua clears head 1).
+int l_ClearFrame(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n >= 2) {
+        return arg_range_error(
+            L,
+            "ClearFrame(int head) - destroy all controls in frame, nil head will clear all frames",
+            0, 1, n);
+    }
+    lua_settop(L, 1);
+    auto* reg = get_ui_registry(L);
+    ui::UIControl* root = reg ? root_frame(L) : nullptr;
+    if (!root) {
+        return luaL_error(L, "UI layer has not been initialized.");
+    }
+    const int head = lua_isnil(L, 1) ? -1 : static_cast<int>(lua_tonumber(L, 1));
+    if (head == -1 || head == 0) {
+        destroy_children(L, reg, root);
+    }
     return 0;
 }
 

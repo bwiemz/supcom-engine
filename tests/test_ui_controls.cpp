@@ -427,6 +427,60 @@ TEST_CASE("Hiding a control hides its children, each told by OnHide, as Moho's",
     CHECK(check.ok());
 }
 
+TEST_CASE("ClearFrame destroys every control in the head's root frame, as Moho's", "[ui][lua]") {
+    // faf-re cfunc_ClearFrameL and CUIManager::ClearChildren: each child of
+    // the head's root frame destroyed, its own children first, each told
+    // OnDestroy; nil clears every head; a head that isn't one does nothing
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+    auto result = lua.do_string(R"(
+        log = {}
+        local function group(parent, name)
+            local c = setmetatable({OnDestroy = function(self) table.insert(log, name) end},
+                                   { __index = moho.control_methods })
+            InternalCreateGroup(c, parent)
+            return c
+        end
+        local frame = GetFrame(0)
+        local a = group(frame, 'a')
+        group(a, 'a1')
+        group(frame, 'b')
+        ClearFrame(1)
+        not_a_head = table.concat(log, ',')
+        ClearFrame(0)
+        head0 = table.concat(log, ',')
+        log = {}
+        group(frame, 'c')
+        ClearFrame()
+        all = table.concat(log, ',')
+        local ok
+        ok, too_many = pcall(ClearFrame, 0, 1)
+        assert(not ok)
+        frame_left = GetFrame(0) == frame and frame:GetTopmostDepth() == 0
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    lua_State* L = lua.raw();
+    const auto global = [L](const char* name) {
+        lua_getglobal(L, name);
+        std::string s = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+        if (lua_isboolean(L, -1)) s = lua_toboolean(L, -1) ? "true" : "false";
+        lua_pop(L, 1);
+        return s;
+    };
+    CHECK(global("not_a_head").empty());
+    CHECK(global("head0") == "a1,a,b");
+    CHECK(global("all") == "c");
+    CHECK(global("too_many")
+              .find("ClearFrame(int head) - destroy all controls in frame, nil head "
+                    "will clear all frames\n  expected between 0 and 1 args, but got 2") !=
+          std::string::npos);
+    CHECK(global("frame_left") == "true");
+}
+
 TEST_CASE("A frame's topmost depth is its deepest live control's, as Moho's", "[ui][lua]") {
     osc::lua::LuaState lua;
     osc::sim::SimState sim(lua.raw(), nullptr);

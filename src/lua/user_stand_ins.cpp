@@ -20,7 +20,6 @@ constexpr UserStandIn kStandIns[] = {
     {"__language",              GlobalString{"us"}},
     {"__installedlanguages",    GlobalStrings{kInstalledLanguages}},
     {"PrefetchSession",         Command{}}, // a background load ahead of a launch
-    {"ClearFrame",              Command{}},
 };
 // clang-format on
 

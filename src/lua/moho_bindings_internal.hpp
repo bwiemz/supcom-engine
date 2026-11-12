@@ -54,6 +54,8 @@ ui::UIControl* check_control(lua_State* L, int idx = 1);
 void attach_to_parent(lua_State* L, ui::UIControl& ctrl, ui::UIControl& parent);
 ui::WorldView* check_world_view(lua_State* L, int idx = 1);
 ui::UIControlRegistry* get_ui_registry(lua_State* L);
+/// ClearFrame(head): Moho's user-state global, with the controls' bindings.
+int l_ClearFrame(lua_State* L);
 sim::SimCallbackQueue* get_callback_queue(lua_State* L);
 /// Push a unit as the UI state sees it (a UserUnit), or nil.
 void push_unit_for_ui(lua_State* L, sim::Entity* entity);
