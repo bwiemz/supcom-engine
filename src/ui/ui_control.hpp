@@ -325,6 +325,10 @@ public:
     /// hidden under the world view, for the whole game.
     bool movie_on_screen() const { return movie_on_screen_; }
     void set_movie_on_screen(bool v) { movie_on_screen_ = v; }
+    /// The subtitle its script was told last (Moho's mSubtitleCache): kept
+    /// for the control's life, through new movies and Play.
+    const std::string& movie_subtitle() const { return movie_subtitle_; }
+    void set_movie_subtitle(const std::string& s) { movie_subtitle_ = s; }
 
     // --- WorldMesh state (Moho's CUIWorldMesh and its MeshInstance) ---
     struct WorldMesh {
@@ -469,6 +473,7 @@ private:
     bool movie_looping_ = false;
     bool movie_stopped_ = false;
     bool movie_on_screen_ = true;
+    std::string movie_subtitle_;
 
     std::optional<WorldMesh> world_mesh_;
 };

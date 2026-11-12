@@ -1134,6 +1134,27 @@ bool UIDispatch::run_script(lua_State* L, UIControl* ctrl, const char* name, con
     return true;
 }
 
+bool UIDispatch::run_script_text(lua_State* L, UIControl* ctrl, const char* name,
+                                 const std::string& text) {
+    if (ctrl->destroyed() || ctrl->lua_table_ref() < 0) return false;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
+    lua_pushstring(L, name);
+    lua_gettable(L, -2); // through the class, as Moho's CallbackStr looks
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        return false;
+    }
+    lua_pushvalue(L, -2); // self
+    lua_pushstring(L, text.c_str());
+    if (lua_pcall(L, 2, 0, 0) != 0) {
+        report_ui_callback_error(fmt::format("{} error for control #{}: {}", name,
+                                             ctrl->control_id(), lua_tostring(L, -1)));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1); // control table
+    return true;
+}
+
 void UIDispatch::movie_frame(lua_State* L, UIControl* ctrl, f64 dt) {
     // Moho's CMauiMovie::Frame. A control not playing (its movie ended, or
     // Play found none) finishes.
@@ -1166,6 +1187,14 @@ void UIDispatch::movie_frame(lua_State* L, UIControl* ctrl, f64 dt) {
         return;
     }
     if (ctrl->movie_on_screen()) movie->update_frame();
+    // UpdatePlaybackFrame takes the subtitle due too (on screen or off),
+    // and when it isn't the one the script was told last, the script is
+    // told: OnSubtitle(text), "" once none is due.
+    movie->update_subtitle();
+    if (movie->subtitle() != ctrl->movie_subtitle()) {
+        ctrl->set_movie_subtitle(movie->subtitle());
+        run_script_text(L, ctrl, "OnSubtitle", ctrl->movie_subtitle());
+    }
 }
 
 } // namespace osc::ui

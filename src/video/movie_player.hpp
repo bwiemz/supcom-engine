@@ -3,6 +3,8 @@
 #include "core/types.hpp"
 #include "video/video_decoder.hpp"
 
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace osc::video {
@@ -16,6 +18,14 @@ i32 sofdec_frame_count(const u8* data, size_t size);
 /// MOV_GetDuration): the header's frame count over the first MPEG
 /// sequence header's frame rate. 0 if either is missing.
 f32 sofdec_duration(const u8* data, size_t size);
+
+/// A movie's subtitle: its text, shown from `start` until `end` (seconds
+/// on the movie's clock).
+struct Subtitle {
+    f64 start = 0;
+    f64 end = 0;
+    std::string text;
+};
 
 /// Moho's CMovie: a movie played on its own clock, as Sofdec plays one.
 /// It opens paused on its first frame. Unpaused, its clock runs, and the
@@ -52,6 +62,20 @@ public:
     /// behind, and ends on time.
     void update_frame();
 
+    /// The movie's subtitles. Moho's come from Sofdec's mwPlyGetSubtitle,
+    /// which looks up a SUBTITLE tag in the movie's own data (CRI's tags:
+    /// the exe names CONTENT, INTIME, DURTIME and TUNIT beside it). The
+    /// engine reads none from a file: where and how an .sfd holds them is
+    /// CRI's and undocumented, and no FA movie has any (each holds only its
+    /// SofdecStream header and the encoder's CRITAGS). A reader of them
+    /// would give them here; until then only tests do.
+    void set_subtitles(std::vector<Subtitle> subtitles) { subtitles_ = std::move(subtitles); }
+    /// Take the subtitle due on the clock, or none, unless paused (with the
+    /// frame, in Moho's CMovie::UpdatePlaybackFrame).
+    void update_subtitle();
+    /// The subtitle taken last (CMovie's mSubtitleText): empty for none.
+    const std::string& subtitle() const { return subtitle_; }
+
     /// The frame shown (0-based), and its pixels (RGBA, width x height).
     i32 frame_shown() const { return shown_; }
     const u8* rgba() const { return decoder_.rgba_data(); }
@@ -72,6 +96,8 @@ private:
     bool exhausted_ = false;
     u64 serial_ = 0;
     u64 id_ = 0;
+    std::vector<Subtitle> subtitles_;
+    std::string subtitle_;
 };
 
 } // namespace osc::video

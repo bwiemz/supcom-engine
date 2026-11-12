@@ -93,6 +93,19 @@ bool MoviePlayer::finished() const {
     return clock_ >= frames / rate;
 }
 
+void MoviePlayer::update_subtitle() {
+    if (paused_) return;
+    // mwPlyGetSubtitle gives the subtitle in effect, else none: the text
+    // is cleared.
+    subtitle_.clear();
+    for (const Subtitle& s : subtitles_) {
+        if (clock_ >= s.start && clock_ < s.end) {
+            subtitle_ = s.text;
+            return;
+        }
+    }
+}
+
 void MoviePlayer::update_frame() {
     const f64 rate = decoder_.framerate();
     const i32 due = rate > 0 ? static_cast<i32>(std::floor(clock_ * rate)) : 0;
