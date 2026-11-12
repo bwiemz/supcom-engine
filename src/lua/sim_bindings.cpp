@@ -4608,6 +4608,54 @@ static std::vector<sim::EntityId> collect_unit_ids(lua_State* L, int table_idx) 
     return ids;
 }
 
+// Moho's func_GetUnitList (faf-re CollectLiveUnitsFromLuaTable, 0x006EEE40):
+// the live units of the list at `idx`, read from its entries 1 to n, a
+// destroyed or dead one left out. Anything but a table, and an entry that is
+// no game object (SCR_ScriptObjectSlot) or no unit, raise its errors. `help`
+// is the calling function's help text.
+static std::vector<sim::EntityId> live_unit_list(lua_State* L, int idx, const char* help) {
+    if (!lua_istable(L, idx)) {
+        luaL_error(L, "Invalid unit set in %s; expected a table but got a %s", help,
+                   lua_typename(L, lua_type(L, idx)));
+        return {};
+    }
+    if (idx < 0) idx = lua_gettop(L) + idx + 1;
+    std::vector<sim::EntityId> ids;
+    auto* sim = get_sim(L);
+    if (!sim) return ids;
+    const int count = luaL_getn(L, idx);
+    for (int i = 1; i <= count; ++i) {
+        lua_rawgeti(L, idx, i);
+        const int entry = lua_gettop(L);
+        // (a blip names its entity by id alone: a game object, but no unit)
+        if (!lua_istable(L, entry) || !is_object_handle(L, entry)) {
+            luaL_error(L, "Expected a game object. (Did you call with '.' instead of ':'?)");
+            return {};
+        }
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, entry);
+        const bool held = lua_isuserdata(L, -1) != 0;
+        void* object = held ? lua_touserdata(L, -1) : nullptr;
+        lua_settop(L, entry - 1);
+        if (held && !object) {
+            continue; // its entity is gone, as Moho's null script object
+        }
+        const sim::Entity* e = object && sim->entity_registry().holds(object)
+                                   ? static_cast<const sim::Entity*>(object)
+                                   : nullptr;
+        if (!e || !e->is_unit()) {
+            luaL_error(L, "Incorrect type of game object.  (Did you call with '.' instead of "
+                          "':'?)");
+            return {};
+        }
+        const auto& unit = static_cast<const sim::Unit&>(*e);
+        if (!unit.destroyed() && !unit.is_dying()) {
+            ids.push_back(unit.entity_id());
+        }
+    }
+    return ids;
+}
+
 // Route a command for a table of units through SimState. In single-player (and
 // for deterministic AI/sim orders under multiplayer) this applies the order
 // directly; a networked client's *local human* orders are instead handed to the
@@ -4751,6 +4799,24 @@ static int l_IssueStop(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Stop;
     route_units_command(L, 1, cmd, false);
+    return 0;
+}
+
+// IssuePause(units): a Pause at the back of each unit's queue, as Moho's
+// (faf-re cfunc_IssuePauseL 0x006F1C50: IssueSimpleUnitCommand, which issues
+// without clearing). As the order comes up, a unit that can pause toggles its
+// pause (Unit::order_pause). Retail's and FAF's scripts never call it: their
+// pause button is the UI's SetPaused.
+static int l_IssuePause(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 1) return arg_count_error(L, "IssuePause", 1, n);
+    const auto ids = live_unit_list(L, 1, "IssuePause");
+    auto* sim = get_sim(L);
+    if (sim && !ids.empty()) {
+        sim::UnitCommand cmd;
+        cmd.type = sim::CommandType::Pause;
+        sim->route_command(ids, cmd, false);
+    }
     return 0;
 }
 
@@ -6105,7 +6171,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueTeleport", l_IssueTeleport);
     state.register_function("IssueUpgrade", l_IssueUpgrade);
     state.register_function("IssueKillSelf", l_IssueKillSelf);
-    state.register_function("IssuePause", stub_noop);  // unused in FA
+    state.register_function("IssuePause", l_IssuePause);
     state.register_function("IssueScript", l_IssueScript);
     state.register_function("IssueDive", l_IssueDive);
     state.register_function("IssueEnhancement", l_IssueEnhancement);

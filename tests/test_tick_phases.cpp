@@ -415,6 +415,124 @@ TEST_CASE("An IssueMove from a Lua thread runs at the next tick's orders", "[tic
     CHECK(tank.position().x > x);
 }
 
+// faf-re cfunc_IssuePauseL; IAiCommandDispatchImpl's UNITCOMMAND_Pause.
+TEST_CASE("An IssuePause from a Lua thread toggles its unit's pause at the next tick's orders",
+          "[tick-phases][commands]") {
+    Phases w;
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    tank.add_command_cap("RULEUCC_Pause");
+    REQUIRE(
+        w.run("heard = ''"
+              " function tank:OnPaused() heard = heard .. 'paused ' .. GetGameTick() .. ' ' end"
+              " function tank:OnUnpaused() heard = heard .. 'unpaused ' .. GetGameTick() .. ' ' end"
+              " ForkThread(function() IssuePause({tank}) end)"));
+    w.sim.tick();
+    REQUIRE(tank.command_queue().size() == 1);
+    CHECK(tank.command_queue().front().type == CommandType::Pause);
+    CHECK_FALSE(tank.is_paused());
+    CHECK(w.text("heard").empty());
+    w.sim.tick();
+    CHECK(tank.is_paused());
+    CHECK(tank.command_queue().empty());
+    const std::string first = std::to_string(w.sim.tick_count());
+    CHECK(w.text("heard") == "paused " + first + " ");
+    // Each toggles as it comes up; the order makes no task, so the next one
+    // runs in the same tick
+    REQUIRE(w.run("IssuePause({tank}) IssuePause({tank})"));
+    REQUIRE(tank.command_queue().size() == 2);
+    w.sim.tick();
+    const std::string next = std::to_string(w.sim.tick_count());
+    CHECK(tank.is_paused());
+    CHECK(tank.command_queue().empty());
+    CHECK(w.text("heard") == "paused " + first + " unpaused " + next + " paused " + next + " ");
+}
+
+TEST_CASE("An IssuePause waits behind its unit's orders", "[tick-phases][commands]") {
+    Phases w;
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    tank.add_command_cap("RULEUCC_Pause");
+    Phases::drive_east(tank);
+    REQUIRE(w.run("IssuePause({tank})"));
+    REQUIRE(tank.command_queue().size() == 2);
+    CHECK(tank.command_queue().back().type == CommandType::Pause);
+    for (int i = 0; i < 5; ++i) {
+        w.sim.tick();
+    }
+    CHECK_FALSE(tank.is_paused());
+    REQUIRE(tank.command_queue().size() == 2);
+    CHECK(tank.command_queue().front().type == CommandType::Move);
+    tick_until([&] { w.sim.tick(); }, "the tank's move ends and it pauses", 300,
+               [&] { return tank.is_paused(); });
+    CHECK(tank.command_queue().empty());
+    CHECK(tank.position().x > 125.0f);
+}
+
+TEST_CASE("Any unit takes an IssuePause; only one with RULEUCC_Pause or RULEUTC_GenericToggle "
+          "pauses",
+          "[tick-phases][commands]") {
+    // Moho's ProcessIssuedUnitCommand lets any unit have the order; Unit::SetPaused does
+    // nothing for one without either cap
+    const std::string cap = GENERATE("none", "RULEUCC_Pause", "RULEUTC_GenericToggle");
+    CAPTURE(cap);
+    Phases w;
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    if (cap == "RULEUCC_Pause") {
+        tank.add_command_cap(cap);
+    } else if (cap == "RULEUTC_GenericToggle") {
+        tank.add_toggle_cap(cap);
+    }
+    REQUIRE(w.run("heard = 0 function tank:OnPaused() heard = heard + 1 end"
+                  " IssuePause({tank})"));
+    REQUIRE(tank.command_queue().size() == 1);
+    CHECK(tank.command_queue().front().type == CommandType::Pause);
+    w.sim.tick();
+    CHECK(tank.command_queue().empty());
+    CHECK(tank.is_paused() == (cap != "none"));
+    CHECK(w.number("heard") == (cap != "none" ? 1.0f : 0.0f));
+}
+
+TEST_CASE("IssuePause reads its one list of units as Moho's func_GetUnitList does",
+          "[lua][commands]") {
+    Phases w;
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    tank.add_command_cap("RULEUCC_Pause");
+    w.brain("brain", 0);
+    // A destroyed unit's handle: its _c_object is null
+    lua_State* L = w.state.raw();
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, nullptr);
+    lua_rawset(L, -3);
+    lua_setglobal(L, "gone");
+    const auto error_of = [&](const char* code) {
+        auto r = w.state.do_string(code);
+        return r.ok() ? std::string() : r.error().message;
+    };
+    CHECK(error_of("IssuePause()").ends_with("IssuePause\n  expected 1 args, but got 0"));
+    CHECK(
+        error_of("IssuePause({tank}, true)").ends_with("IssuePause\n  expected 1 args, but got 2"));
+    CHECK(error_of("IssuePause(5)")
+              .ends_with("Invalid unit set in IssuePause; expected a table but got a number"));
+    CHECK(error_of("IssuePause(nil)")
+              .ends_with("Invalid unit set in IssuePause; expected a table but got a nil"));
+    constexpr const char* kNoObject =
+        "Expected a game object. (Did you call with '.' instead of ':'?)";
+    CHECK(error_of("IssuePause({tank, 5})").ends_with(kNoObject));
+    CHECK(error_of("IssuePause({tank, {}})").ends_with(kNoObject));
+    CHECK(error_of("IssuePause({tank, brain})")
+              .ends_with("Incorrect type of game object.  (Did you call with '.' instead of "
+                         "':'?)"));
+    // The list is read whole before any unit is given the order
+    CHECK(tank.command_queue().empty());
+    // A destroyed unit is left out, and so are the list's other keys
+    CHECK(error_of("IssuePause({gone, tank, x = 5})").empty());
+    REQUIRE(tank.command_queue().size() == 1);
+    CHECK(tank.command_queue().front().type == CommandType::Pause);
+    // A unit on its own is a table with no entries: no units
+    CHECK(error_of("IssuePause(tank)").empty());
+    CHECK(tank.command_queue().size() == 1);
+}
+
 TEST_CASE("A thread OnStartBuild forks runs in the tick of OnStartBuild", "[tick-phases]") {
     Phases w;
     Unit& fac = w.make("fac", "fac", 1, 60.0f, 60.0f);

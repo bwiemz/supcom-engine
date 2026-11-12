@@ -1663,6 +1663,7 @@ TEST_CASE("Only Move, Attack, the form moves, Dive and a rally point return thei
         {"IssueTeleport({with}, {20, 0, 20})", "RULEUCC_Teleport", false},
         {"IssueFerry({with}, {20, 0, 20})", "RULEUCC_Ferry", false},
         {"IssueTransportUnload({with}, {20, 0, 20})", "RULEUCC_Transport", false},
+        {"IssuePause({with})", "RULEUCC_Pause", false},
         {"IssueUpgrade({with}, 'uel0001')", "RULEUCC_Move", false},
         {"IssueScript({with}, {TaskName = 'EnhanceTask'})", "RULEUCC_Move", false},
         {"IssueBuildMobile({with}, {20, 0, 20}, 'uel0001', {})", "RULEUCC_Move", false},

@@ -44,6 +44,7 @@ static const char* command_name(sim::CommandType type) {
     case sim::CommandType::Script: return "Working";
     case sim::CommandType::DestroySelf: return "Destroying";
     case sim::CommandType::SpecialAction: return "Special Action";
+    case sim::CommandType::Pause: return "Pausing";
     }
     return "Idle";
 }

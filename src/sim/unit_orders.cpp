@@ -475,6 +475,7 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     case CommandType::WaitForFerry: return order_wait_for_ferry(cmd, ctx);
     case CommandType::DestroySelf: return order_destroy_self(ctx);
     case CommandType::SpecialAction: return order_special_action(cmd, ctx);
+    case CommandType::Pause: return order_pause(ctx.L);
     default: // an order no handler runs: dropped
         command_queue_.pop_front();
         return OrderStep::Next;
@@ -575,6 +576,23 @@ OrderStep Unit::order_destroy_self(SimContext& ctx) {
         ctx.registry.destroy(*this);
     }
     return OrderStep::Gone;
+}
+
+OrderStep Unit::order_pause(lua_State* L) {
+    // IAiCommandDispatchImpl's UNITCOMMAND_Pause: SetPaused(!IsPaused()) as
+    // the order comes up. It makes no task, so the order is done and the next
+    // one starts in the same tick. A unit without RULEUCC_Pause or
+    // RULEUTC_GenericToggle takes the order but stays as it is (SetPaused's
+    // check). Its script hears OnPaused or OnUnpaused, and may change the
+    // queue: the order goes only if it is still the head.
+    const UnitCommand* head = &command_queue_.front();
+    const u32 order_id = head->command_id;
+    pause(L, !paused_);
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    if (!command_queue_.empty() && &command_queue_.front() == head &&
+        command_queue_.front().command_id == order_id)
+        command_queue_.pop_front();
+    return OrderStep::Next;
 }
 
 OrderStep Unit::order_stop(lua_State* L) {

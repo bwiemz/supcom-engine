@@ -3102,9 +3102,9 @@ std::string ui_command_name(const char* name) {
     return std::string(n);
 }
 
-/// An order with no target: Stop, Dive, a silo build, or a Script order
-/// (M206w: the construction panel's enhancements, as EnhanceTask). `data`
-/// is the order's table.
+/// An order with no target: Stop, Dive, a silo build, Pause, or a Script
+/// order (M206w: the construction panel's enhancements, as EnhanceTask).
+/// `data` is the order's table.
 bool issue_targetless_order(lua_State* L, const std::vector<sim::EntityId>& ids,
                             const std::string& name, int data, bool clear, bool tell,
                             const std::string& blueprint) {
@@ -3120,6 +3120,8 @@ bool issue_targetless_order(lua_State* L, const std::vector<sim::EntityId>& ids,
                                            : sim::CommandType::SiloBuildTactical;
     } else if (name == "DestroySelf") {
         cmd.type = sim::CommandType::DestroySelf;
+    } else if (name == "Pause") {
+        cmd.type = sim::CommandType::Pause;
     } else if (name == "Script" && data != 0 && lua_istable(L, data)) {
         auto bytes = sim::lua_to_bytes(L, data);
         if (!bytes) {

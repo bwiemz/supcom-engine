@@ -1323,7 +1323,8 @@ bool has_target(const UnitCommand& command) {
     case CommandType::Upgrade:
     case CommandType::Enhance:
     case CommandType::SiloBuildNuke:
-    case CommandType::SiloBuildTactical: return false;
+    case CommandType::SiloBuildTactical:
+    case CommandType::Pause: return false;
     default:
         return static_cast<bool>(command.target_id) || command.target_pos.x != 0.0f ||
                command.target_pos.y != 0.0f || command.target_pos.z != 0.0f;

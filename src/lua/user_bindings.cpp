@@ -2988,9 +2988,9 @@ int l_UISelectionByCategory(lua_State* L) {
     return 0;
 }
 
-/// CON_IssueCommand: `IssueCommand Stop|Dive|SiloBuildTactical|
-/// SiloBuildNuke` to the selection (Stop clears the queues and announces the
-/// selection again).
+/// CON_IssueCommand: `IssueCommand Stop|Pause|Dive|SiloBuildTactical|
+/// SiloBuildNuke` to the selection (Stop and Pause clear the queues and
+/// announce the selection again).
 void issue_command(lua_State* L, const std::vector<std::string>& args) {
     auto* sim = get_sim(L);
     auto* ih = get_input_handler(L);
@@ -3011,7 +3011,8 @@ void issue_command(lua_State* L, const std::vector<std::string>& args) {
     } else if (iequal(order, "SiloBuildNuke")) {
         issue_targetless_order(L, ids, "BuildSiloNuke", 0, false);
     } else if (iequal(order, "Pause")) {
-        spdlog::info("IssueCommand Pause: the engine has no pause order yet");
+        issue_targetless_order(L, ids, "Pause", 0, true);
+        ih->set_selected(ih->selected());
     }
 }
 
