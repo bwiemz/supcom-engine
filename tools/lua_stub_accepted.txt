@@ -25,7 +25,6 @@ SetIgnoreArmyCap l_SetIgnoreArmyCap  # not Moho's: retail's AIBrain.IgnoreArmyUn
 GetSimTicksPerSecond l_GetSimTicksPerSecond  # Moho's answers 10 too (faf-re cfunc_GetSimTicksPerSecondL)
 SecondsPerTick l_SecondsPerTick  # the blueprint phase's and the UI's; a tick is a tenth of a second, as Moho's answers
 GetNumRootFrames l_GetNumRootFrames  # the engine draws one head, so one root frame
-GetTargetHead frame_GetTargetHead  # one head: every frame's is 0
 IsSignedInToSteam l_IsSignedInToSteam  # there is no Steam here
 Hide <lambda>  # the stand-in cursor before one is set: nothing to hide
 Show <lambda>  # the stand-in cursor before one is set: nothing to show

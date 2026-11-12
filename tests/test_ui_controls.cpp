@@ -466,6 +466,52 @@ TEST_CASE("A frame's topmost depth is its deepest live control's, as Moho's", "[
     CHECK(global("destroyed") == 0);
 }
 
+TEST_CASE("A frame keeps the head SetTargetHead gives it, truncated, and returns itself, as Moho's",
+          "[ui][lua]") {
+    // faf-re cfunc_CMauiFrameSetTargetHeadL and GetTargetHeadL: a number,
+    // stored as an int; exactly the frame and the number, else Moho's errors
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+    auto result = lua.do_string(R"(
+        local frame = GetFrame(0)
+        before = frame:GetTargetHead()
+        returned = frame:SetTargetHead(1.75) == frame
+        after = frame:GetTargetHead()
+        local ok
+        ok, too_few = pcall(frame.SetTargetHead, frame)
+        assert(not ok)
+        ok, not_number = pcall(frame.SetTargetHead, frame, 'one')
+        assert(not ok)
+        ok, get_extra = pcall(frame.GetTargetHead, frame, 2)
+        assert(not ok)
+        kept = frame:GetTargetHead()
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    lua_State* L = lua.raw();
+    const auto global = [L](const char* name) {
+        lua_getglobal(L, name);
+        std::string s = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+        if (lua_isboolean(L, -1)) s = lua_toboolean(L, -1) ? "true" : "false";
+        lua_pop(L, 1);
+        return s;
+    };
+    CHECK(global("before") == "0");
+    CHECK(global("returned") == "true");
+    CHECK(global("after") == "1");
+    CHECK(global("kept") == "1");
+    CHECK(global("too_few").find(
+              "CMauiFrame:SetTargetHead(targetHead)\n  expected 2 args, but got 1") !=
+          std::string::npos);
+    CHECK(global("not_number").find("attempt to use as number a string value") !=
+          std::string::npos);
+    CHECK(global("get_extra").find("int GetTargetHead()\n  expected 1 args, but got 2") !=
+          std::string::npos);
+}
+
 namespace {
 
 /// A UI state with the input fixtures: boxes laid out in plain numbers, each
