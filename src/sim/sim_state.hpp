@@ -479,6 +479,14 @@ public:
     /// it for the user side. Not saved, as Moho's isn't.
     void request_xml_army_stats() { xml_army_stats_requested_ = true; }
     bool take_xml_army_stats_request() { return std::exchange(xml_army_stats_requested_, false); }
+    /// The UI's selection as the last beat's Sync left it, in ascending ids:
+    /// Moho's Sim::mSyncFilter.maskB, which CWldSession::SetSelection hands the
+    /// sim driver at each change and Sim::Sync copies in (SyncQueue carries it
+    /// here). DebugGetSelection reads it. Local to each peer, as Moho's: a
+    /// peer's own player's selection, a replay's viewer's.
+    const std::vector<EntityId>& debug_selection() const { return debug_selection_; }
+    /// Sorted and without repeats, as Moho's id set holds them.
+    void set_debug_selection(std::vector<EntityId> ids);
     // --- The sim's own thread (OE-134) ---
     /// A tick runs on the sim's thread: until it is collected, nothing else
     /// may read the live sim (the UI reads its last published snapshot).
@@ -1232,6 +1240,10 @@ private:
     bool cheats_enabled_ = false;
     i32 sync_army_ = -1;
     bool xml_army_stats_requested_ = false; // see request_xml_army_stats
+    /// See debug_selection: Moho's Sim::mSyncFilter.maskB, local to each peer,
+    /// so outside the game's state: not checksummed, saved, recorded or
+    /// replayed (no command carries it).
+    std::vector<EntityId> debug_selection_;
     i32 paused_by_ = -1;               // see request_pause
     u32 pause_serial_ = 0;
     bool single_step_ = false;

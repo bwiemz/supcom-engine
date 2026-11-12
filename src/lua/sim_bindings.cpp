@@ -1908,7 +1908,6 @@ static int l_sim_ResumeSim(lua_State* L) {
 // Stub functions — shared definitions in lua_stubs.hpp, local aliases for brevity
 #include "lua/lua_stubs.hpp"
 static int (*const stub_noop)(lua_State*) = lua_stubs::noop;
-static int (*const stub_nil)(lua_State*) = lua_stubs::return_nil;
 
 // Returns a dummy object (table) whose methods are no-ops that return self
 // for chaining (e.g., CreateAnimator(self):PlayAnim(anim):SetRate(1)).
@@ -3809,6 +3808,28 @@ static int l_DrawCircle(lua_State* L) {
     const auto size = static_cast<f32>(luaL_checknumber(L, 2));
     sim->debug_canvas().circle(at, size, debug_color(L, 3));
     return 0;
+}
+
+/// DebugGetSelection(): the local UI's selected units, as the last beat's Sync
+/// gave the sim them (Moho's cfunc_DebugGetSelectionL over Sim::mSyncFilter.maskB,
+/// SimState::debug_selection): in ascending ids, each one still found and a unit
+/// (the binary tests IsUnit; faf-re's text keeps any entity), one its deletion
+/// queue holds too. No arguments. Each peer's own player's selection, as Moho's,
+/// so only debug scripts read it: FAF's AI state-machine view, retail's PrintBuffs.
+static int l_DebugGetSelection(lua_State* L) {
+    if (const int n = lua_gettop(L); n != 0)
+        return arg_count_error(L, "Get DEBUG info for UI selection", 0, n);
+    lua_newtable(L);
+    const auto* sim = get_sim(L);
+    if (!sim) return 1;
+    int i = 0;
+    for (const sim::EntityId id : sim->debug_selection()) {
+        const sim::Entity* e = sim->entity_registry().find(id);
+        if (!e || !e->is_unit() || e->lua_table_ref() < 0) continue;
+        lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
+        lua_rawseti(L, -2, ++i);
+    }
+    return 1;
 }
 
 static int l_Vector(lua_State* L) {
@@ -6101,7 +6122,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("DrawCircle", l_DrawCircle);
     state.register_function("DrawLinePop", l_DrawLinePop);
     state.register_function("DrawLine", l_DrawLine);
-    state.register_function("DebugGetSelection", stub_nil);
+    state.register_function("DebugGetSelection", l_DebugGetSelection);
 
     // Effects — real IEffect creation (state tracking, rendering deferred)
     state.register_function("CreateEmitterAtBone", l_CreateEmitterAtBone);

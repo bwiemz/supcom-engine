@@ -461,6 +461,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     // print_lines_: the beat's console lines, which its sync takes (Moho's mPrintField isn't saved)
     // xml_army_stats_requested_: SubmitXMLArmyStats's request, which the beat's sync takes
     // (Moho's mRequestXMLArmyStatsSubmit isn't saved)
+    // debug_selection_: the local UI's selection, each peer's own (Moho's mSyncFilter.maskB
+    // isn't saved)
     {
         std::vector<std::string> armor;
         armor.reserve(sim.armor_def_.table_.size());

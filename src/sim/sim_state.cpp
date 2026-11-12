@@ -1980,6 +1980,12 @@ std::vector<u32> SimState::army_command_sources(i32 army) const {
     return {it->second.begin(), it->second.end()};
 }
 
+void SimState::set_debug_selection(std::vector<EntityId> ids) {
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    debug_selection_ = std::move(ids);
+}
+
 bool SimState::cheats_enabled() {
     // As Moho's, which names the source's player ("???" without one)
     if (!cheats_enabled_) {

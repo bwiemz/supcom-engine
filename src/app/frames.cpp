@@ -344,7 +344,9 @@ selection_upgrades(const osc::sim::SimState& sim,
 /// engine's own AddOnSelectionChangedCallback callbacks. Moho reports every
 /// action (`action`), even one that leaves the selection unchanged -- retail
 /// refreshes the orders and construction panels on those -- as well as any
-/// change. `prev` becomes `cur`.
+/// change. `prev` becomes `cur`. A change goes to the sim too, as
+/// CWldSession::SetSelection hands it the driver (SetSyncFilterMaskB): the
+/// next beat's Sync gives it DebugGetSelection.
 void dispatch_selection_change(lua_State* uL, std::unordered_set<osc::sim::EntityId>& prev,
                                const std::unordered_set<osc::sim::EntityId>& cur, bool action) {
     if (cur == prev && !action) return;
@@ -357,6 +359,7 @@ void dispatch_selection_change(lua_State* uL, std::unordered_set<osc::sim::Entit
                         old_ids.end(), std::back_inserter(added));
     std::set_difference(old_ids.begin(), old_ids.end(), new_ids.begin(),
                         new_ids.end(), std::back_inserter(removed));
+    if (cur != prev) osc::lua::request_debug_selection(uL, new_ids);
     prev = cur;
 
     osc::lua::push_units_for_ui(uL, old_ids);
