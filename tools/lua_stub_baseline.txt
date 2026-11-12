@@ -7,10 +7,8 @@ BlueprintLoaderUpdateProgress stub_noop
 ClearFrame Command
 Destroy wlduiprovider_Destroy
 EndLoggingStats l_EndLoggingStats
-GetOmni shield_GetOmni
 InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService
 IsKnownFake blip_IsKnownFake
-IsRestricted <lambda>
 MetaImpact stub_noop
 PrefetchSession Command
 RefreshSteamGames l_RefreshSteamGames

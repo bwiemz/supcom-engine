@@ -6337,21 +6337,6 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("ArmyIsCivilian", l_ArmyIsCivilian);
     state.register_function("ArmyIsOutOfGame", l_ArmyIsOutOfGame);
 
-    // Game global — FA uses Game.IsRestricted(bp_id, army_index) in OnStopBeingBuilt
-    {
-        lua_newtable(L);
-        lua_pushstring(L, "IsRestricted");
-        lua_pushcfunction(L, [](lua_State* Ls) -> int {
-            lua_pushboolean(Ls, 0);
-            return 1;
-        });
-        lua_rawset(L, -3);
-        lua_pushstring(L, "Game");
-        lua_pushvalue(L, -2);
-        lua_rawset(L, LUA_GLOBALSINDEX);
-        lua_pop(L, 1);
-    }
-
     // The game's mods, which its launch set before the blueprints loaded
     // (none if it didn't)
     ensure_active_mods(L);
