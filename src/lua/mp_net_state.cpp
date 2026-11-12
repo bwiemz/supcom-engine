@@ -276,7 +276,9 @@ bool mp_attach_session(osc::sim::SimState& sim) {
     });
     // Every client seeds its sim from the host's shared seed so RNG matches;
     // a resumed game's random numbers are its save's.
-    if (sim.tick_count() == 0) sim.set_seed(s.seed);
+    if (sim.tick_count() == 0 && sim.seed() != s.seed) {
+        sim.set_seed(s.seed);
+    }
     // Each player's copy of a save they all agreed to (OE-128)
     session->set_save_handler([&sim](const std::string& name) {
         if (save_handler()) save_handler()(sim, name);
