@@ -180,6 +180,25 @@ TEST_CASE("Each order a UI script issues through Moho's ISSUE_Command tells OnCo
                   " BuildFactoryuel0101 ', told)"));
 }
 
+TEST_CASE("A UI script's Pause order goes to the sim as Moho's UNITCOMMAND_Pause",
+          "[ui][command_issued]") {
+    // faf-re cfunc_IssueCommandL: any command lexical but the silo builds goes to ISSUE_Command
+    IssueWorld w;
+    REQUIRE(w.check("IssueCommand('UNITCOMMAND_Pause')"
+                    " IssueUnitCommand(units, 'Pause', nil, false)"));
+    CHECK(w.check("local told = ''"
+                  " for _, c in seen do told = told .. c.CommandType .. (c.Clear and '!' or '') end"
+                  " assert(told == 'Pause!Pause', told)"));
+    const auto pending = w.sim.command_scheduler().pending();
+    REQUIRE(pending.size() == 2);
+    for (const auto& c : pending) {
+        CHECK(c.command.type == osc::sim::CommandType::Pause);
+        CHECK(c.unit_ids == std::vector<osc::sim::EntityId>{w.id});
+    }
+    CHECK(pending[0].clear_existing);
+    CHECK_FALSE(pending[1].clear_existing);
+}
+
 TEST_CASE("A command-mode Script order hands OnCommandIssued VerifyScriptCommand's answer",
           "[ui][command_issued][script]") {
     IssueWorld w;

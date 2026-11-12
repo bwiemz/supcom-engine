@@ -380,6 +380,7 @@ const char* command_lexical(sim::CommandType type) {
     case sim::CommandType::Script: return "Script";
     case sim::CommandType::AggressiveMove: return "AggressiveMove";
     case sim::CommandType::DestroySelf: return "DestroySelf";
+    case sim::CommandType::Pause: return "Pause";
     }
     return "None";
 }
