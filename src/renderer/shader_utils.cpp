@@ -1445,7 +1445,7 @@ layout(push_constant) uniform PushConstants {
     // 32 Effect, 33 Cloud, 34 OuterCloud, 35 NukeUEF, 36 NukeEMP, 37 NukeQuantum,
     // 38 PhalanxEffect, 39 UEFQuantumGate, 40 CommandFeedback3, 41 CommandFeedback4,
     // 42 AeonCZAR (High; below it, Aeon), 43 Flat, 44 GlassAlpha, 45 BloatingNormalMappedAlpha;
-    // 50 Explosion
+    // 50 Explosion, 52 EditorMarker
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
@@ -1853,6 +1853,14 @@ vec4 explosionColor() {
     if (alpha <= 15.0 / 255.0) discard;
     return vec4(clamp(head, 0.0, 1.0), alpha);
 }
+
+// EditorMarkerPS by VertexNormalVS: the instance's colour (white but a
+// unit's) lit by the vertex's normal, unshadowed. FA writes it colour only:
+// no glow.
+vec4 editorMarkerColor() {
+    vec3 tint = fragColor.g < 0.0 ? vec3(1.0) : fragColor.rgb;
+    return vec4(tint * computeLight(dot(sunDirection(), fragVertexNormal), 1.0, 1.0, 1.0), 0.0);
+}
 )glsl" // split again: MSVC caps one literal at 16380 bytes (C2026)
                         R"glsl(
 
@@ -1877,6 +1885,10 @@ void main() {
     }
     if ((pc.technique >= 32u && pc.technique <= 39u) || pc.technique == 50u) {
         outColor = explosionColor();
+        return;
+    }
+    if (pc.technique == 52u) {
+        outColor = editorMarkerColor();
         return;
     }
     if (pc.technique == 28u || pc.technique == 29u || pc.technique == 30u) {

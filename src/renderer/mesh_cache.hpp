@@ -99,6 +99,9 @@ enum class MeshTechnique : u32 {
     /// TMeshShield's: mesh.fx has no technique Shield (only the factions'), so
     /// Moho's material reads renderStage 0 and no pass draws it (has_render_stage).
     Shield = 51,
+    /// EditorMarkerPS (VertexNormalVS): the instance's colour lit by the
+    /// vertex's normal; opaque, colour only, after the water.
+    EditorMarker = 52,
 };
 
 /// Stable names for render dumps.
@@ -170,7 +173,8 @@ inline bool is_post_water_technique(MeshTechnique t) {
            t == MeshTechnique::NormalMappedAlphaNoShadow || t == MeshTechnique::NukeUEF ||
            t == MeshTechnique::NukeEMP || t == MeshTechnique::PhalanxEffect ||
            t == MeshTechnique::UEFQuantumGate || t == MeshTechnique::CommandFeedback3 ||
-           t == MeshTechnique::CommandFeedback4; // STAGE_POSTWATER + STAGE_PREEFFECT
+           t == MeshTechnique::CommandFeedback4 ||
+           t == MeshTechnique::EditorMarker; // STAGE_POSTWATER + STAGE_PREEFFECT
 }
 
 /// A technique of the POSTWATER + POSTEFFECT stage, the last meshes Moho
@@ -227,7 +231,7 @@ inline ShieldPasses shield_passes(MeshTechnique t) {
 /// slices, cast none (M211f/g); nor do shields (M211k), nor the map's
 /// border (MapImager_LowFi is PREWATER + PREEFFECT alone), nor the effects'
 /// (Effect names a depthTechnique but, like NormalMappedAlphaNoShadow, no
-/// STAGE_DEPTH), nor Explosion, nor Shield (no stage at all).
+/// STAGE_DEPTH), nor Explosion or EditorMarker, nor Shield (no stage at all).
 inline bool has_depth_stage(MeshTechnique t) {
     return t != MeshTechnique::AeonBuild && t != MeshTechnique::AlphaFade &&
            t != MeshTechnique::UnitPlace && t != MeshTechnique::MapImager &&
@@ -238,7 +242,7 @@ inline bool has_depth_stage(MeshTechnique t) {
            t != MeshTechnique::UEFQuantumGate && t != MeshTechnique::CommandFeedback3 &&
            t != MeshTechnique::CommandFeedback4 && t != MeshTechnique::GlassAlpha &&
            t != MeshTechnique::NormalMappedAlphaNoShadow && t != MeshTechnique::Explosion &&
-           has_render_stage(t);
+           t != MeshTechnique::EditorMarker && has_render_stage(t);
 }
 
 /// What a technique reads as its instance's material.y (its `parameter`

@@ -66,6 +66,7 @@ TEST_CASE("mesh_technique: a LOD's ShaderName picks FA's technique", "[renderer]
     CHECK(mesh_technique("NormalMappedAlphaNoShadow") == MeshTechnique::NormalMappedAlphaNoShadow);
     CHECK(mesh_technique("Explosion") == MeshTechnique::Explosion);
     CHECK(mesh_technique("TMeshExplosion") == MeshTechnique::Explosion);
+    CHECK(mesh_technique("EditorMarker") == MeshTechnique::EditorMarker);
     // TMeshShield names a technique mesh.fx lacks, which no pass draws.
     CHECK(mesh_technique("Shield") == MeshTechnique::Shield);
     CHECK(mesh_technique("TMeshShield") == MeshTechnique::Shield);
@@ -157,7 +158,7 @@ TEST_CASE("The explosions' techniques: mesh.fx's stages and blending", "[rendere
     CHECK_FALSE(is_blended_technique(MeshTechnique::NormalMappedAlphaNoShadow));
 }
 
-TEST_CASE("Explosion and Shield: mesh.fx's stages, or none", "[renderer][mesh]") {
+TEST_CASE("Explosion, EditorMarker and Shield: mesh.fx's stages, or none", "[renderer][mesh]") {
     // Explosion: STAGE_POSTWATER + STAGE_POSTEFFECT, blended (SrcAlpha,
     // InvSrcAlpha), no STAGE_DEPTH
     CHECK(is_post_effect_technique(MeshTechnique::Explosion));
@@ -165,6 +166,13 @@ TEST_CASE("Explosion and Shield: mesh.fx's stages, or none", "[renderer][mesh]")
     CHECK(is_blended_technique(MeshTechnique::Explosion));
     CHECK_FALSE(has_depth_stage(MeshTechnique::Explosion));
     CHECK(has_render_stage(MeshTechnique::Explosion));
+    // EditorMarker: STAGE_POSTWATER + STAGE_PREEFFECT, opaque
+    // (AlphaBlend_Disable_Write_RGB), no STAGE_DEPTH
+    CHECK(is_post_water_technique(MeshTechnique::EditorMarker));
+    CHECK_FALSE(is_post_effect_technique(MeshTechnique::EditorMarker));
+    CHECK_FALSE(is_blended_technique(MeshTechnique::EditorMarker));
+    CHECK_FALSE(has_depth_stage(MeshTechnique::EditorMarker));
+    CHECK(has_render_stage(MeshTechnique::EditorMarker));
     // Shield: no technique, so renderStage 0, which no pass lets through,
     // nor the depth pass; not one of the faction shields' techniques
     CHECK_FALSE(has_render_stage(MeshTechnique::Shield));
@@ -351,8 +359,8 @@ TEST_CASE("mesh_technique: a ShaderName with no technique warns once and draws a
     CHECK(log.count("no technique for ShaderName 'NoSuchShaderA'") == 1);
     CHECK(log.count("no technique for ShaderName 'NoSuchShaderB'") == 1);
 
-    for (const char* quiet :
-         {"TMeshAlpha", "Aeon", "", "Unit", "Simple", "Wreckage", "TMeshExplosion", "TMeshShield"})
+    for (const char* quiet : {"TMeshAlpha", "Aeon", "", "Unit", "Simple", "Wreckage",
+                              "TMeshExplosion", "TMeshShield", "EditorMarker"})
         mesh_technique(quiet);
     CHECK(log.count("no technique") == 2);
 }
@@ -400,7 +408,8 @@ TEST_CASE("mesh technique dump names round trip", "[renderer][mesh]") {
         INFO(mesh_technique_name(technique));
         CHECK(mesh_technique(mesh_technique_name(technique)) == technique);
     }
-    for (const MeshTechnique technique : {MeshTechnique::Explosion, MeshTechnique::Shield}) {
+    for (const MeshTechnique technique :
+         {MeshTechnique::Explosion, MeshTechnique::Shield, MeshTechnique::EditorMarker}) {
         INFO(mesh_technique_name(technique));
         CHECK(mesh_technique(mesh_technique_name(technique)) == technique);
     }

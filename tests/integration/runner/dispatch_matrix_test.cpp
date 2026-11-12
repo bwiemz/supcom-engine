@@ -56,7 +56,7 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     ctx.vfs.mount(root, std::make_unique<vfs::DirectoryMount>(dir));
     map::Terrain ground(map::Heightmap(512, 512, 1.0f, std::vector<u16>(513 * 513, 0)), 0.0f, true);
     ground.set_lighting(white_fill(), {});
-    constexpr u32 techniques = static_cast<u32>(MeshTechnique::Shield) + 1;
+    constexpr u32 techniques = static_cast<u32>(MeshTechnique::EditorMarker) + 1;
     // An id between the techniques names none ("Unknown"): no plate, no coverage.
     const auto named = [](u32 id) {
         return std::string(renderer::mesh_technique_name(static_cast<MeshTechnique>(id))) !=
@@ -242,6 +242,9 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
         fact(fidelity, fmt::format("technique=Explosion stage=post-effect pass=0 "
                                    "pipeline=explosion drawn=Explosion lane={} ",
                                    fidelity));
+        fact(fidelity, fmt::format("technique=EditorMarker stage=post-water pass=0 pipeline=mesh "
+                                   "drawn=EditorMarker lane={} ",
+                                   fidelity));
         for (const char* stage : {"shadow", "reflection", "pre-water", "post-water", "post-effect"})
             fact(fidelity, fmt::format("technique=Shield stage={} ", stage), false);
     }
@@ -287,7 +290,8 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
                              "AeonCZAR",
                              "Flat",
                              "BloatingNormalMappedAlpha",
-                             "NormalMappedAlphaNoShadow"}) {
+                             "NormalMappedAlphaNoShadow",
+                             "EditorMarker"}) {
         fact(2, fmt::format("technique={} stage=reflection ", name));
         fact(0, fmt::format("technique={} stage=reflection ", name), false);
         fact(1, fmt::format("technique={} stage=reflection ", name), false);

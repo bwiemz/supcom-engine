@@ -72,6 +72,7 @@ const char* mesh_technique_name(MeshTechnique technique) {
     case MeshTechnique::NormalMappedAlphaNoShadow: return "NormalMappedAlphaNoShadow";
     case MeshTechnique::Explosion: return "Explosion";
     case MeshTechnique::Shield: return "Shield";
+    case MeshTechnique::EditorMarker: return "EditorMarker";
     }
     return "Unknown";
 }
@@ -379,6 +380,9 @@ MeshTechnique mesh_technique(const std::string& shader) {
     // (has_render_stage); not one left to port.
     if (shader_name == "Shield") {
         return MeshTechnique::Shield;
+    }
+    if (shader_name == "EditorMarker") {
+        return MeshTechnique::EditorMarker;
     }
     if (shader_name != "Unit" && !is_wreckage_shader(shader_name)) {
         static std::mutex mutex;
