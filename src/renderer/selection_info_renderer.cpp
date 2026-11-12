@@ -43,6 +43,7 @@ static const char* command_name(sim::CommandType type) {
     case sim::CommandType::Dock: return "Docking";
     case sim::CommandType::Script: return "Working";
     case sim::CommandType::DestroySelf: return "Destroying";
+    case sim::CommandType::SpecialAction: return "Special Action";
     }
     return "Idle";
 }

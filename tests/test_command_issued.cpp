@@ -323,3 +323,35 @@ TEST_CASE("The UI's issue functions take and refuse their arguments in Moho's wo
     CHECK(w.told() == "Stop::F1 Stop::F1 Stop::F1 BuildSiloNuke::F1! Stop::! "
                       "BuildFactory:uel0105:F1 ");
 }
+
+TEST_CASE("A command-mode special action goes to the selected units that have one, at the ground "
+          "clicked",
+          "[ui][command_issued][special-action]") {
+    // Moho's DispatchOrderCommandMode: RULEUCC_SpecialAction issues
+    // UNITCOMMAND_SpecialAction at the entity under the cursor, else at the
+    // ground; the sim drops it for a unit without the cap
+    IssueWorld w;
+    const osc::sim::EntityId e = w.add_unit("uel0105", "ENGINEER", "E");
+    w.input.set_selected({w.id, e});
+    osc::renderer::CommandMode mode;
+    mode.mode = "order";
+    mode.name = "RULEUCC_SpecialAction";
+    CHECK_FALSE(w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, false));
+    CHECK(w.sim.command_scheduler().pending().empty());
+
+    static_cast<osc::sim::Unit*>(w.sim.entity_registry().find(w.id))
+        ->add_command_cap("RULEUCC_SpecialAction");
+    const auto issued = w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, false);
+    REQUIRE(issued);
+    CHECK(issued->type == "SpecialAction");
+    CHECK(issued->units == std::vector<osc::sim::EntityId>{w.id});
+    const auto pending = w.sim.command_scheduler().pending();
+    REQUIRE(pending.size() == 1);
+    CHECK(pending[0].command.type == osc::sim::CommandType::SpecialAction);
+    CHECK(pending[0].command.target_id == osc::sim::EntityId{});
+    CHECK(pending[0].command.target_pos.x == 40.0f);
+    CHECK(pending[0].command.target_pos.z == 60.0f);
+    CHECK(pending[0].unit_ids == std::vector<osc::sim::EntityId>{w.id});
+    osc::lua::report_command_issued(w.ui.raw(), *issued);
+    CHECK(w.check("assert(seen[1].CommandType == 'SpecialAction', seen[1].CommandType)"));
+}

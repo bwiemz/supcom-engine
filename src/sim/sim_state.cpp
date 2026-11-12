@@ -1502,6 +1502,9 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     if (command.type == CommandType::Overcharge) {
         return unit.has_command_cap("RULEUCC_Overcharge");
     }
+    if (command.type == CommandType::SpecialAction) {
+        return unit.has_command_cap("RULEUCC_SpecialAction");
+    }
     if (command.type == CommandType::Ferry) {
         return !carrier && unit.has_category("TRANSPORTATION") && has_transport_ai(unit);
     }

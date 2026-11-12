@@ -151,7 +151,7 @@ TEST_CASE("An order's commandType is Moho's UNITCOMMAND number", "[faf][orders]"
         {CommandType::Upgrade, 27},      {CommandType::Script, 28},
         {CommandType::Enhance, 28},      {CommandType::Sacrifice, 32},
         {CommandType::Overcharge, 34},   {CommandType::AggressiveMove, 35},
-        {CommandType::Dock, 39},
+        {CommandType::Dock, 39},         {CommandType::SpecialAction, 38},
     };
     for (const auto& [type, number] : plain) {
         INFO(static_cast<int>(type));
