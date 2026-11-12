@@ -474,6 +474,11 @@ public:
     /// isn't.
     i32 sync_army() const { return sync_army_; }
     void set_sync_army(i32 army) { sync_army_ = army; }
+    /// SubmitXMLArmyStats() asked for the army stats document: Moho's
+    /// Sim::mRequestXMLArmyStatsSubmit, which the beat's Sync takes to build
+    /// it for the user side. Not saved, as Moho's isn't.
+    void request_xml_army_stats() { xml_army_stats_requested_ = true; }
+    bool take_xml_army_stats_request() { return std::exchange(xml_army_stats_requested_, false); }
     // --- The sim's own thread (OE-134) ---
     /// A tick runs on the sim's thread: until it is collected, nothing else
     /// may read the live sim (the UI reads its last published snapshot).
@@ -1226,6 +1231,7 @@ private:
     u32 current_command_source_ = kEngineSource; // see current_command_source
     bool cheats_enabled_ = false;
     i32 sync_army_ = -1;
+    bool xml_army_stats_requested_ = false; // see request_xml_army_stats
     i32 paused_by_ = -1;               // see request_pause
     u32 pause_serial_ = 0;
     bool single_step_ = false;

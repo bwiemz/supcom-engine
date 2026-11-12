@@ -1,18 +1,26 @@
 #include "lua/sim_sync.hpp"
 
+#include "blueprints/blueprint_store.hpp"
 #include "core/console_output.hpp"
 #include "core/lua_copy.hpp"
 #include "core/test_status.hpp"
 #include "lua/engine_stats.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/blueprint_categories.hpp"
 #include "sim/lua_sim.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
 
+#include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
+#include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
+#include <string_view>
+#include <unordered_set>
 
 extern "C" {
 #include <lauxlib.h>
@@ -153,7 +161,195 @@ void push_sim_sync(lua_State* sim_L) {
     }
 }
 
+/// What CArmyStats::ArmyXmlStatsNode reads of a unit blueprint: the
+/// categories it is in (its own id among them, as Moho's
+/// RegisterBlueprintCategoryMembership makes it one), its Description as the
+/// blueprint has it (RBlueprint::mDescription, a LOC tag and all) and its
+/// costs.
+struct StatsBlueprint {
+    std::unordered_set<std::string> categories;
+    std::string description;
+    sim::BuildEconomy cost;
+};
+
+StatsBlueprint read_stats_blueprint(lua_State* L, const std::string& id) {
+    StatsBlueprint bp;
+    bp.categories.insert(id);
+    if (!L) return bp;
+    const int top = lua_gettop(L);
+    if (blueprints::push_blueprint(L, id)) {
+        sim::collect_blueprint_categories(L, lua_gettop(L), bp.categories);
+        lua_pushstring(L, "Description");
+        lua_rawget(L, -2);
+        if (lua_type(L, -1) == LUA_TSTRING) bp.description = lua_tostring(L, -1);
+    }
+    lua_settop(L, top);
+    bp.cost = sim::blueprint_build_economy(L, id);
+    return bp;
+}
+
+/// `text` as an XML attribute value: & < > " ' as entities. Moho writes its
+/// strings unescaped (STR_Printf, faf-re CArmyStats.cpp; the Steam exe hands
+/// them straight to its sprintf), so a LOC-tagged Description already broke
+/// its documents. The engine escapes every string it puts in one: a
+/// nickname comes from another peer through the lobby and a blueprint from
+/// any mod, and the document goes to the GPGNet client, where a stray quote
+/// or tag would corrupt it or inject into it.
+std::string xml_escape(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    for (const char c : text) {
+        switch (c) {
+        case '&': out += "&amp;"; break;
+        case '<': out += "&lt;"; break;
+        case '>': out += "&gt;"; break;
+        case '"': out += "&quot;"; break;
+        case '\'': out += "&apos;"; break;
+        default: out += c;
+        }
+    }
+    return out;
+}
+
+using BlueprintLanes = std::map<std::string, f64>;
+using StatsBlueprints = std::map<std::string, StatsBlueprint>;
+
+/// Moho's CArmyStatItem::SumCategory: a stat's per-blueprint values summed,
+/// as a float, over the blueprints in `category`; 0 for a stat without them.
+f32 sum_category(const BlueprintLanes* lanes, const StatsBlueprints& bps,
+                 const std::string& category) {
+    f32 total = 0.0f;
+    if (!lanes) return total;
+    for (const auto& [id, value] : *lanes) {
+        const auto it = bps.find(id);
+        if (it != bps.end() && it->second.categories.contains(category)) {
+            total += static_cast<f32>(value);
+        }
+    }
+    return total;
+}
+
+/// The sum as its %d takes it: truncated (cvttss2si; past an int, INT32_MIN).
+i32 sum_category_int(const BlueprintLanes* lanes, const StatsBlueprints& bps,
+                     const std::string& category) {
+    const f32 sum = sum_category(lanes, bps, category);
+    return sum >= -2147483648.0f && sum < 2147483648.0f ? static_cast<i32>(sum)
+                                                        : std::numeric_limits<i32>::min();
+}
+
+/// A float as its %.2f prints it.
+double as_float(f64 value) {
+    return static_cast<double>(static_cast<f32>(value));
+}
+
+/// The categories SummaryStats counts, in Moho's order.
+constexpr const char* kSummaryCategories[] = {
+    "AIR",
+    "LAND",
+    "NAVAL",
+    "ENGINEER",
+    "ARTILLERY",
+    "ANTIAIR",
+    "TRANSPORTATION",
+    "STRUCTURE",
+    "FACTORY",
+    "ENERGYPRODUCTION",
+    "MASSPRODUCTION",
+    "DEFENSE",
+    "TECH1",
+    "TECH2",
+    "TECH3",
+};
+
+/// Moho's CArmyStats::ArmyXmlStatsNode (faf-re CArmyStats.cpp; Steam exe
+/// 0x7136C0): the army's <Army> element, each line after `indent`. Its
+/// units are the blueprints it has a Units_Active or Enemies_Killed count
+/// for, each with those counts and its Units_Killed (its losses) summed over
+/// the category its id names, the damage its units dealt and took, and the
+/// blueprint's costs; then the built and killed counts over fixed
+/// categories, and the economy's totals. ("built" is Units_Active: the
+/// units alive now.) Moho lists the units by their blueprints' addresses;
+/// the engine by id. Every string goes through xml_escape, unlike Moho's.
+/// The damage lanes are Moho's SIM_DoDamagePoint's, which the engine
+/// doesn't keep yet: 0.
+void append_army_xml(std::string& xml, lua_State* L, const sim::ArmyBrain& brain,
+                     std::string_view indent, StatsBlueprints& bps) {
+    const BlueprintLanes* active = brain.blueprint_stats("Units_Active");
+    const BlueprintLanes* lost = brain.blueprint_stats("Units_Killed");
+    const BlueprintLanes* killed = brain.blueprint_stats("Enemies_Killed");
+    const BlueprintLanes* dealt = brain.blueprint_stats("Units_TotalDamageDealt");
+    const BlueprintLanes* received = brain.blueprint_stats("Units_TotalDamageReceive");
+    for (const BlueprintLanes* lanes : {active, lost, killed, dealt, received}) {
+        if (!lanes) continue;
+        for (const auto& lane : *lanes) {
+            if (!bps.contains(lane.first))
+                bps.emplace(lane.first, read_stats_blueprint(L, lane.first));
+        }
+    }
+    std::set<std::string> units;
+    for (const BlueprintLanes* lanes : {active, killed}) {
+        if (!lanes) continue;
+        for (const auto& lane : *lanes) units.insert(lane.first);
+    }
+
+    xml += fmt::format("{}<Army index=\"{}\" name=\"{}\">\n", indent, brain.index(),
+                       xml_escape(brain.nickname()));
+    xml += fmt::format("{}    <UnitStats>\n", indent);
+    for (const std::string& id : units) {
+        const StatsBlueprint& bp = bps.at(id);
+        xml += fmt::format(
+            "{}      <Unit id=\"{}\" type=\"{}\" built=\"{}\" lost=\"{}\" killed=\"{}\" "
+            "damagedealt=\"{:.2f}\" damagereceived=\"{:.2f}\" masscost=\"{:.2f}\" "
+            "energycost=\"{:.2f}\" buildtime=\"{:.2f}\"/>\n",
+            indent, xml_escape(id), xml_escape(bp.description), sum_category_int(active, bps, id),
+            sum_category_int(lost, bps, id), sum_category_int(killed, bps, id),
+            static_cast<double>(sum_category(dealt, bps, id)),
+            static_cast<double>(sum_category(received, bps, id)), as_float(bp.cost.mass),
+            as_float(bp.cost.energy), as_float(bp.cost.time));
+    }
+    xml += fmt::format("{}    </UnitStats>\n", indent);
+    xml += fmt::format("{}    <SummaryStats>\n", indent);
+    for (const char* category : kSummaryCategories) {
+        xml += fmt::format("{}      <Category type=\"{}\" built=\"{}\" killed=\"{}\"/>\n", indent,
+                           xml_escape(category), sum_category_int(active, bps, category),
+                           sum_category_int(killed, bps, category));
+    }
+    xml += fmt::format("{}    </SummaryStats>\n", indent);
+    xml += fmt::format("{}    <EconomyStats>\n", indent);
+    for (const char* resource : {"Energy", "Mass"}) {
+        const std::string suffix = std::string("_") + resource;
+        xml += fmt::format(
+            "{}      <{} produced=\"{:.2f}\" consumed=\"{:.2f}\" storage=\"{:.2f}\"/>\n", indent,
+            xml_escape(resource), as_float(brain.get_stat("Economy_TotalProduced" + suffix)),
+            as_float(brain.get_stat("Economy_TotalConsumed" + suffix)),
+            as_float(brain.get_stat("Economy_MaxStorage" + suffix)));
+    }
+    xml += fmt::format("{}    </EconomyStats>\n", indent);
+    xml += fmt::format("{}</Army>\n", indent);
+}
+
+/// The beat's army stats document if SubmitXMLArmyStats asked for one (the
+/// request taken), else empty.
+std::string take_army_stats(lua_State* sim_L, sim::SimState* sim) {
+    if (!sim || !sim->take_xml_army_stats_request()) return {};
+    return army_stats_xml(sim_L, *sim);
+}
+
 } // namespace
+
+std::string army_stats_xml(lua_State* sim_L, const sim::SimState& sim) {
+    std::string xml = "<?xml version=\"1.0\" ?>\n"
+                      "<GameStats xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
+                      "xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\n";
+    StatsBlueprints bps;
+    for (size_t i = 0; i < sim.army_count(); ++i) {
+        if (const sim::ArmyBrain* brain = sim.army_at(i)) {
+            append_army_xml(xml, sim_L, *brain, "  ", bps);
+        }
+    }
+    xml += "</GameStats>\n";
+    return xml;
+}
 
 int focus_army(lua_State* ui_L) {
     return registry_int(ui_L, "__osc_focus_army", 0);
@@ -182,6 +378,7 @@ void SyncQueue::queue(lua_State* sim_L, lua_State* ui_L) {
     packets_.push_back(luaL_ref(packets_state_, LUA_REGISTRYINDEX));
     sim::SimState* sim = sim::get_sim(sim_L);
     print_lines_.push_back(sim ? sim->take_print_lines() : std::vector<std::string>{});
+    army_stats_.push_back(take_army_stats(sim_L, sim));
     call_global(sim_L, "ResetSyncTable", 0);
 }
 
@@ -199,22 +396,26 @@ void SyncQueue::prepare_threaded(lua_State* sim_L, lua_State* ui_L) {
     }
 }
 
-void SyncQueue::deliver(lua_State* sim_L, lua_State* ui_L) {
+std::string SyncQueue::deliver(lua_State* sim_L, lua_State* ui_L) {
     if (!sim_L || !ui_L) {
-        return;
+        return {};
     }
     const bool queued = !packets_.empty();
     lua_State* from = queued ? packets_state_ : sim_L;
     std::vector<std::string> print_lines;
+    std::string army_stats;
     if (queued) {
         lua_rawgeti(packets_state_, LUA_REGISTRYINDEX, packets_.front());
         luaL_unref(packets_state_, LUA_REGISTRYINDEX, packets_.front());
         packets_.pop_front();
         print_lines = std::move(print_lines_.front());
         print_lines_.pop_front();
+        army_stats = std::move(army_stats_.front());
+        army_stats_.pop_front();
     } else {
         if (sim::SimState* sim = sim::get_sim(sim_L)) {
             print_lines = sim->take_print_lines();
+            army_stats = take_army_stats(sim_L, sim);
         }
         apply_focus_request(sim_L, ui_L, ui_request_);
         sync_army_stats(sim_L);
@@ -253,6 +454,7 @@ void SyncQueue::deliver(lua_State* sim_L, lua_State* ui_L) {
     for (const std::string& line : print_lines) {
         core::console_print(ui_L, line);
     }
+    return army_stats;
 }
 
 void SyncQueue::clear() {
@@ -261,6 +463,7 @@ void SyncQueue::clear() {
     }
     packets_.clear();
     print_lines_.clear();
+    army_stats_.clear();
     ui_request_.reset();
 }
 

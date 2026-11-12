@@ -20,4 +20,3 @@ RefreshSteamGames l_RefreshSteamGames
 SetTargetHead frame_SetTargetHead
 SimConExecute stub_noop
 SpecFootprints stub_noop
-SubmitXMLArmyStats stub_noop

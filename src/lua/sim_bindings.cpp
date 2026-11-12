@@ -955,6 +955,19 @@ static int l_SetArmyStatsSyncArmy(lua_State* L) {
     return 0;
 }
 
+/// SubmitXMLArmyStats(): the game's army stats asked for, for the online
+/// service -- Moho's cfunc_SubmitXMLArmyStats (faf-re SimLuaFunctions.cpp;
+/// Steam exe 0x765010) only sets the sim's flag. The beat's sync builds the
+/// <GameStats> document (army_stats_xml) and the user side hands it to GPGNet
+/// as Stats, if linked. Retail's victory.lua asks when an army is defeated
+/// and when the game is won or drawn.
+static int l_SubmitXMLArmyStats(lua_State* L) {
+    constexpr const char* kHelp = "Request that we submit xml army stats to gpg.net.";
+    if (lua_gettop(L) != 0) return arg_count_error(L, kHelp, 0, lua_gettop(L));
+    if (auto* sim = get_sim(L)) sim->request_xml_army_stats();
+    return 0;
+}
+
 static int l_GetGameTick(lua_State* L) {
     auto* sim = get_sim(L);
     lua_pushnumber(L, sim ? sim->tick_count() : 0);
@@ -5850,10 +5863,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueFormPatrol", l_IssuePatrol);
     state.register_function("IssueFormAttack", l_IssueFormAttack);
 
-    // SubmitXMLArmyStats(): uploads end-of-game stats to the online service
-    // (GPGNet). Offline there is nowhere to send them, so this is faithfully
-    // a no-op; retail victory.lua calls it on every defeat.
-    state.register_function("SubmitXMLArmyStats", stub_noop);
+    state.register_function("SubmitXMLArmyStats", l_SubmitXMLArmyStats);
     state.register_function("SetArmyStatsSyncArmy", l_SetArmyStatsSyncArmy);
 
     // Game state
