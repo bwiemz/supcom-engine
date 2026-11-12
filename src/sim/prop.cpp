@@ -2,6 +2,7 @@
 
 #include "core/dmath.hpp"
 #include "map/terrain.hpp"
+#include "sim/flight_math.hpp"
 
 #include <cmath>
 
@@ -9,44 +10,45 @@ namespace osc::sim {
 
 namespace {
 
-constexpr f32 kPi = 3.14159265f;
-constexpr f32 kHalfPi = kPi / 2;
-constexpr f32 kQuarterPi = kPi / 4;
+constexpr f32 kPi = 3.1415927f;
+constexpr f32 kHalfPi = 1.5707964f;
+constexpr f32 kQuarterPi = 0.78539819f;
+constexpr f32 kFourOverPi = 1.2732395f;
 constexpr f32 kAccelFactor = 0.1f;
 constexpr f32 kSpringFactor = 0.5f;
 constexpr f32 kDampFactor = 0.5f;
 constexpr f32 kUprootFactor = 0.1f;
 
-Vector3 normalized(const Vector3& v, f32& length) {
-    length = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-    if (length <= 1e-6f) {
-        return v;
+/// func_NormalizeAngle (0x0062FB50): MSVC8's fmod (-0 as +0), then a turn either way.
+f32 signed_angle(f32 a) {
+    constexpr f32 kTwoPi = 6.2831855f;
+    const f32 wrapped =
+        static_cast<f32>(std::fmod(static_cast<double>(a), static_cast<double>(kTwoPi))) + 0.0f;
+    if (wrapped < -kPi) {
+        return wrapped + kTwoPi;
     }
-    return {v.x / length, v.y / length, v.z / length};
+    if (wrapped > kPi) {
+        return wrapped - kTwoPi;
+    }
+    return wrapped;
 }
 
-Quaternion arc_between(const Vector3& from_raw, const Vector3& to_raw) {
-    f32 from_length = 0;
-    f32 to_length = 0;
-    const Vector3 to = normalized(to_raw, to_length);
-    const Vector3 from = normalized(from_raw, from_length);
-    if (to_length <= 1e-6f || from_length <= 1e-6f) {
-        return {};
-    }
-    const f32 dot = from.x * to.x + from.y * to.y + from.z * to.z;
-    if (dot < -0.9999f) {
-        Vector3 axis{0, from.z, -from.y};
-        if (axis.y * axis.y + axis.z * axis.z <= 1e-6f) {
-            axis = {from.y, -from.x, 0};
+/// BuildTiltShortestArcDelta (0x0050CB50): the turn taking `up` onto `target`, about their
+/// half-vector.
+Quaternion tilt_arc(const Vector3& target, const Vector3& up) {
+    Vector3 half{up.x + target.x, up.y + target.y, up.z + target.z};
+    wm3_normalize(half);
+    const f32 w = (up.z * half.z + up.x * half.x) + up.y * half.y;
+    if (w == 0.0f) {
+        if (!(std::fabs(up.x) >= std::fabs(up.y))) {
+            const f32 inv = 1.0f / std::sqrt(up.y * up.y + up.z * up.z);
+            return {0.0f, up.z * inv, -(up.y * inv), w};
         }
-        f32 axis_length = 0;
-        axis = normalized(axis, axis_length);
-        return {axis.x, axis.y, axis.z, 0};
+        const f32 inv = 1.0f / std::sqrt(up.x * up.x + up.z * up.z);
+        return {-(up.z * inv), 0.0f, up.x * inv, w};
     }
-    Quaternion q{from.y * to.z - from.z * to.y, from.z * to.x - from.x * to.z,
-                 from.x * to.y - from.y * to.x, 1.0f + dot};
-    const f32 n = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
-    return {q.x / n, q.y / n, q.z / n, q.w / n};
+    return {up.y * half.z - up.z * half.y, up.z * half.x - up.x * half.z,
+            up.x * half.y - up.y * half.x, w};
 }
 
 } // namespace
@@ -91,37 +93,34 @@ void Prop::step_fall(const map::Terrain* terrain) {
     if (fall_angle < 0) {
         fall_angle = -fall_angle;
         fall_speed = -fall_speed;
-        fall_direction += kPi;
-        while (fall_direction >= 2 * kPi) {
-            fall_direction -= 2 * kPi;
-        }
-        while (fall_direction < 0) {
-            fall_direction += 2 * kPi;
-        }
+        fall_direction = signed_angle(fall_direction + kPi);
     }
     if (fall_angle > kHalfPi) {
         fall_angle = kHalfPi;
         fall_speed = 0;
     }
 
+    // MotorFallDown::Update (0x00695180): the x87 sines and cosines multiply unrounded.
     const f32 elevation = fall_angle - kHalfPi;
-    const f32 level = dmath::cos(elevation);
-    const Vector3 target{dmath::sin(fall_direction) * level, -dmath::sin(elevation),
-                         dmath::cos(fall_direction) * level};
-    const Quaternion delta = arc_between(quat_rotate(pending_orientation(), {0, 1, 0}), target);
+    const double level = dmath::cos(static_cast<double>(elevation));
+    const Vector3 target{static_cast<f32>(dmath::sin(static_cast<double>(fall_direction)) * level),
+                         -dmath::sin(elevation),
+                         static_cast<f32>(dmath::cos(static_cast<double>(fall_direction)) * level)};
+    Vector3 p = position();
+    const Quaternion& o = orientation();
+    const Vector3 up{(o.y * o.x - o.w * o.z) * 2.0f, 1.0f - (o.z * o.z + o.x * o.x) * 2.0f,
+                     (o.z * o.y + o.w * o.x) * 2.0f};
+    const Quaternion delta = tilt_arc(target, up);
     if (std::fabs(std::fabs(delta.w) - 1.0f) <= 0.0001f) {
         return;
     }
 
     if (fall_breaks && fall_angle > kQuarterPi && terrain) {
-        Vector3 p = pending_position();
         const f32 rooted = terrain->get_terrain_height(p.x, p.z) + fall_size_x * kUprootFactor;
-        p.y += (rooted - p.y) * (fall_angle - kQuarterPi) * (4 / kPi);
-        set_position(p);
+        p.y += (rooted - p.y) * (fall_angle - kQuarterPi) * kFourOverPi;
     }
-    Quaternion q = quat_multiply(delta, pending_orientation());
-    const f32 n = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
-    set_orientation({q.x / n, q.y / n, q.z / n, q.w / n});
+    set_position(p);
+    set_orientation(quat_normalized_moho(quat_multiply_moho(delta, o)));
 }
 
 } // namespace osc::sim
