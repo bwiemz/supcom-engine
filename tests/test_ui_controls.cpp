@@ -17,6 +17,8 @@
 #include "vfs/directory_mount.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "support/temp_path.hpp"
+#include "support/tiny_movie.hpp"
+#include "video/movie_player.hpp"
 
 #include <GLFW/glfw3.h>
 
@@ -1689,6 +1691,56 @@ TEST_CASE("Enter and Esc clear an Edit, or on an empty one drop the focus, unles
     f.dispatch.on_key(GLFW_KEY_ESCAPE, GLFW_PRESS, 0);
     f.deliver();
     CHECK(f.registry.keyboard_focus() == nullptr);
+}
+
+TEST_CASE("A playing Movie tells OnSubtitle(text) when its subtitle changes, and \"\" once none "
+          "is due, as Moho's",
+          "[ui][lua][movie]") {
+    // Moho's CMauiMovie::Frame (0x0079F1C0): after the movie's frame update
+    // (CMovie::UpdatePlaybackFrame, which takes the subtitle due or clears
+    // it), a subtitle unlike the one the script was told last is told:
+    // OnSubtitle(self, text). Not at the movie's end, where OnFinished runs.
+    InputFixture f;
+    f.run(R"(
+        calls = {}
+        m = setmetatable({
+            OnSubtitle = function(self, text)
+                table.insert(calls, (self == m and 'self' or '?') .. ' ' .. type(text) ..
+                                    ' [' .. text .. ']')
+            end,
+            OnFinished = function(self) table.insert(calls, 'finished') end,
+        }, { __index = moho.movie_methods })
+        InternalCreateMovie(m, GetFrame(0))
+    )");
+    auto* movie = control_of(f.lua.raw(), "m");
+    REQUIRE(movie);
+    auto player = std::make_unique<osc::video::MoviePlayer>();
+    REQUIRE(player->open(osc::test::tiny_movie(30))); // 1 s
+    player->set_subtitles({{0.25, 0.5, "first"}, {0.5, 0.75, "second"}, {0.75, 0.85, "second"}});
+    movie->set_movie_player(std::move(player));
+    f.run("m:Play()");
+    // The script's `calls` log as 'a,b,c', emptied
+    const auto told = [&f] {
+        f.run("__took = table.concat(calls, ',') calls = {}");
+        lua_State* L = f.lua.raw();
+        lua_getglobal(L, "__took");
+        std::string s = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+        lua_pop(L, 1);
+        return s;
+    };
+    const auto frame = [&] {
+        f.dispatch.update_controls(f.lua.raw(), f.registry, 0.125);
+        return told();
+    };
+    CHECK(frame().empty()); // 0.125 s: none yet, and none told
+    CHECK(frame() == "self string [first]");
+    CHECK(frame().empty());
+    CHECK(frame() == "self string [second]");
+    CHECK(frame().empty());
+    CHECK(frame().empty()); // 0.75 s: another subtitle, the same text
+    CHECK(frame() == "self string []");
+    CHECK(frame() == "finished");
+    CHECK(movie->movie_subtitle().empty());
 }
 
 TEST_CASE("A press reaches uimain's OnMouseButtonPress, a module function", "[ui][lua][input]") {

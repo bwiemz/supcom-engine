@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "support/tiny_movie.hpp"
 #include "video/movie_player.hpp"
 
 #include <cstring>
@@ -80,4 +81,32 @@ TEST_CASE("A Sofdec file's length, as GetMovieDuration gives it", "[video]") {
     std::vector<u8> plain(8192, 0);
     add_sequence_header(plain, 6174, 4);
     CHECK(sofdec_duration(plain.data(), plain.size()) == 0.0f);
+}
+
+TEST_CASE("A movie's subtitle is the one due on its clock, taken with its frame, as Sofdec's",
+          "[video]") {
+    // Moho's CMovie::UpdatePlaybackFrame: unless paused, the frame due,
+    // then the subtitle mwPlyGetSubtitle gives (the text cleared for none).
+    osc::video::MoviePlayer m;
+    REQUIRE(m.open(osc::test::tiny_movie(30)));
+    CHECK(m.frame_count() == 30);
+    CHECK(m.frame_rate() == 30.0f);
+    m.set_subtitles({{0.25, 0.5, "first"}, {0.5, 0.75, "second"}});
+    m.play();
+    const auto at = [&](double dt) {
+        m.advance(dt);
+        m.update_frame();
+        m.update_subtitle();
+        return m.subtitle();
+    };
+    CHECK(at(0.125).empty());
+    CHECK(at(0.125) == "first");
+    CHECK(at(0.25) == "second");
+    CHECK(m.frame_shown() == 15);
+    // Paused, it keeps the one it has
+    m.pause();
+    CHECK(at(0.25) == "second");
+    m.play();
+    CHECK(at(0.25).empty());
+    CHECK_FALSE(m.finished());
 }
