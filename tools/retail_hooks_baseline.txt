@@ -2,7 +2,6 @@
 method OnAnimationFinished
 method OnAnimationFrame
 method OnAssignedFocusEntity
-method OnIconsVisible
 method OnSpecialAction
 method OnStart
 method OnSubtitle
