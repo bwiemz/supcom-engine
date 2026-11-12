@@ -966,3 +966,47 @@ TEST_CASE("A helper with no build rate still hears the quarters others build",
         CHECK(heard.find(band) != std::string::npos);
     }
 }
+
+TEST_CASE("A repair, and a guard's help with it, hear OnAssignedFocusEntity just before "
+          "OnStartBuild",
+          "[build][assist][focus]") {
+    // CBuildTaskHelper::SetFocus: the focus set, OnAssignedFocusEntity (self
+    // alone), then OnStartBuild; its OnStopBuild clears the focus, which
+    // calls nothing
+    AssistSim w;
+    const std::string code = R"(
+        function Builder:OnAssignedFocusEntity(...)
+            table.insert(log, self.name .. ' focus ' .. arg.n)
+        end
+    )";
+    REQUIRE(luaL_loadbuffer(w.L, code.c_str(), code.size(), "focus") == 0);
+    REQUIRE(lua_pcall(w.L, 0, 0, 0) == 0);
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    w.sim.tick();
+    CHECK(w.log() == "eng arm");
+    w.sim.tick();
+    REQUIRE(eng->is_building());
+    CHECK(w.log() == "eng focus 0,eng start Repair");
+    w.sim.tick();
+    CHECK(w.log().find("focus") == std::string::npos);
+
+    Unit* helper = w.engineer("helper", 14.0f);
+    helper->push_command(order(CommandType::Guard, *eng, 2), true);
+    std::string heard;
+    tick_until(
+        [&] {
+            w.sim.tick();
+            heard += w.log() + ",";
+        },
+        "the helper starts building", 10, [&] { return helper->is_building(); });
+    CHECK(heard.find("helper focus 0,helper start Repair") != std::string::npos);
+    CHECK(heard.find("eng focus") == std::string::npos);
+
+    eng->push_command(order(CommandType::Stop, *w.site, 3), true);
+    helper->push_command(order(CommandType::Stop, *w.site, 4), true);
+    w.sim.tick();
+    const std::string stopped = w.log();
+    CHECK(stopped.find("eng stop") != std::string::npos);
+    CHECK(stopped.find("focus") == std::string::npos);
+}

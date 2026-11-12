@@ -1846,6 +1846,11 @@ static int unit_SetFocusEntity(lua_State* L) {
     if (!u) return 0;
     auto* target = check_entity(L, 2);
     u->set_focus_entity_id(target ? target->entity_id() : sim::EntityId());
+    // faf-re cfunc_UnitSetFocusEntityL: a focus set tells the unit's script
+    // (OnAssignedFocusEntity); ClearFocusEntity's tells it nothing.
+    if (target) {
+        u->notify_focus_assigned(L);
+    }
     return 0;
 }
 
