@@ -251,3 +251,60 @@ TEST_CASE("An entity's spec names its army as Moho's _c_CreateEntity reads it", 
     CHECK(army_of("{}") == -1);
     CHECK_FALSE(w.state.do_string("e = {} _c_CreateEntity(e, {Army = 0})").ok());
 }
+
+TEST_CASE("AITarget makes Moho's target table of an entity, a point or nothing",
+          "[scriptobject][aitarget]") {
+    ScriptWorld w;
+    lua_State* L = w.state.raw();
+    REQUIRE(w.check("u = CreateUnit('test_plain', 1, 0, 0, 0)"));
+    // Another script object's table (a platoon's, a brain's): not an entity
+    static int other_stand_in = 0;
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, &other_stand_in);
+    lua_rawset(L, -3);
+    lua_setglobal(L, "other");
+    CHECK(w.check(R"(
+        local t = AITarget(u)
+        assert(t.Type == 'Entity', tostring(t.Type))
+        assert(rawequal(t.Entity, u), 'the unit itself')
+        assert(t.Position == nil, 'an entity has no position')
+
+        t = AITarget({1, 2.5, -3})
+        assert(t.Type == 'Ground', tostring(t.Type))
+        assert(t.Entity == nil, 'a point has no entity')
+        assert(t.Position[1] == 1 and t.Position[2] == 2.5 and t.Position[3] == -3,
+               'the point')
+        assert(t.Position.x == 1 and t.Position.z == -3, 'as a vector')
+
+        local function none(t)
+            return t.Type == 'None' and t.Entity == nil and t.Position == nil
+        end
+        assert(none(AITarget()), 'nothing')
+        assert(none(AITarget(nil)), 'nil')
+        assert(none(AITarget(7)), 'a number')
+        assert(none(AITarget('u')), 'a string')
+        assert(none(AITarget(true)), 'a boolean')
+
+        local function raises(text, ...)
+            local ok, err = pcall(AITarget, unpack(arg))
+            assert(not ok, 'answered')
+            assert(string.find(err, text, 1, true), tostring(err))
+        end
+        raises('Create a target object\n  expected between 0 and 1 args, but got 2', u, u)
+        raises('get as number expected but got nil', {1, 2})
+        raises('get as number expected but got string', {'1', 2, 3})
+        raises('get as number expected but got nil', other)
+
+        ;(moho.unit_methods.Destroy or moho.entity_methods.Destroy)(u)
+        t = AITarget(u)
+        assert(t.Type == 'Entity' and rawequal(t.Entity, u), 'a unit its deletion queue holds')
+    )"));
+    w.sim.tick();
+    // Gone, its table is just a table: a point with no numbers
+    CHECK(w.check(R"(
+        local ok, err = pcall(AITarget, u)
+        assert(not ok and string.find(err, 'get as number expected but got nil', 1, true),
+               tostring(err))
+    )"));
+}
