@@ -410,3 +410,15 @@ TEST_CASE("Past 500 orders a unit takes no more queued, but a cleared one", "[ro
     w.sim.route_command({u.entity_id()}, move, true);
     CHECK(u.command_queue().size() == 1);
 }
+
+TEST_CASE("A special action goes only to a unit with RULEUCC_SpecialAction", "[routing]") {
+    // ProcessIssuedUnitCommand's UNITCOMMAND_SpecialAction arm: HasCommandCap
+    IssueWorld w;
+    Unit& u = w.make(0, {}, "RULEUMT_Land");
+    Unit& target = w.make(1, {}, "RULEUMT_Land", {20.0f, 0.0f, 20.0f});
+    CHECK_FALSE(w.takes(u, CommandType::SpecialAction));
+    CHECK_FALSE(w.takes(u, CommandType::SpecialAction, target.entity_id()));
+    u.add_command_cap("RULEUCC_SpecialAction");
+    CHECK(w.takes(u, CommandType::SpecialAction));
+    CHECK(w.takes(u, CommandType::SpecialAction, target.entity_id()));
+}

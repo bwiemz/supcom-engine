@@ -2336,6 +2336,55 @@ TEST_CASE("Production reports reset before tick threads and survive paused beats
     CHECK(producer.economy().energy_produced() == 5.0);
 }
 
+TEST_CASE("A special action's script hears where the order aims as it comes up, and the next "
+          "order starts in the same tick",
+          "[tick-phases][special-action]") {
+    // IAiCommandDispatchImpl's UNITCOMMAND_SpecialAction:
+    // OnSpecialAction(location), the order's CAiTarget::GetTargetPosGun(false)
+    // as a vector; no task follows, so the dispatch takes the order off and
+    // dispatches the next at once
+    Phases w;
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    const Unit& other = w.make("other", "tank", 2, 120.0f, 100.0f);
+    REQUIRE(w.run("heard = 0 vector_mt = getmetatable(EM.GetPosition(tank))"
+                  " function Plain:OnSpecialAction(location, ...)"
+                  "   heard = heard + 1 extra = arg.n"
+                  "   at_x, at_y, at_z = location[1], location[2], location[3]"
+                  "   named = vector_mt ~= nil and getmetatable(location) == vector_mt"
+                  "     and location.x == at_x and location.z == at_z"
+                  " end"));
+    UnitCommand action;
+    action.type = CommandType::SpecialAction;
+    action.target_pos = {110.0f, 10.0f, 105.0f};
+    tank.push_command(action, false);
+    UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {150.0f, 10.0f, 100.0f};
+    tank.push_command(move, false);
+    w.sim.tick();
+    CHECK(w.number("heard") == 1.0f);
+    CHECK(w.number("extra") == 0.0f);
+    CHECK(w.number("at_x") == 110.0f);
+    CHECK(w.number("at_y") == 10.0f);
+    CHECK(w.number("at_z") == 105.0f);
+    CHECK(w.run("assert(named, 'location is no vector')"));
+    REQUIRE(tank.command_queue().size() == 1);
+    CHECK(tank.command_queue().front().type == CommandType::Move);
+    CHECK(tank.command_queue().front().begun);
+    w.sim.tick();
+    CHECK(w.number("heard") == 1.0f);
+
+    // At a unit: its target point
+    tank.push_command(order(CommandType::SpecialAction, other.entity_id()), true);
+    w.sim.tick();
+    CHECK(w.number("heard") == 2.0f);
+    const osc::sim::Vector3 aim = other.target_point(-1);
+    CHECK(w.number("at_x") == Catch::Approx(aim.x));
+    CHECK(w.number("at_y") == Catch::Approx(aim.y));
+    CHECK(w.number("at_z") == Catch::Approx(aim.z));
+    CHECK(tank.command_queue().empty());
+}
+
 TEST_CASE("A weapon holds a target off its layers till its next check, not firing at it",
           "[tick-phases]") {
     Phases w;

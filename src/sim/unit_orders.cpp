@@ -474,10 +474,84 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     case CommandType::Ferry: return order_ferry(cmd, ctx);
     case CommandType::WaitForFerry: return order_wait_for_ferry(cmd, ctx);
     case CommandType::DestroySelf: return order_destroy_self(ctx);
+    case CommandType::SpecialAction: return order_special_action(cmd, ctx);
     default: // an order no handler runs: dropped
         command_queue_.pop_front();
         return OrderStep::Next;
     }
+}
+
+namespace {
+
+/// `v` as a script's vector, as Moho's SCR_ToLua<Vector3f> makes one: {x, y,
+/// z}, with the vector metatable every engine vector carries (v.x), once
+/// the Lua side has made it.
+void push_script_vector(lua_State* L, const Vector3& v) {
+    lua_newtable(L);
+    lua_pushnumber(L, v.x);
+    lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, v.y);
+    lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, v.z);
+    lua_rawseti(L, -2, 3);
+    lua_pushstring(L, "__osc_vector_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1)) {
+        lua_setmetatable(L, -2);
+    } else {
+        lua_pop(L, 1);
+    }
+}
+
+} // namespace
+
+OrderStep Unit::order_special_action(UnitCommand& cmd, SimContext& ctx) {
+    // IAiCommandDispatchImpl's UNITCOMMAND_SpecialAction (faf-re
+    // DispatchQueuedCommand, 0x00608EF0): as the order comes up, the unit's
+    // script hears OnSpecialAction(location), `location` where the order
+    // aims as CAiTarget::GetTargetPosGun(false) gives it: a unit's target
+    // point, another entity's place, the ground's point; NaNs for a target
+    // gone from the sim. No task follows, so the dispatch takes the order
+    // off and runs the next one in the same tick.
+    Vector3 location = cmd.target_pos;
+    if (cmd.target_id) {
+        const Entity* target = ctx.registry.find(cmd.target_id);
+        if (!target) {
+            const f32 nan = std::numeric_limits<f32>::quiet_NaN();
+            location = {nan, nan, nan};
+        } else if (target->is_unit()) {
+            location = static_cast<const Unit*>(target)->target_point(cmd.target_point);
+        } else {
+            location = target->position();
+        }
+    }
+    const u32 order_id = cmd.command_id;
+    lua_State* L = ctx.L;
+    if (L && lua_table_ref() >= 0) {
+        const int top = lua_gettop(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+        const int self = lua_gettop(L);
+        lua_pushstring(L, "OnSpecialAction");
+        lua_gettable(L, self);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, self);
+            push_script_vector(L, location);
+            if (lua_pcall(L, 2, 0, 0) != 0) {
+                spdlog::warn("OnSpecialAction error: {}", lua_tostring(L, -1));
+            }
+        }
+        lua_settop(L, top);
+    }
+    if (destroyed() || !in_registry()) {
+        return OrderStep::Gone;
+    }
+    // The script may have changed the queue (Moho's dispatch then starts
+    // over at its new head); otherwise the order is done.
+    if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+        command_queue_.front().command_id == order_id) {
+        command_queue_.pop_front();
+    }
+    return OrderStep::Next;
 }
 
 OrderStep Unit::order_destroy_self(SimContext& ctx) {

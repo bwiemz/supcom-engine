@@ -1892,6 +1892,9 @@ private:
     OrderStep order_transport_unload(UnitCommand& cmd, SimContext& ctx);
     /// A cheat's DestroySelf order: the unit destroyed.
     OrderStep order_destroy_self(SimContext& ctx);
+    /// A SpecialAction order: its script hears OnSpecialAction(location), and
+    /// the order ends (IAiCommandDispatchImpl, Moho's dispatch of it).
+    OrderStep order_special_action(UnitCommand& cmd, SimContext& ctx);
     /// An aircraft's refuel at a staging platform (M206r, Moho's CUnitRefuel):
     /// a slot, the flight to its bone, docking, and the climb away once full.
     OrderStep order_refuel(UnitCommand& cmd, SimContext& ctx);

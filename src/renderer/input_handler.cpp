@@ -1430,6 +1430,9 @@ constexpr OrderSpec kOrders[] = {
     {"RULEUCC_Tactical", sim::CommandType::Tactical, "Tactical", false},
     {"RULEUCC_Overcharge", sim::CommandType::Overcharge, "Overcharge", true},
     {"RULEUCC_Sacrifice", sim::CommandType::Sacrifice, "Sacrifice", true},
+    // At the unit under the cursor, else the ground (Moho's
+    // DispatchOrderCommandMode, its Nuke/Tactical/SpecialAction arm)
+    {"RULEUCC_SpecialAction", sim::CommandType::SpecialAction, "SpecialAction", false},
 };
 
 } // namespace
