@@ -71,6 +71,7 @@ const char* mesh_technique_name(MeshTechnique technique) {
     case MeshTechnique::BloatingNormalMappedAlpha: return "BloatingNormalMappedAlpha";
     case MeshTechnique::NormalMappedAlphaNoShadow: return "NormalMappedAlphaNoShadow";
     case MeshTechnique::Explosion: return "Explosion";
+    case MeshTechnique::Shield: return "Shield";
     }
     return "Unknown";
 }
@@ -373,6 +374,11 @@ MeshTechnique mesh_technique(const std::string& shader) {
     }
     if (shader_name == "Explosion") {
         return MeshTechnique::Explosion;
+    }
+    // TMeshShield's: mesh.fx has no technique Shield, so no pass draws it
+    // (has_render_stage); not one left to port.
+    if (shader_name == "Shield") {
+        return MeshTechnique::Shield;
     }
     if (shader_name != "Unit" && !is_wreckage_shader(shader_name)) {
         static std::mutex mutex;

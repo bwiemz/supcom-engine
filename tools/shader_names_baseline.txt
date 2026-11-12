@@ -1,6 +1,5 @@
 # Retail ShaderName values with no technique yet (tools/check_shader_names.py)
 Clutter
 EditorMarker
-Shield
 UnderwaterClutter
 UndulatingClutter

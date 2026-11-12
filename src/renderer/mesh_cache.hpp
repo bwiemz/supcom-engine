@@ -96,6 +96,9 @@ enum class MeshTechnique : u32 {
     /// scrolling, fading out; the normals fading in, dissolving them. Blended,
     /// colour only, depth tested strictly less and written; alpha-tested over 0x40.
     Explosion = 50,
+    /// TMeshShield's: mesh.fx has no technique Shield (only the factions'), so
+    /// Moho's material reads renderStage 0 and no pass draws it (has_render_stage).
+    Shield = 51,
 };
 
 /// Stable names for render dumps.
@@ -180,6 +183,18 @@ inline bool is_post_effect_technique(MeshTechnique t) {
            t == MeshTechnique::GlassAlpha || t == MeshTechnique::Explosion;
 }
 
+/// A technique some pass draws. Moho's MeshRenderer::Render lets a material
+/// through when its renderStage annotation shares a bit with the pass's
+/// (0x14, 0x18, 0x24, 0x28), RenderDepth when it has STAGE_DEPTH; a name
+/// mesh.fx has no technique for reads 0 (CD3DEffect::GetIntegerAnnotation
+/// warns and returns 0), so none does, nor the cartographic pass (no
+/// cartographicTechnique). Only the reflection pass lets every stage
+/// through, and it draws units alone, which would select no technique.
+/// Shield (TMeshShield: retail's sphere_prop alone) is such a name.
+inline bool has_render_stage(MeshTechnique t) {
+    return t != MeshTechnique::Shield;
+}
+
 /// The mesh.fx states the shields' passes draw with (M211k): blended
 /// (SrcAlpha, InvSrcAlpha, RGBA), the same unculled, added colour (SrcAlpha,
 /// One, RGB), added colour and glow (RGBA), the fill's depth alone, and a
@@ -212,7 +227,7 @@ inline ShieldPasses shield_passes(MeshTechnique t) {
 /// slices, cast none (M211f/g); nor do shields (M211k), nor the map's
 /// border (MapImager_LowFi is PREWATER + PREEFFECT alone), nor the effects'
 /// (Effect names a depthTechnique but, like NormalMappedAlphaNoShadow, no
-/// STAGE_DEPTH), nor Explosion.
+/// STAGE_DEPTH), nor Explosion, nor Shield (no stage at all).
 inline bool has_depth_stage(MeshTechnique t) {
     return t != MeshTechnique::AeonBuild && t != MeshTechnique::AlphaFade &&
            t != MeshTechnique::UnitPlace && t != MeshTechnique::MapImager &&
@@ -222,7 +237,8 @@ inline bool has_depth_stage(MeshTechnique t) {
            t != MeshTechnique::NukeQuantum && t != MeshTechnique::PhalanxEffect &&
            t != MeshTechnique::UEFQuantumGate && t != MeshTechnique::CommandFeedback3 &&
            t != MeshTechnique::CommandFeedback4 && t != MeshTechnique::GlassAlpha &&
-           t != MeshTechnique::NormalMappedAlphaNoShadow && t != MeshTechnique::Explosion;
+           t != MeshTechnique::NormalMappedAlphaNoShadow && t != MeshTechnique::Explosion &&
+           has_render_stage(t);
 }
 
 /// What a technique reads as its instance's material.y (its `parameter`

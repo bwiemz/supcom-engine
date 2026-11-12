@@ -2851,6 +2851,8 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         // shields', M211k); only units are reflected.
         const MeshTechnique technique = drawn_technique(group);
         if (strategic && technique != MeshTechnique::MapImager) continue;
+        // A name mesh.fx has no technique for has no stage: no pass draws it.
+        if (!has_render_stage(technique)) continue;
         const bool after_effects = is_post_effect_technique(technique);
         const bool after_water = is_post_water_technique(technique);
         if ((stage == MeshPass::AfterEffects) != after_effects ||
