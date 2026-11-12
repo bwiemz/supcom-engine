@@ -7,7 +7,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "sim/army_brain.hpp"
+#include "sim/collision_cells.hpp"
 #include "sim/economy_event.hpp"
+#include "sim/entity.hpp"
+#include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/platoon.hpp"
 #include "sim/saved_game.hpp"
@@ -25,6 +28,7 @@ extern "C" {
 
 #include <fmt/format.h>
 
+#include <bit>
 #include <functional>
 #include <memory>
 #include <sstream>
@@ -470,4 +474,252 @@ TEST_CASE("Banked production and reclaim reports survive a snapshot",
     REQUIRE(record);
     CHECK(record->mass_produced == 3);
     CHECK(record->energy_produced == 11);
+}
+
+// The registry's own order: which entities a rect query finds first, which
+// step first, and which ids come next. None of it shows in any entity's
+// place, so two games alike entity by entity can still part from here on.
+// The checksum must tell them apart, and a snapshot must carry it.
+
+namespace {
+
+/// A sim as `setup` makes it, with collision cells, after a few beats.
+std::vector<osc::sim::EntityId> setup_played(SimState& sim) {
+    sim.set_seed(7);
+    sim.entity_registry().init_spatial_grid(512, 512);
+    auto ids = setup(sim);
+    sim.set_recording(true);
+    for (int i = 0; i < 3; ++i) sim.tick();
+    return ids;
+}
+
+/// A unit of `army` whose box (half a unit each way) is in the collision
+/// cells at `at`.
+osc::sim::EntityId add_boxed(SimState& sim, int army, const osc::sim::Vector3& at) {
+    auto u = std::make_unique<Unit>();
+    u->set_army(army);
+    u->set_position(at);
+    osc::sim::CollisionShape box;
+    box.type = osc::sim::CollisionShapeType::BOX;
+    box.sx = 0.5f;
+    box.sy = 0.5f;
+    box.sz = 0.5f;
+    u->set_default_collision_shape(box);
+    return sim.entity_registry().register_entity(std::move(u));
+}
+
+/// What a rect query over the cell (100, 100) is in finds, in its order.
+std::vector<osc::sim::EntityId> cell_order(SimState& sim) {
+    std::vector<osc::sim::EntityId> ids;
+    const auto rect = osc::sim::CollisionCells::query_rect(100.0f, 100.0f, 103.0f, 103.0f);
+    for (const osc::sim::Entity* e :
+         sim.entity_registry().collision_cells().gather(rect, true, true, true)) {
+        ids.push_back(e->entity_id());
+    }
+    return ids;
+}
+
+/// The bits of each entity's place, in id order: what equal transforms are.
+std::vector<osc::u32> places(SimState& sim) {
+    std::vector<osc::u32> out;
+    sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
+        for (const osc::f32 v : {e.position().x, e.position().y, e.position().z, e.orientation().x,
+                                 e.orientation().y, e.orientation().z, e.orientation().w}) {
+            out.push_back(std::bit_cast<osc::u32>(v));
+        }
+    });
+    return out;
+}
+
+/// Load `save` into a sim set up as `setup_played` does, before its first
+/// beat (a snapshot loads only into a sim that hasn't run).
+void restore(SimState& sim, const osc::sim::SavedGame& save,
+             const std::vector<osc::sim::EntityId>& ids) {
+    sim.set_seed(7);
+    sim.entity_registry().init_spatial_grid(512, 512);
+    REQUIRE(setup(sim) == ids);
+    const std::string err = osc::sim::load_snapshot(sim, save.snapshot);
+    INFO(err);
+    REQUIRE(err.empty());
+    sim.adopt_history(save.game);
+}
+
+/// Play `a` and `b` on beat by beat: their checksums agree on each.
+void play_on_together(SimState& a, SimState& b, int beats) {
+    for (int i = 0; i < beats; ++i) {
+        a.tick();
+        b.tick();
+        INFO("beat " << a.beat_count());
+        REQUIRE(changed_domains(a.checksum_parts(), b.checksum_parts()).empty());
+    }
+}
+
+} // namespace
+
+TEST_CASE("The collision cells' order changes the sync checksum, though nothing moved",
+          "[sync][checksum][collision_cells]") {
+    LuaGuard ga, gb;
+    SimState a(ga.L, nullptr), b(gb.L, nullptr);
+    auto ids = setup_played(a);
+    REQUIRE(setup_played(b) == ids);
+    // Two units in one cell, a box apart, in both games
+    for (SimState* sim : {&a, &b}) {
+        const auto first = add_boxed(*sim, 0, {100.5f, 0.0f, 100.5f});
+        const auto second = add_boxed(*sim, 1, {102.5f, 0.0f, 100.5f});
+        if (sim == &a) {
+            ids.push_back(first);
+            ids.push_back(second);
+        }
+    }
+    REQUIRE(changed_domains(a.checksum_parts(), b.checksum_parts()).empty());
+    REQUIRE(cell_order(a) == std::vector{ids[3], ids[2]}); // the last linked first
+
+    // In b the first leaves its cells and comes back where it was: a rect
+    // query finds it first from now on, and nothing has moved
+    const auto before = places(b);
+    auto& cells = b.entity_registry().collision_cells();
+    osc::sim::Entity& relinked = *b.entity_registry().find(ids[2]);
+    cells.unlink(relinked);
+    cells.link(relinked);
+    CHECK(places(b) == before);
+    CHECK(places(b) == places(a));
+    CHECK(cell_order(b) == std::vector{ids[2], ids[3]});
+    CHECK(changed_domains(a.checksum_parts(), b.checksum_parts()) == "entities");
+
+    // Saved, restored and played on, its order holds and its checksum agrees
+    const osc::sim::SavedGame save = osc::sim::save_game(b, "relinked");
+    REQUIRE_FALSE(save.snapshot.empty());
+    LuaGuard gc;
+    SimState c(gc.L, nullptr);
+    restore(c, save, std::vector(ids.begin(), ids.begin() + 2));
+    CHECK(cell_order(c) == cell_order(b));
+    CHECK(c.compute_sync_checksum() == b.compute_sync_checksum());
+    play_on_together(b, c, 30);
+    CHECK(cell_order(c) == cell_order(b));
+    // A link made after the load comes in the order the saved game's would
+    const auto late_b = add_boxed(b, 0, {101.5f, 0.0f, 101.5f});
+    const auto late_c = add_boxed(c, 0, {101.5f, 0.0f, 101.5f});
+    CHECK(late_c == late_b);
+    CHECK(cell_order(c) == cell_order(b));
+    CHECK(cell_order(c).front() == late_c);
+    CHECK(changed_domains(b.checksum_parts(), c.checksum_parts()).empty());
+}
+
+TEST_CASE("The order entities step in changes the sync checksum, and a snapshot keeps it",
+          "[sync][checksum]") {
+    LuaGuard ga, gb;
+    SimState a(ga.L, nullptr), b(gb.L, nullptr);
+    const auto ids = setup_played(a);
+    REQUIRE(setup_played(b) == ids);
+    REQUIRE(changed_domains(a.checksum_parts(), b.checksum_parts()).empty());
+
+    // b's two units step the other way round from its next beat on
+    std::vector<osc::sim::EntityId>& walk = b.entity_registry().walk();
+    REQUIRE(walk == ids);
+    std::swap(walk[0], walk[1]);
+    CHECK(places(b) == places(a));
+    CHECK(changed_domains(a.checksum_parts(), b.checksum_parts()) == "entities");
+
+    const osc::sim::SavedGame save = osc::sim::save_game(b, "walk order");
+    REQUIRE_FALSE(save.snapshot.empty());
+    LuaGuard gc;
+    SimState c(gc.L, nullptr);
+    restore(c, save, ids);
+    CHECK(c.entity_registry().walk() == std::vector{ids[1], ids[0]});
+    CHECK(c.compute_sync_checksum() == b.compute_sync_checksum());
+    play_on_together(b, c, 30);
+}
+
+TEST_CASE("The id pools' held serials change the sync checksum before any id comes back",
+          "[sync][checksum]") {
+    // An entity made and destroyed: its serial is held, then free again
+    // (Moho's IdPool), and the next entity of its kind takes it
+    const auto spend_one = [](SimState& sim) {
+        auto e = std::make_unique<osc::sim::Entity>();
+        e->set_army(0);
+        const osc::sim::EntityId id = sim.entity_registry().register_entity(std::move(e));
+        sim.entity_registry().destroy(*sim.entity_registry().find(id));
+        return id;
+    };
+    const auto next_id = [](SimState& sim) {
+        auto e = std::make_unique<osc::sim::Entity>();
+        e->set_army(0);
+        return sim.entity_registry().register_entity(std::move(e));
+    };
+    LuaGuard ga, gb, gn;
+    SimState a(ga.L, nullptr), b(gb.L, nullptr), never(gn.L, nullptr);
+    const auto ids = setup_played(a);
+    REQUIRE(setup_played(b) == ids);
+    REQUIRE(setup_played(never) == ids);
+
+    // a spends one a beat before b does; `never` spends none
+    const osc::sim::EntityId spent = spend_one(a);
+    a.tick();
+    b.tick();
+    REQUIRE(spend_one(b) == spent);
+    a.tick();
+    b.tick();
+    never.tick();
+    never.tick();
+    REQUIRE(a.entity_registry().find(spent) == nullptr);
+    REQUIRE(b.entity_registry().find(spent) == nullptr);
+    CHECK(places(a) == places(b));
+    CHECK(places(a) == places(never));
+    // Held a beat apart: the same live entities, ids free again a beat apart
+    CHECK(changed_domains(a.checksum_parts(), b.checksum_parts()) == "entities");
+    // Its pool's next serial is one on
+    CHECK(changed_domains(a.checksum_parts(), never.checksum_parts()) == "entities");
+
+    // Saved while b's serial is held; restored and played on past its hold,
+    // the next entity takes the same id in both, the serial b spent
+    const osc::sim::SavedGame save = osc::sim::save_game(b, "held serial");
+    REQUIRE_FALSE(save.snapshot.empty());
+    LuaGuard gc;
+    SimState c(gc.L, nullptr);
+    restore(c, save, ids);
+    CHECK(c.compute_sync_checksum() == b.compute_sync_checksum());
+    play_on_together(b, c, static_cast<int>(osc::sim::EntityRegistry::kIdHeldBeats) + 2);
+    const osc::sim::EntityId reused = next_id(b);
+    CHECK(next_id(c) == reused);
+    CHECK(reused.moho() == spent.moho());
+    CHECK(changed_domains(b.checksum_parts(), c.checksum_parts()).empty());
+}
+
+TEST_CASE("A paused beat ages the id pools' held serials, so the checksum counts it",
+          "[sync][checksum]") {
+    // Moho's Sim::Sync runs EntityDB::Purge (and so IdPool::Update) after
+    // every beat, ticked or paused: how many beats a pause lasted decides
+    // when a serial is free again. Two games alike but for a paused beat
+    // are told apart, though nothing in them moved.
+    LuaGuard ga, gb;
+    SimState a(ga.L, nullptr), b(gb.L, nullptr);
+    const auto ids = setup_played(a);
+    REQUIRE(setup_played(b) == ids);
+    for (SimState* sim : {&a, &b}) {
+        auto e = std::make_unique<osc::sim::Entity>();
+        e->set_army(0);
+        const osc::sim::EntityId id = sim->entity_registry().register_entity(std::move(e));
+        sim->entity_registry().destroy(*sim->entity_registry().find(id));
+    }
+    a.tick();
+    b.tick();
+    REQUIRE(changed_domains(a.checksum_parts(), b.checksum_parts()).empty());
+
+    // b pauses for a beat that runs no tick, then plays on
+    b.begin_command_sources();
+    b.set_command_source(0, 0, true);
+    b.set_pause_holds(true);
+    b.request_pause(0);
+    REQUIRE(b.paused());
+    const auto ticks = b.tick_count();
+    b.tick();
+    REQUIRE(b.tick_count() == ticks);
+    b.resume(0);
+    REQUIRE_FALSE(b.paused());
+    a.tick();
+    b.tick();
+    REQUIRE(a.tick_count() == b.tick_count());
+    CHECK(places(a) == places(b));
+    CHECK(changed_domains(a.checksum_parts(), b.checksum_parts()).find("entities") !=
+          std::string::npos);
 }

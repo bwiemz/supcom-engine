@@ -1,6 +1,7 @@
 #include "sim/entity_registry.hpp"
 #include "sim/collision.hpp"
 #include "sim/entity.hpp"
+#include "sim/fnv.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -68,6 +69,38 @@ void EntityRegistry::update_id_pools() {
             pool.held.pop_front();
         }
         pool.held.emplace_back();
+    }
+}
+
+void EntityRegistry::fingerprint(Fnv& f) const {
+    // The links made: the next one's order
+    f.mix(0x43454c4c00000000ull); // "CELL"
+    f.mix(cells_.link_count());
+    // The walk's order, filtered as a snapshot saves it
+    f.mix(0x57414c4b00000000ull); // "WALK"
+    for (const EntityId id : walk_) {
+        if (const Entity* e = find(id); e && e->walk() == Entity::Walk::Stepping) {
+            f.mix(id);
+        }
+    }
+    // Destroyed entities waiting for their OnDestroy: none between beats
+    if (!deletion_queue_.empty()) {
+        f.mix(0x44454c5100000000ull | deletion_queue_.size()); // "DELQ"
+        for (const EntityId id : deletion_queue_) f.mix(id);
+    }
+    for (const auto& [bits, pool] : id_pools_) {
+        f.mix(0x504f4f4c00000000ull | bits); // "POOL"
+        f.mix(pool.next);
+        f.mix(pool.released.size());
+        for (const u32 serial : pool.released) f.mix(serial);
+        // Held by beat, oldest first: when each comes free
+        f.mix(pool.held.size());
+        for (const std::vector<u32>& beat : pool.held) {
+            f.mix(beat.size());
+            for (const u32 serial : beat) f.mix(serial);
+        }
+        f.mix(pool.generations.size());
+        for (const u32 generation : pool.generations) f.mix(generation);
     }
 }
 
