@@ -9,10 +9,8 @@ ClearFrame Command
 DebugGetSelection stub_nil
 Destroy wlduiprovider_Destroy
 EndLoggingStats l_EndLoggingStats
-GetOmni shield_GetOmni
 InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService
 IsKnownFake blip_IsKnownFake
-IsRestricted <lambda>
 IssuePause stub_noop
 MetaImpact stub_noop
 PrefetchSession Command
