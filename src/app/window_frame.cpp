@@ -55,6 +55,12 @@ bool App::Window::frame() {
     // from here until this frame starts its own, nothing else runs the sim
     collect_sim();
     world_interp.staged = threaded;
+    // The world plays: the game's UI provider hears OnStart, once, the
+    // frame after its interface was made and before this frame's ticks
+    // (Moho's WLD_DoPostInitializing entering Playing). The engine has no
+    // ready handshake to wait on: a network game's lockstep holds its first
+    // tick for every peer instead.
+    wld_provider.start_game(ui_lua_state.raw());
     sim_held = sim_state && (sim_state->paused() || sim_state->game_over());
     if (tracking_notice && sim_state) {
         osc::core::call_on_track_unit(ui_lua_state.raw(), *tracking_notice);
