@@ -956,6 +956,10 @@ private:
     VkPipelineLayout mesh_phalanx_layout_ = VK_NULL_HANDLE;
     VkPipeline mesh_quantum_gate_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_quantum_gate_layout_ = VK_NULL_HANDLE;
+    /// Explosion: the fading pipeline's state, but depth tested strictly less
+    /// (Depth_Enable_Less, its depth written).
+    VkPipeline mesh_explosion_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout mesh_explosion_layout_ = VK_NULL_HANDLE;
     /// The shields' pipelines (M211k), one per ShieldState: blended (Cybran,
     /// Aeon), blended unculled (UEF, Cybran's impact), added colour
     /// (Seraphim), added colour and glow (the impact), the fill's depth, and
@@ -968,8 +972,7 @@ private:
     std::array<VkPipeline, kCartographicMeshStates> cartographic_mesh_pipelines_{};
     std::array<VkPipelineLayout, kCartographicMeshStates> cartographic_mesh_layouts_{};
     /// This frame's mesh draw calls by technique (mesh_draws).
-    std::array<u32, static_cast<size_t>(MeshTechnique::NormalMappedAlphaNoShadow) + 1>
-        mesh_draws_{};
+    std::array<u32, static_cast<size_t>(MeshTechnique::EditorMarker) + 1> mesh_draws_{};
     /// And a cartographic view's, by CartographicTechnique, a pass each
     std::array<u32, 7> cartographic_mesh_draws_{};
     /// The cartographic minimap's mesh pipelines (its output's pass), and
@@ -1339,9 +1342,17 @@ private:
     /// Which meshes a draw_meshes call draws (M213b): Moho's buckets
     /// before and after the water, or the units in its reflection.
     /// Moho's mesh stages: before the water, after it, into its reflection,
-    /// and after the effects above it, the shields' (M211k). Dry maps use
-    /// the same stages.
-    enum class MeshPass { All, BeforeWater, AfterWater, Reflection, AfterEffects };
+    /// after the effects above it, the shields' (M211k), and after the
+    /// effects under it but before it, UnderwaterClutter's (RenderMeshes(0x18)).
+    /// Dry maps use the same stages.
+    enum class MeshPass {
+        All,
+        BeforeWater,
+        AfterWater,
+        Reflection,
+        AfterEffects,
+        BeforeWaterAfterEffects
+    };
     /// The mesh instances' draws, with the scene's pipelines, seen by `vp`
     /// (for the reflection, already mirrored).
     void draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp, MeshPass stage);

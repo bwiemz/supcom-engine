@@ -170,7 +170,8 @@ void test_clipped_shadows(TestContext& ctx) {
     // Test 1: half-clear hovering plates. Drawn by Unit (FA's Depth), the
     // whole plate casts; by NormalMappedAlpha, VertexNormal,
     // UndulatingNormalMappedAlpha and Flat (DepthClip, UndulatingDepthClip),
-    // and as a prop of a technique the engine hasn't ported, half.
+    // and as a prop of a ShaderName the engine has no technique for (once
+    // Clutter's, which casts none now), half.
     {
         struct Hover {
             const char* shader;
@@ -178,7 +179,7 @@ void test_clipped_shadows(TestContext& ctx) {
         };
         const Hover hovers[] = {{"Unit", false},         {"NormalMappedAlpha", false},
                                 {"VertexNormal", false}, {"UndulatingNormalMappedAlpha", false},
-                                {"Flat", false},         {"Clutter", true}};
+                                {"Flat", false},         {"NoSuchShader", true}};
         f32 x = 100.0f;
         for (const Hover& h : hovers) {
             stand("Unit", "albedo_white.dds", "plate_wide.scm", x, 100.0f, 0.0f);

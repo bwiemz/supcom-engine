@@ -56,10 +56,16 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     ctx.vfs.mount(root, std::make_unique<vfs::DirectoryMount>(dir));
     map::Terrain ground(map::Heightmap(512, 512, 1.0f, std::vector<u16>(513 * 513, 0)), 0.0f, true);
     ground.set_lighting(white_fill(), {});
-    constexpr u32 techniques = static_cast<u32>(MeshTechnique::NormalMappedAlphaNoShadow) + 1;
+    constexpr u32 techniques = static_cast<u32>(MeshTechnique::EditorMarker) + 1;
+    // An id between the techniques names none ("Unknown"): no plate, no coverage.
+    const auto named = [](u32 id) {
+        return std::string(renderer::mesh_technique_name(static_cast<MeshTechnique>(id))) !=
+               "Unknown";
+    };
     bool shared = true;
     for (u32 id = 0; id <= techniques; ++id) {
         if (id == static_cast<u32>(MeshTechnique::UnitPlace)) continue;
+        if (id < techniques && !named(id)) continue;
         Plate plate;
         plate.shader = renderer::mesh_technique_name(
             id < techniques ? static_cast<MeshTechnique>(id) : MeshTechnique::Unit);
@@ -191,7 +197,8 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     std::sort(matrix.begin(), matrix.end());
     std::string all;
     for (const auto& line : matrix) all += line + '\n';
-    for (u32 id = 0; id <= static_cast<u32>(MeshTechnique::NormalMappedAlphaNoShadow); ++id) {
+    for (u32 id = 0; id < techniques; ++id) {
+        if (!named(id)) continue;
         const std::string name = renderer::mesh_technique_name(static_cast<MeshTechnique>(id));
         for (int lane = 0; lane < 3; ++lane)
             for (const char* view : {"world", "cartographic-main", "cartographic-minimap"}) {
@@ -199,6 +206,10 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
                 if (id == static_cast<u32>(MeshTechnique::UnitPlace) &&
                     std::string(view) == "cartographic-minimap")
                     continue;
+                // Shield names no technique mesh.fx has: no world pass draws it
+                // (the cartographic ones record it undrawn).
+                const bool expected = !(id == static_cast<u32>(MeshTechnique::Shield) &&
+                                        std::string(view) == "world");
                 bool found = false;
                 for (const auto& line : matrix) {
                     const bool target =
@@ -209,8 +220,9 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
                     found |= target && line.find(fmt::format("fidelity={} ", lane)) == 0 &&
                              line.find("technique=" + name + " ") != std::string::npos;
                 }
-                t.check(found,
-                        fmt::format("dispatch coverage: {} fidelity={} view={}", name, lane, view));
+                t.check(found == expected,
+                        fmt::format("dispatch coverage: {} fidelity={} view={} ({})", name, lane,
+                                    view, expected ? "drawn" : "none"));
             }
     }
     const auto fact = [&](int fidelity, const std::string& text, bool expected = true) {
@@ -226,6 +238,15 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
         fact(fidelity, "technique=CybranBuild stage=pre-water pass=1 pipeline=overlay");
         fact(fidelity, "technique=AeonBuild stage=pre-water pass=1", fidelity > 0);
         fact(fidelity, "technique=ShieldCybran stage=post-effect pass=1", fidelity > 0);
+        // One technique each, whatever the fidelity: no lanes
+        fact(fidelity, fmt::format("technique=Explosion stage=post-effect pass=0 "
+                                   "pipeline=explosion drawn=Explosion lane={} ",
+                                   fidelity));
+        fact(fidelity, fmt::format("technique=EditorMarker stage=post-water pass=0 pipeline=mesh "
+                                   "drawn=EditorMarker lane={} ",
+                                   fidelity));
+        for (const char* stage : {"shadow", "reflection", "pre-water", "post-water", "post-effect"})
+            fact(fidelity, fmt::format("technique=Shield stage={} ", stage), false);
     }
     fact(1, "drawn=Seraphim lane=0 shader_id=4 shadow=0");
     fact(0, "technique=AeonCZAR stage=pre-water pass=0 pipeline=mesh drawn=Aeon lane=0");
@@ -233,6 +254,16 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     fact(2, "technique=AeonCZAR stage=pre-water pass=0 pipeline=mesh drawn=AeonCZAR lane=2");
     fact(2, "technique=NormalMappedAlphaNoShadow stage=post-water pass=0 pipeline=mesh "
             "drawn=NormalMappedAlpha lane=2");
+    // The clutter's one lane at every fidelity: after the effects, Clutter's and
+    // UndulatingClutter's above the water, UnderwaterClutter's under it
+    for (int fidelity = 0; fidelity < 3; ++fidelity) {
+        fact(fidelity, "technique=Clutter stage=post-effect pass=0 pipeline=mesh drawn=Clutter ");
+        fact(fidelity, "technique=UndulatingClutter stage=post-effect pass=0 pipeline=mesh "
+                       "drawn=UndulatingClutter ");
+        fact(fidelity, "technique=UnderwaterClutter stage=pre-water-post-effect pass=0 "
+                       "pipeline=mesh drawn=UnderwaterClutter ");
+        fact(fidelity, "technique=UnderwaterClutter stage=pre-water ", false);
+    }
     fact(1, "drawn=PhaseShield lane=0 shader_id=25 shadow=0");
     fact(2, "drawn=SeraphimPersonalShield lane=2 shader_id=26 shadow=2");
     for (const char* name : {"Unit",
@@ -269,7 +300,8 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
                              "AeonCZAR",
                              "Flat",
                              "BloatingNormalMappedAlpha",
-                             "NormalMappedAlphaNoShadow"}) {
+                             "NormalMappedAlphaNoShadow",
+                             "EditorMarker"}) {
         fact(2, fmt::format("technique={} stage=reflection ", name));
         fact(0, fmt::format("technique={} stage=reflection ", name), false);
         fact(1, fmt::format("technique={} stage=reflection ", name), false);
@@ -305,9 +337,10 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
     };
     for (const char* role :
          {"mesh", "fade", "overlay", "cube", "outer_cloud", "nuke_emp", "nuke_quantum", "phalanx",
-          "quantum_gate", "feedback", "glow", "shield:Blend", "shield:BlendUnculled",
+          "quantum_gate", "explosion", "feedback", "glow", "shield:Blend", "shield:BlendUnculled",
           "shield:AddRGB", "shield:AddRGBA", "shield:Fill", "shield:BlendDepthWrite"}) {
-        t.check(role_in(role, {"reflection", "pre-water", "post-water", "post-effect"}),
+        t.check(role_in(role, {"reflection", "pre-water", "post-water", "post-effect",
+                               "pre-water-post-effect"}),
                 std::string("dispatch world role coverage: ") + role);
     }
     t.check(role_in("shadow", {"shadow"}), "dispatch role coverage: shadow");
@@ -317,7 +350,7 @@ void test_dispatch_matrix(TestContext& ctx, TestContext& ui) {
         t.check(role_in(role, {"cartographic-main", "cartographic-minimap"}),
                 std::string("dispatch cartographic role coverage: ") + role);
     for (const char* stage : {"shadow", "reflection", "pre-water", "post-water", "post-effect",
-                              "cartographic-main", "cartographic-minimap"})
+                              "pre-water-post-effect", "cartographic-main", "cartographic-minimap"})
         t.check(all.find(std::string("stage=") + stage + " ") != std::string::npos,
                 std::string("dispatch stage coverage: ") + stage);
     t.check(all.find("bucket=fading") != std::string::npos &&

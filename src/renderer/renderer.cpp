@@ -846,9 +846,10 @@ void Renderer::create_shadow_resources() {
     // binding 1: light UBO, bindings 2-4: the environment cubes meshes reflect,
     // "<default>", "<aeon>" and "<seraphim>", M211a/b; 5-6: FA's anisotropic and
     // insect lookups, M211b; 7: the shadow map, bilinear, white outside, the
-    // meshes' PCF; 8: the terrain's mask, likewise, M210c) ---
+    // meshes' PCF; 8: the terrain's mask, likewise, M210c; 9: MeshRenderer's
+    // dissolve noise, the clutter's) ---
     {
-        std::array<VkDescriptorSetLayoutBinding, 9> bindings{};
+        std::array<VkDescriptorSetLayoutBinding, 10> bindings{};
         bindings[0].binding = 0;
         bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[0].descriptorCount = 1;
@@ -859,7 +860,7 @@ void Renderer::create_shadow_resources() {
         bindings[1].descriptorCount = 1;
         bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
 
-        for (u32 b = 2; b < 9; ++b) {
+        for (u32 b = 2; b < 10; ++b) {
             bindings[b].binding = b;
             bindings[b].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             bindings[b].descriptorCount = 1;
@@ -876,7 +877,7 @@ void Renderer::create_shadow_resources() {
     // --- Shadow descriptor pool + per-frame sets ---
     {
         std::array<VkDescriptorPoolSize, 2> pool_sizes{};
-        pool_sizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8 * FRAMES_IN_FLIGHT};
+        pool_sizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 9 * FRAMES_IN_FLIGHT};
         pool_sizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, FRAMES_IN_FLIGHT};
 
         VkDescriptorPoolCreateInfo pool_ci{};
@@ -1177,7 +1178,8 @@ void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
     // leaves depth unwritten (M211g). The layouts match.
     // The order marks (CommandFeedback) blend colour with no depth test;
     // the map border's second pass writes its glow alone. OuterCloud is the
-    // cube's state but tests strictly less (Depth_Enable_Less_Write_None).
+    // cube's state but tests strictly less (Depth_Enable_Less_Write_None);
+    // Explosion the fade's, testing strictly less (Depth_Enable_Less).
     enum class Blend {
         Opaque,
         Fade,
@@ -1189,17 +1191,20 @@ void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
         NukeEMP,
         NukeQuantum,
         Phalanx,
-        QuantumGate
+        QuantumGate,
+        Explosion
     };
     const auto build_mesh = [&](Blend blend, VkPipelineLayout* layout) {
         const bool less = blend == Blend::OuterCloud || blend == Blend::NukeEMP ||
                           blend == Blend::NukeQuantum || blend == Blend::Phalanx ||
-                          blend == Blend::QuantumGate;
+                          blend == Blend::QuantumGate || blend == Blend::Explosion;
         const VkBlendFactor src =
             blend == Blend::Phalanx ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_SRC_ALPHA;
-        const bool no_depth_write = blend == Blend::FadeNoDepthWrite || less;
+        const bool no_depth_write =
+            blend == Blend::FadeNoDepthWrite || (less && blend != Blend::Explosion);
         const bool colour_only = blend == Blend::Fade || blend == Blend::FadeNoDepthWrite ||
-                                 blend == Blend::OuterCloud || blend == Blend::Feedback;
+                                 blend == Blend::OuterCloud || blend == Blend::Feedback ||
+                                 blend == Blend::Explosion;
         constexpr VkColorComponentFlags kGlowOnly = VK_COLOR_COMPONENT_A_BIT;
         constexpr VkColorComponentFlags kRedBlueGlow =
             VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -1245,6 +1250,7 @@ void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
     mesh_nuke_quantum_pipeline_ = build_mesh(Blend::NukeQuantum, &mesh_nuke_quantum_layout_);
     mesh_phalanx_pipeline_ = build_mesh(Blend::Phalanx, &mesh_phalanx_layout_);
     mesh_quantum_gate_pipeline_ = build_mesh(Blend::QuantumGate, &mesh_quantum_gate_layout_);
+    mesh_explosion_pipeline_ = build_mesh(Blend::Explosion, &mesh_explosion_layout_);
 
     // The shields' (M211k): their own shaders, the mesh's input, push
     // block and sets, and mesh.fx's states. Each depth-tests; only the
@@ -2758,6 +2764,9 @@ const char* Renderer::mesh_pipeline_role(VkPipeline pipeline) const {
     if (pipeline == mesh_quantum_gate_pipeline_) {
         return "quantum_gate";
     }
+    if (pipeline == mesh_explosion_pipeline_) {
+        return "explosion";
+    }
     if (pipeline == mesh_feedback_pipeline_) return "feedback";
     if (pipeline == mesh_glow_pipeline_) return "glow";
     static constexpr std::array<const char*, 6> shields = {
@@ -2840,12 +2849,17 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         if (!group.mesh || group.instance_count == 0) continue;
         // Moho's buckets (M213b): a technique's render stage puts it
         // before the water or after it, or after the effects too (the
-        // shields', M211k); only units are reflected.
+        // shields', M211k), or after the effects under the water (the
+        // kelp's, UnderwaterClutter); only units are reflected.
         const MeshTechnique technique = drawn_technique(group);
         if (strategic && technique != MeshTechnique::MapImager) continue;
+        // A name mesh.fx has no technique for has no stage: no pass draws it.
+        if (!has_render_stage(technique)) continue;
         const bool after_effects = is_post_effect_technique(technique);
         const bool after_water = is_post_water_technique(technique);
+        const bool after_effects_under_water = is_pre_water_post_effect_technique(technique);
         if ((stage == MeshPass::AfterEffects) != after_effects ||
+            (stage == MeshPass::BeforeWaterAfterEffects) != after_effects_under_water ||
             (stage == MeshPass::BeforeWater && after_water) ||
             (stage == MeshPass::AfterWater && !after_water) ||
             (stage == MeshPass::Reflection && !group.reflected))
@@ -2945,6 +2959,8 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         } else if (technique == MeshTechnique::CommandFeedback4 ||
                    technique == MeshTechnique::GlassAlpha) {
             passes[0] = mesh_cube_pipeline_;
+        } else if (technique == MeshTechnique::Explosion) {
+            passes[0] = mesh_explosion_pipeline_;
         }
         mesh_pc.boneBase = group.bone_base_offset;
         mesh_pc.bonesPerInst = group.bones_per_instance;
@@ -2996,6 +3012,7 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
                 case MeshPass::BeforeWater: stage_name = "pre-water"; break;
                 case MeshPass::AfterWater: stage_name = "post-water"; break;
                 case MeshPass::AfterEffects: stage_name = "post-effect"; break;
+                case MeshPass::BeforeWaterAfterEffects: stage_name = "pre-water-post-effect"; break;
                 case MeshPass::Reflection: stage_name = "reflection"; break;
                 }
                 group.dump_dispatch.push_back(fmt::format(
@@ -3973,6 +3990,9 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp, bool afte
     // (M214b-c)
     particle_renderer_.render(cmd_, view_area_, vp.data(), true, fi);
     trail_renderer_.render(cmd_, view_area_, vp.data(), true, fi);
+    // 4c. The meshes after the effects under the water, before it
+    // (RenderMeshes(0x18)): UnderwaterClutter's
+    draw_meshes(cmd_, fi, vp, MeshPass::BeforeWaterAfterEffects);
 
     // 5. FA's water (M213a), as CWorldView draws it: its alpha mask (alpha 0
     // over open water), a copy of the frame so far, then the surface, which
@@ -4731,19 +4751,23 @@ void Renderer::bind_mesh_environment(const map::ScmapEnvironment& environment) {
     };
     const std::array<VkImageView, 2> lookups = {lookup("/textures/engine/anisotropiclookup.dds"),
                                                 lookup("/textures/engine/insectlookup.dds")};
+    // And its dissolve noise (MeshRenderer::LoadGlobalTextures), which only
+    // ClutterPS reads, through a linear, wrapping sampler
+    VkImageView dissolve = lookup("/textures/environment/dissolve.dds");
     for (VkImageView v : cubes)
         if (!v) return;
     for (u32 f = 0; f < FRAMES_IN_FLIGHT; ++f) {
         if (!shadow_ds_[f]) continue;
-        std::array<VkDescriptorImageInfo, 5> infos{};
-        std::array<VkWriteDescriptorSet, 5> writes{};
-        for (u32 i = 0; i < 5; ++i) {
-            infos[i].sampler = i < 3 ? texture_sampler_ : lookup_sampler_;
-            infos[i].imageView = i < 3 ? cubes[i] : lookups[i - 3];
+        std::array<VkDescriptorImageInfo, 6> infos{};
+        std::array<VkWriteDescriptorSet, 6> writes{};
+        for (u32 i = 0; i < 6; ++i) {
+            const bool noise = i == 5; // binding 9; the others 2-6
+            infos[i].sampler = (i < 3 || noise) ? texture_sampler_ : lookup_sampler_;
+            infos[i].imageView = i < 3 ? cubes[i] : (noise ? dissolve : lookups[i - 3]);
             infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i].dstSet = shadow_ds_[f];
-            writes[i].dstBinding = 2 + i;
+            writes[i].dstBinding = noise ? 9 : 2 + i;
             writes[i].descriptorCount = 1;
             writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[i].pImageInfo = &infos[i];
@@ -5311,6 +5335,8 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, mesh_phalanx_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_quantum_gate_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, mesh_quantum_gate_layout_, nullptr);
+    vkDestroyPipeline(device_, mesh_explosion_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, mesh_explosion_layout_, nullptr);
     for (u32 i = 0; i < kShieldStates; ++i) {
         vkDestroyPipeline(device_, shield_pipelines_[i], nullptr);
         vkDestroyPipelineLayout(device_, shield_layouts_[i], nullptr);
