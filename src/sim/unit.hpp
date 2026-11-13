@@ -1755,6 +1755,9 @@ private:
     Entity* find_patrol_target(const UnitCommand& cmd, SimContext& ctx);
     /// Whether a guard of `guarded` (null: of a point) takes on enemies.
     bool guard_reacts(const Unit* guarded) const;
+    /// Whether Moho's guard task of `guarded` returns 7, not 1: its constructor
+    /// set neither mDisableReactionState nor mDisableBestEnemySearch.
+    bool guard_sleeps(const Unit* guarded) const;
     /// A guard's fight (Moho's guard task, GetBestEnemy and its Starting
     /// state): going home after one, or, every 6 ticks, an enemy within its
     /// GuardScanRadius taken on as an Attack ahead of the guard. The step,

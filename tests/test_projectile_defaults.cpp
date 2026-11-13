@@ -21,10 +21,12 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <array>
 #include <bit>
 #include <cmath>
 #include <memory>
 #include <string>
+#include <vector>
 
 TEST_CASE("A projectile's omitted Physics spreads read as Moho's defaults", "[blueprints]") {
     osc::lua::LuaState state;
@@ -233,9 +235,79 @@ TEST_CASE("A projectile draws its spin and spreads as Moho's Projectile, whateve
     (void)made.apply_blueprint_physics(state.raw(), &rng);
     CHECK(std::bit_cast<osc::u32>(made.angular_velocity.x) == 0x3f3b744au);
     CHECK(std::bit_cast<osc::u32>(made.angular_velocity.y) == 0xbef27585u);
-    CHECK(std::bit_cast<osc::u32>(made.angular_velocity.z) == 0xbd088950u);
+    CHECK(std::bit_cast<osc::u32>(made.angular_velocity.z) == 0xbd08894eu);
     CHECK(rng.words_drawn() == 15);
     CHECK(rng.next_u32() == 1801189930u);
+}
+
+TEST_CASE("Spinning projectiles turn about the axes the original game's draws give them",
+          "[blueprints]") {
+    // Seed 7, eight Random() calls before each, made one after another. The original game's
+    // GetOrientation a tick on: DebrisMisc01 along +Y (x, y, z, w), UnitTeleport01 flashes (y).
+    osc::lua::LuaState state;
+    REQUIRE(state
+                .do_string(R"(
+        __blueprints = {
+            debris = {Physics = {RotationalVelocity = 360, RotationalVelocityRange = 180,
+                                 VelocityAlign = false}},
+            flash = {Physics = {RotationalVelocity = 50, StayUpright = true,
+                                VelocityAlign = false}},
+        }
+    )")
+                .ok());
+    const std::array<std::array<osc::u32, 4>, 6> debris = {{
+        {0xbebd291fu, 0x3df1b53eu, 0xbe567d05u, 0x3f65c9a4u},
+        {0xbf1cf3efu, 0x3e35bd50u, 0xbe47d5d4u, 0x3f3ea27bu},
+        {0xbeef262eu, 0xbca55706u, 0x3d170725u, 0x3f621a1fu},
+        {0xbf453e2fu, 0xbe0c5a72u, 0x3de9f934u, 0x3f1caadbu},
+        {0xbf0e1abdu, 0x3eacee66u, 0xbe00a2deu, 0x3f3fea8bu},
+        {0xbecf15d2u, 0xbe514e04u, 0xbc8d3cbcu, 0x3f642933u},
+    }};
+    const std::array<osc::u32, 6> flash_y = {0x3d32aa3eu, 0x3d32aa3fu, 0x3d32aa3fu,
+                                             0x3d32aa3fu, 0x3d32aa3fu, 0x3d32aa3fu};
+    osc::sim::SimRandom rng;
+    rng.set_mt19937(true);
+    rng.seed(7);
+    for (int i = 0; i < 120; ++i) {
+        (void)rng.next_u32();
+    }
+    osc::sim::EntityRegistry reg;
+    const auto make = [&](const char* bp, int direction_draws, osc::sim::Quaternion facing) {
+        for (int i = 0; i < 8 + direction_draws; ++i) {
+            (void)rng.next_u32();
+        }
+        auto p = std::make_unique<osc::sim::Projectile>();
+        p->set_blueprint_id(bp);
+        (void)p->apply_blueprint_physics(state.raw(), &rng);
+        p->set_orientation(facing);
+        p->collide_surface = false;
+        p->collide_entity = false;
+        p->set_lifetime(100.0f, 0);
+        return static_cast<osc::sim::Projectile*>(reg.find(reg.register_entity(std::move(p))));
+    };
+    std::vector<osc::sim::Projectile*> made;
+    made.reserve(debris.size() + flash_y.size());
+    for (size_t i = 0; i < debris.size(); ++i) {
+        made.push_back(make("debris", 0, osc::sim::coords_orient_moho({0.0f, 1.0f, 0.0f})));
+    }
+    for (size_t i = 0; i < flash_y.size(); ++i) {
+        made.push_back(make("flash", 3, osc::sim::Quaternion{}));
+    }
+    for (osc::sim::Projectile* p : made) {
+        p->update(0.1, reg, nullptr, nullptr, 1);
+    }
+    reg.advance_coords();
+    const auto bits = [](float v) { return std::bit_cast<osc::u32>(v); };
+    for (size_t i = 0; i < debris.size(); ++i) {
+        const osc::sim::Quaternion q = made[i]->orientation();
+        CHECK(bits(q.x) == debris[i][0]);
+        CHECK(bits(q.y) == debris[i][1]);
+        CHECK(bits(q.z) == debris[i][2]);
+        CHECK(bits(q.w) == debris[i][3]);
+    }
+    for (size_t i = 0; i < flash_y.size(); ++i) {
+        CHECK(bits(made[debris.size() + i]->orientation().y) == flash_y[i]);
+    }
 }
 
 TEST_CASE("A projectile a script aims faces as retail's, bit for bit", "[blueprints]") {

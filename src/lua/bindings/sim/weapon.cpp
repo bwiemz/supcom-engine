@@ -262,17 +262,18 @@ static int weapon_CreateProjectile(lua_State* L) {
     else if (!w->muzzle_bone_name.empty() && unit->bone_data())
         bone = unit->bone_data()->find_bone(w->muzzle_bone_name);
     const sim::Vector3 spawn = bone >= 0 ? bone_world_position(unit, bone) : unit->position();
-    // A silo missile leaves the way its muzzle faces.
-    std::optional<sim::Vector3> muzzle_dir;
-    if (bone >= 0 && unit->bone_data()) muzzle_dir = unit->bone_world_forward(bone);
+    std::optional<sim::Quaternion> muzzle;
+    if (bone >= 0 && unit->bone_data()) {
+        muzzle = unit->bone_world_rotation(bone);
+    }
 
     const sim::Entity* target = nullptr;
     if (w->target_entity_id) {
         target = sim->entity_registry().find(w->target_entity_id);
         if (target && target->destroyed()) target = nullptr;
     }
-    auto* proj = w->launch(*unit, spawn, target, sim->entity_registry(), L,
-                           under_water(sim, spawn), muzzle_dir);
+    auto* proj =
+        w->launch(*unit, spawn, target, sim->entity_registry(), L, under_water(sim, spawn), muzzle);
     if (!proj || proj->lua_table_ref() < 0) {
         lua_pushnil(L);
         return 1;
