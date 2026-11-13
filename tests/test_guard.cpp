@@ -4,6 +4,7 @@
 // docs/plans/2026-10-05-guard-engagement-design.md.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "blueprints/footprint.hpp"
 #include "map/heightmap.hpp"
@@ -502,12 +503,18 @@ Unit* build_unit(SimState& sim, Unit& factory, f32 x, f32 z) {
     return unit;
 }
 
-FactoryAtWork factory_at_work(SimState& sim, f32 x, f32 z, f32 unit_x, f32 unit_z) {
+/// A T1 land factory's shape (ueb0101): its skirt [x - 4, x + 4] by [z - 4, z + 4].
+Unit* idle_factory(SimState& sim, f32 x, f32 z) {
     Unit* factory = still(sim, 0, x, z);
     factory->add_category("FACTORY");
     factory->set_footprint_size(5.0f, 5.0f);
-    factory->set_skirt(8.0f, 8.0f, 0.0f, 0.0f);
+    factory->set_skirt(8.0f, 8.0f, -1.5f, -1.5f);
     factory->set_build_time(100000.0);
+    return factory;
+}
+
+FactoryAtWork factory_at_work(SimState& sim, f32 x, f32 z, f32 unit_x, f32 unit_z) {
+    Unit* factory = idle_factory(sim, x, z);
     return {factory, build_unit(sim, *factory, unit_x, unit_z)};
 }
 
@@ -528,8 +535,121 @@ Unit* engineer_of(SimState& sim, f32 x, f32 z) {
 
 } // namespace
 
-TEST_CASE("A guarding engineer walks to its build place before it helps a factory, even within "
-          "reach",
+TEST_CASE("A guarding engineer walks up to an idle factory at once, to the nearest place two cells "
+          "apart clear of its skirt",
+          "[guard][assist]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* factory = idle_factory(sim, 60.5f, 50.5f);
+    struct Case {
+        const char* what;
+        f32 x, z;
+        f32 place_x, place_z;
+    };
+    const Case c = GENERATE(Case{"within twice its reach", 52.2f, 53.1f, 54.5f, 52.5f},
+                            Case{"beyond it", 77.5f, 55.7f, 66.5f, 56.5f});
+    CAPTURE(c.what);
+    Unit* eng = engineer_of(sim, c.x, c.z);
+    eng->push_command(guard(factory, 1), true);
+
+    sim.tick();
+    REQUIRE(eng->is_moving());
+    CHECK(eng->navigator().goal().x == c.place_x);
+    CHECK(eng->navigator().goal().z == c.place_z);
+    tick_until([&] { sim.tick(); }, "the engineer arrives", 240, [&] { return !eng->is_moving(); });
+    CHECK(std::hypot(eng->position().x - c.place_x, eng->position().z - c.place_z) < 0.5f);
+    for (int t = 0; t < 30; ++t) {
+        sim.tick();
+        REQUIRE_FALSE(eng->is_moving());
+        REQUIRE_FALSE(eng->is_building());
+    }
+}
+
+TEST_CASE("An engineer that walked up to an idle factory helps its first build from where it "
+          "stands, a tick after the build begins",
+          "[guard][assist]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* factory = idle_factory(sim, 60.5f, 50.5f);
+    Unit* eng = engineer_of(sim, 52.2f, 53.1f);
+    eng->push_command(guard(factory, 1), true);
+    sim.tick();
+    tick_until([&] { sim.tick(); }, "the engineer arrives", 240, [&] { return !eng->is_moving(); });
+    for (int t = 0; t < 10; ++t) {
+        sim.tick();
+    }
+    const osc::sim::Vector3 stood = eng->position();
+
+    const Unit* unit = build_unit(sim, *factory, 60.5f, 47.5f);
+    sim.tick();
+    CHECK_FALSE(eng->is_building());
+    CHECK_FALSE(eng->is_moving());
+    sim.tick();
+    CHECK(eng->is_building());
+    CHECK(eng->build_target_id() == unit->entity_id());
+    CHECK(eng->position().x == stood.x);
+    CHECK(eng->position().z == stood.z);
+}
+
+TEST_CASE("Engineers ordered together to guard a factory walk up to places apart",
+          "[guard][assist]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* factory = idle_factory(sim, 60.5f, 50.5f);
+    Unit* first = engineer_of(sim, 77.5f, 55.7f);
+    Unit* second = engineer_of(sim, 77.5f, 55.7f);
+    first->push_command(guard(factory, 1), true);
+    second->push_command(guard(factory, 2), true);
+
+    sim.tick();
+    const osc::sim::Vector3 a = first->navigator().goal();
+    const osc::sim::Vector3 b = second->navigator().goal();
+    INFO("first " << a.x << "," << a.z << " second " << b.x << "," << b.z);
+    CHECK(a.x == 66.5f);
+    CHECK(a.z == 56.5f);
+    CHECK((b.x != a.x || b.z != a.z));
+    CHECK(std::hypot(b.x - 60.5f, b.z - 50.5f) < 9.0f);
+}
+
+TEST_CASE("A support commander guarding a factory doesn't walk up to it", "[guard][assist]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* factory = idle_factory(sim, 60.5f, 50.5f);
+    Unit* scu = engineer_of(sim, 52.2f, 53.1f);
+    scu->add_category("REBUILDER");
+    scu->push_command(guard(factory, 1), true);
+    for (int t = 0; t < 20; ++t) {
+        sim.tick();
+        REQUIRE_FALSE(scu->is_moving());
+    }
+}
+
+TEST_CASE("A guard that is no engineer helps a factory at work from where it stands within reach",
+          "[guard][assist]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    const auto [factory, unit] = factory_at_work(sim, 60.5f, 50.5f, 60.5f, 47.5f);
+    Unit* bot = walker(sim, 0, 53.0f, 50.9f, 3.6f);
+    bot->set_footprint_size(1.0f, 1.0f);
+    bot->add_category("REPAIR");
+    bot->set_build_rate(1.0f);
+    bot->set_max_build_distance(5.0f);
+    bot->push_command(guard(factory, 1), true);
+    tick_until(
+        [&] {
+            sim.tick();
+            REQUIRE_FALSE(bot->is_moving());
+        },
+        "the bot starts helping", 40, [&] { return bot->is_building(); });
+    CHECK(bot->build_target_id() == unit->entity_id());
+}
+
+TEST_CASE("A guarding engineer walks up to a factory before it helps it, even within reach",
           "[guard][assist]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
@@ -602,7 +722,8 @@ TEST_CASE("A guarding engineer that walked up to a factory goes on helping on ev
     CHECK(unit->fraction_complete() > 0.1f);
 }
 
-TEST_CASE("A guarding engineer keeps chasing a mobile factory, never a place it has left",
+TEST_CASE("A guarding engineer that walked up to a mobile factory keeps chasing it, never a "
+          "place it has left",
           "[guard][assist]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
@@ -611,11 +732,17 @@ TEST_CASE("A guarding engineer keeps chasing a mobile factory, never a place it 
     factory->set_motion_type("RULEUMT_Land");
     Unit* eng = engineer_of(sim, 60.5f, 80.5f);
     eng->push_command(guard(factory, 1), true);
+    sim.tick();
+    tick_until([&] { sim.tick(); }, "the engineer walks up", 400,
+               [&] { return !eng->is_moving(); });
 
     for (int t = 0; t < 100; ++t) {
         factory->set_position({factory->position().x + 0.2f, 0.0f, factory->position().z});
         unit->set_position({unit->position().x + 0.2f, 0.0f, unit->position().z});
         sim.tick();
+        if (!eng->is_moving()) {
+            continue;
+        }
         const auto goal = eng->navigator().goal();
         INFO("tick " << t << " goal " << goal.x << "," << goal.z << " factory "
                      << factory->position().x);

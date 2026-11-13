@@ -242,26 +242,28 @@ TEST_CASE("A guard's help starts 6 ticks later than a repair order's, or a tick 
         const char* what;
         CommandType type;
         bool engineer;
-        bool no_formation;
+        const char* guard_category;
         const char* site_category;
         int wait;
     };
     const Case c = GENERATE(
-        Case{"a repair order", CommandType::Repair, true, false, nullptr, 0},
-        Case{"a repairer that is no engineer", CommandType::Guard, false, false, nullptr, 6},
-        Case{"an engineer guarding a structure", CommandType::Guard, true, false, nullptr, 6},
-        Case{"an engineer of no formation guarding a factory", CommandType::Guard, true, true,
+        Case{"a repair order", CommandType::Repair, true, nullptr, nullptr, 0},
+        Case{"a repairer that is no engineer", CommandType::Guard, false, nullptr, nullptr, 6},
+        Case{"an engineer guarding a structure", CommandType::Guard, true, nullptr, nullptr, 6},
+        Case{"an engineer of no formation guarding a factory", CommandType::Guard, true,
+             "NOFORMATION", "FACTORY", 6},
+        Case{"a support commander guarding a factory", CommandType::Guard, true, "REBUILDER",
              "FACTORY", 6},
-        Case{"an engineer guarding an engineer", CommandType::Guard, true, false, "ENGINEER", 1},
-        Case{"an engineer guarding a factory", CommandType::Guard, true, false, "FACTORY", 1});
+        Case{"an engineer guarding an engineer", CommandType::Guard, true, nullptr, "ENGINEER", 1},
+        Case{"an engineer guarding a factory", CommandType::Guard, true, nullptr, "FACTORY", 1});
     CAPTURE(c.what);
     AssistSim w;
     if (c.site_category) {
         w.site->add_category(c.site_category);
     }
     Unit* eng = w.engineer("eng", 16.0f, c.engineer);
-    if (c.no_formation) {
-        eng->add_category("NOFORMATION");
+    if (c.guard_category) {
+        eng->add_category(c.guard_category);
     }
     eng->push_command(order(c.type, *w.site, 1), true);
     for (int tick = 0; tick < c.wait; ++tick) {

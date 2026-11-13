@@ -385,7 +385,7 @@ void SimState::on_entity_unregistered(Entity& entity) {
     entity.clear_ambient_sounds();
 
     // Its ground is free (Moho's ReleaseOccupyGround, a prop's destructor),
-    // and any place it reserved to land on. A prop frees its footprint where it stands
+    // and any place it reserved. A prop frees its footprint where it stands
     // now (~Prop works it out afresh from its transform): a fallen tree's may be a cell
     // off the one it took.
     if (entity.is_prop()) {
@@ -401,7 +401,10 @@ void SimState::on_entity_unregistered(Entity& entity) {
         }
     }
     release_ground(entity.entity_id());
-    if (entity.is_unit()) static_cast<Unit&>(entity).free_landing_reservation(*this);
+    if (entity.is_unit()) {
+        static_cast<Unit&>(entity).free_landing_reservation(*this);
+        static_cast<Unit&>(entity).free_guard_anchor(this);
+    }
 
     // A dead structure stops blocking paths (it used to block forever).
     if (auto it = occupied_footprints_.find(entity.entity_id());

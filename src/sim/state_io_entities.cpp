@@ -1445,6 +1445,12 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.i32v(u.idle_landing_.reserved.z0);
     w.i32v(u.idle_landing_.reserved.x1);
     w.i32v(u.idle_landing_.reserved.z1);
+    w.b(u.guard_anchor_.held);
+    w.u32v(u.guard_anchor_.order);
+    w.i32v(u.guard_anchor_.reserved.x0);
+    w.i32v(u.guard_anchor_.reserved.z0);
+    w.i32v(u.guard_anchor_.reserved.x1);
+    w.i32v(u.guard_anchor_.reserved.z1);
     w.i32v(u.beam_up_ticks_);
     w.vec3(u.beam_from_);
     w.quat(u.beam_from_orientation_);
@@ -1881,6 +1887,12 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.idle_landing_.reserved.z0 = r.i32v();
     u.idle_landing_.reserved.x1 = r.i32v();
     u.idle_landing_.reserved.z1 = r.i32v();
+    u.guard_anchor_.held = r.b();
+    u.guard_anchor_.order = r.u32v();
+    u.guard_anchor_.reserved.x0 = r.i32v();
+    u.guard_anchor_.reserved.z0 = r.i32v();
+    u.guard_anchor_.reserved.x1 = r.i32v();
+    u.guard_anchor_.reserved.z1 = r.i32v();
     u.beam_up_ticks_ = r.i32v();
     u.beam_from_ = r.vec3();
     u.beam_from_orientation_ = r.quat();

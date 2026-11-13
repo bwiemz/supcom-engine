@@ -3975,6 +3975,18 @@ void Unit::free_landing_reservation(SimState& sim) {
     r = {};
 }
 
+void Unit::free_guard_anchor(SimState* sim) {
+    const OccupancyRect& r = guard_anchor_.reserved;
+    if (sim && r.x1 > r.x0 && r.z1 > r.z0) {
+        sim->reserve_ground(r, false);
+    }
+    guard_anchor_ = {};
+}
+
+const OccupancyRect& Unit::reserved_ground() const {
+    return guard_anchor_.held ? guard_anchor_.reserved : idle_landing_.reserved;
+}
+
 void Unit::take_off(SimContext& ctx) {
     lifts_off_ = false;
     idle_landing_.descending = false;

@@ -217,6 +217,11 @@ void mix_unit_flight(Fnv& units, const Unit& u) {
         units.mix(path::pack_cell({il.reserved.x0, il.reserved.z0}));
         units.mix(path::pack_cell({il.reserved.x1, il.reserved.z1}));
     }
+    if (const Unit::GuardAnchor& ga = u.guard_anchor(); ga.held) {
+        units.mix(0x47414e4300000000ull | ga.order); // "GANC"
+        units.mix(path::pack_cell({ga.reserved.x0, ga.reserved.z0}));
+        units.mix(path::pack_cell({ga.reserved.x1, ga.reserved.z1}));
+    }
     // Its last vertical motion event (OnMotionVertEventChange tells the
     // next against it), only off Top.
     if (u.vert_event() != "Top") {
