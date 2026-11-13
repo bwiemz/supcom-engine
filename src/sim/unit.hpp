@@ -1067,6 +1067,7 @@ public:
     const Vector3& air_facing() const { return air_facing_; }
     void set_air_facing(const Vector3& f) { air_facing_ = f; }
     bool flew_at(u32 tick) const { return lift_tick_ == tick; }
+    bool has_flown() const { return lift_tick_ != 0; }
 
     // Motion type (from blueprint Physics.MotionType)
     const std::string& motion_type() const { return motion_type_; }

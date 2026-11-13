@@ -4162,7 +4162,7 @@ void Unit::fly_unflown_tick(f64 dt, SimContext& ctx) {
         return;
     }
     const u32 now = ctx.sim->tick_count();
-    if (now == 0 || flew_at(now) || !flew_at(now - 1)) {
+    if (now == 0 || flew_at(now) || (has_flown() && !flew_at(now - 1))) {
         return;
     }
     if (!navigator_.air_hold()) {

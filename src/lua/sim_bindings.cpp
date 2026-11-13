@@ -27,6 +27,7 @@
 #include "sim/economy_event.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/occupancy.hpp"
 #include "sim/pose.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/terrain_types.hpp"
@@ -40,6 +41,7 @@
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
 #include "blueprints/blueprint_store.hpp"
+#include "blueprints/footprint.hpp"
 
 #include <algorithm>
 #include <array>
@@ -51,6 +53,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -602,7 +605,24 @@ static void set_up_initial_rally(sim::SimState& sim, sim::EntityId id) {
 /// failed", as Moho's is.
 static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation,
                                 i32 (*army_of)(lua_State*, int, sim::SimState*),
-                                const char* what = "CreateUnit", CapGate gate = CapGate::Tell);
+                                const char* what = "CreateUnit", CapGate gate = CapGate::Tell,
+                                u8 layer = 0);
+
+static constexpr std::pair<const char*, u8> kLayerBits[] = {
+    {"Land", blueprints::occupancy::kLand}, {"Seabed", blueprints::occupancy::kSeabed},
+    {"Sub", blueprints::occupancy::kSub},   {"Water", blueprints::occupancy::kWater},
+    {"Air", blueprints::occupancy::kAir},   {"Orbit", blueprints::occupancy::kOrbit},
+};
+
+/// Moho's COORDS_StringToLayer: the layer's bit, 0 for a name it doesn't know.
+static u8 layer_bit(const char* name) {
+    for (const auto& [layer, bit] : kLayerBits) {
+        if (std::strcmp(name, layer) == 0) {
+            return bit;
+        }
+    }
+    return 0;
+}
 
 // CreateUnit(bp, army, x, y, z, qx, qy, qz, qw[, layer])
 static int l_CreateUnit(lua_State* L) {
@@ -617,7 +637,33 @@ static int l_CreateUnit(lua_State* L) {
                            orientation.w / len};
         else orientation = {};
     }
-    return create_complete_unit(L, orientation, unit_army);
+    const u8 layer = lua_isstring(L, 10) ? layer_bit(lua_tostring(L, 10)) : 0;
+    return create_complete_unit(L, orientation, unit_army, "CreateUnit", CapGate::Tell, layer);
+}
+
+/// Moho's SUnitConstructionParams with a layer asked for: the unit starts on
+/// it where its footprint fits there (Entity::GetStartingLayer), at the
+/// height it was given (mFixElevation).
+static void settle_on_layer(sim::SimState& sim, sim::Unit& made, const sim::Vector3& pos,
+                            u8 layer) {
+    const auto* terrain = sim.terrain();
+    if (!terrain) {
+        return;
+    }
+    const auto& fp = made.footprint();
+    const sim::OccupancyRect cell = sim::footprint_rect(fp, pos.x, pos.z);
+    if ((sim::footprint_fits(fp, *terrain, sim.occupancy(), cell.x0, cell.z0) & layer) != 0) {
+        for (const auto& [name, bit] : kLayerBits) {
+            if (bit == layer) {
+                made.set_layer(name);
+            }
+        }
+    }
+    made.set_position(pos);
+    made.set_lifts_off(false);
+    if (made.is_air_unit()) {
+        made.set_current_altitude(pos.y - made.air_floor(terrain, pos.x, pos.z));
+    }
 }
 
 /// A complete unit of `bp_id` for `army` (0-based) at `pos` facing
@@ -633,7 +679,7 @@ static sim::EntityId spawn_complete_unit(lua_State* L, sim::SimState& sim, const
                                          int army, const sim::Vector3& pos,
                                          const sim::Quaternion& orientation,
                                          const sim::Unit* place_of, CapGate gate,
-                                         bool* at_cap = nullptr) {
+                                         bool* at_cap = nullptr, u8 layer = 0) {
     sim::EntityId id =
         create_unit_core(L, bp_id, army, pos.x, pos.y, pos.z, /*being_built=*/false, gate, at_cap);
     if (!id) {
@@ -652,6 +698,8 @@ static sim::EntityId spawn_complete_unit(lua_State* L, sim::SimState& sim, const
             made->set_lifts_off(false);
             made->set_heading(place_of->heading());
             made->set_current_altitude(place_of->current_altitude());
+        } else if (layer != 0) {
+            settle_on_layer(sim, *made, pos, layer);
         }
         made->place_now();
     }
@@ -739,7 +787,7 @@ static sim::EntityId spawn_complete_unit(lua_State* L, sim::SimState& sim, const
 
 static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation,
                                 i32 (*army_of)(lua_State*, int, sim::SimState*), const char* what,
-                                CapGate gate) {
+                                CapGate gate, u8 layer) {
     auto* sim = get_sim(L);
     if (!sim) return luaL_error(L, "CreateUnit: no SimState");
 
@@ -752,7 +800,8 @@ static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation
                static_cast<f32>(lua_tonumber(L, 5))};
     }
     bool at_cap = false;
-    if (!spawn_complete_unit(L, *sim, bp_id, army, pos, orientation, nullptr, gate, &at_cap)) {
+    if (!spawn_complete_unit(L, *sim, bp_id, army, pos, orientation, nullptr, gate, &at_cap,
+                             layer)) {
         if (at_cap) return luaL_error(L, "%s(%s) failed", what, bp_id);
         lua_pushnil(L);
     }

@@ -2508,12 +2508,16 @@ OrderStep Unit::guard_follow(const Unit& target, bool working,
         const Entity* focus = is_reclaiming()  ? registry.find(reclaim_target_id_)
                               : is_capturing() ? registry.find(capture_target_id_)
                                                : nullptr;
+        const bool at_focus = focus && !focus->destroyed();
+        // faf-re CUnitGuardTask::Execute: once it hands out help it no longer follows.
+        if (working && !winged_goal && !at_focus && !silo_assist_id_) {
+            return OrderStep::Hold;
+        }
         const Vector3 goal =
             winged_goal ? *winged_goal
-            : focus && !focus->destroyed()
-                ? focus->position()
-                : approach_point(*this, target.position(), target.skirt_size_x() * 0.5f,
-                                 target.skirt_size_z() * 0.5f);
+            : at_focus  ? focus->position()
+                        : approach_point(*this, target.position(), target.skirt_size_x() * 0.5f,
+                                         target.skirt_size_z() * 0.5f);
         navigator_.abort_move();
         set_course({.kind = AirCourse::Kind::Winged, .at = goal});
         return OrderStep::Hold;
