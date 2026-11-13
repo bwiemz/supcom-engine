@@ -50,9 +50,11 @@ public:
     bool water_at(i32 x, i32 z) const { return water_any({x, z, x + 1, z + 1}); }
     /// Moho's mOccupation: places units have claimed to come to rest (an
     /// aircraft's landing place, Unit::ReserveOgridRect), which a move's
-    /// destination (PrepareMove) keeps clear of. Off the map, nothing.
+    /// destination (PrepareMove) keeps clear of. Off the map, nothing. The
+    /// cells of `own`, the asking unit's reservation, count as free (Moho's
+    /// Unit::CanReserveOgridRect).
     void reserve(const OccupancyRect& r, bool reserved) { set(reserved_, r, reserved); }
-    bool reserved_any(const OccupancyRect& r) const;
+    bool reserved_any(const OccupancyRect& r, const OccupancyRect& own = {}) const;
 
 private:
     bool any(const std::vector<u8>& cells, const OccupancyRect& r) const;

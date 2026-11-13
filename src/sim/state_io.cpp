@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 111; // 2: entities' wanted loops (M216b);
+constexpr u32 kVersion = 112; // 2: entities' wanted loops (M216b);
                               // 3: emitter overrides (M214d);
                               // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                               // 6: weapons' lead physics;
@@ -150,6 +150,8 @@ constexpr u32 kVersion = 111; // 2: entities' wanted loops (M216b);
                               // 110: the sim random's spare FRandGaussian draw
                               // 111: guards' wait before the task they hand out, and
                               //      an engineer's walk up to the factory it guards
+                              // 112: the place an engineer walking up to the factory it
+                              //      guards reserved
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -695,10 +697,15 @@ void StateIO::load(StateReader& r, SimState& sim) {
         }
         sim.occupy_ground(id, std::move(g));
     }
-    // The places aircraft reserved to land on, from the aircraft.
+    // The places aircraft reserved to land on, and guarding engineers to walk
+    // up to, from the units.
     sim.entity_registry_.for_each_unit([&](Entity& e) {
-        const OccupancyRect& rr = static_cast<Unit&>(e).idle_landing_.reserved;
-        if (rr.x1 > rr.x0 && rr.z1 > rr.z0) sim.occupancy_.reserve(rr, true);
+        const auto& u = static_cast<Unit&>(e);
+        for (const OccupancyRect& rr : {u.idle_landing_.reserved, u.guard_anchor_.reserved}) {
+            if (rr.x1 > rr.x0 && rr.z1 > rr.z0) {
+                sim.occupancy_.reserve(rr, true);
+            }
+        }
     });
     // path_tables_ is derived (roadmap item 4c): made again over the loaded
     // grid, every cluster dirty. No search reads them yet; when one does,

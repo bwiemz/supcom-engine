@@ -29,16 +29,22 @@ OccupancyGrid::OccupancyGrid(u32 width, u32 height)
       water_(static_cast<size_t>(width) * height, 0),
       reserved_(static_cast<size_t>(width) * height, 0) {}
 
-bool OccupancyGrid::reserved_any(const OccupancyRect& r) const {
+bool OccupancyGrid::reserved_any(const OccupancyRect& r, const OccupancyRect& own) const {
     // Moho's IsRectOccupied reads the bits within the map only.
     const i32 x0 = std::max(r.x0, 0);
     const i32 z0 = std::max(r.z0, 0);
     const i32 x1 = std::min(r.x1, static_cast<i32>(width_));
     const i32 z1 = std::min(r.z1, static_cast<i32>(height_));
-    for (i32 z = z0; z < z1; ++z)
-        for (i32 x = x0; x < x1; ++x)
-            if (reserved_[static_cast<size_t>(z) * width_ + static_cast<size_t>(x)] != 0)
+    for (i32 z = z0; z < z1; ++z) {
+        for (i32 x = x0; x < x1; ++x) {
+            if (x >= own.x0 && x < own.x1 && z >= own.z0 && z < own.z1) {
+                continue;
+            }
+            if (reserved_[static_cast<size_t>(z) * width_ + static_cast<size_t>(x)] != 0) {
                 return true;
+            }
+        }
+    }
     return false;
 }
 
