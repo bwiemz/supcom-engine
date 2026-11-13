@@ -23,6 +23,13 @@ struct Quaternion {
     f32 x = 0, y = 0, z = 0, w = 1;
 };
 
+/// A bone's transform: in model space (the unit's own frame), or relative
+/// to its parent bone.
+struct BonePose {
+    Vector3 position;
+    Quaternion rotation;
+};
+
 // --- Quaternion math utilities ---
 
 /// Rotate a vector by a quaternion (Hamilton product: q * v * q_conjugate).
@@ -296,6 +303,12 @@ public:
 
     const BoneData* bone_data() const { return bone_data_; }
     void set_bone_data(const BoneData* bd) { bone_data_ = bd; }
+    /// Moho's Entity::GetBoneLocalTransform: a bone of its mesh in its own frame, the rest bone
+    /// inverted and its offset scaled; -1 is its collision box's centre; any other the identity.
+    BonePose bone_local_transform(i32 bone) const;
+    /// Moho's GetBoneWorldTransform: bone_local_transform under its transform, its transform
+    /// for a bone below -1.
+    virtual BonePose bone_world_transform(i32 bone) const;
 
     // Targeting/reclaimable flags
     bool do_not_target() const { return do_not_target_; }

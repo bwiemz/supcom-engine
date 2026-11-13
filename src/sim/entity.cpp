@@ -1,6 +1,8 @@
 #include "sim/entity.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/pose.hpp"
 
 #include <cmath>
 
@@ -36,6 +38,28 @@ void Entity::advance_coords() {
     if (registry_ && (moved || turned)) {
         registry_->notify_moved(*this, moved);
     }
+}
+
+BonePose Entity::bone_local_transform(i32 bone) const {
+    if (bone_data_ && bone_data_->is_valid(bone)) {
+        BonePose local = inverse_moho(bone_data_->bones[static_cast<size_t>(bone)].inverse_bind);
+        const f32 s = bone_data_->model_scale;
+        local.position = {local.position.x * (s * scale_x_), local.position.y * (s * scale_y_),
+                          local.position.z * (s * scale_z_)};
+        return local;
+    }
+    if (bone == -1) {
+        const CollisionShape& box = default_collision_shape_;
+        return {{box.cx, box.cy, box.cz}, Quaternion{}};
+    }
+    return {};
+}
+
+BonePose Entity::bone_world_transform(i32 bone) const {
+    if (bone < -1) {
+        return {position_, orientation_};
+    }
+    return compose_moho(bone_local_transform(bone), {position_, orientation_});
 }
 
 void Entity::wake() {

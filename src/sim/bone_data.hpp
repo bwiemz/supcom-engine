@@ -11,6 +11,10 @@
 
 namespace osc::sim {
 
+struct MeshBounds {
+    Vector3 lo, hi;
+};
+
 struct BoneInfo {
     std::string name;
     Vector3 local_position;    // relative to parent
@@ -20,10 +24,10 @@ struct BoneInfo {
     Quaternion world_rotation; // pre-computed: accumulated from root
     std::array<f32, 16> inverse_bind_pose = {
         1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}; // column-major
-};
-
-struct MeshBounds {
-    Vector3 lo, hi;
+    /// inverse_bind_pose as Moho's CAniSkel keeps it (SAniSkelBone::mBoneTransform).
+    BonePose inverse_bind{};
+    /// Its vertices in its own frame, and its origin (CAniSkel::UpdateBoneBounds).
+    MeshBounds box{};
 };
 
 /// Shared bone data for all units of the same blueprint.

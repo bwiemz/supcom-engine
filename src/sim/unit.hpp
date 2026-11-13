@@ -1546,7 +1546,7 @@ public:
     /// offset (Moho's Unit::GetBoneWorldTransform, M211k): the bone's world
     /// place and turn as the sim poses it; for bone -1 half our height above
     /// our position, for one we haven't our position.
-    BonePose bone_world_transform(i32 bone) const;
+    BonePose bone_world_transform(i32 bone) const override;
     /// Its blueprint's AI.TargetBones: the points weapons aim at on it
     /// (Moho's target points). How many it has.
     i32 target_point_count() const;

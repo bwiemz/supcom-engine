@@ -721,9 +721,7 @@ void BoneEntityManipulator::apply_pose(PoseLocals& pose) {
         pose.set_model(bone_index_, {{0.0f, -10000.0f, 0.0f}, Quaternion{}});
         return;
     }
-    const BonePose world =
-        target->is_unit() ? static_cast<const Unit*>(target)->bone_world_transform(target_bone_)
-                          : BonePose{target->position(), target->orientation()};
+    const BonePose world = target->bone_world_transform(target_bone_);
     const BonePose model =
         pose_relative({owner_->pending_position(), owner_->pending_orientation()}, world);
     const BoneData* bd = owner_->bone_data();

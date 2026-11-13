@@ -354,22 +354,12 @@ i32 resolve_bone_index(const sim::Entity* e, lua_State* L, int arg) {
 }
 
 /// Compute world-space bone position for an entity: a unit's as posed by
-/// its manipulators (turrets, rotators), anything else's in bind pose.
+/// its manipulators (turrets, rotators), anything else's from its mesh's rest bone.
 sim::Vector3 bone_world_position(const sim::Entity* e, i32 bone_idx) {
-    if (e->is_unit()) return static_cast<const sim::Unit*>(e)->bone_world_position(bone_idx);
-    auto* bd = e->bone_data();
-    if (!bd || !bd->is_valid(bone_idx)) return e->position();
-
-    auto& bone = bd->bones[static_cast<size_t>(bone_idx)];
-    const f32 s = bd->model_scale;
-    auto rotated = sim::quat_rotate(e->orientation(), sim::Vector3{bone.world_position.x * s,
-                                                                   bone.world_position.y * s,
-                                                                   bone.world_position.z * s});
-    return {
-        e->position().x + rotated.x,
-        e->position().y + rotated.y,
-        e->position().z + rotated.z
-    };
+    if (e->is_unit()) {
+        return static_cast<const sim::Unit*>(e)->bone_world_position(bone_idx);
+    }
+    return e->bone_world_transform(bone_idx).position;
 }
 
 /// Whether a point is under the map's water (a projectile's OnCreate(inWater)).

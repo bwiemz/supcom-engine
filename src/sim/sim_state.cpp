@@ -630,12 +630,11 @@ void SimState::follow_parent(Entity& e, const Entity& parent) {
         }
         return;
     }
-    // Moho's CalculateAttachedTransform (M211k), the child's own bone taken as its origin; another
-    // entity's bone is on its committed transform (Entity::GetBoneWorldTransform).
-    const BonePose bone =
-        parent.is_unit() ? static_cast<const Unit&>(parent).bone_world_transform(e.parent_bone())
-                         : BonePose{parent.position(), parent.orientation()};
-    const BonePose at = attached_moho({}, compose_moho({e.parent_offset(), Quaternion{}}, bone));
+    // Moho's CalculateAttachedTransform (M211k); a unit's own bone is taken as its origin.
+    const BonePose own = e.is_unit() ? BonePose{} : e.bone_local_transform(e.attached_bone());
+    const BonePose at =
+        attached_moho(own, compose_moho({e.parent_offset(), Quaternion{}},
+                                        parent.bone_world_transform(e.parent_bone())));
     e.set_position(at.position);
     e.set_orientation(at.rotation);
     // Attaching is a jump, and so is following a parent that jumped since: the renderer pops it.

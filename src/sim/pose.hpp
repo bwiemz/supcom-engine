@@ -8,13 +8,6 @@
 
 namespace osc::sim {
 
-/// A bone's transform: in model space (the unit's own frame), or relative
-/// to its parent bone.
-struct BonePose {
-    Vector3 position;
-    Quaternion rotation;
-};
-
 inline Quaternion quat_conjugate(const Quaternion& q) {
     return {-q.x, -q.y, -q.z, q.w};
 }
@@ -60,6 +53,12 @@ inline Vector3 mult_quad_vec(const Quaternion& q, const Vector3& v) {
         out[r] = ((v.x * rows[r][0] + 0.0f) + v.y * rows[r][1]) + v.z * rows[r][2];
     }
     return {out[0], out[1], out[2]};
+}
+
+/// VTransform::Inverse: the conjugate turn, and the offset negated and turned by it.
+inline BonePose inverse_moho(const BonePose& t) {
+    const Quaternion turn{-t.rotation.x, -t.rotation.y, -t.rotation.z, t.rotation.w};
+    return {mult_quad_vec(turn, {-t.position.x, -t.position.y, -t.position.z}), turn};
 }
 
 /// VTransform::Compose (0x00549C20): `local` placed under `parent`, each lane summed as Moho's.

@@ -802,13 +802,9 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
     proj->set_army(e->army());
     proj->launcher_id = launcher_of(*e);
     apply_script_projectile_physics(L, *proj);
-    const auto* bd = e->bone_data();
     const sim::Quaternion bone_world_rot =
         e->is_unit() ? static_cast<const sim::Unit*>(e)->bone_world_rotation(bone_idx)
-        : bd && bd->is_valid(bone_idx)
-            ? sim::quat_multiply(e->orientation(),
-                                 bd->bones[static_cast<size_t>(bone_idx)].world_rotation)
-            : e->orientation();
+                     : e->bone_world_transform(bone_idx).rotation;
     proj->set_orientation(bone_world_rot);
     if (direction.x == 0.0f && direction.y == 0.0f && direction.z == 0.0f)
         direction = sim::quat_rotate(bone_world_rot, {0, 0, 1});
@@ -1046,7 +1042,7 @@ static int entity_AttachTo(lua_State* L) {
             if (old) old->remove_child(self->entity_id());
         }
     }
-    self->set_parent(parent->entity_id(), bone);
+    self->set_parent(parent->entity_id(), bone, 0);
     parent->add_child(self->entity_id(), bone);
     set_attached(*self, true);
     return 0;
@@ -1054,7 +1050,12 @@ static int entity_AttachTo(lua_State* L) {
 
 static int entity_AttachBoneTo(lua_State* L) {
     auto* self = check_entity(L); if (!self) return 0;
-    i32 self_bone = resolve_bone_index(self, L, 2);
+    i32 self_bone = -1;
+    if (lua_type(L, 2) == LUA_TNUMBER && lua_tonumber(L, 2) < 0) {
+        self_bone = static_cast<i32>(lua_tonumber(L, 2));
+    } else if (!lua_isnil(L, 2)) {
+        self_bone = resolve_bone_index(self, L, 2);
+    }
     auto* parent = check_entity_arg(L, 3); if (!parent) return 0;
     i32 parent_bone = attach_bone_index(parent, L, 4);
     // Detach from current parent first
@@ -1379,8 +1380,8 @@ static int prop_Kill(lua_State* L) {
 }
 
 // prop:CreatePropAtBone(bone, blueprint): a new prop at one of this prop's
-// bones (tree groups breaking up into trees), its own root bone on it (Moho's
-// Compose(Inverse(its bone 0), the bone's world transform), then Warp).
+// bones (tree groups breaking up into trees), then warped to have its own root
+// bone there (Moho's Compose(Inverse(its bone 0), the bone's world transform)).
 static int prop_CreatePropAtBone(lua_State* L) {
     auto* e = check_entity(L);
     auto* sim = get_sim(L);
@@ -1388,26 +1389,13 @@ static int prop_CreatePropAtBone(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    const i32 bone = resolve_bone_index(e, L, 2);
-    const auto* bones = e->bone_data();
-    const sim::Quaternion rot =
-        bones && bones->is_valid(bone)
-            ? sim::quat_multiply(e->orientation(),
-                                 bones->bones[static_cast<size_t>(bone)].world_rotation)
-            : e->orientation();
-    const sim::Vector3 at = bone_world_position(e, bone);
-    sim::Prop* made = sim::spawn_prop(L, *sim, lua_tostring(L, 3), at, rot, true);
-    const auto* own = made ? made->bone_data() : nullptr;
-    if (own && own->is_valid(0)) {
-        const sim::BoneInfo& root = own->bones[0];
-        const f32 s = own->model_scale;
-        const sim::Quaternion undo = sim::quat_conjugate(root.world_rotation);
-        const sim::Vector3 back =
-            sim::quat_rotate(undo, {-root.world_position.x * s, -root.world_position.y * s,
-                                    -root.world_position.z * s});
-        const sim::Vector3 offset = sim::quat_rotate(rot, back);
-        made->set_orientation(sim::quat_multiply(rot, undo));
-        made->set_position({at.x + offset.x, at.y + offset.y, at.z + offset.z});
+    const sim::BonePose at = e->bone_world_transform(resolve_bone_index(e, L, 2));
+    sim::Prop* made = sim::spawn_prop(L, *sim, lua_tostring(L, 3), at.position, at.rotation, true);
+    if (made) {
+        const sim::BonePose warped =
+            sim::compose_moho(sim::inverse_moho(made->bone_local_transform(0)), at);
+        made->set_orientation(warped.rotation);
+        made->set_position(warped.position);
         made->note_snap();
         made->place_now();
     }
