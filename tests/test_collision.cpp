@@ -13,6 +13,7 @@
 #include "sim/collision.hpp"
 #include "sim/collision_beam.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/flight_math.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
 #include "sim/projectile_script.hpp"
@@ -441,7 +442,7 @@ TEST_CASE("a shot leaves along its muzzle unless its weapon fires along its solu
     w.muzzle_velocity = 30;
     w.max_range = 24;
     // No target: its solution is along its facing (+z); its muzzle faces +x.
-    const Vector3 muzzle{1, 0, 0};
+    const Quaternion muzzle = osc::sim::coords_orient_moho({1, 0, 0});
     const Projectile* along = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false, muzzle);
     REQUIRE(along);
     CHECK(along->velocity.x == Approx(30.0f));
@@ -491,6 +492,196 @@ TEST_CASE("firing randomness turns a shot by a normal heading and pitch, in degr
     CHECK(std::abs(mean) < 0.15);
     CHECK(std::sqrt(sum_h2 / kShots - mean * mean) == Approx(2.0).epsilon(0.08));
     CHECK(std::sqrt(sum_p2 / kShots) == Approx(2.0).epsilon(0.08));
+}
+
+namespace {
+
+struct DrawScene {
+    osc::lua::LuaState lua;
+    EntityRegistry reg;
+    Unit* owner = nullptr;
+
+    DrawScene() {
+        REQUIRE(lua.do_string("__blueprints = {['/shell'] = {Physics = {}},"
+                              " ['/bomb'] = {Physics = {RealisticOrdinance = true,"
+                              " RotationalVelocityRange = 0.25}}}")
+                    .ok());
+        owner = static_cast<Unit*>(reg.find(add_unit(reg, {0, 0, 0}, box(1, 1, 1))));
+        reg.sim_random().set_mt19937(true);
+        reg.sim_random().seed(1);
+        for (int word = 0; word < 120; ++word) {
+            reg.sim_random().next_u32();
+        }
+    }
+
+    f32 random() { return static_cast<f32>(reg.sim_random().next_double()); }
+
+    std::vector<const Projectile*> fire(osc::sim::Weapon& w, const Vector3& muzzle) {
+        std::vector<const Projectile*> shots;
+        for (int shot = 0; shot < 3; ++shot) {
+            shots.push_back(w.launch(*owner, {0, 0, 0}, nullptr, reg, lua.raw(), false,
+                                     osc::sim::coords_orient_moho(muzzle)));
+            REQUIRE(shots.back());
+        }
+        return shots;
+    }
+};
+
+void check_direction(const Projectile& shot, const Vector3& expected) {
+    const Vector3& v = shot.velocity;
+    const f32 speed = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    CHECK(v.x / speed == Approx(expected.x).margin(1e-6));
+    CHECK(v.y / speed == Approx(expected.y).margin(1e-6));
+    CHECK(v.z / speed == Approx(expected.z).margin(1e-6));
+}
+
+void check_facing(const Projectile& shot, const Quaternion& expected, double margin) {
+    const Quaternion q = shot.pending_orientation();
+    CHECK(q.x == Approx(expected.x).margin(margin));
+    CHECK(q.y == Approx(expected.y).margin(margin));
+    CHECK(q.z == Approx(expected.z).margin(margin));
+    CHECK(q.w == Approx(expected.w).margin(margin));
+}
+
+} // namespace
+
+TEST_CASE("A weapon's shots draw from Moho's stream and turn as the original game's",
+          "[collision]") {
+    // Retail 3599, seed 1: a Striker's, a Mavor's and a bomber's three CreateProjectile shots
+    // each, Random() before and after; the Mavor's barrel and its shots' directions, and the
+    // bombs' GetOrientation (x, y, z, w).
+    DrawScene scene;
+    CHECK(scene.random() == 0.102334432f);
+    osc::sim::Weapon gun;
+    gun.muzzle_velocity = 25;
+    gun.projectile_bp_id = "/shell";
+    scene.fire(gun, {0, 0, 1});
+    CHECK(scene.random() == 0.725997984f);
+
+    CHECK(scene.random() == 0.126314878f);
+    osc::sim::Weapon mavor;
+    mavor.firing_randomness = 0.22f;
+    mavor.muzzle_velocity = 160;
+    mavor.muzzle_velocity_random = 0.7f;
+    mavor.muzzle_velocity_reduce_distance = 4000;
+    mavor.projectile_bp_id = "/shell";
+    const auto shells = scene.fire(mavor, {0, 0.0052353677f, 0.999986295f});
+    CHECK(scene.random() == 0.831692576f);
+    check_direction(*shells[0], {0.00271445432f, 0.0104989261f, 0.9999412f});
+    check_direction(*shells[1], {-0.0027565949f, -0.0038919352f, 0.999988627f});
+    check_direction(*shells[2], {-0.00687255158f, 0.00929375174f, 0.999933195f});
+
+    CHECK(scene.random() == 0.690896928f);
+    osc::sim::Weapon bomber;
+    bomber.firing_randomness = 3;
+    bomber.need_compute_bomb_drop = true;
+    bomber.projectile_bp_id = "/bomb";
+    const auto bombs = scene.fire(bomber, {0, 0, 1});
+    CHECK(scene.random() == 0.289759994f);
+    check_facing(*bombs[0], {0.00730385957f, 4.54308938e-005f, -3.31499365e-007f, 0.999973297f},
+                 1e-5);
+    check_facing(*bombs[1], {-0.00309709343f, 0.00145525986f, 4.51768437e-006f, 0.99999404f}, 1e-5);
+    check_facing(*bombs[2], {-0.00892207678f, -0.00981675833f, -8.76649865e-005f, 0.999912024f},
+                 1e-5);
+}
+
+TEST_CASE("A straight-down shot is turned in COORDS_Orient's frame, as the original game's",
+          "[collision]") {
+    // Retail 3599, seed 1: the Mavor's three shots with its shell made StraightDownOrdinance,
+    // Random() before and after, and their GetOrientation (x, y, z, w).
+    DrawScene scene;
+    CHECK(scene.random() == 0.102334432f);
+    osc::sim::Weapon mavor;
+    mavor.firing_randomness = 0.22f;
+    mavor.muzzle_velocity = 160;
+    mavor.muzzle_velocity_random = 0.7f;
+    mavor.muzzle_velocity_reduce_distance = 4000;
+    mavor.projectile_bp_id = "/shell";
+    mavor.projectile_physics = osc::sim::Weapon::ProjectilePhysics{};
+    mavor.projectile_physics->straight_down = true;
+    const auto shells = scene.fire(mavor, {0, 0, 1});
+    CHECK(scene.random() == 0.269927889f);
+    check_facing(*shells[0], {0.708378255f, -0.00329561299f, -0.00328370044f, 0.70581764f}, 1e-6);
+    check_facing(*shells[1], {0.707399428f, 0.00130162167f, 0.00130053994f, 0.706811607f}, 1e-6);
+    check_facing(*shells[2], {0.705379844f, -0.00188522518f, -0.00189443131f, 0.708824396f}, 1e-6);
+    check_direction(*shells[0], {-0.00930440754f, -0.999950093f, -0.00362122644f});
+}
+
+TEST_CASE("A shot leaves as its muzzle bone is turned, its roll about its axis included",
+          "[collision]") {
+    // XAA0202_lod0.scm: its root and its AutoCannon1 muzzle, rolled a quarter turn about +Z.
+    const auto f = [](u32 b) { return std::bit_cast<f32>(b); };
+    osc::sim::BoneData bones;
+    osc::sim::BoneInfo root;
+    root.name = "XAA0202";
+    root.local_rotation = {f(0x33800000), 0, 0, f(0x3f7fffff)};
+    bones.bones.push_back(root);
+    osc::sim::BoneInfo muzzle;
+    muzzle.name = "Muzzle";
+    muzzle.parent_index = 0;
+    muzzle.local_position = {f(0x3ca5d100), f(0x3e9ed800), f(0x41241b49)};
+    muzzle.local_rotation = {f(0xa6b504f2), f(0x26b504f4), f(0x3f3504f4), f(0x3f3504f2)};
+    bones.bones.push_back(muzzle);
+    bones.name_to_index["xaa0202"] = 0;
+    bones.name_to_index["muzzle"] = 1;
+
+    for (const f32 randomness : {0.0f, 2.0f}) {
+        osc::lua::LuaState lua;
+        REQUIRE(lua.do_string("__blueprints = {['/shell'] = {Physics = {}}}").ok());
+        EntityRegistry reg;
+        auto& owner = static_cast<Unit&>(*reg.find(add_unit(reg, {0, 0, 0}, box(1, 1, 1, 1))));
+        owner.set_bone_data(&bones);
+        owner.init_animated_bones();
+        reg.sim_random().set_mt19937(true);
+        reg.sim_random().seed(1);
+        osc::sim::SimRandom draws = reg.sim_random();
+        osc::sim::Weapon gun;
+        gun.muzzle_bone_name = "Muzzle";
+        gun.max_range = 40;
+        gun.damage = 10;
+        gun.muzzle_velocity = 30;
+        gun.firing_randomness = randomness;
+        gun.projectile_bp_id = "/shell";
+        gun.set_target_ground({0, 0, 30});
+        for (int tick = 0; tick < 30 && gun.fire_clock <= 0; ++tick) {
+            gun.update(owner, reg, lua.raw());
+        }
+        const Projectile* shot = nullptr;
+        reg.for_each([&](osc::sim::Entity& e) {
+            if (e.is_projectile()) {
+                shot = static_cast<const Projectile*>(&e);
+            }
+        });
+        REQUIRE(shot);
+        Quaternion expected = owner.bone_world_rotation(1);
+        if (randomness > 0.0f) {
+            constexpr f32 kDegToRad = 3.14159265358979f / 180.0f;
+            const f32 pitch = draws.gaussian() * randomness * kDegToRad;
+            const f32 heading = draws.gaussian() * randomness * kDegToRad;
+            expected =
+                osc::sim::quat_multiply(expected, osc::sim::euler_to_quat(heading, pitch, 0));
+        }
+        check_facing(*shot, expected, 1e-7);
+        check_direction(*shot, osc::sim::forward_moho(expected));
+    }
+}
+
+TEST_CASE("A weapon with no MuzzleVelocity launches at its projectile's InitialSpeed",
+          "[collision]") {
+    // Retail 3599: a Striker's MainGun made MuzzleVelocity 0 fires its TDFGauss01 at
+    // InitialSpeed 12.
+    osc::lua::LuaState lua;
+    REQUIRE(lua.do_string("__blueprints = {['/gauss'] = {Physics = {InitialSpeed = 12}}}").ok());
+    EntityRegistry reg;
+    auto& owner = static_cast<Unit&>(*reg.find(add_unit(reg, {0, 0, 0}, box(1, 1, 1))));
+    osc::sim::Weapon gun;
+    gun.projectile_bp_id = "/gauss";
+    const Projectile* shot =
+        gun.launch(owner, {0, 0, 0}, nullptr, reg, lua.raw(), false, Quaternion{});
+    REQUIRE(shot);
+    CHECK(shot->velocity.x == Approx(0.0f).margin(1e-6));
+    CHECK(shot->velocity.y == Approx(0.0f).margin(1e-6));
+    CHECK(shot->velocity.z == Approx(12.0f));
 }
 
 TEST_CASE("a shot's speed is MuzzleVelocity, randomised and slowed close in", "[collision]") {

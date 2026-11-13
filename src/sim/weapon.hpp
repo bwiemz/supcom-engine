@@ -352,13 +352,13 @@ public:
     /// ground target, where a manual weapon's last order sent it, or along
     /// the owner's facing): the weapon's muzzle
     /// velocity and spread, the projectile blueprint's physics, the weapon's
-    /// damage. A silo weapon's missile instead leaves along `muzzle_dir` (its
-    /// muzzle bone's facing, when known) and steers itself. It is registered
+    /// damage. It leaves as `muzzle` (its muzzle bone's world rotation, when
+    /// known) is turned; a silo weapon's missile steers itself. It is registered
     /// and given its script object (OnCreate runs), and a launch order the
     /// weapon serves is marked fired. Returns it.
     Projectile* launch(Unit& owner, const Vector3& spawn_pos, const Entity* target,
                        EntityRegistry& registry, lua_State* L, bool in_water,
-                       std::optional<Vector3> muzzle_dir = std::nullopt);
+                       std::optional<Quaternion> muzzle = std::nullopt);
     bool try_fire(Unit& owner, EntityRegistry& registry, lua_State* L,
                   const SimState* sim = nullptr);
 
