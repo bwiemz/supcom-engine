@@ -3,6 +3,7 @@
 // methods; the callbacks the frame's pump brings.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "core/game_state.hpp"
 #include "log_capture.hpp"
@@ -18,6 +19,7 @@
 #include "sim/lockstep_session.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/replay.hpp"
+#include "sim/sim_random.hpp"
 #include "sim/sim_snapshot.hpp"
 #include "sim/unit.hpp"
 #include "sim/manipulator.hpp"
@@ -1157,6 +1159,31 @@ TEST_CASE("A matchmaking client's EjectPlayer ejects the client with that uid (M
     CHECK(osc::lua::eject_session_uid(42) == osc::lua::EjectByUid::Ejected);
     // This client reports Alice's source dropped, as EjectSessionClient does
     CHECK(osc::lua::mp_net_state().session->ejectors(1) == std::vector<osc::u32>{0});
+}
+
+TEST_CASE("A lobby's session keeps the draws of a sim its seed booted, and seeds one booted with "
+          "another",
+          "[lobby][lua][rng]") {
+    const bool same_seed = GENERATE(true, false);
+    CAPTURE(same_seed);
+    MpGuard guard;
+    World w;
+    w.sim.set_seed(same_seed ? 5 : 6);
+    w.sim.add_army("ARMY_1", "ARMY_1");
+    w.sim.add_army("ARMY_2", "ARMY_2");
+    osc::sim::SimRandom expect(5);
+    if (same_seed) {
+        for (int i = 0; i < 4; ++i) {
+            expect.next_u32();
+        }
+    }
+    osc::lua::mp_begin_lobby_game(
+        std::make_unique<osc::sim::LobbyGameTransport>(
+            std::make_unique<osc::sim::LobbyNet>("Host", 1), osc::lua::net_lobby_clock_ms),
+        0, {0, 1}, {{10, "Host"}, {42, "Alice"}}, 5);
+    REQUIRE(osc::lua::mp_attach_session(w.sim));
+    CHECK(w.sim.seed() == 5);
+    CHECK(w.sim.random().next_u32() == expect.next_u32());
 }
 
 TEST_CASE("A resumed lobby retains saved source ids for continued whole-game replays",

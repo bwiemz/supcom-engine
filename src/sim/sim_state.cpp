@@ -997,7 +997,18 @@ ArmyBrain& SimState::add_army(const std::string& name,
     brain->set_name(name);
     brain->set_nickname(nickname);
     armies_.push_back(std::move(brain));
+    generate_army_start(*armies_.back());
     return *armies_.back();
+}
+
+void SimState::generate_army_start(ArmyBrain& brain) {
+    const f32 scale = std::bit_cast<f32>(0x2F4CCCCCu);
+    const f32 fx = SimRandom::mul_word(scale, sim_random_.next_u32()) + 0.1f;
+    const f32 fz = SimRandom::mul_word(scale, sim_random_.next_u32()) + 0.1f;
+    const f32 x = terrain_ ? static_cast<f32>(terrain_->map_width()) * fx : 0.0f;
+    const f32 z = terrain_ ? static_cast<f32>(terrain_->map_height()) * fz : 0.0f;
+    const f32 y = terrain_ ? terrain_->get_surface_height(x, z) : 0.0f;
+    brain.set_start_position({x, y, z});
 }
 
 ArmyBrain* SimState::get_army(i32 index) {
