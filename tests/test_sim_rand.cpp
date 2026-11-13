@@ -12,6 +12,7 @@
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/state_io.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -160,6 +161,22 @@ TEST_CASE("Moho's random stream draws normals as CRandomStream::FRandGaussian do
     CHECK(r.words_drawn() == 10);
     r.seed(1);
     CHECK(bits(r.gaussian()) == 0x3e1fcfa8u);
+}
+
+TEST_CASE("A saved game keeps the normal its random stream holds back", "[simrand][save]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    SimRandom& r = sim.entity_registry().sim_random();
+    r.set_mt19937(true);
+    r.seed(1);
+    (void)r.gaussian();
+
+    osc::lua::LuaState lua2;
+    osc::sim::SimState loaded(lua2.raw(), nullptr);
+    REQUIRE(osc::sim::load_sim_state(loaded, osc::sim::save_sim_state(sim)).empty());
+    SimRandom& again = loaded.entity_registry().sim_random();
+    CHECK(std::bit_cast<osc::u32>(again.gaussian()) == 0x3e9ce066u);
+    CHECK(again.words_drawn() == 4);
 }
 
 // --- Scripts' randomness (M196) ----------------------------------------------
