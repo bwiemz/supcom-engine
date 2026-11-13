@@ -312,9 +312,10 @@ constexpr size_t kCrossers = 8;
 
 void make_crowd(Game& g) {
     for (size_t i = 0; i < kCrowd; ++i) {
-        const f32 x = 6.5f + static_cast<f32>(i % 4) * 4.0f;
-        const f32 z = 44.5f + static_cast<f32>(i / 4) * 8.0f;
-        g.make(i % 4 == 3 ? "bigtank" : "tank", 1, x, z);
+        const size_t col = i % 4;
+        const size_t row = i / 4;
+        g.make(col == 3 ? "bigtank" : "tank", 1, 6.5f + static_cast<f32>(col) * 4.0f,
+               44.5f + static_cast<f32>(row) * 8.0f);
     }
     for (size_t i = 0; i < kCrossers; ++i)
         g.make("tank", 2, 44.5f, 30.5f + static_cast<f32>(i) * 3.0f);
@@ -322,8 +323,10 @@ void make_crowd(Game& g) {
 
 void order_crowd(Game& g, size_t first) {
     for (size_t i = 0; i < kCrowd; ++i) {
-        g.move(first + i, 40.5f + static_cast<f32>(i % 4) * 4.0f,
-               46.5f + static_cast<f32>(i / 4) * 8.0f);
+        const size_t col = i % 4;
+        const size_t row = i / 4;
+        g.move(first + i, 40.5f + static_cast<f32>(col) * 4.0f,
+               46.5f + static_cast<f32>(row) * 8.0f);
     }
     for (size_t i = 0; i < kCrossers; ++i)
         g.move(first + kCrowd + i, 44.5f, 92.5f - static_cast<f32>(i) * 3.0f);
@@ -489,9 +492,12 @@ Scene stun_scene(StunWatch& watch) {
                            20.5f + static_cast<f32>(c) * 3.0f);
                 }
             }
-            for (size_t n = 0; n < 2 * kRow; ++n)
-                g.move(n, 56.5f - static_cast<f32>(n % kRow) * 3.0f,
-                       100.5f + static_cast<f32>(n / kRow) * 3.0f);
+            for (size_t n = 0; n < 2 * kRow; ++n) {
+                const size_t in_row = n % kRow;
+                const size_t row = n / kRow;
+                g.move(n, 56.5f - static_cast<f32>(in_row) * 3.0f,
+                       100.5f + static_cast<f32>(row) * 3.0f);
+            }
         },
         [](Game& g, int t) {
             if (t == kStunBeat) {
