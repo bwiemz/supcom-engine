@@ -357,7 +357,7 @@ TEST_CASE("Engineers assisting a shield generator regenerate its bubble while it
 
     run_lua(g.L, "on = true");
     gen->set_health(50.0f);
-    for (int t = 0; t < 2; ++t) {
+    for (int t = 0; t < 8; ++t) {
         sim.tick();
     }
     const f32 before = bubble->health();
@@ -556,6 +556,29 @@ TEST_CASE("A guarding engineer walks to its build place before it helps a factor
         },
         "the engineer starts helping", 240, [&] { return eng->is_building(); });
     CHECK(std::hypot(eng->position().x - place.x, eng->position().z - place.z) < 1.5f);
+}
+
+TEST_CASE("A guarding engineer that walked up to a factory waits two ticks before it helps",
+          "[guard][assist]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    const auto [factory, unit] = factory_at_work(sim, 60.5f, 50.5f, 60.5f, 47.5f);
+    Unit* eng = engineer_of(sim, 52.5f, 50.5f);
+    eng->push_command(guard(factory, 1), true);
+    sim.tick();
+    REQUIRE(eng->is_moving());
+    tick_until([&] { sim.tick(); }, "the engineer arrives", 240, [&] { return !eng->is_moving(); });
+    for (int t = 0; t < 2; ++t) {
+        CHECK_FALSE(eng->is_building());
+        sim.tick();
+    }
+    CHECK_FALSE(eng->is_building());
+    sim.tick();
+    for (int t = 0; t < 10; ++t) {
+        REQUIRE(eng->is_building());
+        sim.tick();
+    }
 }
 
 TEST_CASE("A guarding engineer that walked up to a factory goes on helping on every tick",

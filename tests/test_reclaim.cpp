@@ -156,6 +156,8 @@ TEST_CASE("A guard helps wear a reclaimed unit down and leaves the finish to the
     ReclaimSim w;
     Unit* eng = w.engineer(10.0f);
     Unit* helper = w.engineer(12.0f);
+    eng->add_category("ENGINEER");
+    helper->add_category("ENGINEER");
     const EntityId target_id = w.target->entity_id();
     eng->push_command(order(CommandType::Reclaim, target_id), true);
     helper->push_command(order(CommandType::Guard, eng->entity_id()), true);

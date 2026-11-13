@@ -472,6 +472,11 @@ void mix_command(Fnv& orders, const UnitCommand& cmd, bool need_unpack) {
         orders.mix(0x5053434eu); // "PSCN"
         orders.mix(static_cast<u64>(static_cast<u32>(cmd.patrol_scan)));
     }
+    if (cmd.handout_wait >= 0 || cmd.guard_prepared) {
+        orders.mix(0x484e4457u); // "HNDW"
+        orders.mix(static_cast<u64>(static_cast<u32>(cmd.handout_wait)) |
+                   (cmd.guard_prepared ? 1ull << 32 : 0ull));
+    }
     if (cmd.patrol_runs != 0 || cmd.patrol_moving) {
         orders.mix(0x5052554eu); // "PRUN"
         orders.mix(static_cast<u64>(static_cast<u32>(cmd.patrol_runs)) |

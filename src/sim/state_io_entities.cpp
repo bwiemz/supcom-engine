@@ -405,6 +405,8 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.i32v(c.dock_wait);
     w.b(c.from_patrol);
     w.i32v(c.patrol_scan);
+    w.i32v(c.handout_wait);
+    w.b(c.guard_prepared);
     w.ids(c.patrol_claimed);
     w.vec3(c.patrol_from);
     w.i32v(c.patrol_runs);
@@ -464,6 +466,8 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.dock_wait = r.i32v();
     c.from_patrol = r.b();
     c.patrol_scan = r.i32v();
+    c.handout_wait = r.i32v();
+    c.guard_prepared = r.b();
     c.patrol_claimed = r.ids();
     c.patrol_from = r.vec3();
     c.patrol_runs = r.i32v();

@@ -271,6 +271,12 @@ struct UnitCommand {
     /// (Moho's patrol and guard tasks run every 6 ticks), or a patrol's
     /// break-off's before it starts. Runtime state.
     i32 patrol_scan = 0;
+    /// A guard's ticks until the task it hands its unit first runs; -1 while
+    /// it hands none. Runtime state.
+    i32 handout_wait = -1;
+    /// An engineer guarding a factory has walked up to it (Moho's guard
+    /// task's Preparing). Runtime state.
+    bool guard_prepared = false;
     /// What a patrol leg has gone to reclaim, not to be picked again on it
     /// (Moho's patrol task's entity set). Runtime state.
     std::vector<EntityId> patrol_claimed;
