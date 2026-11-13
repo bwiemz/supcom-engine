@@ -1857,17 +1857,19 @@ void Unit::hand_over_rally_orders(EntityId built_id, EntityId rally_id, SimConte
     }
 }
 
-bool Unit::guard_reacts(const Unit* guarded) const {
-    // Moho's guard task (its constructor's classification): an engineer
-    // guarding an engineer or a factory only helps; anything else takes on
-    // enemies if it has a weapon to. (A factory guarding a factory assists
-    // before it would ever look.)
+bool Unit::guard_sleeps(const Unit* guarded) const {
     static const CategoryName kEngineer{"ENGINEER"};
     static const CategoryName kFactory{"FACTORY"};
-    if (guarded && has_category(kEngineer) &&
-        (guarded->has_category(kEngineer) || guarded->has_category(kFactory)))
-        return false;
-    return scan_weapon() != nullptr;
+    static const CategoryName kNoFormation{"NOFORMATION"};
+    if (!guarded || has_category(kNoFormation) || !has_category(kEngineer)) {
+        return true;
+    }
+    return !guarded->has_category(kEngineer) && !guarded->has_category(kFactory);
+}
+
+bool Unit::guard_reacts(const Unit* guarded) const {
+    // A factory guarding a factory assists before it would ever look.
+    return guard_sleeps(guarded) && scan_weapon() != nullptr;
 }
 
 void Unit::walk_to(const Vector3& goal, SimContext& ctx) {
@@ -1999,6 +2001,23 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         return *step;
     }
 
+    // Moho's guard task returns 7 (or 1) after handing out a task, which
+    // first runs 6 ticks on (or the next tick).
+    if (is_building() || is_repairing() || is_reclaiming() || silo_assist_id_) {
+        cmd.handout_wait = -1;
+    }
+    const auto hands_out = [&] {
+        if (cmd.handout_wait < 0) {
+            cmd.handout_wait = guard_sleeps(target_unit) ? 6 : 1;
+            abort_move();
+            return true;
+        }
+        if (cmd.handout_wait > 0) {
+            --cmd.handout_wait;
+        }
+        return cmd.handout_wait > 0;
+    };
+
     // Help only within reach of the work (M206e): Moho's guard hands
     // it to a repair or reclaim task. A build, a silo or a repair
     // measures the gap to that unit's skirt (MaxBuildDistance to
@@ -2066,6 +2085,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     if (repairs && target_unit->is_being_built()) {
         if (is_repairing()) stop_repairing(L, registry);
         if (is_reclaiming()) stop_reclaiming(L, &registry);
+        if (build_target_id_ != cmd.target_id && hands_out()) {
+            return OrderStep::Hold;
+        }
         if (within_reach(*target_unit, true, build_target_id_ == cmd.target_id) &&
             target_unit->holds_for_repair()) {
             return order_repair_construction(cmd, dt, ctx, econ_eff, *target_unit, task_waits);
@@ -2092,6 +2114,13 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         EntityId target_build_id = target_unit->build_target_id();
         const bool helping = build_target_id_ == target_build_id;
         const bool factory_build = !helping && target_unit->has_category("FACTORY");
+        // Moho's guard task of an engineer guarding a factory starts
+        // Preparing: it walks up, then waits a tick before it hands out.
+        const bool preparing = factory_build && !cmd.guard_prepared && !guard_sleeps(target_unit) &&
+                               !target_unit->has_category("ENGINEER");
+        if (!helping && !preparing && hands_out()) {
+            return OrderStep::Hold;
+        }
         const Entity& reach = factory_build ? *target_unit : *guarded_build;
         // Moho's repair task for a structure factory's build sends its helper
         // to the build place first, within reach or not, and begins when the
@@ -2121,6 +2150,11 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 stop_assisting(ctx.L, &ctx.registry);
             }
         } else {
+            if (preparing) {
+                cmd.guard_prepared = true;
+                cmd.handout_wait = 2;
+                return OrderStep::Hold;
+            }
             if (build_target_id_ != target_build_id) {
                 // Switch to new assist target
                 if (is_building()) stop_assisting(ctx.L, &ctx.registry);
@@ -2180,6 +2214,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         working = true;
         if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         EntityId target_reclaim_id = target_unit->reclaim_target_id();
+        if (reclaim_target_id_ != target_reclaim_id && hands_out()) {
+            return OrderStep::Hold;
+        }
         if (!within_reach(*guarded_reclaim, false, false)) {
             if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         } else {
@@ -2232,8 +2269,12 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (repair_target_id_ == cmd.target_id) {
             stop_repairing(L, registry);
             cmd.task_wait = 6;
+            cmd.handout_wait = 0;
             cmd.patrol_scan = 0;
             task_waits = true;
+        }
+        if (silo_assist_id_ != cmd.target_id && !task_waits && hands_out()) {
+            return OrderStep::Hold;
         }
         if (within_reach(*target_unit, true, false) && target_unit->holds_for_repair()) {
             // Moho's repair task on it, begun unpaused: focus, OnStartBuild,
@@ -2281,6 +2322,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         // once, then every 6 ticks, and a task it hands out first runs 6 ticks on
         if (silo_assist_id_ == cmd.target_id && !target_unit->silo_building()) {
             cmd.task_wait = needs_repair() ? 6 : 12;
+            cmd.handout_wait = 0;
             cmd.patrol_scan = 0;
             task_waits = true;
         }
@@ -2291,6 +2333,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         // Auto-repair: if target is damaged
         if (repairs && needs_repair() && target_unit->holds_for_repair()) {
             working = true;
+            if (repair_target_id_ != cmd.target_id && hands_out()) {
+                return OrderStep::Hold;
+            }
             if (!within_reach(*target_unit, true, repair_target_id_ == cmd.target_id)) {
                 if (is_repairing()) stop_repairing(L, registry);
             } else {
@@ -2313,6 +2358,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                     progress_repair(dt, registry, L, econ_eff);
                     if (!repair_target_id_ && target_unit->silo_building()) {
                         cmd.task_wait = 6;
+                        cmd.handout_wait = 0;
                         cmd.patrol_scan = 0;
                     }
                 }
@@ -2322,6 +2368,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         }
     }
 
+    if (!working && !task_waits) {
+        cmd.handout_wait = -1;
+    }
     return guard_follow(*target_unit, working, winged_goal, ctx);
 }
 

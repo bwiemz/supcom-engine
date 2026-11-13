@@ -1,5 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "sim/lua_sim.hpp"
 #include "sim/manipulator.hpp"
@@ -103,12 +104,15 @@ struct AssistSim {
         e.set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
     }
 
-    Unit* engineer(const char* name, osc::f32 x) {
+    Unit* engineer(const char* name, osc::f32 x, bool engineer_category = true) {
         auto u = std::make_unique<Unit>();
         u->set_position({x, 0.0f, 20.0f});
         u->set_build_rate(10.0f);
         u->set_max_build_distance(10.0f);
         u->add_category("REPAIR");
+        if (engineer_category) {
+            u->add_category("ENGINEER");
+        }
         auto arm = std::make_unique<AimManipulator>();
         arm->set_builder_arm(true);
         u->add_manipulator(std::move(arm));
@@ -231,6 +235,48 @@ TEST_CASE("A guard builds its unfinished target and keeps guarding when the work
     }
 }
 
+TEST_CASE("A guard's help starts 6 ticks later than a repair order's, or a tick later for an "
+          "engineer guarding an engineer or a factory",
+          "[build][assist][guard]") {
+    struct Case {
+        const char* what;
+        CommandType type;
+        bool engineer;
+        bool no_formation;
+        const char* site_category;
+        int wait;
+    };
+    const Case c = GENERATE(
+        Case{"a repair order", CommandType::Repair, true, false, nullptr, 0},
+        Case{"a repairer that is no engineer", CommandType::Guard, false, false, nullptr, 6},
+        Case{"an engineer guarding a structure", CommandType::Guard, true, false, nullptr, 6},
+        Case{"an engineer of no formation guarding a factory", CommandType::Guard, true, true,
+             "FACTORY", 6},
+        Case{"an engineer guarding an engineer", CommandType::Guard, true, false, "ENGINEER", 1},
+        Case{"an engineer guarding a factory", CommandType::Guard, true, false, "FACTORY", 1});
+    CAPTURE(c.what);
+    AssistSim w;
+    if (c.site_category) {
+        w.site->add_category(c.site_category);
+    }
+    Unit* eng = w.engineer("eng", 16.0f, c.engineer);
+    if (c.no_formation) {
+        eng->add_category("NOFORMATION");
+    }
+    eng->push_command(order(c.type, *w.site, 1), true);
+    for (int tick = 0; tick < c.wait; ++tick) {
+        w.sim.tick();
+        CHECK(w.log().empty());
+        CHECK_FALSE(arm_of(*eng).has_target());
+    }
+    w.sim.tick();
+    CHECK(w.log() == "eng arm");
+    CHECK_FALSE(eng->is_building());
+    w.sim.tick();
+    CHECK(w.log() == "eng start Repair");
+    CHECK(eng->is_building());
+}
+
 TEST_CASE("A repair whose target is gone stops with nil for it, and fails nothing",
           "[build][assist]") {
     AssistSim w;
@@ -259,7 +305,7 @@ TEST_CASE("A repair whose target is gone stops with nil for it, and fails nothin
         w.site->set_health(50.0f);
         eng->push_command(order(CommandType::Repair, *w.site, 1), true);
     }
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         w.sim.tick();
     }
     REQUIRE(w.log().find("start Repair") != std::string::npos);
@@ -299,9 +345,9 @@ TEST_CASE("A guard helping a build aims its arm at what it helps build", "[build
     Unit* helper = w.engineer("helper", 14.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
     helper->push_command(order(CommandType::Guard, *eng, 2), true);
-    // The repair starts on the second tick; the helper aims at it then and
-    // starts on the third
-    for (int i = 0; i < 3; ++i) {
+    // The repair starts on the second tick; the helper hands out its help
+    // then, aims on the third and starts on the fourth
+    for (int i = 0; i < 4; ++i) {
         w.sim.tick();
     }
     CHECK(helper->is_building());
@@ -390,10 +436,10 @@ TEST_CASE("A guard paused before it helps a build waits until a retry after unpa
         w.sim.tick();
         CHECK_FALSE(helper->is_building());
     }
-    // The helper's arm is on the build from the third tick, where it meets
-    // the pause, then each 10th: the 23rd, the 8th after the unpause.
+    // The helper's arm is on the build from the fourth tick, where it meets
+    // the pause, then each 10th: the 24th, the 9th after the unpause.
     helper->set_paused(false);
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 8; ++i) {
         w.sim.tick();
         CHECK_FALSE(helper->is_building());
     }
@@ -411,10 +457,10 @@ TEST_CASE("A guard paused before building its ward consumes its retry timer once
         w.sim.tick();
         CHECK_FALSE(eng->is_building());
     }
-    // Like a direct repair, the arm arrives on tick 2, then retries on
-    // ticks 12 and 22. Unpausing on tick 15 leaves seven ticks to wait.
+    // Its help starts 6 ticks on, the arm arriving on tick 8, then retries
+    // on ticks 18 and 28. Unpausing on tick 15 leaves three ticks to wait.
     eng->set_paused(false);
-    for (int tick = 0; tick < 6; ++tick) {
+    for (int tick = 0; tick < 2; ++tick) {
         w.sim.tick();
         CHECK_FALSE(eng->is_building());
     }
