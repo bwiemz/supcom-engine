@@ -332,7 +332,26 @@ Vector3 Unit::build_place(const Vector3& site, f32 skirt_x, f32 skirt_z, SimCont
     return goal;
 }
 
+Vector3 Unit::guard_anchor_place(const Unit& guarded, SimContext& ctx) const {
+    Vector3 place = guarded.position();
+    if (ctx.sim && ctx.terrain) {
+        // RUnitBlueprint::GetSkirtRect
+        const auto x0 = static_cast<f32>(std::lrint(place.x - guarded.footprint_size_x() * 0.5f)) +
+                        guarded.skirt_offset_x();
+        const auto z0 = static_cast<f32>(std::lrint(place.z - guarded.footprint_size_z() * 0.5f)) +
+                        guarded.skirt_offset_z();
+        const MoveExclusion skirt{x0, z0, x0 + guarded.skirt_size_x(), z0 + guarded.skirt_size_z()};
+        prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()), place,
+                     0, &skirt);
+    }
+    return place;
+}
+
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
+    if (guard_anchor_.held &&
+        (command_queue_.empty() || command_queue_.front().command_id != guard_anchor_.order)) {
+        free_guard_anchor(ctx.sim);
+    }
     const bool awaited = std::exchange(arm_awaited_, false);
     if (!awaited && !is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
         !silo_assist_id_ &&
@@ -1861,7 +1880,10 @@ bool Unit::guard_sleeps(const Unit* guarded) const {
     static const CategoryName kEngineer{"ENGINEER"};
     static const CategoryName kFactory{"FACTORY"};
     static const CategoryName kNoFormation{"NOFORMATION"};
-    if (!guarded || has_category(kNoFormation) || !has_category(kEngineer)) {
+    static const CategoryName kRebuilder{"REBUILDER"};
+    // A REBUILDER binds no structure it guards (RefreshGuardedUnitFromTarget).
+    if (!guarded || has_category(kNoFormation) || !has_category(kEngineer) ||
+        (has_category(kRebuilder) && !guarded->is_mobile())) {
         return true;
     }
     return !guarded->has_category(kEngineer) && !guarded->has_category(kFactory);
@@ -2018,6 +2040,33 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         return cmd.handout_wait > 0;
     };
 
+    // Moho's guard task of an engineer guarding a factory starts Preparing:
+    // it walks up to the factory, then waits a tick before it hands out.
+    if (!cmd.guard_prepared && !guard_sleeps(target_unit) && target_unit->has_category("FACTORY") &&
+        !target_unit->has_category("ENGINEER")) {
+        if (effective_speed() <= 0 || (flies_winged_on_guard(*this) && ctx.sim)) {
+            cmd.guard_prepared = true;
+        } else {
+            if (!guard_anchor_.held || guard_anchor_.order != cmd.command_id) {
+                const Vector3 place = guard_anchor_place(*target_unit, ctx);
+                free_guard_anchor(ctx.sim);
+                guard_anchor_ = {true, cmd.command_id,
+                                 footprint_rect(footprint(), place.x, place.z)};
+                if (ctx.sim) {
+                    ctx.sim->reserve_ground(guard_anchor_.reserved, true);
+                }
+                set_path_goal(place, ctx);
+            }
+            if (approach_update(ctx)) {
+                return OrderStep::Hold;
+            }
+            free_guard_anchor(ctx.sim);
+            cmd.guard_prepared = true;
+            cmd.handout_wait = 2;
+            return OrderStep::Hold;
+        }
+    }
+
     // Help only within reach of the work (M206e): Moho's guard hands
     // it to a repair or reclaim task. A build, a silo or a repair
     // measures the gap to that unit's skirt (MaxBuildDistance to
@@ -2114,29 +2163,28 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         EntityId target_build_id = target_unit->build_target_id();
         const bool helping = build_target_id_ == target_build_id;
         const bool factory_build = !helping && target_unit->has_category("FACTORY");
-        // Moho's guard task of an engineer guarding a factory starts
-        // Preparing: it walks up, then waits a tick before it hands out.
-        const bool preparing = factory_build && !cmd.guard_prepared && !guard_sleeps(target_unit) &&
-                               !target_unit->has_category("ENGINEER");
-        if (!helping && !preparing && hands_out()) {
+        if (!helping && hands_out()) {
             return OrderStep::Hold;
         }
         const Entity& reach = factory_build ? *target_unit : *guarded_build;
-        // Moho's repair task for a structure factory's build sends its helper
-        // to the build place first, within reach or not, and begins when the
-        // move ends. A mobile factory moves, so its helper keeps chasing it.
+        // Moho's repair task for a structure factory's build sends a helper out
+        // of its reach to the build place, and begins when the move ends. A
+        // mobile factory moves, so its helper keeps chasing it.
         bool walking = false;
         if (factory_build && !target_unit->is_mobile() && effective_speed() > 0 &&
             !(flies_winged_on_guard(*this) && ctx.sim)) {
             if (!cmd.approached) {
                 cmd.approached = true;
-                cmd.prepared = true;
-                Vector3 site = target_unit->position();
-                snap_structure_center(site.x, site.z, target_unit->footprint_size_x(),
-                                      target_unit->footprint_size_z());
-                set_path_goal(build_place(site, target_unit->skirt_size_x(),
-                                          target_unit->skirt_size_z(), ctx),
-                              ctx);
+                cmd.prepared = work_gap(*this, target_unit->position(),
+                                        skirt_extent(*target_unit)) > max_build_distance_;
+                if (cmd.prepared) {
+                    Vector3 site = target_unit->position();
+                    snap_structure_center(site.x, site.z, target_unit->footprint_size_x(),
+                                          target_unit->footprint_size_z());
+                    set_path_goal(build_place(site, target_unit->skirt_size_x(),
+                                              target_unit->skirt_size_z(), ctx),
+                                  ctx);
+                }
             }
             if (cmd.prepared) {
                 walking = approach_update(ctx);
@@ -2150,11 +2198,6 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 stop_assisting(ctx.L, &ctx.registry);
             }
         } else {
-            if (preparing) {
-                cmd.guard_prepared = true;
-                cmd.handout_wait = 2;
-                return OrderStep::Hold;
-            }
             if (build_target_id_ != target_build_id) {
                 // Switch to new assist target
                 if (is_building()) stop_assisting(ctx.L, &ctx.registry);
@@ -2508,12 +2551,16 @@ OrderStep Unit::guard_follow(const Unit& target, bool working,
         const Entity* focus = is_reclaiming()  ? registry.find(reclaim_target_id_)
                               : is_capturing() ? registry.find(capture_target_id_)
                                                : nullptr;
+        const bool at_focus = focus && !focus->destroyed();
+        // faf-re CUnitGuardTask::Execute: once it hands out help it no longer follows.
+        if (working && !winged_goal && !at_focus && !silo_assist_id_) {
+            return OrderStep::Hold;
+        }
         const Vector3 goal =
             winged_goal ? *winged_goal
-            : focus && !focus->destroyed()
-                ? focus->position()
-                : approach_point(*this, target.position(), target.skirt_size_x() * 0.5f,
-                                 target.skirt_size_z() * 0.5f);
+            : at_focus  ? focus->position()
+                        : approach_point(*this, target.position(), target.skirt_size_x() * 0.5f,
+                                         target.skirt_size_z() * 0.5f);
         navigator_.abort_move();
         set_course({.kind = AirCourse::Kind::Winged, .at = goal});
         return OrderStep::Hold;

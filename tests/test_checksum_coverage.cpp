@@ -179,6 +179,7 @@ TEST_CASE("State that decides a unit's next move changes the sync checksum, in i
             {"landing layer", "units", [&] { landing([](auto& l) { l.layer = "Water"; }); }},
             {"landing reservation", "units",
              [&] { landing([](auto& l) { l.reserved = {10, 7, 14, 11}; }); }},
+            {"guard anchor", "units", [&] { u.set_guard_anchor({true, 3, {12, 9, 13, 10}}); }},
             {"vertical event", "units", [&] { u.set_vert_event("Bottom", nullptr); }},
             {"flying", "units", [&] { u.air_combat().flying = true; }},
             {"airframe velocity", "units",
@@ -374,6 +375,7 @@ TEST_CASE("A game saved with that state, restored and played on, matches", "[syn
         move.formed = true;
         move.speed_cap = 3.0f;
         u.push_command(move, true);
+        u.set_guard_anchor({true, u.command_queue().front().command_id, {12, 9, 13, 10}});
         UnitCommand attack; // queued behind it, its facing clock running
         attack.type = CommandType::Attack;
         attack.target_id = ids[1];
@@ -416,6 +418,8 @@ TEST_CASE("A game saved with that state, restored and played on, matches", "[syn
     CHECK(b.get_army(0)->find_platoon_by_name("keepme") != nullptr);
     CHECK(u.idle_landing().descending);
     CHECK(u.idle_landing().layer == "Land");
+    CHECK(u.guard_anchor().held);
+    CHECK(u.guard_anchor().reserved.x1 == 13);
     CHECK(u.vert_event() == "Down");
     CHECK(u.air_combat().circle_reverse);
     CHECK(u.command_queue().front().formed);

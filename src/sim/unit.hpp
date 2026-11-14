@@ -1067,6 +1067,7 @@ public:
     const Vector3& air_facing() const { return air_facing_; }
     void set_air_facing(const Vector3& f) { air_facing_ = f; }
     bool flew_at(u32 tick) const { return lift_tick_ == tick; }
+    bool has_flown() const { return lift_tick_ != 0; }
 
     // Motion type (from blueprint Physics.MotionType)
     const std::string& motion_type() const { return motion_type_; }
@@ -1396,6 +1397,21 @@ public:
     void set_idle_landing(const IdleLanding& l) { idle_landing_ = l; }
     /// Its reservation goes (landed, taken off, or gone).
     void free_landing_reservation(SimState& sim);
+    /// An engineer walking up to the factory it guards: the place it reserved
+    /// there (Moho's guard task's move anchor) and the guard order's id.
+    struct GuardAnchor {
+        bool held = false;
+        u32 order = 0;
+        OccupancyRect reserved{};
+    };
+    const GuardAnchor& guard_anchor() const { return guard_anchor_; }
+    /// For tests: its anchor as given (no reservation taken or freed).
+    void set_guard_anchor(const GuardAnchor& a) { guard_anchor_ = a; }
+    /// Its reservation goes; with no sim, only its record.
+    void free_guard_anchor(SimState* sim);
+    /// What the unit has reserved of the ground (Moho's Unit::ReserveOgridRect):
+    /// its guard's move anchor, else its landing place; empty when nothing.
+    const OccupancyRect& reserved_ground() const;
     /// A transport's pickup (M206m): the units given slots, not yet aboard;
     /// whether it is at their centre; the ticks it has waited there.
     const std::vector<EntityId>& pickup_ids() const { return pickup_ids_; }
@@ -1670,6 +1686,9 @@ private:
     /// place nearest the site clear of its skirt grown by a cell, else the
     /// point toward the unit where its own cell clears it.
     Vector3 build_place(const Vector3& site, f32 skirt_x, f32 skirt_z, SimContext& ctx) const;
+    /// Moho's EnsureReservedGuardMoveAnchorPosition: the place nearest `guarded`
+    /// clear of its skirt (PrepareMove(0)), else its position.
+    Vector3 guard_anchor_place(const Unit& guarded, SimContext& ctx) const;
     /// An order that walked toward its target lets the navigator go when it
     /// ends before it got there (its target gone, taken or whole): Moho's
     /// task ends its move with it, so the unit isn't left Moving.
@@ -2193,6 +2212,7 @@ private:
     f32 auto_land_time_ = 0.0f;         // Air.AutoLandTime
     f32 start_turn_distance_ = 0.0f;    // Air.StartTurnDistance
     IdleLanding idle_landing_;
+    GuardAnchor guard_anchor_;
     // A unit beaming up into its transport (M206m): ticks left of the 10,
     // and where it started.
     i32 beam_up_ticks_ = 0;

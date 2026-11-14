@@ -3975,6 +3975,18 @@ void Unit::free_landing_reservation(SimState& sim) {
     r = {};
 }
 
+void Unit::free_guard_anchor(SimState* sim) {
+    const OccupancyRect& r = guard_anchor_.reserved;
+    if (sim && r.x1 > r.x0 && r.z1 > r.z0) {
+        sim->reserve_ground(r, false);
+    }
+    guard_anchor_ = {};
+}
+
+const OccupancyRect& Unit::reserved_ground() const {
+    return guard_anchor_.held ? guard_anchor_.reserved : idle_landing_.reserved;
+}
+
 void Unit::take_off(SimContext& ctx) {
     lifts_off_ = false;
     idle_landing_.descending = false;
@@ -4162,7 +4174,7 @@ void Unit::fly_unflown_tick(f64 dt, SimContext& ctx) {
         return;
     }
     const u32 now = ctx.sim->tick_count();
-    if (now == 0 || flew_at(now) || !flew_at(now - 1)) {
+    if (now == 0 || flew_at(now) || (has_flown() && !flew_at(now - 1))) {
         return;
     }
     if (!navigator_.air_hold()) {

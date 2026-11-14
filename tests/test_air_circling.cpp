@@ -66,6 +66,15 @@ std::unique_ptr<osc::map::Terrain> terrain(u32 size, bool slope, f32 water = 0.0
     return std::make_unique<osc::map::Terrain>(std::move(hm), water, water > 0.0f);
 }
 
+/// SCMP_009 where the drone-assist probe ran, moved 600 west and 300 north.
+std::unique_ptr<osc::map::Terrain> probe_ground() {
+    std::vector<osc::u16> heights(static_cast<size_t>(129) * 129, 2391);
+    heights[47 * 129 + 68] = 2390;
+    heights[52 * 129 + 68] = 2390;
+    osc::map::Heightmap hm(128, 128, 1.0f / 128.0f, std::move(heights));
+    return std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false);
+}
+
 /// A sim on a flat 128 map with Moho-like gunships ('gunship'; 'steady'
 /// never changes its way round), one that hovers over its target
 /// ('hoverer'), a winged one ('plane') and a drone.
@@ -74,13 +83,13 @@ struct World {
     osc::blueprints::BlueprintStore store{state.raw()};
     osc::sim::SimState sim{state.raw(), &store};
 
-    World() {
+    explicit World(std::unique_ptr<osc::map::Terrain> ground = terrain(128, false)) {
         osc::sim::GameSetup game;
         game.scenario = "/maps/test/test_scenario.lua";
         game.seed = 7;
         osc::lua::register_moho_bindings(state, sim);
         osc::lua::register_sim_bindings(state, sim);
-        sim.set_terrain(terrain(128, false));
+        sim.set_terrain(std::move(ground));
         sim.build_pathfinding_grid();
         sim.add_army("ARMY_1", "ARMY_1");
         sim.set_game_setup(game);
@@ -126,6 +135,21 @@ struct World {
                     " Air = {CanFly = true, MaxAirspeed = 6, MinAirspeed = 3, StartTurnDistance = "
                     "5,"
                     " KMove = 1, KMoveDamping = 1.2}}"),
+                // Cybran's build drone, URA0001, and a structure for it to mend
+                std::string(
+                    "return {BlueprintId = 'buildbot', Categories = {'AIR', 'MOBILE', 'REPAIR'},"
+                    " Defense = {MaxHealth = 30}, SizeX = 0.25, SizeY = 0.25, SizeZ = 0.25,"
+                    " Economy = {BuildRate = 0, MaxBuildDistance = 100},"
+                    " General = {CommandCaps = {RULEUCC_Guard = true, RULEUCC_Repair = true}},"
+                    " Physics = {MotionType = 'RULEUMT_Air', Elevation = 3, MaxSpeed = 20.5},"
+                    " Air = {CanFly = true, CirclingElevationChangeRatio = 0.5,"
+                    " CirclingRadiusVsAirMult = 0.66, KLift = 3, KLiftDamping = 1, KMove = 4,"
+                    " KMoveDamping = 1, KTurn = 4, KTurnDamping = 2, LiftFactor = 7,"
+                    " MaxAirspeed = 8, MinAirspeed = 8, StartTurnDistance = 5, BankFactor = 0.1}}"),
+                std::string("return {BlueprintId = 'wall', Categories = {'STRUCTURE'},"
+                            " Defense = {MaxHealth = 600}, SizeX = 0.6, SizeZ = 0.4,"
+                            " Economy = {BuildTime = 125, BuildCostMass = 75,"
+                            " BuildCostEnergy = 750}, Physics = {MotionType = 'RULEUMT_None'}}"),
                 std::string(
                     "return {BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
                     " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
@@ -144,8 +168,9 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"gunship", "steady", "hoverer", "plane", "banker", "flatwing",
-                               "gunfwd", "nomin", "drone", "repairdrone", "tank"}) {
+        for (const char* id :
+             {"gunship", "steady", "hoverer", "plane", "banker", "flatwing", "gunfwd", "nomin",
+              "drone", "repairdrone", "buildbot", "wall", "tank"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -877,4 +902,112 @@ TEST_CASE("A circling gunship leans forward as its speed changes only with BankF
     REQUIRE(engaged(forward));
     CHECK(forward_pitch > 0.1f);
     CHECK(plain_pitch < forward_pitch * 0.5f);
+}
+
+namespace {
+
+Unit* made_at(World& w, const char* bp, f32 z) {
+    Unit* found = nullptr;
+    w.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        auto& u = static_cast<Unit&>(e);
+        if (u.blueprint_id() == bp && u.position().z == z) {
+            found = &u;
+        }
+    });
+    REQUIRE(found);
+    return found;
+}
+
+} // namespace
+
+TEST_CASE("CreateUnit's layer puts an aircraft on it at the height it was given; without one it "
+          "starts at its flight height, as retail's",
+          "[air_circling]") {
+    World w(probe_ground());
+    REQUIRE(
+        w.state
+            .do_string("CreateUnit('buildbot', 1, 68.5, GetSurfaceHeight(68.5, 40.5) + 1.1, 40.5,"
+                       " 0, 0, 0, 1, 'Air')"
+                       " CreateUnit('buildbot', 1, 68.5, GetSurfaceHeight(68.5, 52.5) + 1.1, 52.5,"
+                       " 0, 0, 0, 1)")
+            .ok());
+    const Unit& low = *made_at(w, "buildbot", 40.5f);
+    const Unit& plain = *made_at(w, "buildbot", 52.5f);
+    CHECK(low.layer() == "Air");
+    CHECK(std::abs(low.position().y - 19.779688f) < 1e-5f);
+    CHECK(std::abs(plain.position().y - 21.677734f) < 1e-5f);
+}
+
+TEST_CASE("Build drones guarding a hurt wall stay where they were made till they repair, the one "
+          "made low climbing meanwhile, then circle it at their drawn heights, as retail's",
+          "[air_circling]") {
+    World w(probe_ground());
+    w.sim.tick(); // made after the game's first tick, as the probe's were (on tick 10)
+    REQUIRE(
+        w.state
+            .do_string("wall = CreateUnitHPR('wall', 1, 84.5, GetSurfaceHeight(84.5, 46.5), 46.5,"
+                       " 0, 0, 0)"
+                       " low = CreateUnit('buildbot', 1, 68.5, GetSurfaceHeight(68.5, 40.5) + 1.1,"
+                       " 40.5, 0, 0, 0, 1, 'Air')"
+                       " high = CreateUnit('buildbot', 1, 68.5, GetSurfaceHeight(68.5, 46.5) + 3,"
+                       " 46.5, 0, 0, 0, 1, 'Air')"
+                       " IssueGuard({low}, wall) IssueGuard({high}, wall)")
+            .ok());
+    made_at(w, "wall", 46.5f)->set_health(100.0f);
+    // Retail's drone-assist probe: each drone's heights from tick 11, the circle it drew (fitted
+    // to its path), the tick its arm came on target and where it was at tick 35.
+    const f32 low_heights[] = {19.808187f, 19.890409f, 20.019321f, 20.187086f, 20.385370f,
+                               20.605629f, 20.839388f, 21.078485f, 21.315296f, 21.552519f,
+                               21.794275f, 22.036615f, 22.276140f, 22.509418f, 22.733038f,
+                               22.943783f, 23.138317f, 23.312946f, 23.464197f, 23.589844f,
+                               23.688540f, 23.759365f, 23.802118f, 23.817638f, 23.807823f};
+    const f32 high_heights[] = {21.677734f, 21.677734f, 21.677734f, 21.677734f, 21.677734f,
+                                21.677734f, 21.677734f, 21.677734f, 21.677734f, 21.677734f,
+                                21.678722f, 21.681629f, 21.686628f, 21.693735f, 21.702234f,
+                                21.711378f, 21.721083f, 21.731609f, 21.742937f, 21.754421f,
+                                21.765881f, 21.777462f, 21.788767f, 21.799141f, 21.808058f};
+    struct Drone {
+        f32 z;
+        const f32* heights;
+        f32 elevation;
+        f32 radius;
+        bool reverse;
+        u32 repairs_at;
+        Vector3 ends_at;
+        Unit* unit;
+    };
+    Drone drones[] = {
+        {40.5f, low_heights, 1.3502f, 0.806f, false, 10, {83.107727f, 0.0f, 42.920135f}, nullptr},
+        {46.5f, high_heights, 0.108f, 0.6114f, true, 11, {82.403992f, 0.0f, 48.643677f}, nullptr},
+    };
+    for (Drone& d : drones) {
+        d.unit = made_at(w, "buildbot", d.z);
+        d.unit->set_builder_on_target(false);
+        AirCombatState& st = d.unit->air_combat();
+        st.circle_elevation = d.elevation;
+        st.circle_radius_ratio = d.radius;
+        st.circle_reverse = d.reverse;
+        st.timeout_tick = 1000000;
+    }
+    for (u32 t = 1; t <= 25; ++t) {
+        for (Drone& d : drones) {
+            if (t == d.repairs_at) {
+                d.unit->set_builder_on_target(true);
+            }
+        }
+        w.sim.tick();
+        for (const Drone& d : drones) {
+            const Vector3& p = d.unit->position();
+            INFO("tick " << t << " made at z " << d.z << " y " << p.y);
+            CHECK(std::abs(p.y - d.heights[t - 1]) < 0.005f);
+            CHECK(d.unit->is_repairing() == (t >= d.repairs_at));
+            if (t < d.repairs_at) {
+                CHECK(p.x == 68.5f);
+                CHECK(p.z == d.z);
+            }
+        }
+    }
+    for (const Drone& d : drones) {
+        CHECK(flat_dist(*d.unit, d.ends_at) < 0.05f);
+    }
 }

@@ -40,7 +40,7 @@ bool prepare_move(const Unit& unit, const map::Terrain& map, const OccupancyGrid
     // Moho's IsPrepareMoveCandidateValid: clear of the skirt rect (its one
     // cell, touching counting: ShouldTestPrepareMoveCellAgainstSkirt); inside
     // the bounds by its side; its footprint fits (on the Water layer, SUB
-    // aside); no one has reserved it.
+    // aside); no other unit has reserved it.
     const auto valid = [&](i32 x, i32 z, f32 wx, f32 wz) {
         if (exclude && exclude->x1 > exclude->x0 && exclude->z1 > exclude->z0) {
             const auto cx = static_cast<f32>(x);
@@ -57,7 +57,7 @@ bool prepare_move(const Unit& unit, const map::Terrain& map, const OccupancyGrid
         u8 caps = map_caps(fp, map, x, z);
         if (unit.layer() == "Water") caps = static_cast<u8>(caps & ~oc::kSub);
         if (footprint_fits(fp, map, grid, x, z, caps) == 0) return false;
-        return !grid.reserved_any({x, z, x + fp.size_x, z + fp.size_z});
+        return !grid.reserved_any({x, z, x + fp.size_x, z + fp.size_z}, unit.reserved_ground());
     };
     // The cell the goal will be (ToCellPos, rounded). Moho truncates here,
     // the same cell for its destinations, which are cell centres; the
