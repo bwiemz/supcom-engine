@@ -76,7 +76,7 @@ void collide_with_props(Unit& unit, EntityRegistry& registry, lua_State* L, u32 
     }
     if (unit.is_dying() || unit.is_being_built() || unit.can_fly() || unit.transport_id() ||
         unit.parent_entity_id() || unit.layer() == "Air" || unit.layer() == "Sub" ||
-        unit.has_category("NAVAL")) {
+        unit.has_category("NAVAL") || unit.destroyed()) {
         return;
     }
     const OrientedBox box =

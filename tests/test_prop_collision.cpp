@@ -130,6 +130,18 @@ TEST_CASE("With Moho pathing a unit made on a prop runs into it only if its moti
     CHECK(scene.calls_after(0, 5, true) == calls);
 }
 
+TEST_CASE("A unit queued for deletion runs into no prop", "[collision][lua]") {
+    const auto [moho, queued, calls] = GENERATE(table<bool, bool, int>(
+        {{false, false, 1}, {false, true, 0}, {true, false, 1}, {true, true, 0}}));
+    Scene scene(1, 1);
+    scene.unit->set_motion_type("RULEUMT_Land");
+    if (queued) {
+        scene.registry.destroy(*scene.unit);
+    }
+    INFO("moho pathing " << moho << ", queued " << queued);
+    CHECK(scene.calls_after(0, 5, moho) == calls);
+}
+
 TEST_CASE("The prop grid finds a prop where it stands, after it moves, until it goes",
           "[collision]") {
     EntityRegistry registry;
