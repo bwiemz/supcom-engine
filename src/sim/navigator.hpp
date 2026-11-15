@@ -77,7 +77,8 @@ public:
     }
 
     bool speed_through_goal() const { return speed_through_goal_; }
-    void set_speed_through_goal(bool b) { speed_through_goal_ = b; }
+    /// Moho's CAiSteeringImpl::CalcAtTopSpeed1: a target in the goal takes it at once.
+    void set_speed_through_goal(bool b);
 
     void set_sim_state(SimState* sim) { sim_ = sim; }
     SimState* sim_state() const { return sim_; }
