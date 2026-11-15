@@ -4185,6 +4185,7 @@ void Unit::fly_unflown_tick(f64 dt, SimContext& ctx) {
     move.target = *navigator_.air_hold();
     move.elevation = elevation_target_;
     move.top_speed = navigator_.speed_through_goal();
+    move.winged = flies_winged_on_guard(*this);
     fly_air_move(*this, move, ctx.sim, ctx.terrain, static_cast<f32>(dt));
 }
 

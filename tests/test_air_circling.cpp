@@ -1011,3 +1011,40 @@ TEST_CASE("Build drones guarding a hurt wall stay where they were made till they
         CHECK(flat_dist(*d.unit, d.ends_at) < 0.05f);
     }
 }
+
+TEST_CASE("A hovering guard waiting for its work turns its nose toward heading 0, as Moho flies a "
+          "guard winged with nowhere to go",
+          "[air_circling]") {
+    f32 made_y = 0.0f;
+    SECTION("climbing to its height") {
+        made_y = 11.14f;
+    }
+    SECTION("at its height, nothing asked of its flight") {
+        made_y = 13.0f;
+    }
+    World w;
+    w.sim.tick();
+    REQUIRE(w.state
+                .do_string("wall = CreateUnitHPR('wall', 1, 72.5, 10, 62.5, 0, 0, 0)"
+                           " d = CreateUnit('buildbot', 1, 64, " +
+                           std::to_string(made_y) +
+                           ", 64, 0, -0.230198, 0, 0.973144, 'Air') IssueGuard({d}, wall)")
+                .ok());
+    made_at(w, "wall", 62.5f)->set_health(100.0f);
+    Unit& d = *made_at(w, "buildbot", 64.0f);
+    d.set_builder_on_target(false);
+    REQUIRE(std::abs(osc::sim::quat_yaw(d.orientation()) + 0.46456f) < 1e-4f);
+    for (int t = 0; t < 10; ++t) {
+        w.sim.tick();
+    }
+    // Retail's five drones in lucky(1), made facing their commander, had heading 0.1983 on
+    // their tenth tick (their arms' aim at the factory, less its bearing).
+    INFO("made at " << made_y << " heading " << osc::sim::quat_yaw(d.orientation()));
+    CHECK(std::abs(osc::sim::quat_yaw(d.orientation()) - 0.1983f) < 0.01f);
+    CHECK(d.position().x == 64.0f);
+    CHECK(d.position().z == 64.0f);
+    if (made_y == 13.0f) {
+        CHECK(d.position().y == 13.0f);
+    }
+    CHECK_FALSE(d.is_repairing());
+}
