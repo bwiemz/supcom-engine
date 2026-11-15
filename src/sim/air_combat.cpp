@@ -426,9 +426,9 @@ void fly_air_move(Unit& unit, const AirMove& move, SimState* sim, const map::Ter
         const bool guarding = !queue.empty() && queue.front().type == CommandType::Guard;
         Vector3 selected = facing;
         if (!near || guarding) {
-            if (want_len > 0.0f) {
-                selected = {want.x / want_len, want.y / want_len, want.z / want_len};
-            }
+            selected = want_len > 0.0f
+                           ? Vector3{want.x / want_len, want.y / want_len, want.z / want_len}
+                           : Vector3{};
             const f32 align = want_len > 0.0f ? (want.x * nx + want.z * nz) / want_len : 0.0f;
             f32 scale = align > 0.5f ? align : 0.5f;
             if (guarding && near) {
