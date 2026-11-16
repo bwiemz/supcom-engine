@@ -11852,7 +11852,8 @@ void test_beam_weapon(TestContext& ctx) {
             if ticks[k] - ticks[k - 1] ~= 2 then error('checks at ' .. ticks[k - 1] .. ' and ' .. ticks[k]) end
         end
     )");
-    lua_check("Test 4: the beam runs from the muzzle, past a friend, to a face of what it holds",
+    lua_check("Test 4: the beam runs from the muzzle, past a friend, as far as the centre of what "
+              "it holds",
               R"(
         local i = __osc_ml.__osc_impacts[table.getn(__osc_ml.__osc_impacts)]
         if i.target == __osc_friend then error('it stopped at the friendly structure') end
@@ -11860,13 +11861,14 @@ void test_beam_weapon(TestContext& ctx) {
         local start = i.beam:GetPosition(0)
         local muzzle = __osc_ml:GetPosition('Center_Turret_Muzzle')
         if VDist3(start, muzzle) > 0.01 then error('it starts ' .. VDist3(start, muzzle) .. ' from the muzzle') end
+        -- Moho's CreateCollisionBeamHelper: a beam that strikes a unit is as long as the way to
+        -- the unit's centre (its bone -1, half its height above it), not to its box's face
         local wall, bp, e = __osc_wall:GetPosition(), __osc_wall:GetBlueprint(), i['end']
-        local gap = math.max(math.abs(e[1] - wall[1]) - bp.SizeX / 2,
-                             math.abs(e[2] - wall[2] - bp.SizeY / 2) - bp.SizeY / 2,
-                             math.abs(e[3] - wall[3]) - bp.SizeZ / 2)
-        if math.abs(gap) > 0.05 then
-            error(string.format('it ends at (%.2f, %.2f, %.2f), %.2f off the face of the box at (%.2f, %.2f, %.2f)',
-                                e[1], e[2], e[3], gap, wall[1], wall[2], wall[3]))
+        local centre = Vector(wall[1], wall[2] + bp.SizeY / 2, wall[3])
+        local reach, want = VDist3(start, e), VDist3(start, centre)
+        if math.abs(reach - want) > 0.05 then
+            error(string.format('it reaches %.2f to (%.2f, %.2f, %.2f); the centre of what it holds is %.2f away',
+                                reach, e[1], e[2], e[3], want))
         end
     )");
     lua_check("setup: the structure can be hurt now", R"(
@@ -11875,8 +11877,8 @@ void test_beam_weapon(TestContext& ctx) {
     )");
     tick_for(ctx, 10);
     lua_check("Test 5: its small blast on the hull hurts a big target", R"(
-        -- The Monkeylord's beam deals DamageArea (radius 0.5) at its end, on
-        -- the structure's face, far from its position at its feet.
+        -- The Monkeylord's beam deals DamageArea (radius 0.5) at its end, as far
+        -- as the structure's centre, far from its position at its feet.
         local lost = __osc_wall_hp - __osc_wall:GetHealth()
         if lost < 800 then error('the structure lost ' .. lost .. ' in 10 ticks') end
     )");

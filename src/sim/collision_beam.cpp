@@ -98,14 +98,59 @@ bool weapon_allowed(lua_State* L, const Entity& struck, int weapon_ref) {
     return allowed;
 }
 
-/// The Lua table of the weapon that fires the beam, or LUA_NOREF.
-int weapon_ref(const EntityRegistry& registry, const Entity& beam) {
+/// The weapon that fires the beam, if it still has one.
+const Weapon* beam_weapon(const EntityRegistry& registry, const Entity& beam) {
     const Entity* e = registry.find(beam.beam_launcher_id());
-    if (!e || e->destroyed() || !e->is_unit()) return LUA_NOREF;
+    if (!e || e->destroyed() || !e->is_unit()) return nullptr;
     const auto& weapons = static_cast<const Unit*>(e)->weapons();
     const i32 index = beam.beam_setup().weapon;
-    if (index < 0 || static_cast<size_t>(index) >= weapons.size()) return LUA_NOREF;
-    return weapons[static_cast<size_t>(index)]->lua_table_ref;
+    if (index < 0 || static_cast<size_t>(index) >= weapons.size()) return nullptr;
+    return weapons[static_cast<size_t>(index)].get();
+}
+
+/// The Lua table of the weapon that fires the beam, or LUA_NOREF.
+int weapon_ref(const EntityRegistry& registry, const Entity& beam) {
+    const Weapon* weapon = beam_weapon(registry, beam);
+    return weapon ? weapon->lua_table_ref : LUA_NOREF;
+}
+
+/// How far a beam reaches, read at each check (Moho's UnitWeapon::CreateCollisionBeamHelper):
+/// its weapon's MaximumBeamLength, else the weapon's MaxRadius as it is now, which
+/// ChangeMaxRadius moves (a Cybran commander's range upgrade). A beam with no weapon reaches
+/// the length it was made with.
+f32 beam_reach(const EntityRegistry& registry, const Entity& beam) {
+    if (const Weapon* w = beam_weapon(registry, beam)) {
+        return w->max_beam_length > 0 ? w->max_beam_length : w->max_range;
+    }
+    const f32 length = beam.beam_setup().length;
+    return length > 0 ? length : 1.0f;
+}
+
+/// How many times its reach a beam looks along itself (Moho's CreateCollisionBeamHelper,
+/// Steam 0x006DD787): its reach over its reach across the ground, at most 5, and 1 when that
+/// is 0.001 or less (straight up or down). A weapon's range is measured across the ground, so a
+/// beam aimed up or down still covers it.
+f32 sweep_stretch(const Vector3& from, const Vector3& facing, f32 reach) {
+    const Vector3 end{facing.x * reach + from.x, facing.y * reach + from.y,
+                      facing.z * reach + from.z};
+    const f32 dx = from.x - end.x;
+    const f32 dz = from.z - end.z;
+    const f32 across = std::sqrt(dx * dx + dz * dz);
+    if (!(across > 0.001f)) return 1.0f;
+    return std::min(reach / across, 5.0f);
+}
+
+/// How far a beam from `from` that struck `hit` reaches (Moho's CreateCollisionBeamHelper):
+/// in a straight line to a unit's centre (its bone -1, half its height above it) or to anything
+/// else's position, not to where it entered them; to a shield, as far as where it met it
+/// (`met` along the beam).
+f32 struck_reach(const Entity& hit, const Vector3& from, f32 met) {
+    if (hit.is_shield()) return met;
+    const Vector3 at = hit.is_unit() ? hit.bone_world_transform(-1).position : hit.position();
+    const f32 dx = from.x - at.x;
+    const f32 dy = from.y - at.y;
+    const f32 dz = from.z - at.z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
 } // namespace
@@ -120,10 +165,13 @@ void check_collision_beam(SimState& sim, lua_State* L, EntityId beam_id, bool be
     setup.check_clock = setup.check_interval + (before_step ? 1 : 0);
 
     const EntityId launcher_id = beam->beam_launcher_id();
-    const f32 length = setup.length > 0 ? setup.length : 1.0f;
     const Vector3 from = beam->pending_position();
-    const Vector3 to{from.x + facing->x * length, from.y + facing->y * length,
-                     from.z + facing->z * length};
+    // It reaches its weapon's range along itself, but looks farther (Moho's
+    // CreateCollisionBeamHelper): aimed up or down it still covers that range across the ground.
+    const f32 reach = beam_reach(registry, *beam);
+    const f32 sweep = reach * sweep_stretch(from, *facing, reach);
+    const Vector3 to{from.x + facing->x * sweep, from.y + facing->y * sweep,
+                     from.z + facing->z * sweep};
 
     // The surface it would meet: the ground, or the water's from above.
     const map::Terrain* terrain = sim.terrain();
@@ -145,7 +193,7 @@ void check_collision_beam(SimState& sim, lua_State* L, EntityId beam_id, bool be
         }
     }
 
-    // What stands in the way before it, nearest first. Scripted entities
+    // What stands in its way, nearest first. Scripted entities
     // (a flare's lure) and other beams don't stop a beam.
     std::vector<EntityId> candidates;
     registry.collect_colliders(from.x, from.z, to.x, to.z, candidates);
@@ -162,14 +210,14 @@ void check_collision_beam(SimState& sim, lua_State* L, EntityId beam_id, bool be
         // A shield stops what comes in, not what goes out.
         const auto t = segment_enters(e->collision_shape(), e->position(), e->orientation(), from,
                                       to, !e->is_shield());
-        if (t && *t < surface_t) hits.emplace_back(*t, id);
+        if (t) hits.emplace_back(*t, id);
     }
     std::sort(hits.begin(), hits.end());
 
     // The first that lets the weapon hit it (its script may say no: an ally
     // without CollideFriendly, a category on DoNotCollideList).
     EntityId hit_id{};
-    f32 hit_t = surface_t;
+    f32 hit_t = 0.0f;
     const int weapon = weapon_ref(registry, *beam);
     for (const auto& [t, id] : hits) {
         const Entity* e = registry.find(id);
@@ -185,24 +233,37 @@ void check_collision_beam(SimState& sim, lua_State* L, EntityId beam_id, bool be
         break;
     }
 
-    const char* type = nullptr;
+    // How far it reaches: to what it struck, else its reach. A surface nearer than that stops it
+    // instead; Moho measures the surface against that length, so with nothing struck the ground
+    // past its reach doesn't.
+    f32 reached = reach;
     if (hit_id) {
-        type = impact_type(*registry.find(hit_id));
-    } else if (surface_t <= 1.0f) {
+        reached = struck_reach(*registry.find(hit_id), from, hit_t * sweep);
+    }
+    const char* type = nullptr;
+    bool on_water = false;
+    if (surface_type && surface_t * sweep < reached) {
+        hit_id = {};
+        reached = surface_t * sweep;
         type = surface_type;
+        on_water = std::string(surface_type) == "Water";
+    } else if (hit_id) {
+        type = impact_type(*registry.find(hit_id));
     } else {
         // Nothing in reach: it ends in the air, or under the water.
-        hit_t = 1.0f;
-        const bool under = terrain && terrain->has_water() && to.y < terrain->water_elevation() &&
-                           terrain->get_terrain_height(to.x, to.z) < terrain->water_elevation();
+        const Vector3 at{from.x + facing->x * reach, from.y + facing->y * reach,
+                         from.z + facing->z * reach};
+        const bool under = terrain && terrain->has_water() && at.y < terrain->water_elevation() &&
+                           terrain->get_terrain_height(at.x, at.z) < terrain->water_elevation();
         type = under ? "Underwater" : "Air";
     }
-    Vector3 end = lerp(from, to, hit_t);
-    if (!hit_id && surface_type && surface_t <= 1.0f && std::string(surface_type) == "Water") {
+    Vector3 end{from.x + facing->x * reached, from.y + facing->y * reached,
+                from.z + facing->z * reached};
+    if (on_water) {
         end.y = terrain->water_elevation();
     }
     beam->set_beam_endpoint(end);
-    beam->beam_setup().reached = hit_t * length;
+    beam->beam_setup().reached = reached;
 
     // ReTargetOnMiss: its weapon hears whether the check struck the weapon's target (Moho's
     // CheckCollision, ahead of OnImpact). It runs no script.
