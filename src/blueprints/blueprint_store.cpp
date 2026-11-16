@@ -161,6 +161,12 @@ size_t BlueprintStore::count(BlueprintType type) const {
     return c;
 }
 
+size_t BlueprintStore::registered_count() const {
+    return static_cast<size_t>(
+        std::count_if(blueprints_.begin(), blueprints_.end(),
+                      [](const auto& kv) { return kv.second.lua_ref >= 0; }));
+}
+
 void BlueprintStore::push_lua_table(const BlueprintEntry& entry) const {
     lua_rawgeti(L_, LUA_REGISTRYINDEX, entry.lua_ref);
 }

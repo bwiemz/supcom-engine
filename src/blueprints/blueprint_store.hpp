@@ -56,6 +56,11 @@ public:
     /// Total number of blueprints.
     size_t total_count() const { return blueprints_.size(); }
 
+    /// The blueprints with a table in the bound Lua state: those registered
+    /// since the store was made or last rebound (a rebind keeps the earlier
+    /// ones, without their tables).
+    size_t registered_count() const;
+
     /// Push the Lua table for a blueprint onto the stack.
     /// Uses the main lua_State (L_). For coroutine safety, use the overload
     /// that takes an explicit lua_State*.

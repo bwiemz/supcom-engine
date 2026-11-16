@@ -6,8 +6,9 @@ Forged Alliance/mods` at /mods/<name>; the Documents folder here is a
 temporary one, through XDG_DOCUMENTS_DIR) holds two test mods:
 
 - a game mod, a folder: a blueprint of its own that merges into the UEF
-  ACU's, and hooks of /lua/simInit.lua and /lua/userInit.lua that leave a
-  probe;
+  ACU's, and hooks of /lua/RuleInit.lua (which loads the blueprints, in
+  the state the sim then runs in), /lua/simInit.lua and /lua/userInit.lua
+  that leave a probe;
 - a UI-only mod, a .zip: hooks of /lua/userInit.lua (which runs before UI
   mods join the session, so must not run) and /lua/UserSync.lua (which
   must).
@@ -74,6 +75,7 @@ def write_mods(documents: Path) -> None:
         f'name = "OSC mods flow: game"\nuid = "{GAME_MOD}"\nversion = 1\n'
         + 'description = "A test game mod"\nauthor = "OpenSupCom"\nui_only = false\n'
     )
+    _ = (game / "hook/lua/RuleInit.lua").write_text(probe("game:rules"))
     _ = (game / "hook/lua/simInit.lua").write_text(probe("game:sim"))
     _ = (game / "hook/lua/userInit.lua").write_text(probe("game:user"))
     # Named as the ACU's own file, so Blueprints.lua gives it the ACU's id;
@@ -161,7 +163,7 @@ GAME_MODS = sorted([RESOURCE_RICH, GAME_MOD])
 ALL_SELECTED = Expected(
     mods={"sim": GAME_MODS, "ui": [*GAME_MODS, UI_MOD]},
     name="ModsFlow",
-    wanted={"sim": ["game:sim"], "ui": ["game:user", "ui:sync"]},
+    wanted={"sim": ["game:rules", "game:sim"], "ui": ["game:user", "ui:sync"]},
     unwanted={"sim": ["game:user", "ui:user", "ui:sync"], "ui": ["game:sim", "ui:user"]},
     user_sync_runs=2,
     selected=sorted([RESOURCE_RICH, GAME_MOD, UI_MOD]),
