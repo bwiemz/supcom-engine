@@ -6,6 +6,7 @@
 // Retail's Unit.lua remakes its movement effects for the new ground there.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "blueprints/blueprint_store.hpp"
 #include "blueprints/footprint.hpp"
@@ -117,6 +118,31 @@ UnitCommand move_to(Vector3 at) {
     return c;
 }
 
+void tank_class(osc::lua::LuaState& state, osc::blueprints::BlueprintStore& store, SimState& sim,
+                const std::string& methods) {
+    osc::lua::register_moho_bindings(state, sim);
+    osc::lua::register_sim_bindings(state, sim);
+    lua_State* L = state.raw();
+    sands(sim, L);
+    REQUIRE(state
+                .do_string("return {BlueprintId = 'tank', Categories = {'LAND'},"
+                           " Defense = {MaxHealth = 100}}")
+                .ok());
+    store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+    lua_pop(L, 1);
+    store.expose_to_lua(L);
+    REQUIRE(state
+                .do_string("Tank = setmetatable({" + methods +
+                           "}, {__index = moho.unit_methods}) Tank.__index = Tank")
+                .ok());
+    lua_pushstring(L, "__osc_unit_script_classes");
+    lua_newtable(L);
+    lua_pushstring(L, "tank");
+    lua_getglobal(L, "Tank");
+    lua_rawset(L, -3);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
 } // namespace
 
 TEST_CASE("A unit's script hears its terrain type change as it drives onto new ground",
@@ -174,39 +200,53 @@ TEST_CASE("A unit's script hears the terrain type it is made on, after OnPreCrea
     osc::lua::LuaState state;
     osc::blueprints::BlueprintStore store{state.raw()};
     SimState sim{state.raw(), &store};
-    osc::lua::register_moho_bindings(state, sim);
-    osc::lua::register_sim_bindings(state, sim);
-    lua_State* L = state.raw();
-    sands(sim, L);
-    REQUIRE(state
-                .do_string("return {BlueprintId = 'tank', Categories = {'LAND'},"
-                           " Defense = {MaxHealth = 100}}")
-                .ok());
-    store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
-    lua_pop(L, 1);
-    store.expose_to_lua(L);
-    REQUIRE(state
-                .do_string(R"(
-        Tank = setmetatable({
-            OnPreCreate = function(self) table.insert(heard, 'pre') end,
-            OnTerrainTypeChange = function(self, new, old)
-                table.insert(heard, new.Name .. '<' .. tostring(old))
-            end,
-            OnCreate = function(self) table.insert(heard, 'create') end,
-        }, {__index = moho.unit_methods})
-        Tank.__index = Tank
-    )")
-                .ok());
-    lua_pushstring(L, "__osc_unit_script_classes");
-    lua_newtable(L);
-    lua_pushstring(L, "tank");
-    lua_getglobal(L, "Tank");
-    lua_rawset(L, -3);
-    lua_rawset(L, LUA_REGISTRYINDEX);
+    tank_class(state, store, sim, R"(
+        OnPreCreate = function(self) table.insert(heard, 'pre') end,
+        OnTerrainTypeChange = function(self, new, old)
+            table.insert(heard, new.Name .. '<' .. tostring(old))
+        end,
+        OnCreate = function(self) table.insert(heard, 'create') end,
+    )");
 
     REQUIRE(state.do_string("CreateUnit('tank', 1, 100, 0, 64)").ok());
     const auto told = state.do_string(
         "assert(table.concat(heard, ', ') == 'pre, Sand<nil, create', table.concat(heard, ', '))");
     INFO((told.ok() ? std::string() : told.error().message));
+    CHECK(told.ok());
+}
+
+TEST_CASE("A unit's script hears its starting layer as it is made, after OnPreCreate",
+          "[terrain-type][layer]") {
+    const bool being_built = GENERATE(false, true);
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store{state.raw()};
+    SimState sim{state.raw(), &store};
+    tank_class(state, store, sim, R"(
+        OnPreCreate = function(self) table.insert(heard, 'pre') end,
+        OnLayerChange = function(self, new, old)
+            table.insert(heard, new .. '<' .. old .. ' ' .. self.Layer)
+        end,
+        OnTerrainTypeChange = function(self, new, old) table.insert(heard, new.Name) end,
+        OnCreate = function(self) table.insert(heard, 'create') end,
+    )");
+    lua_State* L = state.raw();
+
+    if (being_built) {
+        lua_pushstring(L, "__osc_create_building_unit");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        lua_pushstring(L, "tank");
+        for (const lua_Number arg : {1.0, 100.0, 0.0, 64.0}) {
+            lua_pushnumber(L, arg);
+        }
+        REQUIRE(lua_pcall(L, 5, 2, 0) == 0);
+        lua_pop(L, 2);
+    } else {
+        REQUIRE(state.do_string("CreateUnit('tank', 1, 100, 0, 64)").ok());
+    }
+    const auto told = state.do_string("assert(table.concat(heard, ', ') == "
+                                      "'pre, Land<None Land, Sand, create', "
+                                      "table.concat(heard, ', '))");
+    INFO("being built " << being_built << ": "
+                        << (told.ok() ? std::string() : told.error().message));
     CHECK(told.ok());
 }

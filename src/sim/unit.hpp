@@ -482,6 +482,7 @@ public:
 
     // Layer change with Lua OnLayerChange(new, old) callback
     void set_layer_with_callback(const std::string& new_layer, lua_State* L);
+    void call_on_layer_change(lua_State* L, const std::string& old_layer);
 
     /// Moho's horizontal motion states, raised to scripts as
     /// self:OnMotionHorzEventChange(new, old) when they change.
