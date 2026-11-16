@@ -253,7 +253,8 @@ std::optional<int> App::Window::set_up() {
         renderer.set_fixed_frame_dt(static_cast<osc::f32>(kScreenshotFrameDt));
         renderer.camera().set_input_enabled(false);
         renderer.set_vsync(false);
-        // Its zones split each frame's CPU time; its overlay would add to it
+        // Its zones split each frame's CPU time; its overlay would add to it.
+        // (Not the Lua profile, --profile's: its hook would slow the sim.)
         osc::Profiler::instance().set_enabled(true);
         renderer.set_profile_overlay_hidden(true);
     }

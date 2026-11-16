@@ -25,6 +25,7 @@
 #include "platform/paths.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
+#include "sim/lua_profile.hpp"
 #include "sim/lua_sim.hpp"
 
 extern "C" {
@@ -763,6 +764,7 @@ std::optional<int> App::start() {
     // Enable profiler if requested
     if (opt.profile_enabled) {
         osc::Profiler::instance().set_enabled(true);
+        osc::sim::lua_profile::set_enabled(true);
         spdlog::info("Performance profiling enabled");
     }
 
