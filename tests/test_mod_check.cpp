@@ -273,6 +273,22 @@ TEST_CASE("check-mods: hooks", "[mods][check-mods]") {
     CHECK(report.warnings() == 3);
 }
 
+TEST_CASE("check-mods: a mod's code runs with no file access", "[mods][check-mods]") {
+    Game game;
+    const std::filesystem::path out = game.dir.path() / "written.txt";
+    write(game.dir.path(), "mods/sneaky/mod_info.lua", "name = 'Sneaky'\nuid = 'sneaky'\n");
+    write(game.dir.path(), "mods/sneaky/units/w/w_unit.bp",
+          "local f = io.open('" + out.generic_string() +
+              "', 'w')\nf:write('x')\nf:close()\nUnitBlueprint {}\n");
+    write(game.dir.path(), "mods/sneaky/units/d/d_unit.bp",
+          "dofile('" + out.generic_string() + "')\nUnitBlueprint {}\n");
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(game.dir.path()));
+    const Report report = check_mods(vfs, {"sneaky"});
+    CHECK(of(mod_at(report, "/mods/sneaky"), "blueprint_run").size() == 2);
+    CHECK_FALSE(std::filesystem::exists(out));
+}
+
 TEST_CASE("check-mods: blueprints", "[mods][check-mods]") {
     Game game;
     const Report report = check_mods(game.vfs, {"bps"});

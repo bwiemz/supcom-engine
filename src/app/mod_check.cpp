@@ -280,6 +280,15 @@ public:
         lua::register_blueprint_store_bindings(state_);
         if (auto ran = lua::run_system_scripts(state_, vfs); !ran)
             spdlog::warn("check-mods: {}", ran.error().message);
+        // A player may check a mod before trusting it, and the checker runs
+        // its mod_info.lua and blueprints: they get no file access here
+        // (the game's scripts reach the data through the VFS, never io).
+        lua_State* L = state_.raw();
+        for (const char* name : {"io", "dofile", "loadfile"}) {
+            lua_pushstring(L, name);
+            lua_pushnil(L);
+            lua_rawset(L, LUA_GLOBALSINDEX);
+        }
     }
     ~Checker() {
         if (dependencies_ != LUA_NOREF) luaL_unref(state_.raw(), LUA_REGISTRYINDEX, dependencies_);

@@ -373,6 +373,10 @@ it; that each blueprint compiles and runs, has a `ShaderName` the renderer
 knows, and names mesh and texture files that exist; and that its sound banks
 parse. It exits 1 on an error and 0 on warnings alone.
 
+It runs a mod's `mod_info.lua` and blueprints as the game does, but without
+Lua's `io`, `dofile` and `loadfile`, so checking a mod you don't yet trust
+gives its scripts no access to your files.
+
 ## Testing
 
 | Suite | Command | Needs game data |
