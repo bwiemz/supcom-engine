@@ -3,6 +3,8 @@
 
 #include "app/world_sounds.hpp"
 #include "audio/sound_manager.hpp"
+#include "vfs/directory_mount.hpp"
+#include "vfs/virtual_file_system.hpp"
 #include "xact_fixtures.hpp"
 
 #include <spdlog/sinks/ostream_sink.h>
@@ -31,9 +33,11 @@ namespace fs = std::filesystem;
 /// Global) and "Shot" (Music: loops forever from 150 ms, cue limit 2, a
 /// 300 ms fade-out, a Distance falloff to -2000 mB at 1000 units). Music
 /// allows one instance and replaces the oldest. Each case gets its own
-/// directory, as ctest runs them in parallel.
+/// directory, as ctest runs them in parallel. `vfs` mounts it at /sounds,
+/// as FAF's init mounts FA's sounds folder.
 struct Sounds {
     fs::path dir;
+    vfs::VirtualFileSystem vfs;
     /// Optionally: Music's limit and behaviour, and Click's category and
     /// priority (Shot's priority is 7).
     explicit Sounds(u8 music_limit = 1, u8 music_behavior = 2, u16 click_category = 0,
@@ -43,10 +47,11 @@ struct Sounds {
               ("osc_sound_engine_test_" + std::to_string(rd()) + std::to_string(rd()));
         fs::create_directories(dir);
         u32 rpc = 0;
-        write(dir / "Game.xgs", make_xgs(&rpc, music_limit, music_behavior));
+        write(dir / "SupCom.xgs", make_xgs(&rpc, music_limit, music_behavior));
         write(dir / "Test.xsb", make_xsb("TestWaves", rpc, click_category, click_priority, 0x40,
                                          new_variation_on_loop));
         write(dir / "TestWaves.xwb", make_xwb("TestWaves", 4, 2205)); // 0.1 s waves
+        vfs.mount("/sounds", std::make_unique<vfs::DirectoryMount>(dir));
     }
     ~Sounds() { fs::remove_all(dir); }
 };
@@ -73,7 +78,7 @@ struct LogCapture {
 
 TEST_CASE("Sound engine: a one-shot plays for its wave's length", "[audio][engine]") {
     Sounds s;
-    SoundManager sm(s.dir, /*output=*/false);
+    SoundManager sm(s.vfs, /*output=*/false);
     REQUIRE(sm.has_data());
     int finished = 0;
     const auto h = sm.play("Test", "Click");
@@ -96,7 +101,7 @@ TEST_CASE("Sound engine: a one-shot plays for its wave's length", "[audio][engin
 
 TEST_CASE("Sound engine: a looping cue plays until stopped, then fades out", "[audio][engine]") {
     Sounds s;
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     const auto h = sm.play("Test", "Shot");
     REQUIRE(h != INVALID_SOUND);
     sm.update(0.2f); // its play event fires at 150 ms
@@ -120,7 +125,7 @@ TEST_CASE("Sound engine: a looping cue plays until stopped, then fades out", "[a
 
 TEST_CASE("Sound engine: a full category replaces its oldest sound", "[audio][engine]") {
     Sounds s;
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     const auto first = sm.play("Test", "Shot");
     sm.update(0.2f);
     const auto second = sm.play("Test", "Shot"); // Music holds one: first fades
@@ -140,7 +145,7 @@ TEST_CASE("Sound engine: a full category replaces its oldest sound", "[audio][en
 
 TEST_CASE("Sound engine: distance falloff comes from the sound's RPC curve", "[audio][engine]") {
     Sounds s;
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     sm.set_listener({0, 0, 0}, {0, 0, 1});
     const sim::Vector3 near{0, 0, 0};
     const auto h = sm.play("Test", "Shot", &near);
@@ -187,7 +192,7 @@ TEST_CASE("Sound engine: a world sound is panned; centred it takes half each sid
     // Moho's X3DAudio matrix puts a centred mono emitter at [0.5, 0.5],
     // where a 2D sound plays at [1, 1]: world sounds sit 6 dB under UI.
     Sounds s;
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     sm.set_listener({0, 0, 0}, {0, 0, 1}, {1, 0, 0});
     const sim::Vector3 here{0, 0, 0};
     const auto flat = sm.play("Test", "Shot");
@@ -209,7 +214,7 @@ TEST_CASE("Sound engine: a world sound is panned; centred it takes half each sid
 
 TEST_CASE("Sound engine: the player's category volumes scale their subtree", "[audio][engine]") {
     Sounds s;
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     const auto h = sm.play("Test", "Shot");
     sm.update(0.2f);
     const f32 full = sm.current_gain(h);
@@ -234,7 +239,7 @@ TEST_CASE("Sound engine: a world one-shot is filtered as Moho's FilterSound does
     // then the player's hearing; one of each cue a beat; none while world
     // sounds are off.
     Sounds s;
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     using WS = SoundManager::WorldSound;
     const sim::Vector3 far{5000, 0, 0};
     // CameraDistance 100, TestCutoff 100: not beyond.
@@ -261,7 +266,7 @@ TEST_CASE("Sound engine: a world one-shot is filtered as Moho's FilterSound does
 TEST_CASE("Sound engine: entity loops start in view and near, and stop as Moho's do",
           "[audio][engine]") {
     Sounds s;
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     using EL = SoundManager::EntityLoop;
     std::vector<EL> want{EL{1, "Test", "Shot", "", {0, 0, 0}, false, /*in_view=*/false}};
     sm.sync_entity_loops(want);
@@ -337,7 +342,7 @@ TEST_CASE("Sound engine: entity loops start in view and near, and stop as Moho's
 TEST_CASE("Sound engine: a world sound at a point that isn't finite is not heard",
           "[audio][engine]") {
     Sounds s;
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     LogCapture log;
     const f32 nan = std::numeric_limits<f32>::quiet_NaN();
     const sim::EntityId entity = sim::EntityId::of(7, 1);
@@ -374,7 +379,7 @@ TEST_CASE("Sound engine: stop_all stops every sound as a plain stop does", "[aud
     // Moho stops the Global category without IMMEDIATE (the score screen):
     // Shot fades over its cue's 300 ms, Click (no fade) ends at once.
     Sounds s;
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     sm.play("Test", "Shot");
     sm.update(0.2f); // Shot's wave starts at 150 ms
     sm.play("Test", "Click");
@@ -389,7 +394,7 @@ TEST_CASE("Sound engine: stop_all stops every sound as a plain stop does", "[aud
 
 TEST_CASE("Sound engine: a paused category holds its subtree's sounds", "[audio][engine]") {
     Sounds s;
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     const auto click = sm.play("Test", "Click"); // Global, a 0.1 s wave
     const auto shot = sm.play("Test", "Shot");   // Music, under Global
     sm.update(0.05f);
@@ -425,7 +430,7 @@ TEST_CASE("Sound engine: a paused category holds its subtree's sounds", "[audio]
 TEST_CASE("Sound engine: a paused sound stopped, or replaced, ends at once", "[audio][engine]") {
     // Its fade could never run while its clock is held.
     Sounds s;
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     const auto shot = sm.play("Test", "Shot"); // a 300 ms cue fade-out
     sm.update(0.2f);
     sm.pause_category("Music", true);
@@ -457,7 +462,7 @@ TEST_CASE("Sound engine: the duck ramps over DuckLength, and a volume drops it",
     // Moho's PushDuck/PopDuck/UpdateDuck: 0 -> 1 over DuckLength (0.5 s)
     // for the first ducking voice, 1 -> 0 after the last; SetVolume resets.
     Sounds s;
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     const auto duck = [&] { return sm.global_variable("Duck"); };
     sm.push_duck();
     CHECK(duck() == 0.0f);
@@ -491,8 +496,8 @@ TEST_CASE("Sound engine: only a replacement fades in", "[audio][engine]") {
     // retail's Ambient category (1 s) must not fade in every play.
     Sounds s;
     u32 rpc = 0;
-    write(s.dir / "Game.xgs", make_xgs(&rpc, 1, 2, /*music_fade_in_ms=*/400));
-    SoundManager sm(s.dir, false);
+    write(s.dir / "SupCom.xgs", make_xgs(&rpc, 1, 2, /*music_fade_in_ms=*/400));
+    SoundManager sm(s.vfs, false);
     const auto first = sm.play("Test", "Shot");
     sm.update(0.2f);
     const f32 full = sm.current_gain(first);
@@ -510,7 +515,7 @@ TEST_CASE("Sound engine: a prepared sound waits, silent, until started", "[audio
     // Retail's movies prepare their sound (PlaySound(sound, true)) and
     // start it with the movie (StartSound).
     Sounds s;
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     int finished = 0;
     const auto h = sm.prepare("Test", "Click");
     REQUIRE(h != INVALID_SOUND);
@@ -544,7 +549,7 @@ TEST_CASE("Sound engine: a prepared sound waits, silent, until started", "[audio
     CHECK(sm.active_count() == 0);
 }
 
-TEST_CASE("Sound engine: a voice language loads sounds/Voice/<la> and its tutorials",
+TEST_CASE("Sound engine: a voice language loads /sounds/voice/<la> and its tutorials",
           "[audio][engine]") {
     // FA's VO banks (EVA's XGG, the campaign's, the movies' X_FMV) sit in
     // sounds/Voice/US, Windows-cased; Moho loads them on AudioSetLanguage.
@@ -556,7 +561,7 @@ TEST_CASE("Sound engine: a voice language loads sounds/Voice/<la> and its tutori
     write(voice / "VO.xsb", make_xsb("VOWaves", rpc));
     write(voice / "VOWaves.xwb", make_xwb("VOWaves", 4, 2205));
     write(voice / "Tutorials" / "Tut.xsb", make_xsb("VOWaves", rpc));
-    SoundManager sm(s.dir, /*output=*/false);
+    SoundManager sm(s.vfs, /*output=*/false);
     REQUIRE(sm.has_data());
     CHECK(sm.play("VO", "Click") == INVALID_SOUND); // not loaded before
     CHECK(sm.has_voice_language("us"));
@@ -573,7 +578,7 @@ TEST_CASE("Sound engine: a voice language loads sounds/Voice/<la> and its tutori
 TEST_CASE("Sound engine: a loop that picks a new wave each time keeps playing", "[audio][engine]") {
     // FA's Music/Base_Building and Battle: loop forever, a new wave per loop.
     Sounds s(1, 2, 0, 0, /*new_variation_on_loop=*/true);
-    SoundManager sm(s.dir, /*output=*/false);
+    SoundManager sm(s.vfs, /*output=*/false);
     const auto h = sm.play("Test", "Shot");
     REQUIRE(h != INVALID_SOUND);
     for (int i = 0; i < 40; ++i) sm.update(0.05f); // 2 s: some 18 of its 0.1 s waves
@@ -600,7 +605,7 @@ TEST_CASE("Sound engine: a long wave streams and plays for its length", "[audio]
     // streams from its bank rather than being read whole when it starts.
     Sounds s;
     write(s.dir / "TestWaves.xwb", make_xwb("TestWaves", 4, 1100000)); // 2.2 MB, ~49.9 s
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     const auto h = sm.play("Test", "Click");
     REQUIRE(h != INVALID_SOUND);
     sm.update(49.8f);
@@ -610,11 +615,33 @@ TEST_CASE("Sound engine: a long wave streams and plays for its length", "[audio]
 }
 
 TEST_CASE("Sound engine: no sound data plays nothing", "[audio][engine]") {
-    SoundManager sm(fs::temp_directory_path() / "osc_no_such_sounds_dir", false);
+    const vfs::VirtualFileSystem empty;
+    SoundManager sm(empty, false);
     CHECK_FALSE(sm.has_data());
     CHECK(sm.play("Test", "Click") == INVALID_SOUND);
     sm.update(1.0f);
     CHECK(sm.category_volume("Music") == 1.0f);
+}
+
+TEST_CASE("Sound engine: a mod's sounds folder mounted at /sounds plays", "[audio][engine]") {
+    // FAF's init mounts each mod's sounds folder at /sounds, ahead of FA's
+    // (init_faf.lua's MountModContent): its banks play with FA's.
+    Sounds s;
+    const fs::path mod = s.dir.parent_path() / (s.dir.filename().string() + "_mod");
+    fs::create_directories(mod);
+    u32 rpc = 0;
+    (void)make_xgs(&rpc);
+    write(mod / "ModSounds.xsb", make_xsb("ModWaves", rpc));
+    write(mod / "ModWaves.xwb", make_xwb("ModWaves", 4, 2205));
+    vfs::VirtualFileSystem with_mod;
+    with_mod.mount("/sounds", std::make_unique<vfs::DirectoryMount>(mod));
+    with_mod.mount("/sounds", std::make_unique<vfs::DirectoryMount>(s.dir));
+    {
+        SoundManager sm(with_mod, false);
+        CHECK(sm.play("ModSounds", "Click") != INVALID_SOUND);
+        CHECK(sm.play("Test", "Click") != INVALID_SOUND);
+    }
+    fs::remove_all(mod);
 }
 
 TEST_CASE("Sound engine: replace-lowest-priority stops the lowest priority", "[audio][engine]") {
@@ -623,7 +650,7 @@ TEST_CASE("Sound engine: replace-lowest-priority stops the lowest priority", "[a
     Sounds s(/*music_limit=*/2, /*music_behavior=*/4 /* ReplaceLowestPriority */,
              /*click_category=*/1,
              /*click_priority=*/3);
-    SoundManager sm(s.dir, false);
+    SoundManager sm(s.vfs, false);
     const auto shot = sm.play("Test", "Shot");
     REQUIRE(shot != INVALID_SOUND);
     sm.update(0.2f); // Shot's play event fires at 150 ms

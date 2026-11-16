@@ -55,6 +55,9 @@ std::optional<int> App::boot_engine() {
         spdlog::error("Init failed: {}", init_result.error().message);
         return 1;
     }
+    // The sound banks the init file mounted at /sounds: FA's, and any mod's
+    // or map's it mounted there too
+    sound.load_banks(vfs);
 
     // Phase 2: Blueprint loading (sim Lua state owns the store), with a
     // recorded game's mods (M221b); a new game from the command line has

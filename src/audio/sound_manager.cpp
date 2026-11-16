@@ -6,6 +6,7 @@
 #include "audio/xact/bank_registry.hpp"
 #include "audio/wave_stream.hpp"
 #include "audio/xwb_parser.hpp"
+#include "vfs/virtual_file_system.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -136,12 +137,11 @@ struct SoundManager::CueInstance {
 
 namespace {
 
-using xact::child_any_case;
+constexpr std::string_view kSoundsDir = "/sounds";
 
-fs::path voice_dir(const fs::path& sounds_dir, std::string_view la) {
-    if (la.empty()) return {};
-    const fs::path voice = child_any_case(sounds_dir, "voice");
-    return voice.empty() ? fs::path{} : child_any_case(voice, la);
+/// Moho's voice folder for language `la`: /sounds/voice/<la>.
+std::string voice_dir(std::string_view la) {
+    return std::string(kSoundsDir) + "/voice/" + std::string(la);
 }
 
 } // namespace
@@ -149,9 +149,11 @@ fs::path voice_dir(const fs::path& sounds_dir, std::string_view la) {
 // ---- SoundManager implementation ----
 
 bool SoundManager::has_voice_language(std::string_view la) const {
-    std::error_code ec;
-    const fs::path dir = voice_dir(sounds_dir_, la);
-    return !dir.empty() && fs::is_directory(dir, ec);
+    if (!vfs_ || la.empty()) return false;
+    const std::string dir = voice_dir(la);
+    // A folder on disk; an archive lists no folders, only the files in them
+    if (const auto info = vfs_->get_file_info(dir); info && info->is_folder) return true;
+    return !vfs_->find_files(dir, "*").empty();
 }
 
 bool SoundManager::set_voice_language(std::string_view la) {
@@ -165,21 +167,28 @@ bool SoundManager::set_voice_language(std::string_view la) {
                          wanted);
         return voice_language_ == wanted;
     }
-    const fs::path dir = voice_dir(sounds_dir_, wanted);
-    registry_->add_directory(dir);
-    if (const fs::path tutorials = child_any_case(dir, "tutorials"); !tutorials.empty())
-        registry_->add_directory(tutorials);
+    // Moho's AudioSetLanguage makes two engines: the folder's, and its
+    // tutorials' (an engine with no banks when there are none)
+    const std::string dir = voice_dir(wanted);
+    registry_->add_directory(*vfs_, dir);
+    registry_->add_directory(*vfs_, dir + "/tutorials");
     voice_language_ = std::move(wanted);
     return true;
 }
 
-SoundManager::SoundManager(const fs::path& sounds_dir, bool output)
-    : sounds_dir_(sounds_dir), engine_(std::make_unique<AudioEngine>()) {
-    if (!fs::exists(sounds_dir_)) {
-        spdlog::warn("Sound directory not found: {} -- no audio", sounds_dir_.string());
+SoundManager::SoundManager(const vfs::VirtualFileSystem& vfs, bool output) : SoundManager(output) {
+    load_banks(vfs);
+}
+
+void SoundManager::load_banks(const vfs::VirtualFileSystem& vfs) {
+    if (registry_) return; // once, as Moho makes its engine
+    vfs_ = &vfs;
+    auto registry = std::make_unique<xact::BankRegistry>(vfs, kSoundsDir);
+    if (!registry->global_settings() && registry->sound_bank_names().empty()) {
+        spdlog::warn("Audio: no sound banks in {} -- no audio", kSoundsDir);
         return;
     }
-    registry_ = std::make_unique<xact::BankRegistry>(sounds_dir_);
+    registry_ = std::move(registry);
     if (const auto* gs = registry_->global_settings()) {
         globals_.resize(gs->variables.size());
         for (size_t i = 0; i < gs->variables.size(); ++i) globals_[i] = gs->variables[i].initial;
@@ -195,6 +204,9 @@ SoundManager::SoundManager(const fs::path& sounds_dir, bool output)
         duck_length_variable_ = gs->find_variable("DuckLength");
         paused_.assign(gs->categories.size(), 0);
     }
+}
+
+SoundManager::SoundManager(bool output) : engine_(std::make_unique<AudioEngine>()) {
     if (!output) return;
 
     ma_engine_config cfg = ma_engine_config_init();
@@ -222,7 +234,8 @@ std::shared_ptr<const SoundManager::WaveData> SoundManager::wave_data(const XwbP
         return it->second;
     }
     const WaveInfo& info = bank.entry(index);
-    if (info.format_tag == 0 && info.data_length >= kStreamBytes) {
+    // A bank in memory (one read from an archive) holds its long waves too
+    if (info.format_tag == 0 && info.data_length >= kStreamBytes && !bank.in_memory()) {
         // Streamed: nothing is read now (a headless run never reads it).
         auto data = std::make_shared<WaveData>();
         const u32 frame = std::max<u32>(1, info.channels * (info.bits_per_sample / 8));

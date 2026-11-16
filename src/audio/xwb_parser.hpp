@@ -3,6 +3,8 @@
 #include "core/result.hpp"
 #include "core/types.hpp"
 
+#include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -28,10 +30,18 @@ class XwbParser {
 public:
     /// Parse wave bank header and entry metadata from file.
     Result<void> parse(const fs::path& xwb_path);
+    /// Parse a bank held in memory (one read from an archive), which it
+    /// keeps: its waves are read from these bytes.
+    Result<void> parse(std::shared_ptr<const std::vector<u8>> bytes);
 
     const std::string& bank_name() const { return bank_name_; }
-    /// The bank's file (streamed waves read from it as they play).
+    /// The bank's file (streamed waves read from it as they play); empty
+    /// for a bank in memory.
     const fs::path& path() const { return path_; }
+    bool in_memory() const { return bytes_ != nullptr; }
+    /// Built as a streaming bank (XACT's WAVEBANK_TYPE_STREAMING, the bank
+    /// data's flag bit 0), which Moho opens as a file (IsStreamingWaveBank).
+    bool streaming() const { return streaming_; }
     u32 entry_count() const { return static_cast<u32>(entries_.size()); }
     const WaveInfo& entry(u32 index) const { return entries_[index]; }
 
@@ -39,9 +49,17 @@ public:
     std::vector<u8> read_wave_data(u32 index) const;
 
 private:
+    /// `n` bytes at `offset` of the bank into `out`; false when they aren't
+    /// all there.
+    using ReadAt = std::function<bool(u64 offset, u8* out, size_t n)>;
+    Result<void> parse_with(const ReadAt& read);
+    bool read_bytes(u64 offset, u8* out, size_t n) const; ///< from bytes_
+
     fs::path path_;
+    std::shared_ptr<const std::vector<u8>> bytes_; ///< the bank, when in memory
     std::string bank_name_;
     std::vector<WaveInfo> entries_;
+    bool streaming_ = false;
 };
 
 } // namespace osc::audio

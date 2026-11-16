@@ -20,6 +20,7 @@ static constexpr u32 SEG_ENTRYMETADATA = 1;
 static constexpr u32 SEG_ENTRYWAVEDATA = 4;
 
 // BANKDATA flags
+static constexpr u32 BANKDATA_TYPE_STREAMING = 0x00000001; // XACT's WAVEBANK_TYPE_STREAMING
 static constexpr u32 BANKDATA_FLAGS_COMPACT = 0x00020000;
 
 // MINIWAVEFORMAT codec tags
@@ -61,6 +62,7 @@ static WaveInfo decode_miniwaveformat(u32 fmt) {
 
 Result<void> XwbParser::parse(const fs::path& xwb_path) {
     path_ = xwb_path;
+    bytes_.reset();
     entries_.clear();
     bank_name_.clear();
 
@@ -68,11 +70,35 @@ Result<void> XwbParser::parse(const fs::path& xwb_path) {
     if (!file) {
         return Error("Failed to open XWB file: " + xwb_path.string());
     }
+    return parse_with([&file](u64 offset, u8* out, size_t n) {
+        file.clear();
+        file.seekg(static_cast<std::streamoff>(offset));
+        file.read(reinterpret_cast<char*>(out), static_cast<std::streamsize>(n));
+        return static_cast<bool>(file);
+    });
+}
+
+Result<void> XwbParser::parse(std::shared_ptr<const std::vector<u8>> bytes) {
+    path_.clear();
+    bytes_ = std::move(bytes);
+    if (!bytes_) return Error("No XWB bytes");
+    return parse_with([this](u64 offset, u8* out, size_t n) { return read_bytes(offset, out, n); });
+}
+
+bool XwbParser::read_bytes(u64 offset, u8* out, size_t n) const {
+    if (offset > bytes_->size() || n > bytes_->size() - offset) return false;
+    std::memcpy(out, bytes_->data() + offset, n);
+    return true;
+}
+
+Result<void> XwbParser::parse_with(const ReadAt& read) {
+    entries_.clear();
+    bank_name_.clear();
+    streaming_ = false;
 
     // Read header: 4 magic + 4 version + 4 header_version + 5*8 segments = 52 bytes
     u8 header[52];
-    file.read(reinterpret_cast<char*>(header), 52);
-    if (!file) {
+    if (!read(0, header, 52)) {
         return Error("Failed to read XWB header");
     }
 
@@ -101,13 +127,12 @@ Result<void> XwbParser::parse(const fs::path& xwb_path) {
     }
 
     std::vector<u8> bankdata(bd_seg.length);
-    file.seekg(bd_seg.offset);
-    file.read(reinterpret_cast<char*>(bankdata.data()), bd_seg.length);
-    if (!file) {
+    if (!read(bd_seg.offset, bankdata.data(), bd_seg.length)) {
         return Error("Failed to read BANKDATA");
     }
 
     u32 flags = read_u32(bankdata.data());
+    streaming_ = (flags & BANKDATA_TYPE_STREAMING) != 0;
     u32 entry_count = read_u32(bankdata.data() + 4);
     bool is_compact = (flags & BANKDATA_FLAGS_COMPACT) != 0;
 
@@ -136,9 +161,7 @@ Result<void> XwbParser::parse(const fs::path& xwb_path) {
     }
 
     std::vector<u8> entry_meta(em_seg.length);
-    file.seekg(em_seg.offset);
-    file.read(reinterpret_cast<char*>(entry_meta.data()), em_seg.length);
-    if (!file) {
+    if (!read(em_seg.offset, entry_meta.data(), em_seg.length)) {
         return Error("Failed to read entry metadata");
     }
 
@@ -209,6 +232,12 @@ std::vector<u8> XwbParser::read_wave_data(u32 index) const {
 
     const auto& e = entries_[index];
     if (e.data_length == 0) return {};
+
+    if (bytes_) {
+        std::vector<u8> data(e.data_length);
+        if (!read_bytes(e.data_offset, data.data(), data.size())) return {};
+        return data;
+    }
 
     std::ifstream file(path_, std::ios::binary);
     if (!file) return {};
