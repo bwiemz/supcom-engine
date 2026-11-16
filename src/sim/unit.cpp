@@ -535,6 +535,8 @@ void Unit::begin_dying() {
     economy_.production_active = false;
     economy_.reclaim_mass = 0;
     economy_.reclaim_energy = 0;
+    economy_.capture_mass = 0;
+    economy_.capture_energy = 0;
     // Its missile under way, and a repair on a staging platform (M206r),
     // stop asking for resources.
     abandon_silo_build();

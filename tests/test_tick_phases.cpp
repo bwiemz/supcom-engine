@@ -2638,6 +2638,26 @@ TEST_CASE("Units capturing one unit share the work: each tick paid adds its coun
         // 8 of 20 done together, the other 12 alone
         CHECK(w.text("heard") == "T lost B 4; B failed T 4; A stop T 16; T captured A 16; ");
     }
+    SECTION("one of two killed stops capturing at once, though its death keeps it in the world") {
+        // Moho's Kill clears the dying captor's orders, and its task's end
+        // takes it off the target's count (DoCallback(false)): the other
+        // carries on alone, and the dying one asks for nothing more
+        REQUIRE(w.run("Plain.OnKilled = function(self) end"));
+        capture({&a, &b});
+        for (int t = 0; t < 4; ++t) w.sim.tick();
+        REQUIRE(w.run("b:Kill()"));
+        w.sim.tick();
+        REQUIRE(b.is_dying());
+        CHECK_FALSE(b.is_capturing());
+        CHECK(being_captured());
+        tick_until([&] { w.sim.tick(); }, "the capture completes", 30, captured);
+        // Killed between ticks 4 and 5, it leaves the count in tick 5's kill
+        // cleanup, which comes after A's step: 10 of 20 done by two, the rest
+        // by A alone. B pays for its 4 ticks only (A for 15), and nothing is
+        // heard when its death ends.
+        CHECK(w.text("heard") == "T lost B 5; B failed T 5; A stop T 15; T captured A 15; ");
+        CHECK(army.economy().energy.stored == Catch::Approx(490.5));
+    }
     SECTION("a target its script keeps loses its captor as the task ends") {
         REQUIRE(w.run("handover = false"));
         capture({&a});

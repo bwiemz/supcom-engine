@@ -481,7 +481,14 @@ void SimState::kill_cleanup() {
                      [](const auto& a, const auto& b) { return a.first < b.first; });
     for (const auto& [army, id] : due) {
         if (Entity* e = entity_registry_.find(id); e && e->is_unit()) {
-            static_cast<Unit*>(e)->kill_cleanup(L_);
+            auto* unit = static_cast<Unit*>(e);
+            // Its orders go, and a capture task's end takes it off its
+            // target's count of captors (Moho's DoCallback(false)) now, not
+            // when its death ends
+            if (unit->is_capturing()) {
+                unit->stop_capturing(L_, entity_registry_);
+            }
+            unit->kill_cleanup(L_);
         }
     }
 }
