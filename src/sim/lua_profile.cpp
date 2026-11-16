@@ -62,10 +62,17 @@ Bindings& bindings() {
     return b;
 }
 
+// The hook runs on every call and return, so it asks Lua only what each needs.
+// A function's name ("n") is the costly part: the caller's code executed
+// symbolically up to the call, or, when nothing names it there (a call from
+// C, a callback), a walk of the whole globals table. "S" alone says whether
+// a function is C; only a C function's call needs its name.
+
 void time_binding(lua_State* L, lua_Debug* ar) {
-    if (!lua_getinfo(L, "Sn", ar) || ar->what == nullptr || ar->what[0] != 'C') return;
+    if (!lua_getinfo(L, "S", ar) || ar->what == nullptr || ar->what[0] != 'C') return;
     auto& open = bindings().open[L];
     if (ar->event == LUA_HOOKCALL) {
+        lua_getinfo(L, "n", ar);
         open.emplace_back(ar->name ? ar->name : "?", Clock::now());
     } else if (!open.empty()) {
         Binding& b = bindings().by_name[open.back().first];
@@ -83,14 +90,16 @@ void hook(lua_State* L, lua_Debug* ar) {
     }
     // OSC_LUA_PROFILE_LINES: by the line running, not the function it is in
     static const bool by_line = std::getenv("OSC_LUA_PROFILE_LINES") != nullptr;
-    if (ar->event != LUA_HOOKCOUNT || !lua_getinfo(L, by_line ? "Snl" : "Sn", ar)) return;
+    if (ar->event != LUA_HOOKCOUNT || !lua_getinfo(L, by_line ? "Sl" : "S", ar)) return;
     Samples& s = samples();
     ++s.total;
     const int line = by_line ? ar->currentline : ar->linedefined;
     Function& f = s.functions[{ar->source, line}];
     if (f.where.empty()) {
+        // Named by its first sample only
         f.where = std::string(ar->short_src) + ":" + std::to_string(line);
-        if (ar->name && !by_line) f.where += std::string(" (") + ar->name + ")";
+        if (!by_line && lua_getinfo(L, "n", ar) && ar->name)
+            f.where += std::string(" (") + ar->name + ")";
     }
     ++f.samples;
 }
