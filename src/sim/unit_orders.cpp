@@ -236,6 +236,10 @@ EntityId Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
 // water and bound for water.
 void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx) {
     static const CategoryName kFavorsWater{"FAVORSWATER"};
+    // CUnitMoveTask's constructor
+    if (!is_air_unit()) {
+        update_speed_through();
+    }
     if (has_category(kFavorsWater) && ctx.terrain) {
         const map::Terrain& t = *ctx.terrain;
         const f32 water = t.has_water() ? t.water_elevation() : -10000.0f;

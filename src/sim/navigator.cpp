@@ -229,6 +229,14 @@ i32 default_pathcap(u32 extent) {
 
 } // namespace
 
+void Navigator::set_speed_through_goal(bool b) {
+    speed_through_goal_ = b;
+    if (moho_active_ && moho_waypoint_cell_ != path::Cell{-32768, -32768} &&
+        moho_.cell_in_goal(moho_waypoint_cell_)) {
+        through_target_ = b;
+    }
+}
+
 void Navigator::navigate(Unit& unit) {
     if (!moho_pending_ && !moho_active_) {
         return;

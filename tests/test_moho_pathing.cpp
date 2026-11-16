@@ -33,6 +33,7 @@ extern "C" {
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -713,6 +714,63 @@ TEST_CASE("With Moho pathing a two-point move chain slows for two ticks at the f
     CHECK(second < first);
     CHECK(second > 0.0f);
     CHECK(on > second);
+}
+
+TEST_CASE(
+    "With Moho pathing a move with a move or a patrol behind it, a formation's too, runs into its "
+    "point at its top speed; with nothing or an aggressive move behind it, it brakes",
+    "[moho_pathing]") {
+    using osc::sim::CommandType;
+    struct Case {
+        const char* what;
+        std::optional<CommandType> next;
+        bool later;
+        bool formed;
+        bool through;
+    };
+    const Case c =
+        GENERATE(Case{"nothing", std::nullopt, false, false, false},
+                 Case{"a move", CommandType::Move, false, false, true},
+                 Case{"a move queued on the way", CommandType::Move, true, false, true},
+                 Case{"a patrol", CommandType::Patrol, false, false, true},
+                 Case{"a formation's move after one", CommandType::Move, false, true, true},
+                 Case{"an aggressive move", CommandType::AggressiveMove, false, false, false});
+    CAPTURE(c.what);
+    World w(true);
+    Unit& tank = *w.make("tank", 20.5f, 20.5f);
+    const auto order = [&](CommandType type, f32 z, u32 id) {
+        osc::sim::UnitCommand cmd;
+        cmd.type = type;
+        cmd.target_pos = {20.5f, 10.0f, z};
+        cmd.command_id = id;
+        cmd.formed = c.formed;
+        cmd.speed_cap = c.formed ? 4.0f : 0.0f;
+        tank.push_command(cmd, false);
+    };
+    order(CommandType::Move, 40.5f, 1);
+    bool queued = false;
+    const auto queue_next = [&] {
+        order(*c.next, 70.5f, 2);
+        queued = true;
+    };
+    if (c.next && !c.later) {
+        queue_next();
+    }
+    f32 into = 0.0f;
+    tick_until(
+        [&] {
+            into = step_of(w, tank);
+            if (c.next && !queued && cell_z(tank) == 30) {
+                queue_next();
+            }
+        },
+        "the tank reaches the first point's cell", 300, [&] { return cell_z(tank) == 40; });
+    INFO("into " << into);
+    if (c.through) {
+        CHECK(into > 0.39f);
+    } else {
+        CHECK(into < 0.3f);
+    }
 }
 
 TEST_CASE("With Moho pathing a unit walled in where it stands gives its move up four ticks "

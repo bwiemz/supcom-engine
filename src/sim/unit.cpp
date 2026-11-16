@@ -81,10 +81,13 @@ void Unit::push_command(const UnitCommand& cmd, bool clear_existing) {
             [](const UnitCommand& a, const UnitCommand& b) { return a.command_id < b.command_id; });
         if (oldest != first) {
             command_queue_.insert(oldest, cmd);
+            update_speed_through();
             return;
         }
     }
     command_queue_.push_back(cmd);
+    // IAiCommandDispatchImpl::OnEvent(UCQS_CommandInserted)
+    update_speed_through();
 }
 
 void Unit::clear_commands(const char*) {
@@ -592,18 +595,18 @@ void Unit::update_speed_through() {
         return type == CommandType::Move || type == CommandType::Attack ||
                type == CommandType::Patrol || type == CommandType::Guard;
     };
-    if (has_unit_state("Refueling")) {
+    if (is_being_built() || dying_ || destroyed() || has_unit_state("Refueling")) {
         return;
     }
     bool through = has_unit_state("ForceSpeedThrough") || has_unit_state("CannotFindPlaceToLand");
     if (!through && !command_queue_.empty()) {
-        if (!busy(command_queue_.front().type)) {
-            return;
-        }
-        through = command_queue_.size() > 1 && busy(command_queue_[1].type);
-        if (command_queue_.front().type == CommandType::Guard && !has_unit_state("Ferrying") &&
+        const UnitCommand& current = command_queue_.front();
+        if (current.type == CommandType::Guard && can_fly() && !has_unit_state("Ferrying") &&
             !has_category("EXPERIMENTAL")) {
             through = true;
+        } else {
+            through =
+                command_queue_.size() > 1 && busy(current.type) && busy(command_queue_[1].type);
         }
     }
     navigator_.set_speed_through_goal(through);
@@ -4185,6 +4188,7 @@ void Unit::fly_unflown_tick(f64 dt, SimContext& ctx) {
     move.target = *navigator_.air_hold();
     move.elevation = elevation_target_;
     move.top_speed = navigator_.speed_through_goal();
+    move.winged = flies_winged_on_guard(*this);
     fly_air_move(*this, move, ctx.sim, ctx.terrain, static_cast<f32>(dt));
 }
 
