@@ -229,8 +229,6 @@ static int unit_IsUnitState(lua_State* L) {
         } else if (std::strcmp(state, "BeingBuilt") == 0) result = u->is_being_built();
         else if (std::strcmp(state, "Guarding") == 0)
             result = u->guard_order() != nullptr; // fighting for it too
-        else if (std::strcmp(state, "Reclaiming") == 0)
-            result = u->is_reclaiming();
         else if (std::strcmp(state, "Busy") == 0)
             result = u->busy();
         else if (std::strcmp(state, "BlockCommandQueue") == 0)

@@ -52,6 +52,44 @@ f32 blueprint_economy_number(lua_State* L, const std::string& bp_id, const char*
     return value;
 }
 
+/// Moho's CUnitMobileBuildTask aims at mSizeY * 0.5 + mCollisionOffsetY over the
+/// site's COORDS_ToWorldPos.
+Vector3 build_aim_point(lua_State* L, const map::Terrain* terrain, const std::string& bp_id,
+                        const Vector3& site) {
+    f32 size_y = 1.0f;
+    f32 offset_y = 0.0f;
+    bool seabed = false;
+    if (L) {
+        const int top = lua_gettop(L);
+        if (blueprints::push_blueprint(L, bp_id)) {
+            const int bp = lua_gettop(L);
+            const auto number = [L](int table, const char* key, f32 fallback) {
+                lua_pushstring(L, key);
+                lua_rawget(L, table);
+                const f32 v = lua_type(L, -1) == LUA_TNUMBER ? static_cast<f32>(lua_tonumber(L, -1))
+                                                             : fallback;
+                lua_pop(L, 1);
+                return v;
+            };
+            size_y = number(bp, "SizeY", size_y);
+            offset_y = number(bp, "CollisionOffsetY", offset_y);
+            lua_pushstring(L, "Footprint");
+            lua_rawget(L, bp);
+            if (lua_istable(L, -1)) {
+                const auto caps = static_cast<u8>(number(lua_gettop(L), "OccupancyCaps", 0.0f));
+                seabed = (caps & blueprints::occupancy::kSeabed) != 0;
+            }
+        }
+        lua_settop(L, top);
+    }
+    f32 y = site.y;
+    if (terrain) {
+        y = seabed || !terrain->has_water() ? terrain->get_terrain_height(site.x, site.z)
+                                            : terrain->get_surface_height(site.x, site.z);
+    }
+    return {site.x, y + size_y * 0.5f + offset_y, site.z};
+}
+
 /// Ticks a build or repair waits at its army's unit cap, or paused, before
 /// trying again: Moho's tasks return 10 there (a task waits 9 ticks and runs
 /// on the 10th), the brain hearing OnUnitCapLimitReached at each try at the cap.
@@ -88,6 +126,9 @@ bool build_blocked_by_lobby_rules(const Unit& builder, const UnitCommand& cmd,
 /// from its blueprint's reclaim values and time multipliers). Without an
 /// answer: the values set on the target's table (MaxMassReclaim,
 /// MaxEnergyReclaim, TimeReclaim), with the time scaled as before.
+/// Moho's QueryReclaimCosts takes at least a tick.
+constexpr f64 kMinReclaimSeconds = 0.1;
+
 struct ReclaimCosts {
     f64 time = 0;
     f64 energy = 0;
@@ -108,7 +149,7 @@ ReclaimCosts reclaim_costs(lua_State* L, const Unit& reclaimer, const Entity& ta
             lua_pushvalue(L, self);
             lua_rawgeti(L, LUA_REGISTRYINDEX, target.lua_table_ref());
             if (lua_pcall(L, 2, 3, 0) == 0 && lua_isnumber(L, -3)) {
-                costs.time = lua_tonumber(L, -3);
+                costs.time = std::max(lua_tonumber(L, -3), kMinReclaimSeconds);
                 costs.energy = std::fabs(lua_tonumber(L, -2));
                 costs.mass = std::fabs(lua_tonumber(L, -1));
                 lua_settop(L, top);
@@ -131,8 +172,10 @@ ReclaimCosts reclaim_costs(lua_State* L, const Unit& reclaimer, const Entity& ta
     number("MaxEnergyReclaim", costs.energy);
     number("TimeReclaim", time_mult);
     lua_settop(L, top);
-    if (build_rate > 0)
-        costs.time = time_mult * std::max(costs.mass, costs.energy) / build_rate / 10.0;
+    if (build_rate > 0) {
+        costs.time = std::max(time_mult * std::max(costs.mass, costs.energy) / build_rate / 10.0,
+                              kMinReclaimSeconds);
+    }
     return costs;
 }
 
@@ -1060,28 +1103,6 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
     auto* L = ctx.L;
     const u32 order_id = cmd.command_id;
     if (!build_target_id_) {
-        if (!cmd.site_cleared && !cmd.clearing_prop_id) {
-            // The site, as the task takes it: snapped to the footprint's
-            // cells (Moho's CUnitMobileBuildTask, as made). An order from
-            // the UI comes snapped already; a script's may not.
-            const auto [fx, fz] = blueprint_footprint_cells(L, cmd.blueprint_id);
-            snap_structure_center(cmd.target_pos.x, cmd.target_pos.z, fx, fz);
-            const BuildSiteProp site =
-                find_build_site_prop(L, registry, *this, cmd.blueprint_id, cmd.target_pos);
-            if (destroyed() || !in_registry()) {
-                return OrderStep::Gone;
-            }
-            if (site.reclaim_id) {
-                cmd.clearing_prop_id = site.reclaim_id;
-                cmd.clearing_approached = false;
-            } else {
-                cmd.site_cleared = true;
-                if (site.rebuild) {
-                    cmd.rebuild_wreck_id = site.wreck_id;
-                    cmd.rebuild_bonus = site.bonus;
-                }
-            }
-        }
         if (cmd.clearing_prop_id) {
             UnitCommand reclaim;
             reclaim.type = CommandType::Reclaim;
@@ -1098,7 +1119,31 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             const bool done = step == OrderStep::Next;
             cmd.clearing_prop_id = done ? EntityId() : reclaim.target_id;
             cmd.clearing_approached = !done && reclaim.approached;
-            return OrderStep::Hold;
+            if (!done) {
+                return OrderStep::Hold;
+            }
+        }
+        if (!cmd.site_cleared) {
+            // The site, as the task takes it: snapped to the footprint's
+            // cells (Moho's CUnitMobileBuildTask, as made). An order from
+            // the UI comes snapped already; a script's may not.
+            const auto [fx, fz] = blueprint_footprint_cells(L, cmd.blueprint_id);
+            snap_structure_center(cmd.target_pos.x, cmd.target_pos.z, fx, fz);
+            const BuildSiteProp site =
+                find_build_site_prop(L, registry, *this, cmd.blueprint_id, cmd.target_pos);
+            if (destroyed() || !in_registry()) {
+                return OrderStep::Gone;
+            }
+            if (site.reclaim_id) {
+                cmd.clearing_prop_id = site.reclaim_id;
+                cmd.clearing_approached = false;
+                return OrderStep::Hold;
+            }
+            cmd.site_cleared = true;
+            if (site.rebuild) {
+                cmd.rebuild_wreck_id = site.wreck_id;
+                cmd.rebuild_bonus = site.bonus;
+            }
         }
         // Phase 1: reach the site. In range when the gap to its skirt
         // is within MaxBuildDistance and the builder is off the
@@ -1147,7 +1192,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         }
         abort_move();
         {
-            const Vector3 site{cmd.target_pos.x, cmd.target_pos.y + 0.5f, cmd.target_pos.z};
+            const Vector3 site = build_aim_point(L, ctx.terrain, cmd.blueprint_id, cmd.target_pos);
             aim_builder_arms(&site, L);
             if (destroyed() || !in_registry()) {
                 return OrderStep::Gone;
@@ -1541,10 +1586,7 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         if (costs.mass < 0 || costs.energy < 0 || build_rate_ <= 0) {
             return OrderStep::Next;
         }
-        f64 reclaim_time = costs.time;
-        if (reclaim_time <= 0) reclaim_time = 0.01;
-
-        reclaim_rate_ = static_cast<f32>(1.0 / reclaim_time);
+        reclaim_rate_ = static_cast<f32>(1.0 / costs.time);
         begin_reclaim(cmd.target_id, ctx.L, ctx.registry);
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
@@ -1555,7 +1597,7 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
 
         spdlog::info("Reclaim start: entity #{} reclaiming #{} "
                      "(mass={:.0f}, energy={:.0f}, time={:.1f}s)",
-                     entity_id(), cmd.target_id, costs.mass, costs.energy, reclaim_time);
+                     entity_id(), cmd.target_id, costs.mass, costs.energy, costs.time);
     }
 
     // FAF's patched exe holds a paused unit's reclaim of a prop: no progress
@@ -1564,22 +1606,26 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     reclaim_held_ = reclaim_held_by_pause(*this, registry.find(cmd.target_id), ctx);
     if (reclaim_wait_ > 0) {
         auto* reclaimed = registry.find(cmd.target_id);
-        if (reclaim_wait_ == 1 && reclaimed && !reclaim_arm_ready(*reclaimed)) {
-            return OrderStep::Hold;
-        }
-        --reclaim_wait_;
-        if (reclaim_wait_ == 0 && reclaimed) {
-            const ReclaimCosts costs =
-                reclaim_costs(L, *this, *reclaimed, static_cast<f64>(build_rate_));
-            economy_.reclaim_mass = costs.mass * static_cast<f64>(reclaim_rate_);
-            economy_.reclaim_energy = costs.energy * static_cast<f64>(reclaim_rate_);
+        if (reclaim_wait_ == 2) {
+            if (reclaimed && !reclaim_arm_ready(*reclaimed)) {
+                return OrderStep::Hold;
+            }
+            if (reclaimed) {
+                const ReclaimCosts costs =
+                    reclaim_costs(L, *this, *reclaimed, static_cast<f64>(build_rate_));
+                economy_.reclaim_mass = costs.mass * static_cast<f64>(reclaim_rate_);
+                economy_.reclaim_energy = costs.energy * static_cast<f64>(reclaim_rate_);
+            }
+            set_unit_state("Reclaiming", true);
             // (after its script's GetReclaimCosts, as the task's Processing state)
             reclaimed = registry.find(cmd.target_id);
             if (reclaimed && !reclaimed->destroyed()) {
                 reclaim_from_health(*reclaimed);
             }
         }
-        return OrderStep::Hold;
+        if (--reclaim_wait_ > 0) {
+            return OrderStep::Hold;
+        }
     }
 
     // Moho's CUnitReclaimTask: a finished unit loses health for nothing, then
@@ -1589,6 +1635,7 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         if (!reclaim_arm_ready(*reclaimed)) {
             return OrderStep::Hold;
         }
+        set_unit_state("Reclaiming", true);
         // Each tick it wears the unit down, the task makes it its focus
         // (Unit::SetFocusEntity in CUnitReclaimTask's Starting state):
         // OnAssignedFocusEntity, before the unit loses its health.
@@ -1625,11 +1672,10 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Next;
         }
         const ReclaimCosts costs = reclaim_costs(L, *this, *wreck, static_cast<f64>(build_rate_));
-        const f64 reclaim_time = costs.time > 0 ? costs.time : 0.01;
         cmd.target_id = wreck_id;
         reclaim_target_id_ = wreck_id;
-        reclaim_rate_ = static_cast<f32>(1.0 / reclaim_time);
-        reclaim_wait_ = 1;
+        reclaim_rate_ = static_cast<f32>(1.0 / std::max(costs.time, kMinReclaimSeconds));
+        reclaim_wait_ = 2;
         // The wreck is its focus now (SetFocusEntity on what
         // CreateWreckageProp returned).
         notify_focus_assigned(L);
@@ -2367,9 +2413,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 const ReclaimCosts costs =
                     reclaim_costs(L, *this, *guarded_reclaim, static_cast<f64>(build_rate_));
                 if (std::max(costs.mass, costs.energy) > 0 && build_rate_ > 0) {
-                    f64 reclaim_time = costs.time;
-                    if (reclaim_time <= 0) reclaim_time = 0.01;
-                    reclaim_rate_ = static_cast<f32>(1.0 / reclaim_time);
+                    reclaim_rate_ = static_cast<f32>(1.0 / costs.time);
                 } else {
                     reclaim_rate_ = 0;
                 }
