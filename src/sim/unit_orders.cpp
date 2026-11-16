@@ -1748,80 +1748,97 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
     return done();
 }
 
-OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_capture(UnitCommand& cmd, f64 /*dt*/, SimContext& ctx) {
+    // Moho's CUnitCaptureTask::TaskTick (faf-re 0x006043E0; the Steam exe's
+    // 0x0060AEB0 is the same code).
     auto& registry = ctx.registry;
     auto* L = ctx.L;
-    if (!cmd.target_id) {
-        if (is_capturing()) stop_capturing(L, registry, true);
-        end_approach(cmd);
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
-    auto* ctarget = registry.find(cmd.target_id);
-    if (!ctarget || ctarget->destroyed() || !ctarget->is_unit()) {
-        if (is_capturing()) stop_capturing(L, registry, true);
-        end_approach(cmd);
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
-    // Already same army (captured by someone else)
-    if (ctarget->is_unit() && static_cast<Unit*>(ctarget)->army() == army()) {
-        if (is_capturing()) stop_capturing(L, registry, false);
-        end_approach(cmd);
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
-
-    // Reach: fixed, not MaxBuildDistance (Moho's CUnitCaptureTask). A
-    // footprint gap over 5 sends the unit just clear of its target's
-    // skirt; there it captures within 10, or gives up. A moving
-    // target is lost beyond 10.
-    {
-        const auto& cunit = static_cast<const Unit&>(*ctarget);
-        const f32 gap = work_gap(*this, ctarget->position(), footprint_extent(*ctarget));
-        if (capture_target_id_ != cmd.target_id) {
-            if (!cmd.approached && gap > kCaptureReach) {
-                if (effective_speed() <= 0) {
-                    command_queue_.pop_front();
-                    return OrderStep::Next;
-                }
-                cmd.approached = true;
-                set_path_goal(approach_point(*this, ctarget->position(),
-                                             cunit.skirt_size_x() * 0.5f,
-                                             cunit.skirt_size_z() * 0.5f),
-                              ctx);
-            }
-            if (cmd.approached && approach_update(ctx)) {
-                return OrderStep::Hold;
-            }
-            if (gap > kCaptureHold) {
-                if (is_capturing()) stop_capturing(L, registry, true);
-                command_queue_.pop_front();
-                return OrderStep::Next;
-            }
-        } else if (gap > kCaptureHold && cunit.effective_speed() > 0) {
-            stop_capturing(L, registry, true);
+    const u32 order_id = cmd.command_id;
+    // Whether `cmd` is still this unit's head order: the scripts the task
+    // runs may change the queue, or end the unit.
+    const auto still_head = [&] {
+        return !destroyed() && in_registry() && !command_queue_.empty() &&
+               &command_queue_.front() == &cmd && command_queue_.front().command_id == order_id;
+    };
+    // The task ends (TaskTick returns -1), and its order with it.
+    const auto end = [&] {
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
+        if (still_head()) {
+            end_approach(cmd);
             command_queue_.pop_front();
-            return OrderStep::Next;
         }
-    }
-    abort_move();
-
-    // Start capture if not already capturing this target
-    if (capture_target_id_ != cmd.target_id) {
-        if (is_capturing()) stop_capturing(L, registry, true);
-        if (!start_capture(cmd, registry, L)) {
-            command_queue_.pop_front();
-            return OrderStep::Next;
-        }
-    }
-
-    // Progress capture
-    if (!progress_capture(dt, registry, L,
-                          take_grant(economy_.capture_request, ctx) ? 1.0f : 0.0f)) {
-        command_queue_.pop_front();
         return OrderStep::Next;
+    };
+    // It fails (dispatch result 2): the capture it began, if any, ends.
+    const auto fail = [&] {
+        stop_capturing(L, registry);
+        return end();
+    };
+    // Its target gone, or not to be captured: its unit hears OnStopCapture,
+    // itself for the target (Moho passes the captor, its weak target being
+    // null by then), and the task ends.
+    const auto give_up = [&] {
+        call_lua_method_with_entity(L, "OnStopCapture", this);
+        return fail();
+    };
+    if (!cmd.target_id) return fail();
+    const bool begun = capture_target_id_ == cmd.target_id;
+    Entity* const target = registry.find(cmd.target_id);
+    if (!target) {
+        // None as the order came up: Moho's CUnitCaptureTask::Create made no
+        // task, and its order fails with nothing heard.
+        return begun || cmd.approached ? give_up() : fail();
     }
+    // Its walk in runs under the task, which waits for it.
+    if (!begun && cmd.approached && approach_update(ctx)) return OrderStep::Hold;
+    if (!target->is_unit()) return fail();
+    auto& tunit = static_cast<Unit&>(*target);
+    // Each tick it runs, before anything else: a target no longer to be
+    // captured ...
+    if (!tunit.capturable()) return give_up();
+    // ... or of no army, in the air, or allied (its own army's too) fails it
+    if (tunit.army() < 0 || tunit.layer() == "Air" || tunit.army() == army() ||
+        (ctx.sim && ctx.sim->is_ally(tunit.army(), army()))) {
+        return fail();
+    }
+    // ... as does one being captured more than 10 off: another's capture
+    // isn't joined from there, nor is one's own held.
+    const f32 gap = work_gap(*this, target->position(), footprint_extent(*target));
+    if (tunit.is_being_captured() && gap > kCaptureHold) return fail();
+    if (!begun) {
+        // TASKSTATE_Preparing: a gap over 5 sends the unit just clear of its
+        // target's skirt, once. TASKSTATE_Waiting: it captures from there
+        // within 10, a target still alive.
+        if (!cmd.approached && gap > kCaptureReach) {
+            if (effective_speed() <= 0) return end();
+            cmd.approached = true;
+            set_path_goal(approach_point(*this, target->position(), tunit.skirt_size_x() * 0.5f,
+                                         tunit.skirt_size_z() * 0.5f),
+                          ctx);
+            if (approach_update(ctx)) return OrderStep::Hold;
+        }
+        if (gap > kCaptureHold) return fail();
+        if (target->destroyed() || tunit.is_dying()) return end();
+        abort_move();
+        if (is_capturing()) {
+            stop_capturing(L, registry);
+            if (!still_head()) {
+                return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+            }
+        }
+        // TASKSTATE_Starting
+        if (!start_capture(cmd, registry, L)) return end();
+        // Its scripts may have taken the order away: the task goes with it
+        if (!still_head()) {
+            if (destroyed() || !in_registry()) return OrderStep::Gone;
+            stop_capturing(L, registry);
+            return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+        }
+    } else {
+        abort_move();
+    }
+    // TASKSTATE_Processing, and _Complete once its progress is done
+    if (!progress_capture(registry, L, take_grant(economy_.capture_request, ctx))) return end();
     return OrderStep::Hold;
 }
 

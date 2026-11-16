@@ -87,7 +87,9 @@ struct UnitEconomy {
     /// aircraft is damaged.
     f64 dock_repair_mass = 0.0;
     f64 dock_repair_energy = 0.0;
-    /// Moho's CUnitCaptureTask asks through a request of its own, apart from the unit's.
+    /// Moho's CUnitCaptureTask asks through a request of its own, apart from the unit's:
+    /// its capture's costs over its ticks (mCaptureRate), a second here.
+    f64 capture_mass = 0.0;
     f64 capture_energy = 0.0;
     EconRequest silo_request;
     EconRequest dock_repair_request;
@@ -120,7 +122,7 @@ struct UnitEconomy {
 
     /// Moho's mMaintainenceCost: a silo's missile under way asks through it
     /// too (CAiSiloBuildImpl).
-    f64 mass_requested() const { return consumption_mass + silo_mass; }
+    f64 mass_requested() const { return consumption_mass + silo_mass + capture_mass; }
     f64 energy_requested() const { return consumption_energy + silo_energy + capture_energy; }
     f64 mass_produced() const { return produced_mass + reclaimed_mass; }
     f64 energy_produced() const { return produced_energy + reclaimed_energy; }
@@ -744,18 +746,29 @@ public:
     void stop_repairing(lua_State* L, EntityRegistry& registry);
     bool shield_needs_repair(EntityRegistry& registry, lua_State* L);
 
-    /// Capture helpers
+    /// Capture helpers (Moho's CUnitCaptureTask): the target of the capture
+    /// it has started, else 0.
     EntityId capture_target_id() const { return capture_target_id_; }
     void set_capture_target_id(EntityId id) { capture_target_id_ = id; }
     bool is_capturing() const { return static_cast<bool>(capture_target_id_); }
-    bool is_being_captured() const { return being_captured_; }
-    void set_being_captured(bool v) { being_captured_ = v; }
+    /// Moho's UNITSTATE_BeingCaptured: a capture of it has started and not
+    /// ended (its CaptorCount).
+    bool is_being_captured() const { return captor_count_ > 0; }
+    i32 captor_count() const { return captor_count_; }
     bool capturable() const { return capturable_; }
     void set_capturable(bool c) { capturable_ = c; }
+    /// Moho's TASKSTATE_Starting: the capture's costs from the scripts, its
+    /// request to the army, and the target's count of captors
+    /// (DoCallback(true)). False if it could not start, or its scripts ended it.
     bool start_capture(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L);
-    bool progress_capture(f64 dt, EntityRegistry& registry, lua_State* L,
-                           f32 efficiency = 1.0f);
-    void stop_capturing(lua_State* L, EntityRegistry& registry, bool failed);
+    /// Moho's TASKSTATE_Processing, a tick of it: progress by the target's
+    /// count of captors if the tick's share was `paid`, and the capture
+    /// complete once that reaches its ticks. False once it has ended.
+    bool progress_capture(EntityRegistry& registry, lua_State* L, bool paid);
+    /// The capture task's end (Moho's destructor, DoCallback(false)): the
+    /// unit captures no more, and a target alive still loses a captor and
+    /// hears OnFailedBeingCaptured, then this unit OnFailedCapture.
+    void stop_capturing(lua_State* L, EntityRegistry& registry);
 
     /// Enhancement helpers
     bool has_enhancement(const std::string& enh) const;
@@ -2033,11 +2046,11 @@ private:
     f64 repair_build_time_ = 0;   // target's Economy.BuildTime
     f64 repair_cost_mass_ = 0;    // target's Economy.BuildCostMass
     f64 repair_cost_energy_ = 0;  // target's Economy.BuildCostEnergy
-    EntityId capture_target_id_{}; // entity ID of unit being captured
-    f64 capture_time_ = 0;        // total seconds to capture
-    f64 capture_energy_cost_ = 0; // total energy drain
-    bool capturable_ = true;      // can this unit be captured?
-    bool being_captured_ = false; // is this unit currently being captured?
+    EntityId capture_target_id_{}; // the unit it captures, once begun (Moho's mTargetEntity)
+    i32 capture_ticks_ = 0;        // the capture's ticks, one captor's (Moho's mCaptureTime)
+    i32 capture_progress_ = 0;     // of them, done (Moho's mCaptureProgress)
+    bool capturable_ = true;       // can this unit be captured?
+    i32 captor_count_ = 0;         // the captures of it under way (Moho's CaptorCount)
     bool paused_ = false;
     MotionHorz motion_horz_ = MotionHorz::Stopped;
     void update_motion_horz(lua_State* L, bool crossing, const Vector3& from);

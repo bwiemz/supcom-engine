@@ -283,7 +283,7 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
         pool(econ.consumption_request);
         econ.silo_request.ask(econ.silo_mass * dt, econ.silo_energy * dt);
         econ.dock_repair_request.ask(econ.dock_repair_mass * dt, econ.dock_repair_energy * dt);
-        econ.capture_request.ask(0.0, econ.capture_energy * dt);
+        econ.capture_request.ask(econ.capture_mass * dt, econ.capture_energy * dt);
         pool(econ.silo_request);
         pool(econ.dock_repair_request);
         pool(econ.capture_request);
