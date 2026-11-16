@@ -181,7 +181,7 @@ static int l_c_CreateEntity(lua_State* L) {
                 entity->set_army(index);
             }
         } else if (!lua_isnil(L, owner)) {
-            if (const auto* o = extract_entity(L, owner); o && !o->destroyed()) {
+            if (const auto* o = extract_entity(L, owner)) {
                 entity->set_army(o->army());
             }
         } else if (!lua_isnil(L, army)) {

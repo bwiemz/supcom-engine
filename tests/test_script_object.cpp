@@ -302,6 +302,11 @@ TEST_CASE("An entity's spec names its army as Moho's _c_CreateEntity reads it", 
     CHECK(army_of("{Owner = 255}") == -1);
     CHECK(army_of("{}") == -1);
     CHECK_FALSE(w.state.do_string("e = {} _c_CreateEntity(e, {Army = 0})").ok());
+
+    REQUIRE(w.check("(moho.unit_methods.Destroy or moho.entity_methods.Destroy)(u)"));
+    CHECK(army_of("{Owner = u}") == 1);
+    w.sim.tick();
+    CHECK(army_of("{Owner = u}") == -1);
 }
 
 TEST_CASE("AITarget makes Moho's target table of an entity, a point or nothing",
