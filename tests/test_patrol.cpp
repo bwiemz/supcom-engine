@@ -359,6 +359,145 @@ TEST_CASE("A factory and mobile units given one patrol share one anchor", "[patr
     CHECK(q[1].target_pos.z == 70.0f);
 }
 
+namespace {
+
+/// An air transport, flying, as retail's ferries are (TRANSPORTATION and AIR)
+Unit* air_transport(SimState& sim, osc::f32 x, osc::f32 z) {
+    Unit* u = walker(sim, x, z);
+    u->set_position({x, 20.0f, z});
+    u->set_motion_type("RULEUMT_Air");
+    u->add_category("AIR");
+    u->add_category("TRANSPORTATION");
+    u->add_command_cap("RULEUCC_Transport");
+    u->add_command_cap("RULEUCC_Ferry");
+    return u;
+}
+
+/// A unit's orders, those not yet applied too, as Moho's UserCommandQueue
+/// holds them: "Ferry 20,30 Ferry 80,60"
+std::string queued_route(const SimState& sim, const Unit& u) {
+    const auto queues = sim.queues_with_pending();
+    const auto it = queues.find(u.entity_id());
+    const std::vector<osc::sim::UnitCommand> orders =
+        it != queues.end() ? it->second.orders
+                           : std::vector<osc::sim::UnitCommand>(u.command_queue().begin(),
+                                                                u.command_queue().end());
+    std::string out;
+    for (const auto& c : orders) {
+        out += out.empty() ? "" : " ";
+        out += c.type == CommandType::Ferry ? "Ferry" : "Other";
+        out += " " + std::to_string(static_cast<int>(c.target_pos.x)) + "," +
+               std::to_string(static_cast<int>(c.target_pos.z));
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("A ferry clicked once runs from its transports' mean position to the click",
+          "[transport]") {
+    // Moho's ferry arm (IssueFerryOrderForDrag) gives the selection's air
+    // transports two orders: a Ferry at their mean position on the surface,
+    // where they load, then one at the click, where they unload.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* a = air_transport(sim, 10.0f, 10.0f);
+    Unit* b = air_transport(sim, 30.0f, 50.0f);
+    Unit* tank = walker(sim, 90.0f, 90.0f);
+    tank->set_motion_type("RULEUMT_Land");
+    tank->add_command_cap("RULEUCC_Ferry");
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({a->entity_id(), b->entity_id(), tank->entity_id()});
+    std::vector<osc::renderer::IssuedCommand> reported;
+    osc::renderer::CommandModeHooks hooks;
+    hooks.issued = [&](const osc::renderer::IssuedCommand& c) { reported.push_back(c); };
+    input.set_command_mode_hooks(hooks);
+    osc::renderer::CommandMode mode;
+    mode.mode = "order";
+    mode.name = "RULEUCC_Ferry";
+    const auto issued = input.click_in_command_mode(sim, mode, 80.0f, 60.0f, false);
+    REQUIRE(issued);
+    CHECK(queued_route(sim, *a) == "Ferry 20,30 Ferry 80,60");
+    CHECK(queued_route(sim, *b) == "Ferry 20,30 Ferry 80,60");
+    CHECK(queued_route(sim, *tank).empty());
+    // The anchor is on the ground under the transports, not in the air.
+    const auto queues = sim.queues_with_pending();
+    REQUIRE(queues.count(a->entity_id()) == 1);
+    CHECK(queues.at(a->entity_id()).orders.front().target_pos.y == 0.0f);
+    // Each order tells OnCommandIssued (ISSUE_Command's UI_OnCommandIssued):
+    // the anchor's replaced the queues, the click's is added behind it.
+    REQUIRE(reported.size() == 1);
+    CHECK(reported[0].type == "Ferry");
+    CHECK(reported[0].clear);
+    CHECK(reported[0].position.x == 20.0f);
+    CHECK(reported[0].position.z == 30.0f);
+    CHECK_FALSE(issued->clear);
+    CHECK(issued->position.x == 80.0f);
+    CHECK(issued->units == std::vector<EntityId>{a->entity_id(), b->entity_id()});
+}
+
+TEST_CASE("A Shift ferry click adds to the route its transports run; another transport makes the "
+          "route start where they all are",
+          "[transport]") {
+    // Moho's ResolveGroupFerryAnchorOrDetectFerry: when every transport's
+    // last order, issued or not yet applied, is a Ferry, the click alone is
+    // issued. Otherwise the route starts at the mean of where each one's
+    // orders end, or where it is when it has none.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* a = air_transport(sim, 10.0f, 10.0f);
+    Unit* b = air_transport(sim, 30.0f, 50.0f);
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({a->entity_id(), b->entity_id()});
+    osc::renderer::CommandMode mode;
+    mode.mode = "order";
+    mode.name = "RULEUCC_Ferry";
+    REQUIRE(input.click_in_command_mode(sim, mode, 80.0f, 60.0f, false));
+    REQUIRE(input.click_in_command_mode(sim, mode, 90.0f, 90.0f, true));
+    CHECK(queued_route(sim, *a) == "Ferry 20,30 Ferry 80,60 Ferry 90,90");
+    CHECK(queued_route(sim, *b) == "Ferry 20,30 Ferry 80,60 Ferry 90,90");
+
+    Unit* c = air_transport(sim, 60.0f, 30.0f);
+    input.set_selected({a->entity_id(), b->entity_id(), c->entity_id()});
+    REQUIRE(input.click_in_command_mode(sim, mode, 100.0f, 100.0f, true));
+    CHECK(queued_route(sim, *a) == "Ferry 20,30 Ferry 80,60 Ferry 90,90 Ferry 80,70 Ferry 100,100");
+    CHECK(queued_route(sim, *c) == "Ferry 80,70 Ferry 100,100");
+
+    // With every route ending in a Ferry, a click without Shift is issued
+    // alone too, and replaces them (the resolver has no Shift test, unlike
+    // the patrol arm's).
+    REQUIRE(input.click_in_command_mode(sim, mode, 40.0f, 40.0f, false));
+    CHECK(queued_route(sim, *a) == "Ferry 40,40");
+    CHECK(queued_route(sim, *c) == "Ferry 40,40");
+}
+
+TEST_CASE("A ferry route starts at the unit a transport's last order targets", "[transport]") {
+    // Moho's resolver takes the position of the last order's target: the
+    // unit it names, wherever it now is. A plain click clears the order, but
+    // the route still starts there.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* t = air_transport(sim, 10.0f, 10.0f);
+    const Unit* tank = still(sim, 0, 40.0f, 80.0f);
+    osc::sim::UnitCommand guard;
+    guard.type = CommandType::Guard;
+    guard.target_id = tank->entity_id();
+    t->push_command(guard, true);
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({t->entity_id()});
+    osc::renderer::CommandMode mode;
+    mode.mode = "order";
+    mode.name = "RULEUCC_Ferry";
+    REQUIRE(input.click_in_command_mode(sim, mode, 100.0f, 10.0f, false));
+    CHECK(queued_route(sim, *t) == "Ferry 40,80 Ferry 100,10");
+}
+
 TEST_CASE("A patrol breaks off to attack an enemy within its GuardScanRadius of the route",
           "[patrol]") {
     LuaGuard g;
