@@ -118,6 +118,65 @@ TEST_CASE("init loader records the init script's protocols", "[url]") {
     CHECK(loader.url_protocols() == std::vector<std::string>{"http", "https", "mailto"});
 }
 
+TEST_CASE("the init file has io and os, and the game's scripts after it don't, as Moho's states",
+          "[init]") {
+    namespace fs = std::filesystem;
+    std::random_device rd;
+    const fs::path dir =
+        fs::temp_directory_path() / ("osc_io_init_" + std::to_string(rd()) + std::to_string(rd()));
+    fs::create_directories(dir / "bin");
+    const fs::path init = dir / "bin" / "init.lua";
+    // It lists folders and reads files, as FAF's init_faf.lua does
+    std::ofstream(init) << "path = {}\n"
+                           "listed = type(io.dir) == 'function'\n"
+                           "local f = io.open(InitFileDir .. '/init.lua', 'r')\n"
+                           "opened = f ~= nil\n"
+                           "if f then f:close() end\n"
+                           "timed = type(os.clock) == 'function'\n";
+
+    osc::lua::LuaState state;
+    osc::vfs::VirtualFileSystem vfs;
+    osc::lua::InitConfig config;
+    config.init_file = init;
+    config.fa_path = dir;
+    osc::lua::InitLoader loader;
+    const auto result = loader.execute_init(state, config, vfs);
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+
+    REQUIRE(result.ok());
+    CHECK(state.do_string("assert(listed and opened and timed)").ok());
+    // The game's scripts, which run in it next, have neither: no writing or
+    // listing the player's files, no command (os.execute)
+    CHECK(state.do_string("assert(io == nil)").ok());
+    CHECK(state.do_string("assert(os == nil)").ok());
+}
+
+TEST_CASE("an init file that fails leaves its state without io and os too", "[init]") {
+    namespace fs = std::filesystem;
+    std::random_device rd;
+    const fs::path dir =
+        fs::temp_directory_path() / ("osc_io_fail_" + std::to_string(rd()) + std::to_string(rd()));
+    fs::create_directories(dir / "bin");
+    const fs::path init = dir / "bin" / "init.lua";
+    // A reload whose init fails keeps the state it made
+    std::ofstream(init) << "error('no init today')\n";
+
+    osc::lua::LuaState state;
+    osc::vfs::VirtualFileSystem vfs;
+    osc::lua::InitConfig config;
+    config.init_file = init;
+    config.fa_path = dir;
+    osc::lua::InitLoader loader;
+    const auto result = loader.execute_init(state, config, vfs);
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+
+    CHECK_FALSE(result.ok());
+    CHECK(state.do_string("assert(io == nil)").ok());
+    CHECK(state.do_string("assert(os == nil)").ok());
+}
+
 #ifndef _WIN32
 TEST_CASE("open_url hands the URL to the handler as one argument, with no shell", "[url]") {
     namespace fs = std::filesystem;

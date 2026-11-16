@@ -52,6 +52,40 @@ std::vector<std::string> string_array(lua_State* L, const char* name) {
 Result<void> InitLoader::execute_init(LuaState& state,
                                         const InitConfig& config,
                                         vfs::VirtualFileSystem& vfs) {
+    // The init file runs with Lua's io and os libraries (a new state opens
+    // them), as in Moho's start-up state (LuaState::Init with LIB_OSIO): it
+    // lists the player's folders and reads files there (FAF's init_faf.lua,
+    // io.dir and io.open). It runs first in a new state, before any of the
+    // game's scripts, so nothing untrusted has touched the state yet.
+    //
+    // The game's scripts then run in this state, and Moho's game states have
+    // neither library (LIB_BASE: the rules', the sim's, the session UI's and
+    // the front end's). Lua 5.0's luaopen_io opens both io and os, so both go
+    // when this returns, whether the init succeeded or not (a failed reload
+    // keeps its state): a mod's or a map's script can no longer write, delete
+    // or list the player's files, nor run a command. The base library's
+    // dofile, loadfile and require still read real paths, as Moho's do; none
+    // of retail's or FAF's game scripts call them.
+    class DropOsLibraries {
+    public:
+        explicit DropOsLibraries(lua_State* L) : L_(L) {}
+        DropOsLibraries(const DropOsLibraries&) = delete;
+        DropOsLibraries& operator=(const DropOsLibraries&) = delete;
+        DropOsLibraries(DropOsLibraries&&) = delete;
+        DropOsLibraries& operator=(DropOsLibraries&&) = delete;
+        ~DropOsLibraries() {
+            for (const char* name : {"io", "os"}) {
+                lua_pushstring(L_, name);
+                lua_pushnil(L_);
+                lua_rawset(L_, LUA_GLOBALSINDEX);
+            }
+        }
+
+    private:
+        lua_State* L_;
+    };
+    const DropOsLibraries drop_os_libraries(state.raw());
+
     // Register init-context bindings
     register_init_bindings(state);
 
