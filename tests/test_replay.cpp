@@ -21,6 +21,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -148,6 +149,37 @@ TEST_CASE("Recording keeps what the sim applies, and a checksum each tick", "[re
     sim.tick();
     CHECK(sim.recorded_replay().commands.size() == 2);
     CHECK(sim.recorded_replay().commands[1].exec_beat == 3);
+}
+
+TEST_CASE("A player's order to a place that isn't a number is dropped, and not recorded",
+          "[replay][commands]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto ids = setup(sim);
+    sim.set_recording(true);
+    const osc::f32 nan = std::numeric_limits<osc::f32>::quiet_NaN();
+    const osc::f32 inf = std::numeric_limits<osc::f32>::infinity();
+    const auto queued = [&](EntityId id) {
+        return static_cast<const osc::sim::Unit*>(sim.entity_registry().find(id))
+            ->command_queue()
+            .size();
+    };
+
+    sim.schedule_command(0, {ids[0]}, move_to(nan, 0.0f), true);
+    UnitCommand facing = move_to(10.0f, 10.0f);
+    facing.has_facing = true;
+    facing.facing = inf;
+    sim.schedule_command(0, {ids[2]}, facing, true);
+    sim.tick();
+    CHECK(queued(ids[0]) == 0);
+    CHECK(queued(ids[2]) == 0);
+    CHECK(sim.recorded_replay().commands.empty());
+
+    // A finite one still goes through
+    sim.schedule_command(0, {ids[0]}, move_to(10.0f, 10.0f), true);
+    sim.tick();
+    CHECK(queued(ids[0]) == 1);
+    CHECK(sim.recorded_replay().commands.size() == 1);
 }
 
 TEST_CASE("A replay's game ends on the tick that ended it, and its beats go on to the end",
