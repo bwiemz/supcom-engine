@@ -297,6 +297,11 @@ std::optional<Vector3> Weapon::target_point(const EntityRegistry& registry) cons
 bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry,
                       const SimState* sim) const {
     if (!enabled || !has_target() || owner.busy() || owner.is_stunned()) return false;
+    // Moho's CanFire: an aircraft (Air.CanFly, which every RULEUMT_Air unit
+    // has) fires only on the Air layer, landed or not; a unit that unpacks to
+    // fire only while Immobile (retail's WeaponUnpackingState sets it).
+    if (owner.can_fly() && !owner.is_air_unit()) return false;
+    if (owner.need_unpack() && !owner.immobile()) return false;
     if (counted_projectile && owner.silo_ammo(nuke_weapon) <= 0) return false;
     // AboveWaterFireOnly: by where its muzzle is against the water's surface,
     // not by its unit's layer (Moho's UnitWeapon fire check), so a walker
@@ -663,7 +668,6 @@ bool Weapon::can_attack(const Entity& target, const SimState* sim) const {
         // A projectile in flight is on the Air layer, or Water below the
         // surface.
         const auto& proj = static_cast<const Projectile&>(target);
-        if (proj.impacted) return false;
         if (fire_target_layer_caps != 0xFF &&
             !(layer_to_bit(proj.layer()) & fire_target_layer_caps))
             return false;

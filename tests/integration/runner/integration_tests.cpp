@@ -11354,7 +11354,8 @@ void test_defence(TestContext& ctx) {
                         u.__osc_fired = u.__osc_fired + 1
                         local p = proj:GetPosition()
                         local rec = {owner = u, proj = proj, path = {{p[1], p[2], p[3]}}, tick = GetGameTick(),
-                                     torpedo = EntityCategoryContains(categories.TORPEDO, proj)}
+                                     torpedo = EntityCategoryContains(categories.TORPEDO, proj),
+                                     impacts = {}}
                         -- Whether it was ever asked about meeting a Lua entity
                         -- (a flare): retail's scripts say what refuses a
                         -- collision leaves the hitter none the wiser.
@@ -11368,6 +11369,7 @@ void test_defence(TestContext& ctx) {
                             rec.impact = kind
                             rec.target = what
                             rec.hit = what and (what.GetBlueprint and what:GetBlueprint() and what:GetBlueprint().BlueprintId or 'entity')
+                            table.insert(rec.impacts, {kind = kind, target = what, tick = GetGameTick()})
                             return on_impact(p, kind, what)
                         end
                         table.insert(__osc_shots, rec)
@@ -11724,6 +11726,71 @@ void test_defence(TestContext& ctx) {
         end
         homing:Destroy()
         carrier:Destroy()
+    )");
+
+    // A UEF cruise missile that runs into an anti-missile kills it and flies on: Moho's
+    // Projectile::Impact leaves flying a shot its OnImpact spares, and retail's
+    // Projectile.OnImpactDestroy spares a DestroyOnImpact = false shot that struck an ANTIMISSILE
+    // projectile.
+    lua_check("setup: a tactical missile at an undefended target", R"(
+        __osc_run = {}
+        __osc_run.tml = __osc_watch(__osc_spawn('ueb2108', 'ARMY_1', 620, 290))
+        __osc_run.tml:GiveTacticalSiloAmmo(1)
+        __osc_run.target = __osc_spawn('ueb1101', 'ARMY_2', 740, 290)
+        IssueTactical({__osc_run.tml}, __osc_run.target)
+    )");
+    tick_until([&] { run(1); }, "setup: the missile has flown a second and a half", 600,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+            (function()
+                local m = __osc_shot_of(__osc_run.tml, 1)
+                return m ~= nil and not m.gone and GetGameTick() - m.tick >= 15
+            end)()
+        )");
+               });
+    lua_check("setup: an Aeon anti-missile sits still three units ahead of it", R"(
+        local m = __osc_shot_of(__osc_run.tml, 1)
+        local p = m.proj:GetPosition()
+        local vx, vy, vz = m.proj:GetVelocity()
+        local speed = math.sqrt(vx * vx + vy * vy + vz * vz)
+        local ahead = {p[1] + vx / speed * 3, p[2] + vy / speed * 3, p[3] + vz / speed * 3}
+        -- A child of a shell sent at something: a homing shot a script makes with no target is
+        -- destroyed at once (Test 12).
+        local carrier = __osc_run.target:CreateProjectile('/projectiles/TDFGauss01/TDFGauss01_proj.bp', 0, 2, 0, 0, 0, 1)
+        carrier:SetNewTarget(__osc_run.tml)
+        local a = carrier:CreateChildProjectile('/projectiles/AIMAntiMissile01/AIMAntiMissile01_proj.bp')
+        carrier:Destroy()
+        if a:BeenDestroyed() then error('the anti-missile was destroyed') end
+        -- It stays put, and doesn't strike the missile itself.
+        a:TrackTarget(false)
+        a:SetCollision(false)
+        a:SetVelocityAlign(false)
+        a:SetAcceleration(0)
+        a:SetVelocity(0, 0, 0)
+        a:SetLifetime(60)
+        a:SetPosition(ahead, true)
+        __osc_run.interceptor = a
+    )");
+    tick_until(
+        [&] { run(1); }, "the missile is gone", 600,
+        [&] { return lua_true(ctx.lua_state, "__osc_shot_of(__osc_run.tml, 1).gone ~= nil"); });
+    lua_check("Test 14: a UEF missile that runs into an anti-missile kills it and flies on to its "
+              "target",
+              R"(
+        local m = __osc_shot_of(__osc_run.tml, 1)
+        local kinds = {}
+        for _, i in m.impacts do table.insert(kinds, i.kind) end
+        local seen = 'its impacts: ' .. (table.getn(kinds) > 0 and table.concat(kinds, ', ') or 'none')
+        local first = m.impacts[1]
+        if not first or first.kind ~= 'Projectile' or first.target ~= __osc_run.interceptor then
+            error(seen)
+        end
+        if not __osc_run.interceptor:BeenDestroyed() then error('the anti-missile lives; ' .. seen) end
+        local last = m.impacts[2]
+        if table.getn(m.impacts) ~= 2 or (last.kind ~= 'Unit' and last.kind ~= 'Terrain') then
+            error(seen)
+        end
+        if not __osc_run.target:IsDead() then error('its target lives; ' .. seen) end
     )");
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 11: no script errors");

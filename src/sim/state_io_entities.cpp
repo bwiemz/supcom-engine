@@ -2071,7 +2071,6 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.b(p.collide_surface);
     w.b(p.collide_entity);
     w.b(p.stay_underwater);
-    w.b(p.impacted);
     w.f32v(p.impact_interpolation);
     w.id(p.impact_entity_id);
     w.str(p.impact_kind);
@@ -2129,7 +2128,6 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.collide_surface = r.b();
     p.collide_entity = r.b();
     p.stay_underwater = r.b();
-    p.impacted = r.b();
     p.impact_interpolation = r.f32v();
     p.impact_entity_id = r.id();
     p.impact_kind = r.str();

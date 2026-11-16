@@ -96,15 +96,9 @@ void Projectile::set_lifetime(f32 seconds, u32 now) {
 
 void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const map::Terrain* terrain,
                         u32 tick) {
-    if (impacted) {
-        // Lingering for its ImpactTimeout, it just goes.
-        if (tick >= lifetime_end) {
-            registry.destroy(*this);
-        }
-        return;
-    }
-
-    // Moho's MotionTick: a hit its last step found impacts now, in place of a step.
+    // Moho's MotionTick: a hit its last step found impacts now, in place of a step. Its Impact
+    // (0x0069DEC0) only clears the impact after OnImpact: a shot its script spares steps on from
+    // where it struck the next tick, as any other.
     if (impact_waiting()) {
         Entity* hit = impact_entity_id ? registry.find(impact_entity_id) : nullptr;
         const std::string type = impact_kind;
@@ -724,7 +718,6 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
         registry.destroy(*this);
         return;
     }
-    impacted = true;
     const EntityId id = entity_id();
     const EntityId target_id = target ? target->entity_id() : EntityId();
     const char* type = type_override ? type_override : impact_type(target, terrain);
@@ -775,7 +768,9 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
         }
         lua_settop(L, top);
         report_impact(L, registry, launcher, listener, fired_at, target_id, type);
-        if (ok) return; // the script destroys it, now or after its ImpactTimeout
+        // Its script destroys it, now or later, or spares it: retail's OnImpactDestroy spares a
+        // DestroyOnImpact = false shot (a UEF cruise missile) that struck an anti-missile.
+        if (ok) return;
     }
 
     // No script to finish it (or it broke): it goes now.
