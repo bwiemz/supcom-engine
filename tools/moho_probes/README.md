@@ -281,3 +281,22 @@ Asked on 2026-10-23: the original twice, the two runs matching; the engine on ma
 | `stallstart` midbuild | full rate to tick 13, 0.003334 on the stall's first tick, then the 19% grant's step a tick late, then 7.4% | 0.001355 on the stall's first tick; now the same | The same rule. |
 | `stallstart` dual, solo | dual: 0.003333 on the first tick (a 35% grant). Solo: its first tick at a 50% grant adds 0.003571, above the lead, and its second 0.003334 (25%) | 0.002506; 0.001786 on solo's second; now the same | The same rule. `economy`'s stalled scene follows: 0.017 against 0.014 on tick 30 before, now the same. |
 | `stallstart` store | the army's mass store a hundredth lower on 18 rows (651.90 against 651.91 from the 21st tick of `ml`); on the stall's edge (`midbuild` ticks 13 and 14) the energy used 25.360226 and the grant 0.189592 | 25.360224 and 0.189591; now the same | Moho keeps the store in 32-bit floats, and takes each grant off it in turn; the engine now does both. |
+
+**`shotprops/`** asks whether a shot stops on a prop in its way. It clears the map's own props from the plain at x 640–680, z 85–135 (93 of them), then lays out five lanes, at z 90, 100, 110, 120 and 130. In each, a Striker at x 645 fires a level shell (`tdfgauss01`, 0.3 over the ground: the engine's collide test's) toward an enemy T1 power generator at 673. At 660 stands, lane by lane:
+- nothing;
+- a rock (`fieldstone03`);
+- a tree group (`pine06_big_groupa`);
+- a single tree (`pine06_big`);
+- a tank's wreck.
+
+Each lane logs the shell's first impact: its type, whether it struck the prop or the target, where, and on which tick. Then it logs the prop's and the target's health. It is done at `PROBE shotprops done`, about 130 ticks in (`--ticks 200` on the engine).
+
+Asked on 2026-11-16: the original once; the engine on main b671f67e and with props left out of the shots' and beams' gathers. With that change every line of the two logs is the same: the impacts' types, places and ticks, and the props' and targets' health.
+
+| Lane | The original | The engine | So |
+|---|---|---|---|
+| none | `Unit`, the target, tick 109 | the same | |
+| rock | `Unit`, the target, tick 109; the rock untouched (50) | on main `Prop`, the rock, at x 657.75 (tick 97); now as the original | Moho's line gather (`COGrid::GetEntityCollisionsInLine`) walks the units' and the entities' collision buckets, not the props' (`AddColShapeAt` keeps them apart: Steam's exe 0x503A20, the march at 0x503DB9). No prop is asked `OnCollisionCheck`, though retail's `Prop.lua` would say yes. |
+| tree group | `Unit`, the target, tick 109; the group stands (50) | on main the group broke up, and a tree from it stopped the shell at 659.29; now as the original | The same rule: retail's `TreeGroup.OnCollisionCheck` breaks the group up, but nothing asks it. |
+| tree | `Unit`, the target, tick 109 | on main `Prop`, the tree, at 659.95; now as the original | The same rule. |
+| wreck | `Unit`, the target, tick 109 | the same, on main too | |

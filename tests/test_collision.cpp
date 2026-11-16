@@ -254,6 +254,17 @@ TEST_CASE("the collider query finds shapes near a path, large ones from afar", "
     reg.find(big)->revert_collision_shape();
     reg.collect_colliders(95, 100, 105, 100, out);
     CHECK(out == std::vector<EntityId>{near, big});
+
+    // A shot's or a beam's line gathers no prop (Moho's GetEntityCollisionsInLine); the
+    // area query (a blast's shields) still finds it.
+    auto rock = std::make_unique<osc::sim::Prop>();
+    rock->set_position({101, 0, 101});
+    rock->set_default_collision_shape(box(1, 1, 1));
+    const EntityId prop = reg.register_entity(std::move(rock));
+    reg.collect_colliders(95, 100, 105, 100, out);
+    CHECK(out == std::vector<EntityId>{near, big, prop});
+    reg.collect_line_colliders(95, 100, 105, 100, out);
+    CHECK(out == std::vector<EntityId>{near, big});
 }
 
 TEST_CASE("a shot stops at the first thing in its way", "[collision]") {
@@ -329,12 +340,8 @@ TEST_CASE("a beam passes what has no OnCollisionCheckWeapon or fails it", "[coll
     gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->lua_table_ref = script("return {}");
     static_cast<Unit*>(reg.find(shooter))->add_weapon(std::move(gun));
-    // A tree: retail's props have no OnCollisionCheckWeapon
-    auto tree = std::make_unique<osc::sim::Prop>();
-    tree->set_position({100, 0, 104});
-    tree->set_default_collision_shape(box(1, 2, 1));
-    tree->set_lua_table_ref(script("return {}"));
-    reg.register_entity(std::move(tree));
+    const EntityId bare = add_unit(reg, {100, 0, 104}, box(1, 2, 1));
+    reg.find(bare)->set_lua_table_ref(script("return {}"));
     const EntityId broken = add_unit(reg, {100, 0, 107}, box(0.5f, 2, 0.5f));
     reg.find(broken)->set_lua_table_ref(
         script("return {OnCollisionCheckWeapon = function() error('broken') end}"));
@@ -1170,6 +1177,72 @@ TEST_CASE("a shot passes an entity whose script has no OnCollisionCheck, as Moho
     reg.advance_coords();
     CHECK_FALSE(shot->impact_waiting());
     CHECK(shot->position().z == Approx(104.0f));
+}
+
+TEST_CASE("a shot passes a prop in its way, unasked, and hits what is behind it, as Moho's",
+          "[collision]") {
+    // Moho's line gather (COGrid::GetEntityCollisionsInLine) walks the unit and entity buckets,
+    // not the props': a rock, a tree or a wreck in the way is never asked OnCollisionCheck,
+    // though retail's Prop.lua would say yes and its TreeGroup break up. The original game, on
+    // SCMP_009 (tools/moho_probes/shotprops): a level shell from a Striker passes each one onto
+    // the power generator behind it.
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    EntityRegistry reg;
+    reg.init_spatial_grid(512, 512);
+    run_lua(L, "asked = 0");
+    auto rock = std::make_unique<osc::sim::Prop>();
+    rock->set_position({100, 0, 103});
+    rock->set_default_collision_shape(box(1, 1, 1, 1)); // z 102..104
+    rock->set_lua_table_ref(
+        script_of(L, "{ OnCollisionCheck = function() asked = asked + 1 return true end }"));
+    reg.register_entity(std::move(rock));
+    const EntityId wall = add_unit(reg, {100, 0, 106}, box(1, 1, 1, 1)); // z 105..107
+    reg.find(wall)->set_lua_table_ref(
+        script_of(L, "{ OnCollisionCheck = function() return true end }"));
+    Projectile* shot = add_shot(reg, {100, 1, 100}, {0, 0, 60});
+    shot->set_lua_table_ref(script_of(L, "{}"));
+    shot->update(0.1, reg, L);
+    reg.advance_coords();
+    CHECK(global_number(L, "asked") == 0);
+    REQUIRE(shot->impact_waiting());
+    CHECK(shot->impact_entity_id == wall);
+    CHECK(shot->position().z == Approx(105.0f));
+}
+
+TEST_CASE("a beam passes a prop, unasked, even one whose script would let it hit, as Moho's",
+          "[collision]") {
+    // Moho's beam (UnitWeapon::CreateCollisionBeamHelper) gathers with the shots' line gather,
+    // COGrid::GetEntityCollisionsInLine, which walks no prop.
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    osc::sim::SimState sim{L, nullptr};
+    EntityRegistry& reg = sim.entity_registry();
+    reg.init_spatial_grid(512, 512);
+    run_lua(L, "asked = 0");
+    const EntityId shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
+    gun->lua_table_ref = script_of(L, "{}");
+    static_cast<Unit*>(reg.find(shooter))->add_weapon(std::move(gun));
+    auto rock = std::make_unique<osc::sim::Prop>();
+    rock->set_position({100, 0, 104});
+    rock->set_default_collision_shape(box(1, 2, 1));
+    rock->set_lua_table_ref(
+        script_of(L, "{ OnCollisionCheckWeapon = function() asked = asked + 1 return true end }"));
+    reg.register_entity(std::move(rock));
+    const EntityId tank = add_unit(reg, {100, 0, 110}, box(1, 2, 1));
+    reg.find(tank)->set_lua_table_ref(
+        script_of(L, "{ OnCollisionCheckWeapon = function() return true end }"));
+    auto beam = std::make_unique<osc::sim::Entity>();
+    beam->set_collision_beam(true);
+    beam->set_beam_launcher_id(shooter);
+    beam->beam_setup().weapon = 0;
+    beam->beam_setup().length = 20;
+    const EntityId beam_id = reg.register_entity(std::move(beam));
+    osc::sim::check_collision_beam(sim, L, beam_id, false);
+    CHECK(global_number(L, "asked") == 0);
+    CHECK(reg.find(beam_id)->beam_endpoint().z == Approx(109.0f));
 }
 
 TEST_CASE("a shot crossing into the water hears OnEnterWater first on retail's rule, and not "

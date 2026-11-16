@@ -418,7 +418,10 @@ std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
 
     // What it meets on the way, nearest first, each asked again every tick. Retail's
     // CheckCollision sweeps a tenth of the step past each end (0.1 at 0x00E4F714), FAF's patched
-    // exe a hundredth (FixCollisions), and measures the hit from the swept line's start.
+    // exe a hundredth (FixCollisions), and measures the hit from the swept line's start. Its
+    // gathers take no prop (GetEntityCollisionsInLine; mask 0xD00 for a short step's sphere,
+    // Steam's exe 0x6A434E): a shot passes rocks, trees and wrecks unasked, and only a blast's
+    // DamageArea reaches them.
     if (collide_entity) {
         const f32 kSweepBeyond = registry.faf_exe() ? 0.01f : 0.1f;
         const f32 kSweepLength = 1.0f + 2.0f * kSweepBeyond;
@@ -428,7 +431,7 @@ std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
         const Vector3 end{to.x + d.x * kSweepBeyond, to.y + d.y * kSweepBeyond,
                           to.z + d.z * kSweepBeyond};
         std::vector<EntityId> candidates;
-        registry.collect_colliders(start.x, start.z, end.x, end.z, candidates);
+        registry.collect_line_colliders(start.x, start.z, end.x, end.z, candidates);
         std::vector<std::pair<f32, EntityId>> hits;
         for (const EntityId id : candidates) {
             if (id == entity_id() || id == launcher_id) continue;

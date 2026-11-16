@@ -72,7 +72,7 @@ const char* impact_type(const Entity& hit) {
 }
 
 /// Whether `struck` lets the beam's weapon hit it: its
-/// OnCollisionCheckWeapon(weapon), no without one (a prop) or on an error (Moho's
+/// OnCollisionCheckWeapon(weapon), no without one or on an error (Moho's
 /// RunScript_OnCollisionCheckWeapon). With no script to ask, yes. An error fails a test run.
 bool weapon_allowed(lua_State* L, const Entity& struck, int weapon_ref) {
     if (!L || struck.lua_table_ref() < 0 || weapon_ref < 0) return true;
@@ -146,15 +146,17 @@ void check_collision_beam(SimState& sim, lua_State* L, EntityId beam_id, bool be
     }
 
     // What stands in the way before it, nearest first. Scripted entities
-    // (a flare's lure) and other beams don't stop a beam.
+    // (a flare's lure) and other beams don't stop a beam, nor do props: Moho's
+    // beam gathers with the shots' line gather (GetEntityCollisionsInLine),
+    // which walks none.
     std::vector<EntityId> candidates;
-    registry.collect_colliders(from.x, from.z, to.x, to.z, candidates);
+    registry.collect_line_colliders(from.x, from.z, to.x, to.z, candidates);
     std::vector<std::pair<f32, EntityId>> hits;
     for (const EntityId id : candidates) {
         if (id == beam_id || id == launcher_id) continue;
         const Entity* e = registry.find(id);
         if (!e || e->destroyed() || e->is_collision_beam()) continue;
-        if (!e->is_unit() && !e->is_prop() && !e->is_shield() && !e->is_projectile()) continue;
+        if (!e->is_unit() && !e->is_shield() && !e->is_projectile()) continue;
         if (e->is_unit() && static_cast<const Unit*>(e)->transport_id()) {
             continue;
         }
