@@ -780,7 +780,7 @@ public:
                                 ///< pathing its navigators, finders, queues and dirty clusters
         u64 weapons = 0;        ///< targets, ground attacks, fire and target-check clocks,
                                 ///< enabled, script-set range/rate/damage/layers
-        u64 projectiles = 0;    ///< velocity, target, lifetime, impacted
+        u64 projectiles = 0;    ///< velocity, target, lifetime, tracking
         u64 shields = 0;        ///< on or off (their health is an entity's)
         u64 economy_events = 0; ///< progress, done, cancelled
         u64 terrain = 0;        ///< the heightfield's digest (its flattenings included)

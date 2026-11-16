@@ -32,6 +32,7 @@ add_executable(osc_tests
     test_patrol.cpp
     test_guard.cpp
     test_ground_attack.cpp
+    test_attack_reach.cpp
     test_primary_weapon_target.cpp
     test_retarget_on_miss.cpp
     test_projectile_bounce.cpp
