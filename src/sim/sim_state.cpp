@@ -1500,9 +1500,11 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     if (clear_existing && command.type != CommandType::Stop && unit.has_unit_state("Enhancing")) {
         return false;
     }
+    static const CategoryName kPod{"POD"};
+    static const CategoryName kCarrier{"CARRIER"};
     const Unit* carrier = carrier_of(entity_registry_, unit);
-    const bool pod = unit.has_category("POD");
-    const bool may_leave = !carrier || pod || carrier->has_category("CARRIER");
+    const bool pod = unit.has_category(kPod);
+    const bool may_leave = !carrier || pod || carrier->has_category(kCarrier);
     if (command.type == CommandType::Move || command.type == CommandType::Patrol ||
         command.type == CommandType::AggressiveMove) {
         return may_leave && unit.motion_type() != "RULEUMT_None" && has_target(command) &&
