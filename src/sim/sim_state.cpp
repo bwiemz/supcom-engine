@@ -2056,6 +2056,17 @@ void SimState::terminate_command_source(u32 source) {
     }
 }
 
+namespace {
+
+/// Whether an order's place and facing are finite numbers.
+bool finite_place(const UnitCommand& command) {
+    return std::isfinite(command.target_pos.x) && std::isfinite(command.target_pos.y) &&
+           std::isfinite(command.target_pos.z) &&
+           (!command.has_facing || std::isfinite(command.facing));
+}
+
+} // namespace
+
 void SimState::dispatch_due_commands() {
     PROFILE_ZONE("Sim::commands");
     command_scheduler_.dispatch_due(beat_count_, [&](const ScheduledCommand& scheduled) {
@@ -2073,6 +2084,17 @@ void SimState::dispatch_due_commands() {
              sc.callback->func_name == kCommandSourceTerminatedCallback)) {
             spdlog::warn("[commands] source {} sent the engine's {}; ignored", sc.source,
                          sc.callback->func_name);
+            return;
+        }
+        // A player's order to a place, or with a facing, that isn't a finite
+        // number is dropped: no click gives one, and one sent by a peer or a
+        // UI script would steer units toward it. Every peer drops the same
+        // orders, so they stay in step, and a replay's are taken as they
+        // were applied.
+        if (sc.source != kEngineSource && !playback_ && !sc.callback && !finite_place(sc.command)) {
+            spdlog::warn("[commands] source {} sent an order to a place that isn't a number; "
+                         "ignored",
+                         sc.source);
             return;
         }
         // A player's order, or UI callback, moves only the units its source
