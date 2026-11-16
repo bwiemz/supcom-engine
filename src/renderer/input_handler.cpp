@@ -1521,9 +1521,19 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         if (spec->targets_unit && !cmd.target_id) {
             return std::nullopt;
         }
-        live_selected([&](const sim::Unit& u) {
-            return u.has_command_cap(spec->cap) && u.entity_id() != cmd.target_id;
-        });
+        if (spec->type == sim::CommandType::TransportUnload &&
+            assist_move_selection(sim, cmd.target_id, ids)) {
+            // Moho's RULEUCC_Transport arm, on the ground (0x00821014): air
+            // transports with land units selected join them in one AssistMove
+            // there.
+            cmd.type = sim::CommandType::AssistMove;
+            cmd.target_id = {};
+            out.type = "AssistMove";
+        } else {
+            live_selected([&](const sim::Unit& u) {
+                return u.has_command_cap(spec->cap) && u.entity_id() != cmd.target_id;
+            });
+        }
     } else {
         return std::nullopt; // no mode, or one without a world click (ping)
     }
@@ -1839,6 +1849,48 @@ sim::EntityId InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool 
         }
     }
     return best_id;
+}
+
+bool InputHandler::assist_move_selection(sim::SimState& sim, sim::EntityId hovered,
+                                         std::vector<sim::EntityId>& ids) const {
+    // SCommandModeData::HandleEvent's RULEUCC_Transport arm (faf-re
+    // CWldSessionCommands IssueTransportOrderForDrag): a beacon a teleporter
+    // drops onto and a unit that calls transports take the order themselves
+    // (not yet ported: the order is then an unload, as before). Otherwise the
+    // selection splits into mobile air transports and mobile land units
+    // (SplitSelectionForFerryCommand); with both, they all get one AssistMove.
+    std::vector<const sim::Unit*> units;
+    for (const sim::EntityId id : selected_) {
+        const sim::Entity* e = sim.entity_registry().find(id);
+        if (e && e->is_unit() && !e->destroyed()) units.push_back(static_cast<const sim::Unit*>(e));
+    }
+    if (const sim::Entity* e = hovered ? sim.entity_registry().find(hovered) : nullptr;
+        e && e->is_unit()) {
+        const auto& target = static_cast<const sim::Unit&>(*e);
+        const bool teleports = std::any_of(units.begin(), units.end(), [](const sim::Unit* u) {
+            return u->has_category("TELEPORTATION");
+        });
+        if ((target.has_category("TELEPORTBEACON") && teleports) ||
+            target.has_command_cap("RULEUCC_CallTransport")) {
+            return false;
+        }
+    }
+    std::vector<sim::EntityId> transports;
+    std::vector<sim::EntityId> land;
+    for (const sim::Unit* u : units) {
+        if (!u->is_mobile()) continue;
+        if (u->has_category("TRANSPORTATION") &&
+            (u->has_category("AIR") || u->has_category("AIRSTAGINGPLATFORM"))) {
+            transports.push_back(u->entity_id());
+        } else if (u->has_category("LAND")) {
+            land.push_back(u->entity_id());
+        }
+    }
+    if (transports.empty() || land.empty()) return false;
+    ids = std::move(land);
+    ids.insert(ids.end(), transports.begin(), transports.end());
+    std::sort(ids.begin(), ids.end());
+    return true;
 }
 
 sim::EntityId InputHandler::target_under(sim::SimState& sim, f32 wx, f32 wz,

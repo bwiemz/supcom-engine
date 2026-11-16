@@ -14,6 +14,7 @@
 
 #include <lua.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <optional>
@@ -373,4 +374,62 @@ TEST_CASE("A command-mode special action goes to the selected units that have on
     CHECK(pending[0].unit_ids == std::vector<osc::sim::EntityId>{w.id});
     osc::lua::report_command_issued(w.ui.raw(), *issued);
     CHECK(w.check("assert(seen[1].CommandType == 'SpecialAction', seen[1].CommandType)"));
+}
+
+TEST_CASE("The Transport order given to air transports and land units is one AssistMove for both",
+          "[ui][command_issued][assist-move]") {
+    // Moho's SCommandModeData::HandleEvent, its RULEUCC_Transport arm on the
+    // ground (0x00821014): the selection split into mobile air transports and
+    // mobile land units (SplitSelectionForFerryCommand). With both halves,
+    // they all get one UNITCOMMAND_AssistMove there; with either empty, the
+    // order is an unload, as before.
+    IssueWorld w;
+    const osc::sim::EntityId transport = w.add_unit("uea0107", "TRANSPORTATION", "T");
+    const osc::sim::EntityId tank = w.add_unit("uel0201", "LAND", "L");
+    const osc::sim::EntityId bomber = w.add_unit("uea0103", "AIR", "B");
+    const auto unit = [&](osc::sim::EntityId id) {
+        return static_cast<osc::sim::Unit*>(w.sim.entity_registry().find(id));
+    };
+    unit(transport)->add_category("AIR");
+    unit(transport)->add_command_cap("RULEUCC_Transport");
+    for (const osc::sim::EntityId id : {transport, tank, bomber}) {
+        unit(id)->add_category("MOBILE");
+        unit(id)->set_motion_type(id == tank ? "RULEUMT_Land" : "RULEUMT_Air");
+    }
+    osc::renderer::CommandMode mode;
+    mode.mode = "order";
+    mode.name = "RULEUCC_Transport";
+
+    // Transports alone: an unload
+    w.input.set_selected({transport});
+    auto issued = w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, false);
+    REQUIRE(issued);
+    CHECK(issued->type == "TransportUnloadUnits");
+    REQUIRE(w.sim.command_scheduler().pending().size() == 1);
+    CHECK(w.sim.command_scheduler().pending()[0].command.type ==
+          osc::sim::CommandType::TransportUnload);
+
+    // Land units alone: none of them can unload
+    w.input.set_selected({tank});
+    CHECK_FALSE(w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, false));
+
+    // Both: one AssistMove for the transport and the tank; the bomber is in
+    // neither half
+    w.input.set_selected({transport, tank, bomber});
+    issued = w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, false);
+    REQUIRE(issued);
+    CHECK(issued->type == "AssistMove");
+    std::vector<osc::sim::EntityId> both{transport, tank};
+    std::sort(both.begin(), both.end());
+    CHECK(issued->units == both);
+    const auto pending = w.sim.command_scheduler().pending();
+    REQUIRE(pending.size() == 2);
+    CHECK(pending[1].command.type == osc::sim::CommandType::AssistMove);
+    CHECK(pending[1].command.target_id == osc::sim::EntityId{});
+    CHECK(pending[1].command.target_pos.x == 40.0f);
+    CHECK(pending[1].command.target_pos.z == 60.0f);
+    CHECK(pending[1].clear_existing);
+    CHECK(pending[1].unit_ids == both);
+    osc::lua::report_command_issued(w.ui.raw(), *issued);
+    CHECK(w.check("assert(seen[1].CommandType == 'AssistMove', seen[1].CommandType)"));
 }

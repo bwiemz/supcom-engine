@@ -718,16 +718,22 @@ void Unit::tick_weapons(SimContext& ctx) {
 }
 
 bool Unit::end_gone_loading(SimContext& ctx) {
-    const bool loading_head =
-        !command_queue_.empty() && command_queue_.front().type == CommandType::TransportLoad;
-    if (pickup_phase_ != PickupPhase::None &&
-        !(loading_head && command_queue_.front().target_id == entity_id())) {
+    const UnitCommand* head = command_queue_.empty() ? nullptr : &command_queue_.front();
+    const bool loading_head = head && head->type == CommandType::TransportLoad;
+    // An AssistMove's transport picks up under it (its CUnitLoadUnits), and
+    // a land unit it took boards under it.
+    const bool assist = head && head->type == CommandType::AssistMove;
+    if (pickup_phase_ != PickupPhase::None && !(loading_head && head->target_id == entity_id()) &&
+        !(assist && head->assist_phase == AssistPhase::Loading)) {
         finish_pickup(false, ctx.L);
         if (destroyed() || !in_registry()) {
             return false;
         }
+        head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
     }
-    if (beam_up_ticks_ > 0 && !(loading_head && command_queue_.front().target_id != entity_id())) {
+    if (beam_up_ticks_ > 0 &&
+        !(head && head->type == CommandType::TransportLoad && head->target_id != entity_id()) &&
+        !(head && head->type == CommandType::AssistMove && head->assigned_id)) {
         abandon_beam_up(ctx.terrain, ctx.L);
         if (destroyed() || !in_registry()) {
             return false;
@@ -756,6 +762,16 @@ bool Unit::end_gone_tasks(SimContext& ctx) {
     }
     if (has_unit_state("WaitForFerry") && !(head && head->type == CommandType::WaitForFerry)) {
         set_unit_state("WaitForFerry", false);
+    }
+    // A transport's AssistMove gone from the head of its queue, or another
+    // in its place not yet begun, ends its task.
+    if (has_unit_state("AssistMoving") && !(head && head->type == CommandType::AssistMove &&
+                                            head->assist_phase != AssistPhase::Start)) {
+        end_assist_move(ctx);
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
+        head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
     }
     // A Script order's task whose order is gone -- cleared, replaced --
     // ends (M206w): its OnDestroy runs.
@@ -2952,6 +2968,20 @@ TransportSlots* Unit::transport_slots() {
     if (!transport_slots_ && bone_data())
         transport_slots_ = std::make_unique<TransportSlots>(*bone_data(), transport_layout_);
     return transport_slots_.get();
+}
+
+bool Unit::transport_can_carry(const Unit& cargo) {
+    if (!cargo.is_mobile() || cargo.has_category("AIR") != is_staging_platform() ||
+        (cargo.has_category("COMMAND") && !has_category("CANTRANSPORTCOMMANDER"))) {
+        return false;
+    }
+    const TransportSlots* slots = transport_slots();
+    return !slots || slots->can_carry_class(cargo.transport_class());
+}
+
+bool Unit::has_transport_ai() const {
+    return has_command_cap("RULEUCC_Transport") || has_category("PODSTAGINGPLATFORM") ||
+           is_staging_platform();
 }
 
 bool Unit::transport_has_space_for(const Unit& cargo) {

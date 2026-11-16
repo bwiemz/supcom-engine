@@ -62,6 +62,12 @@ enum class CommandType : u8 {
     // Pause): as the order comes up the unit's pause is toggled, and the
     // order is done.
     Pause = 84,
+    // Moho's UNITCOMMAND_AssistMove: the Transport order given to air
+    // transports with land units (the command mode's RULEUCC_Transport arm).
+    // Its transports carry the land units that get there sooner carried
+    // (CUnitAssistMoveTask); the land units drive there, or board the
+    // transport that comes for them.
+    AssistMove = 85,
 };
 
 /// Moho's CommandIsInstant: an order that takes no move of its own.
@@ -118,10 +124,23 @@ inline int moho_command_number(CommandType type, bool formed) {
     case CommandType::AggressiveMove: return formed ? 36 : 35;
     case CommandType::Dock: return 39;
     case CommandType::DestroySelf: return 31;
+    case CommandType::AssistMove: return 37;
     case CommandType::SpecialAction: return 38;
     }
     return 0;
 }
+
+/// Where an AssistMove order is (Moho's IAiCommandDispatchImpl arm for it,
+/// then CUnitAssistMoveTask's states for a transport's).
+enum class AssistPhase : u8 {
+    Start,     ///< not yet dispatched: who carries it out, and how
+    Preparing, ///< a transport's: it looks for units to carry 2 ticks on
+    Waiting,   ///< a transport's: looking (CUnitAssistMoveTask::Wait)
+    Loading,   ///< a transport's: picking units up (its CUnitLoadUnits)
+    Unloading, ///< a transport's: setting them down at the goal (CUnitUnloadUnits)
+    Finishing, ///< a transport's: none left to carry; it goes to the goal
+    Walking,   ///< a land unit's: it drives to the goal, or boards its transport
+};
 
 /// Where a refuel order is (Moho's CUnitRefuel task states, M206r).
 enum class DockPhase : u8 {
@@ -237,17 +256,21 @@ struct UnitCommand {
     /// A ferry route's first order: the beacon it loads at (runtime state; 0
     /// until the route starts).
     EntityId beacon_id{};
-    /// A WaitForFerry order: the ferry that took the unit, which it boards
-    /// (runtime state; 0 while it waits).
+    /// A WaitForFerry order: the ferry that took the unit, which it boards;
+    /// a land unit's AssistMove: the transport that took it to carry it
+    /// (Moho's AssignedTransportRef; runtime state, 0 until one does).
     EntityId assigned_id{};
     /// A factory build whose unit is done: ticks until it next looks at
     /// whether the factory is still busy rolling the unit off (runtime
     /// state; 0 while it builds). See Unit::order_build_in_place.
     i32 rolloff_wait = 0;
     /// A build or repair its army's unit cap or its unit's pause stopped:
-    /// ticks until it tries again, as Moho's tasks wait 10 there (runtime
-    /// state; 0 otherwise).
+    /// ticks until it tries again, as Moho's tasks wait 10 there; an
+    /// AssistMove's transport's ticks until it next looks for units to carry
+    /// (runtime state; 0 otherwise).
     i32 task_wait = 0;
+    /// Where an AssistMove is (runtime state).
+    AssistPhase assist_phase = AssistPhase::Start;
     /// A sacrifice whose OnStartSacrifice has run: ticks until it gives
     /// itself (Moho's task returns 10, which retail runs 9 ticks on).
     /// Runtime state.

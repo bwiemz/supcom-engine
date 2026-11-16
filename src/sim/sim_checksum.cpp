@@ -408,6 +408,11 @@ void mix_command(Fnv& orders, const UnitCommand& cmd, bool need_unpack) {
         orders.mix(0x53414357u); // "SACW"
         orders.mix(static_cast<u64>(static_cast<u32>(cmd.sacrifice_wait)));
     }
+    // An AssistMove under way, only then.
+    if (cmd.assist_phase != AssistPhase::Start) {
+        orders.mix(0x41534d56u); // "ASMV"
+        orders.mix(static_cast<u64>(cmd.assist_phase));
+    }
     // A refuel under way (M206r), only once it has a slot or waits.
     if (cmd.dock_phase != DockPhase::Reserve || cmd.dock_wait != 0) {
         orders.mix(0x444f434bu); // "DOCK"

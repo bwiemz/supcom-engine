@@ -396,6 +396,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.id(c.assigned_id);
     w.i32v(c.rolloff_wait);
     w.i32v(c.task_wait);
+    enum8(w, c.assist_phase);
     w.i32v(c.sacrifice_wait);
     w.i32v(c.count);
     w.i32v(c.max_count);
@@ -457,6 +458,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.assigned_id = r.id();
     c.rolloff_wait = r.i32v();
     c.task_wait = r.i32v();
+    c.assist_phase = enum8<AssistPhase>(r);
     c.sacrifice_wait = r.i32v();
     c.count = r.i32v();
     c.max_count = r.i32v();

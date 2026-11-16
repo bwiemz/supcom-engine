@@ -234,6 +234,7 @@ constexpr Mode kModesBefore[] = {
     {"--transport-slots-test", test_transport_slots, false},
     {"--transport-pickup-test", test_transport_pickup, false},
     {"--transport-drop-test", test_transport_drop, false},
+    {"--transport-assist-move-test", test_assist_move, false},
     {"--carrier-test", test_carrier, false},
     {"--right-click-test", test_right_click, false},
     {"--carrier-land-test", test_carrier_land, false},
@@ -484,6 +485,8 @@ void IntegrationModes::print_usage() const {
               << "  --charge-test      Economy events, OverCharge and teleports cost and take time\n"
               << "  --range-test       Build, repair, reclaim and capture reach, guards, the queue\n"
               << "  --ferry-test       A ferry carries units from its beacon to its drop-off\n"
+              << "  --transport-assist-move-test The Transport order: transports carry the land\n"
+              << "                     units ordered with them (AssistMove)\n"
               << "  --factory-assist-test A factory guarding a factory builds from its queue\n"
               << "  --factory-rally-test What a factory builds takes its rally orders\n"
               << "  --influence-test   The AI's threat is what its intel has seen (influence map)\n"

@@ -35,9 +35,7 @@ void project(const OrientedBox& b, const Vector3& axis, f32& lo, f32& hi) {
 /// The transport its head order waits for, or 0 (Moho's
 /// UNITSTATE_WaitingForTransport, and its focus).
 EntityId awaited_transport(const Unit& u) {
-    const auto& q = u.command_queue();
-    return !q.empty() && q.front().type == CommandType::TransportLoad ? q.front().target_id
-                                                                      : EntityId();
+    return u.awaited_transport();
 }
 
 bool ignores_structures(const Unit& u) {

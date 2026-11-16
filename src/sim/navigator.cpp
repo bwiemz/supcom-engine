@@ -300,8 +300,11 @@ void Navigator::navigate(Unit& unit) {
     nav.immobile = unit.immobile();
     nav.attacking = unit.has_unit_state("Attacking");
     nav.layer = layer_token(unit.layer());
-    nav.waiting_for_transport = !unit.command_queue().empty() &&
-                                unit.command_queue().front().type == CommandType::TransportLoad;
+    const auto& queue = unit.command_queue();
+    nav.waiting_for_transport =
+        !queue.empty() &&
+        (queue.front().type == CommandType::TransportLoad ||
+         (queue.front().type == CommandType::AssistMove && queue.front().assigned_id));
     nav.tick = sim_->tick_count();
     nav.probe_bucket = EntityRegistry::moho_id(unit.entity_id()) % 7;
     nav.max_speed = unit.max_speed();
