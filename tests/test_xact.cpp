@@ -343,6 +343,36 @@ TEST_CASE("XACT: a bank in an archive is read into memory, but not a streaming o
     fs::remove_all(folder);
 }
 
+TEST_CASE("XACT: a wave bank's header asks for no more than the bank holds", "[audio][xact]") {
+    // A bank from a mod or a map is untrusted: a length past its end is refused
+    // before anything is allocated for it.
+    const auto good = make_xwb("BadWaves", 2);
+    const auto patch = [](std::vector<u8>& b, size_t at, u32 v) {
+        for (size_t i = 0; i < 4; ++i) b[at + i] = static_cast<u8>(v >> (8 * i));
+    };
+    const auto parse = [](const std::vector<u8>& b, osc::audio::XwbParser& p) {
+        return p.parse(std::make_shared<const std::vector<u8>>(b)).ok();
+    };
+    SECTION("a segment past the bank's end refuses the bank") {
+        for (const size_t length_at : {12 + 4, 12 + 8 + 4}) { // BANKDATA's, ENTRYMETADATA's
+            auto bytes = good;
+            patch(bytes, length_at, 0xFFFFFFF0u);
+            osc::audio::XwbParser p;
+            INFO("segment length at " << length_at);
+            CHECK_FALSE(parse(bytes, p));
+        }
+    }
+    SECTION("a wave past it plays nothing, and the others still play") {
+        auto bytes = good;
+        const size_t entry0 = 52 + 96;          // the entries follow 96 bytes of bank data
+        patch(bytes, entry0 + 12, 0x7FFFFFFFu); // its play length
+        osc::audio::XwbParser p;
+        REQUIRE(parse(bytes, p));
+        CHECK(p.read_wave_data(0).empty());
+        CHECK(p.read_wave_data(1).size() == 8);
+    }
+}
+
 TEST_CASE("XACT: a damaged wave bank fails to load", "[audio][xact]") {
     namespace fs = std::filesystem;
     const fs::path file = osc::test::unique_temp_path("osc_xact_bad", ".xwb");

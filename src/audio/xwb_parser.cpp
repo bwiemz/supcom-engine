@@ -70,19 +70,27 @@ Result<void> XwbParser::parse(const fs::path& xwb_path) {
     if (!file) {
         return Error("Failed to open XWB file: " + xwb_path.string());
     }
-    return parse_with([&file](u64 offset, u8* out, size_t n) {
-        file.clear();
-        file.seekg(static_cast<std::streamoff>(offset));
-        file.read(reinterpret_cast<char*>(out), static_cast<std::streamsize>(n));
-        return static_cast<bool>(file);
-    });
+    std::error_code ec;
+    const auto size = fs::file_size(xwb_path, ec);
+    if (ec) {
+        return Error("Failed to size XWB file: " + xwb_path.string());
+    }
+    return parse_with(
+        [&file](u64 offset, u8* out, size_t n) {
+            file.clear();
+            file.seekg(static_cast<std::streamoff>(offset));
+            file.read(reinterpret_cast<char*>(out), static_cast<std::streamsize>(n));
+            return static_cast<bool>(file);
+        },
+        size);
 }
 
 Result<void> XwbParser::parse(std::shared_ptr<const std::vector<u8>> bytes) {
     path_.clear();
     bytes_ = std::move(bytes);
     if (!bytes_) return Error("No XWB bytes");
-    return parse_with([this](u64 offset, u8* out, size_t n) { return read_bytes(offset, out, n); });
+    return parse_with([this](u64 offset, u8* out, size_t n) { return read_bytes(offset, out, n); },
+                      bytes_->size());
 }
 
 bool XwbParser::read_bytes(u64 offset, u8* out, size_t n) const {
@@ -91,7 +99,7 @@ bool XwbParser::read_bytes(u64 offset, u8* out, size_t n) const {
     return true;
 }
 
-Result<void> XwbParser::parse_with(const ReadAt& read) {
+Result<void> XwbParser::parse_with(const ReadAt& read, u64 size) {
     entries_.clear();
     bank_name_.clear();
     streaming_ = false;
@@ -120,8 +128,18 @@ Result<void> XwbParser::parse_with(const ReadAt& read) {
         segments[i].length = read_u32(header + 12 + i * 8 + 4);
     }
 
+    // A bank comes from a mod or a map as well as FA's own: every place its
+    // header gives must lie inside it before anything is read into memory for
+    // it, so a bad length can't ask for gigabytes.
+    const auto fits = [size](u64 offset, u64 length) {
+        return offset <= size && length <= size - offset;
+    };
+
     // Read BANKDATA segment (96 bytes for non-compact)
     auto& bd_seg = segments[SEG_BANKDATA];
+    if (!fits(bd_seg.offset, bd_seg.length)) {
+        return Error("BANKDATA segment lies past the end of the bank");
+    }
     if (bd_seg.length < 72) { // flags + entry count + 64-byte bank name
         return Error("BANKDATA segment too small");
     }
@@ -160,6 +178,9 @@ Result<void> XwbParser::parse_with(const ReadAt& read) {
         return Result<void>();
     }
 
+    if (!fits(em_seg.offset, em_seg.length)) {
+        return Error("ENTRYMETADATA segment lies past the end of the bank");
+    }
     std::vector<u8> entry_meta(em_seg.length);
     if (!read(em_seg.offset, entry_meta.data(), em_seg.length)) {
         return Error("Failed to read entry metadata");
@@ -221,6 +242,19 @@ Result<void> XwbParser::parse_with(const ReadAt& read) {
         }
     }
 
+    // A wave whose data the bank doesn't hold plays nothing.
+    u32 outside = 0;
+    for (auto& e : entries_) {
+        if (!fits(e.data_offset, e.data_length)) {
+            e.data_length = 0;
+            ++outside;
+        }
+    }
+    if (outside > 0) {
+        spdlog::warn("XWB {}: {} wave(s) lie past the end of the bank and play nothing", bank_name_,
+                     outside);
+    }
+
     spdlog::debug("XWB parsed: {} ({} entries, {})",
                   bank_name_, entry_count, is_compact ? "compact" : "non-compact");
 
@@ -234,6 +268,9 @@ std::vector<u8> XwbParser::read_wave_data(u32 index) const {
     if (e.data_length == 0) return {};
 
     if (bytes_) {
+        if (e.data_offset > bytes_->size() || e.data_length > bytes_->size() - e.data_offset) {
+            return {};
+        }
         std::vector<u8> data(e.data_length);
         if (!read_bytes(e.data_offset, data.data(), data.size())) return {};
         return data;

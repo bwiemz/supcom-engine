@@ -52,7 +52,8 @@ private:
     /// `n` bytes at `offset` of the bank into `out`; false when they aren't
     /// all there.
     using ReadAt = std::function<bool(u64 offset, u8* out, size_t n)>;
-    Result<void> parse_with(const ReadAt& read);
+    /// `size`: the bank's bytes in all, against which every place its header gives is checked
+    Result<void> parse_with(const ReadAt& read, u64 size);
     bool read_bytes(u64 offset, u8* out, size_t n) const; ///< from bytes_
 
     fs::path path_;
