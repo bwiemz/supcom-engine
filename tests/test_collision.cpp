@@ -1384,13 +1384,12 @@ TEST_CASE("a beam that strikes a unit reaches its centre, a shield where it meet
         CHECK(s.beam().beam_setup().reached == Approx(5.0f));
         CHECK(s.beam().beam_endpoint().z == Approx(105.0f));
     }
-    SECTION("a prop: to its position") {
+    SECTION("anything but a unit or a shield, a projectile: to its position") {
+        // (Not a prop: Moho's beams, as its shots, never meet one.)
         BeamScene s({100, 1, 100}, 0, 30.0f, true);
-        auto tree = std::make_unique<osc::sim::Prop>();
-        tree->set_position({100, 0, 104});
-        tree->set_default_collision_shape(box(1, 2, 1));
-        s.reg.register_entity(std::move(tree));
-        CHECK(s.check() == "Prop");
+        Projectile* shot = add_shot(s.reg, {100, 0, 104}, {0, 0, 0});
+        shot->set_collision_shape(box(1, 2, 1));
+        CHECK(s.check() == "Projectile");
         CHECK(s.beam().beam_setup().reached == Approx(std::sqrt(17.0f)));
     }
     SECTION("a shield: to where it met it") {
