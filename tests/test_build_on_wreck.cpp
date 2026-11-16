@@ -1,6 +1,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "map/heightmap.hpp"
+#include "map/terrain.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
 #include "sim/script_class.hpp"
@@ -174,6 +176,7 @@ TEST_CASE("A wreck of another structure is reclaimed before the build starts", "
     const osc::sim::EntityId wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
     w.build("uab1103");
     w.sim.tick();
+    w.sim.tick();
     CHECK_FALSE(w.built());
     REQUIRE(w.engineer->command_queue().size() == 1);
     CHECK(w.engineer->command_queue().front().type == CommandType::BuildMobile);
@@ -183,10 +186,47 @@ TEST_CASE("A wreck of another structure is reclaimed before the build starts", "
     CHECK(w.built()->fraction_complete() < 0.05f);
 }
 
+TEST_CASE("A build's site is reclaimed from the tick after the order first runs, and the build "
+          "goes on in the tick the reclaim ends",
+          "[build][wreck]") {
+    WreckSite w(R"(
+        Engineer.GetReclaimCosts = function(self, target) return 0.8, 0, 8 end
+        __heard = ''
+        function Engineer:OnStartReclaim(target) __heard = __heard .. 'start ' end
+        function Engineer:OnStopReclaim(target) __heard = __heard .. 'stop ' end
+    )");
+    const osc::sim::EntityId wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
+    w.build("uab1103");
+    std::vector<std::string> heard;
+    int gone = 0;
+    int built = 0;
+    for (int t = 1; t <= 14 && !built; ++t) {
+        lua_pushstring(w.L, "");
+        lua_setglobal(w.L, "__heard");
+        w.sim.tick();
+        lua_getglobal(w.L, "__heard");
+        heard.emplace_back(lua_tostring(w.L, -1));
+        lua_pop(w.L, 1);
+        if (!gone && w.sim.entity_registry().find(wreck) == nullptr) {
+            gone = t;
+        }
+        if (w.built()) {
+            built = t;
+        }
+    }
+    REQUIRE(heard.size() >= 12);
+    CHECK(heard[0].empty());
+    CHECK(heard[1] == "start ");
+    CHECK(heard[11] == "stop ");
+    CHECK(gone == 11);
+    CHECK(built == 13);
+}
+
 TEST_CASE("A build stopped while it clears its site stops reclaiming", "[build][wreck]") {
     WreckSite w;
     w.prop(11.0f, 11.0f, "ueb1103", true);
     w.build("uab1103");
+    w.sim.tick();
     w.sim.tick();
     REQUIRE(w.engineer->reclaim_target_id());
     w.engineer->clear_commands();
@@ -271,6 +311,49 @@ TEST_CASE("A builder that must face its site turns to it before it builds", "[bu
     tick_until([&] { w.sim.tick(); }, "the engineer turns to its site and builds", 30,
                [&] { return w.built() != nullptr; });
     CHECK(std::abs(osc::sim::quat_yaw(w.engineer->orientation())) < 0.32f);
+}
+
+TEST_CASE("A mobile build aims at the middle of the structure's collision box over its site",
+          "[build][arm]") {
+    struct Row {
+        const char* name;
+        const char* blueprint;
+        bool water;
+        osc::f32 aim_y;
+    };
+    const std::vector<Row> rows = {
+        {"on dry ground",
+         "SizeY = 2, CollisionOffsetY = -0.25, Footprint = { SizeX = 2, SizeZ = 2 }", false,
+         10.75f},
+        {"on the water over the ground",
+         "SizeY = 2, CollisionOffsetY = -0.25, Footprint = { SizeX = 2, SizeZ = 2 }", true, 12.75f},
+        {"on the seabed under the water",
+         "SizeY = 2, CollisionOffsetY = -0.25, Footprint = { SizeX = 2, SizeZ = 2, "
+         "OccupancyCaps = 3 }",
+         true, 10.75f},
+        {"with no SizeY", "Footprint = { SizeX = 2, SizeZ = 2 }", false, 10.5f},
+    };
+    for (const auto& row : rows) {
+        DYNAMIC_SECTION(row.name) {
+            WreckSite w(
+                (std::string("__blueprints.site = { BlueprintId = 'site', ") + row.blueprint + " }")
+                    .c_str());
+            std::vector<osc::u16> heights(static_cast<size_t>(65) * 65, 1280);
+            osc::map::Heightmap hm(64, 64, 1.0f / 128.0f, std::move(heights));
+            w.sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 12.0f, row.water));
+            auto arm = std::make_unique<osc::sim::AimManipulator>();
+            arm->set_builder_arm(true);
+            auto* raw =
+                static_cast<osc::sim::AimManipulator*>(w.engineer->add_manipulator(std::move(arm)));
+            w.build("site");
+            w.sim.tick();
+            w.sim.tick();
+            REQUIRE(raw->has_target());
+            CHECK(raw->target().x == 11.0f);
+            CHECK(raw->target().y == row.aim_y);
+            CHECK(raw->target().z == 11.0f);
+        }
+    }
 }
 
 namespace {
@@ -474,6 +557,7 @@ TEST_CASE("A prop is cleared off the site if its shape meets the footprint, wher
             prop->place_now();
             w.build("uab1103");
             w.sim.tick();
+            w.sim.tick();
             CHECK((w.engineer->reclaim_target_id() == id) == row.cleared);
             tick_until([&] { w.sim.tick(); }, "the build starts", 40,
                        [&] { return w.built() != nullptr; });
@@ -487,6 +571,7 @@ TEST_CASE("The site's props are cleared nearest the builder first", "[build][wre
     const auto far = w.prop(11.0f, 12.3f, nullptr, true);
     const auto near = w.prop(11.0f, 9.7f, nullptr, true);
     w.build("uab1103");
+    w.sim.tick();
     w.sim.tick();
     CHECK(w.engineer->reclaim_target_id() == near);
     tick_until([&] { w.sim.tick(); }, "the engineer turns to the far prop", 40,

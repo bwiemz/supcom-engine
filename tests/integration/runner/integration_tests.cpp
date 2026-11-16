@@ -737,9 +737,9 @@ void test_reclaim(TestContext& ctx) {
     }
     if (auto r = ctx.lua_state.do_string(R"(
             local got = table.concat(__osc_reclaim_calls, ',')
-            if got ~= 'start true,stop true' then error('calls: ' .. got) end
+            if got ~= 'start true,stop false' then error('calls: ' .. got) end
         )"))
-        spdlog::info("[PASS] Reclaim test: OnStartReclaim and OnStopReclaim, with the prop");
+        spdlog::info("[PASS] Reclaim test: OnStartReclaim with the prop, OnStopReclaim after it");
     else osc::test_status::fail("[FAIL] Reclaim test: {}", r.error().message);
 
     (void)ctx.lua_state.do_string(R"(
@@ -12591,7 +12591,7 @@ void test_range(TestContext& ctx) {
     )");
     lua_check("Test 5: a tank's footprint is its class's, and props have them", R"(
         if __osc_long:GetFootPrintSize() ~= 1 then error('the tank spans ' .. __osc_long:GetFootPrintSize()) end
-        if not __osc_cutter:IsUnitState('Reclaiming') then error('the grove is not being reclaimed') end
+        if table.getn(__osc_cutter:GetCommandQueue()) ~= 1 then error('the cutter gave up the grove') end
         if __osc_from(__osc_cutter, 726, 110.5) > 0.1 then error('the cutter moved') end
     )");
     lua_check("Test 6: a launch with an empty silo asks it for a missile", R"(
@@ -12608,6 +12608,10 @@ void test_range(TestContext& ctx) {
         if __osc_from(__osc_mender, 575.5, 80.5) > 0.1 then error('the mender moved') end
         if __osc_from(__osc_reclaimer, 620.5, 80.5) > 0.1 then error('the reclaimer moved') end
         if __osc_from(__osc_taker, 640.5, 80.5) > 0.1 then error('the taker moved') end
+    )");
+    lua_check("Test 5b: the cutter reclaims the grove from where it stands", R"(
+        if not __osc_cutter:IsUnitState('Reclaiming') then error('the grove is not being reclaimed') end
+        if __osc_from(__osc_cutter, 726, 110.5) > 0.1 then error('the cutter moved') end
     )");
     lua_check(
         "Test 2b: the mender's focus is the tank, and it pays the tank's cost at its build rate",
