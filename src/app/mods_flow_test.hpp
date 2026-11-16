@@ -9,7 +9,9 @@
 //   lobby, as a player clicks them: Skirmish (no tutorial), Game Options,
 //   Mods, Resource Rich in the mod manager, Enter, OK, Launch (with an AI
 //   added, as a skirmish needs two players);
-// - Watch (--watch <replay>): a recorded game, with its own mods.
+// - Watch (--watch <replay>): a recorded game, with its own mods;
+// - Command line (--map, with --mod): the game the command line starts,
+//   with the mods --mod picks in place of the player's selection.
 // Once the game has run to kReportTick it reports, for the sim's Lua state
 // and the game UI's, what their mods made of them: __active_mods (uids, in
 // order), the UEF ACU's blueprint, the probes test mods' hooks set, and the
@@ -40,7 +42,7 @@ namespace osc::app {
 
 class ModsFlowTest {
 public:
-    enum class Launch : u8 { Direct, Lobby, Watch };
+    enum class Launch : u8 { Direct, Lobby, Watch, CommandLine };
 
     static constexpr u32 kReportTick = 20;
 

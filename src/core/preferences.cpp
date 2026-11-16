@@ -340,6 +340,31 @@ void Preferences::set(std::string_view key, lua_State* L, int idx) {
     assign(key);
 }
 
+Preferences::StandIn::StandIn(Preferences& prefs, std::string_view key,
+                              const std::vector<std::string>& names)
+    : prefs_(prefs), key_(key), path_(prefs.path_) {
+    lua_State* L = prefs_.L_;
+    prefs_.walk(key_);
+    stood_for_ = luaL_ref(L, LUA_REGISTRYINDEX); // (LUA_REFNIL for none)
+    lua_newtable(L);
+    for (const std::string& name : names) {
+        lua_pushstring(L, name.c_str());
+        lua_pushboolean(L, 1);
+        lua_rawset(L, -3);
+    }
+    prefs_.assign(key_);
+    prefs_.path_.clear();
+}
+
+Preferences::StandIn::~StandIn() {
+    lua_State* L = prefs_.L_;
+    if (stood_for_ == LUA_REFNIL) lua_pushnil(L);
+    else lua_rawgeti(L, LUA_REGISTRYINDEX, stood_for_);
+    prefs_.assign(key_);
+    luaL_unref(L, LUA_REGISTRYINDEX, stood_for_);
+    prefs_.path_ = path_;
+}
+
 std::string Preferences::current_profile_path() const {
     walk("profile.current");
     const bool numeric = lua_type(L_, -1) == LUA_TNUMBER;

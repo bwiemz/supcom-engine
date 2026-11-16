@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 struct lua_State;
 
@@ -67,6 +68,25 @@ public:
     void set_float(std::string_view key, float val);
     void set_bool(std::string_view key, bool val);
     void set_int(std::string_view key, int val);
+
+    /// While it lives, `key` reads as the set of `names` ({[name] = true},
+    /// as the mod manager writes the selected mods) and save() writes no
+    /// file; then the value it stood in for is back, and saving with it. A
+    /// command line's game (--mod) picks its UI mods for SessionInit.lua so,
+    /// without changing the player's selection.
+    class StandIn {
+    public:
+        StandIn(Preferences& prefs, std::string_view key, const std::vector<std::string>& names);
+        ~StandIn();
+        StandIn(const StandIn&) = delete;
+        StandIn& operator=(const StandIn&) = delete;
+
+    private:
+        Preferences& prefs_;
+        std::string key_;
+        int stood_for_ = -2; ///< the value it stands in for: a ref in prefs' state
+        std::filesystem::path path_;
+    };
 
 private:
     /// Push the value at `key` in L_ (not a copy), or nil.

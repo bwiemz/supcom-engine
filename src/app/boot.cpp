@@ -9,6 +9,7 @@
 #include "lua/net_lobby.hpp"
 #include "lua/session_clients.hpp"
 #include "lua/binding_coverage.hpp"
+#include "lua/command_line_mods.hpp"
 #include "lua/engine_bindings.hpp"
 #include "lua/game_mods.hpp"
 #include "lua/gpgnet_session.hpp"
@@ -48,21 +49,41 @@ std::optional<int> App::boot() {
 }
 
 std::optional<int> App::boot_engine() {
-    // Phase 1: Init + VFS (sim Lua state)
-
+    // Phase 1: Init + VFS (sim Lua state). --mod's mods on disk mount
+    // first, where retail's init file mounts the player's mods folder,
+    // before the game's data.
+    for (const auto& mod : opt.mods) {
+        if (mod.path.empty()) continue;
+        if (!osc::lua::mount_path(vfs, mod.path, mod.mount_point)) {
+            spdlog::error("--mod {}: can't be mounted", mod.given);
+            return 1;
+        }
+        spdlog::info("--mod {}: mounted at {}", mod.path.string(), mod.mount_point);
+    }
     auto init_result = loader.execute_init(*sim_lua_state, config, vfs);
     if (!init_result) {
         spdlog::error("Init failed: {}", init_result.error().message);
         return 1;
     }
 
-    // Phase 2: Blueprint loading (sim Lua state owns the store), with a
-    // recorded game's mods (M221b); a new game from the command line has
-    // none.
-    if (opt.replay_to_play)
+    // Phase 2: Blueprint loading (sim Lua state owns the store), with the
+    // game's mods (M221b): a recorded game's, or those --mod picks for a new
+    // game from the command line (none without it). The game's setup, and
+    // so its recording, keeps them.
+    if (opt.replay_to_play) {
         osc::lua::set_active_mods(sim_lua_state->raw(), opt.replay_to_play->setup.mods);
-    else if (opt.save_to_load)
+    } else if (opt.save_to_load) {
         osc::lua::set_active_mods(sim_lua_state->raw(), opt.save_to_load->game.setup.mods);
+    } else if (opt.mods_picked) {
+        auto mods = osc::lua::resolve_command_line_mods(vfs, opt.mods);
+        if (!mods) {
+            spdlog::error("{}", mods.error().message);
+            return 1;
+        }
+        game_setup.mods = std::move(mods.value().game);
+        command_line_ui_mods = std::move(mods.value().ui_uids);
+        osc::lua::set_active_mods(sim_lua_state->raw(), game_setup.mods);
+    }
     auto bp_result = loader.load_blueprints(*sim_lua_state, vfs, store);
     if (!bp_result) {
         spdlog::error("Blueprint loading failed: {}", bp_result.error().message);
@@ -139,7 +160,7 @@ std::optional<int> App::boot_game() {
     } else if (opt.save_to_load) {
         game_setup = opt.save_to_load->game.setup;
         game_setup.moho_pathing = recorded_moho_pathing(opt.save_to_load->game);
-    } else {
+    } else { // (its mods, --mod's, set before the blueprints loaded)
         game_setup.scenario = opt.map_path;
         game_setup.seed = new_game_seed(opt.seed_arg, opt.reproducible_run);
         game_setup.moho_random = g_moho_random;
@@ -297,7 +318,8 @@ std::optional<int> App::boot_game() {
 /// a state of their own: the engine's bindings and objects in it, then
 /// userInit.lua -- or, a game's, SessionInit.lua. boot_ui runs it for the
 /// first state, reset_ui_state for each later one (M191 step 4).
-std::optional<int> App::init_ui_state(const std::string* game_mods) {
+std::optional<int> App::init_ui_state(const std::string* game_mods,
+                                      const std::vector<std::string>* ui_mods) {
     // === UI Lua State ===
     ui_lua_state.set_vfs(&vfs);
     ui_lua_state.set_blueprint_store(&store);
@@ -448,11 +470,16 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
         const char* init_script = session                                ? "/lua/SessionInit.lua"
                                   : vfs.file_exists("/lua/userInit.lua") ? "/lua/userInit.lua"
                                                                          : "/lua/globalInit.lua";
+        // A command line's game picked its UI mods (--mod): SessionInit
+        // reads them as the player's selection, which is then put back.
+        std::optional<osc::core::Preferences::StandIn> stand_in;
+        if (session && ui_mods) stand_in.emplace(prefs, "active_mods", *ui_mods);
         if (auto r = osc::lua::run_vfs_script(ui_lua_state.raw(), init_script)) {
             spdlog::info("Loaded {} on ui_L", init_script);
         } else {
             spdlog::warn("{} error: {}", init_script, r.error().message);
         }
+        stand_in.reset();
         if (session) osc::lua::mark_session_init(ui_lua_state.raw());
     }
 
@@ -505,7 +532,10 @@ std::optional<int> App::boot_ui() {
     // A --map game's state is the game's when its interface starts; a
     // headless test mode keeps a bare one, as the front end's.
     const bool game_ui = !opt.map_path.empty() && (!opt.headless || request.world_ui);
-    if (auto code = init_ui_state(game_ui ? &game_setup.mods : nullptr)) return code;
+    if (auto code =
+            init_ui_state(game_ui ? &game_setup.mods : nullptr,
+                          game_ui && command_line_ui_mods ? &*command_line_ui_mods : nullptr))
+        return code;
 
     // State transition: INIT → GAME or INIT → FRONT_END. Moho's UI state is
     // the entry point's before its SetupUI runs (StartUIMainEntryWithState):
@@ -654,7 +684,7 @@ void App::publish_session_objects() {
     }
 }
 
-void App::reset_ui_state(const std::string* game_mods) {
+void App::reset_ui_state(const std::string* game_mods, const std::vector<std::string>* ui_mods) {
     lua_State* old = ui_lua_state.raw();
     spdlog::info("UI state: a fresh one for the next front end or game");
     // What the old state's scripts built goes while the state still runs:
@@ -671,7 +701,7 @@ void App::reset_ui_state(const std::string* game_mods) {
     ui_lua_state = lua::LuaState(); // closes the old state
     ui_store.rebind(ui_lua_state.raw());
     ui_thread_manager.rebind(ui_lua_state.raw());
-    if (init_ui_state(game_mods)) spdlog::error("UI state: the new state's init failed");
+    if (init_ui_state(game_mods, ui_mods)) spdlog::error("UI state: the new state's init failed");
     publish_session_objects();
     if (instrument_harness) {
         instrument_harness->install_panic_handler(ui_lua_state.raw());

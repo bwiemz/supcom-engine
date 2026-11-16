@@ -64,7 +64,7 @@ constexpr std::string_view kValueOptions[] = {
     "--entity-trace-ticks", "--rng-trace", "--rng-trace-ticks", "--gpgnet", "--lan-game-join",
     "--mp-port", "--lan-game-save", "--lan-game-resume", "--lan-game-quit-at",
     "--lan-game-self-destruct-at", "--render-dump", "--count-marks", "--mp-join", "--mp-frames",
-    "--mp-drop-at", "--mp-slow"
+    "--mp-drop-at", "--mp-slow", "--mod"
 };
 // clang-format on
 
@@ -153,6 +153,12 @@ void print_usage() {
               << "  --ai-armies <n>    With --ai-skirmish: number of AI armies (default 2)\n"
               << "  --map <vfs-path>   VFS path to *_scenario.lua (a campaign operation's\n"
               << "                     launches as the campaign does)\n"
+              << "  --mod <uid|path>   With --map: the game plays with this mod (repeat for\n"
+              << "                     more), an installed mod's uid or a mod's folder, .zip\n"
+              << "                     or .scd (mounted at /mods/<name>); the mods it requires\n"
+              << "                     join it. They replace the player's selected mods for\n"
+              << "                     that game. Without --map, or with a replay or saved\n"
+              << "                     game, a mod's path is only mounted\n"
               << "  --difficulty <1-3> A campaign operation's difficulty (default 2)\n"
               << "  --ticks <n>        Number of sim ticks to run (default: 100)\n"
               << "  --seed <n>         The game's random seed (default: fixed for tests and\n"
@@ -558,6 +564,33 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         }
         std::sort(o.save_ticks.begin(), o.save_ticks.end());
         o.save_at = o.save_ticks.empty() ? 0 : o.save_ticks.front();
+    }
+    // --mod <uid or path>, repeatable: the mods a new game --map starts
+    // plays with, in place of the player's selection. Anywhere else a mod on
+    // disk is only mounted -- the lobby's mod manager lists it, a recording
+    // made with it finds it -- and a uid, which would pick nothing, is refused.
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::strcmp(argv[i], "--mod") == 0) o.mods.push_back(lua::mod_arg(argv[++i]));
+    }
+    if (const std::string wrong = lua::check_mod_args(o.mods); !wrong.empty()) {
+        spdlog::error("{}", wrong);
+        return std::nullopt;
+    }
+    const bool recorded =
+        o.replay_to_play || o.save_to_load || !o.watch_path.empty() || !o.load_path.empty();
+    o.mods_picked = !o.mods.empty() && !o.map_path.empty() && !recorded;
+    for (const auto& mod : o.mods) {
+        if (o.mods_picked || !mod.path.empty()) continue;
+        if (recorded) {
+            spdlog::error("--mod {}: a replay or saved game plays with the mods it was recorded "
+                          "with; --mod can only mount a mod's folder or archive for it",
+                          mod.given);
+        } else {
+            spdlog::error("--mod {}: a uid picks the mods of a game --map starts; the front end "
+                          "and its lobby play with the player's selected mods",
+                          mod.given);
+        }
+        return std::nullopt;
     }
     const bool windowed_run = o.fast_match_ticks > 0 || o.play_for > 0;
     if (!o.save_path.empty() && (o.save_at == 0 || (!o.headless && !windowed_run))) {

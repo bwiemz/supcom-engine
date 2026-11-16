@@ -57,7 +57,7 @@ void App::Window::handle_launch() {
 
             // A replay to play (LaunchReplaySession), if any
             std::optional<osc::sim::Replay> launch_replay;
-            SessionLaunch launch{launch_scenario, {}, {}, std::nullopt};
+            SessionLaunch launch{launch_scenario, {}, {}, std::nullopt, std::nullopt};
             lua_pushstring(uiL, "__osc_launch_replay");
             lua_rawget(uiL, LUA_REGISTRYINDEX);
             if (lua_type(uiL, -1) == LUA_TSTRING) {
@@ -109,10 +109,12 @@ void App::Window::handle_launch() {
                 // game's, goes with its controls and threads.
                 wld_provider.destroy_game_interface(uiL);
                 renderer.forget_ui_controls();
-                // (with the game's mods, as its sim will have them)
+                // (with the game's mods, as its sim will have them; a
+                // restarted command line's game keeps --mod's UI mods)
                 const std::string game_mods =
                     restart ? restart->mods : launch_setup(uiL, recorded, launch_scenario, 0).mods;
-                reset_ui_state(&game_mods);
+                if (restart) launch.ui_mods = session_launch->ui_mods;
+                reset_ui_state(&game_mods, launch.ui_mods ? &*launch.ui_mods : nullptr);
                 uiL = ui_lua_state.raw();
                 publish_window_objects();
                 // The new state's loading screen has no game yet, even

@@ -181,7 +181,10 @@ private:
 
     // The App's own work, under the names the loop calls it by.
     void save_last_game() { app.save_last_game(); }
-    void reset_ui_state(const std::string* game_mods = nullptr) { app.reset_ui_state(game_mods); }
+    void reset_ui_state(const std::string* game_mods = nullptr,
+                        const std::vector<std::string>* ui_mods = nullptr) {
+        app.reset_ui_state(game_mods, ui_mods);
+    }
     bool check_catch_up() { return app.check_catch_up(); }
     Restore restore_save(const sim::SavedGame& save, std::string& why) {
         return app.restore_save(save, why);

@@ -27,6 +27,17 @@ temporary one, through XDG_DOCUMENTS_DIR) holds two test mods:
    end, skirmish lobby and mod manager as a player would, picking Resource
    Rich alone: the game must have it, and only it, and the player's
    selection must be saved.
+5. A game the command line starts (`--map`) with `--mod`, the test mods
+   copied outside the mods folder (`--mod <path>`) and Resource Rich by
+   uid, headless and recorded: the game mod's hook must run and the ACU's
+   blueprint be merged and doubled, the game mods sorted by uid.
+6. That recording must replay with them (`--mod <path>` mounting the game
+   mod for it).
+7. An unknown uid must fail, naming the installed mods.
+8. The same game windowed (`--mods-flow-test --map`), the player having
+   selected Resource Rich and another UI mod: `--mod`'s mods replace the
+   selection -- the sim has the game mod alone, the game's UI the UI mod
+   too, by SessionInit -- and the player's selection is left as it was.
 
 Any script error fails a run.
 
@@ -53,6 +64,8 @@ SKIPPED = 77
 RESOURCE_RICH = "74A9EAB2-E851-11DB-A1F1-F2C755D89593"
 GAME_MOD = "osc-mods-flow-game"
 UI_MOD = "osc-mods-flow-ui"
+OTHER_UI_MOD = "osc-mods-flow-other-ui"
+SCENARIO = "/maps/SCMP_009/SCMP_009_scenario.lua"
 MODS_DIR = Path("My Games/Gas Powered Games/Supreme Commander Forged Alliance/mods")
 
 # The UEF ACU's production before Resource Rich doubles it
@@ -65,16 +78,24 @@ def probe(text: str) -> str:
     return f"OscModsFlowProbe = (rawget(_G, 'OscModsFlowProbe') or '') .. '{text};'\n"
 
 
-def write_mods(documents: Path) -> None:
-    mods = documents / MODS_DIR
-    game = mods / "OscModsFlowGame"
+# The game mod's sim hook also logs the sim's UEF ACU, as its blueprint
+# merged and any ModBlueprints made it, for a headless game's log
+SIM_ACU = (
+    "local acu = __blueprints.uel0001\n"
+    + "LOG('mods-flow: the sim ACU: name=' .. tostring(acu.General.UnitName)"
+    + " .. ' mass=' .. tostring(acu.Economy.ProductionPerSecondMass))\n"
+)
+
+
+def write_game_mod(game: Path) -> None:
+    """The game mod, a folder."""
     (game / "hook/lua").mkdir(parents=True)
     (game / "units/uel0001").mkdir(parents=True)
     _ = (game / "mod_info.lua").write_text(
         f'name = "OSC mods flow: game"\nuid = "{GAME_MOD}"\nversion = 1\n'
         + 'description = "A test game mod"\nauthor = "OpenSupCom"\nui_only = false\n'
     )
-    _ = (game / "hook/lua/simInit.lua").write_text(probe("game:sim"))
+    _ = (game / "hook/lua/simInit.lua").write_text(probe("game:sim") + SIM_ACU)
     _ = (game / "hook/lua/userInit.lua").write_text(probe("game:user"))
     # Named as the ACU's own file, so Blueprints.lua gives it the ACU's id;
     # Merge keeps the rest of the ACU.
@@ -82,8 +103,10 @@ def write_mods(documents: Path) -> None:
         "UnitBlueprint {\n    Merge = true,\n    General = { UnitName = 'ModsFlow' },\n}\n"
     )
 
-    # The UI mod packed, as a mod downloaded from a vault is
-    with zipfile.ZipFile(mods / "OscModsFlowUi.zip", "w") as ui:
+
+def write_ui_mod(packed: Path) -> None:
+    """The UI mod packed, as a mod downloaded from a vault is."""
+    with zipfile.ZipFile(packed, "w") as ui:
         ui.writestr(
             "mod_info.lua",
             f'name = "OSC mods flow: UI"\nuid = "{UI_MOD}"\nversion = 1\n'
@@ -91,6 +114,23 @@ def write_mods(documents: Path) -> None:
         )
         ui.writestr("hook/lua/userInit.lua", probe("ui:user"))
         ui.writestr("hook/lua/UserSync.lua", probe("ui:sync"))
+
+
+def write_mods(documents: Path) -> None:
+    mods = documents / MODS_DIR
+    write_game_mod(mods / "OscModsFlowGame")
+    write_ui_mod(mods / "OscModsFlowUi.zip")
+
+
+def write_other_ui_mod(documents: Path) -> None:
+    """Another UI mod, installed, which a command line's game leaves out."""
+    other = documents / MODS_DIR / "OscModsFlowOtherUi"
+    (other / "hook/lua").mkdir(parents=True)
+    _ = (other / "mod_info.lua").write_text(
+        f'name = "OSC mods flow: other UI"\nuid = "{OTHER_UI_MOD}"\nversion = 1\n'
+        + 'description = "Another test UI mod"\nauthor = "OpenSupCom"\nui_only = true\n'
+    )
+    _ = (other / "hook/lua/UserSync.lua").write_text(probe("other:sync"))
 
 
 def report(output: str, state: str) -> dict[str, str]:
@@ -111,6 +151,7 @@ class Expected:
     unwanted: dict[str, list[str]] = field(default_factory=dict)  # ...and must not
     user_sync_runs: int = 0  # the UI mod's UserSync.lua hook
     selected: list[str] = field(default_factory=list)  # the player's, in the UI
+    rich: bool = True  # Resource Rich doubles the ACU's production
 
 
 def check(output: str, run_name: str, want: Expected) -> list[str]:
@@ -124,10 +165,11 @@ def check(output: str, run_name: str, want: Expected) -> list[str]:
         mods = ",".join(want.mods[state])
         if got.get("mods") != mods:
             problems.append(f"{state}: mods {got.get('mods')}, expected {mods}")
-        if got.get("mass") != str(2 * ACU_MASS) or got.get("energy") != str(2 * ACU_ENERGY):
+        times = 2 if want.rich else 1
+        if got.get("mass") != str(times * ACU_MASS) or got.get("energy") != str(times * ACU_ENERGY):
             problems.append(
                 f"{state}: the ACU makes {got.get('mass')} mass and {got.get('energy')} energy,"
-                + f" expected Resource Rich's {2 * ACU_MASS} and {2 * ACU_ENERGY}"
+                + f" expected {times * ACU_MASS} and {times * ACU_ENERGY}"
             )
         if got.get("name") != want.name:
             problems.append(f"{state}: the ACU's UnitName is {got.get('name')}, not {want.name}")
@@ -174,6 +216,22 @@ PICKED_IN_LOBBY = Expected(
     wanted={},
     unwanted={"sim": ["game:", "ui:"], "ui": ["game:", "ui:"]},
     selected=[RESOURCE_RICH],
+)
+
+
+# Run 8: the command line's game, the player having selected Resource Rich
+# and the other UI mod: --mod's game mod and UI mod replace them
+COMMAND_LINE = Expected(
+    mods={"sim": [GAME_MOD], "ui": [GAME_MOD, UI_MOD]},
+    name="ModsFlow",
+    wanted={"sim": ["game:sim"], "ui": ["game:user", "ui:sync"]},
+    unwanted={
+        "sim": ["game:user", "ui:", "other:"],
+        "ui": ["game:sim", "ui:user", "other:sync"],
+    },
+    user_sync_runs=2,
+    selected=sorted([RESOURCE_RICH, OTHER_UI_MOD]),
+    rich=False,
 )
 
 
@@ -289,12 +347,82 @@ def main(argv: list[str]) -> int:
         problems += check(clicked, "lobby", PICKED_IN_LOBBY)
         if lobby.returncode != 0:
             problems.append(f"lobby: failed, exit {lobby.returncode}")
+
+        problems += command_line_runs(exe, Path(tmp))
     for problem in problems:
         print(f"FAIL: {problem}")
     if problems:
         return 1
     print("mods flow: the sim and the game's UI have their mods")
     return 0
+
+
+def command_line_runs(exe: str, tmp: Path) -> list[str]:
+    """Runs 5-8: a game the command line starts (--map) with --mod."""
+    problems: list[str] = []
+    # The test mods outside the player's mods folder, which holds only the
+    # other UI mod
+    dev = tmp / "dev"
+    game_mod = dev / "OscModsFlowGame"
+    ui_mod = dev / "OscModsFlowUi.zip"
+    write_game_mod(game_mod)
+    write_ui_mod(ui_mod)
+    documents = tmp / "CliDocuments"
+    write_other_ui_mod(documents)
+    env = {**os.environ, "XDG_DOCUMENTS_DIR": str(documents)}
+    hooked = "Hooked /lua/siminit.lua with /mods/oscmodsflowgame/"
+    merged = "mods-flow: the sim ACU: name=ModsFlow mass=" + str(2 * ACU_MASS)
+
+    recording = tmp / "command-line.oscreplay"
+    game = run(
+        [exe, "--map", SCENARIO, "--ticks", "30", "--mod", str(game_mod)]
+        + ["--mod", RESOURCE_RICH, "--record", str(recording)],
+        env,
+    )
+    output = game.stdout + game.stderr
+    show(output, "--mod")
+    if game.returncode != 0:
+        problems.append(f"--mod: failed, exit {game.returncode}")
+    if hooked not in output:
+        problems.append("--mod: the game mod's hook of simInit.lua didn't run")
+    if merged not in output:
+        problems.append("--mod: the sim's ACU isn't the game mod's, doubled by Resource Rich")
+    picked = re.search(r"Game mods \(--mod\): (.*)", output)
+    if not picked or picked.group(1).find(RESOURCE_RICH) > picked.group(1).find(GAME_MOD):
+        problems.append(f"--mod: the game mods aren't sorted by uid: {picked and picked.group(1)}")
+
+    if not recording.exists():
+        problems.append("--mod: left no recording")
+    else:
+        replay = run([exe, "--replay", str(recording), "--mod", str(game_mod)], env)
+        replayed = replay.stdout + replay.stderr
+        if replay.returncode != 0:
+            problems.append(f"--mod replay: failed or diverged, exit {replay.returncode}")
+        if hooked not in replayed or merged not in replayed:
+            problems.append("--mod replay: ran without the recorded game's mods")
+
+    unknown = run([exe, "--map", SCENARIO, "--ticks", "1", "--mod", "no-such-mod"], env)
+    refused = unknown.stdout + unknown.stderr
+    if unknown.returncode == 0:
+        problems.append("--mod no-such-mod: the game ran")
+    if "no installed mod has that uid" not in refused or f"({RESOURCE_RICH})" not in refused:
+        problems.append("--mod no-such-mod: the refusal doesn't name the installed mods")
+
+    prefs = tmp / "CliGame.prefs"
+    _ = prefs.write_text(
+        f"active_mods = {{\n    ['{RESOURCE_RICH}'] = true,\n    ['{OTHER_UI_MOD}'] = true,\n}}\n"
+    )
+    windowed = run(
+        [exe, "--mods-flow-test", "--map", SCENARIO, "--prefs", str(prefs)]
+        + ["--mod", str(game_mod), "--mod", str(ui_mod)],
+        env,
+    )
+    output = windowed.stdout + windowed.stderr
+    show(output, "--mod windowed")
+    problems += check(output, "--mod windowed", COMMAND_LINE)
+    if windowed.returncode != 0:
+        problems.append(f"--mod windowed: failed, exit {windowed.returncode}")
+    return problems
 
 
 if __name__ == "__main__":
