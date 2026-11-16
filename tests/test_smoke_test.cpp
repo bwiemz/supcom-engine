@@ -285,6 +285,13 @@ struct BuildRuleHarness {
         store.expose_to_lua(state.raw());
         REQUIRE(state.do_string(
             "__blueprints.test_factory.General = {CommandCaps = {RULEUCC_Pause = true}}\n"));
+        // What the factory makes has no shape: the harness has no scripts to roll
+        // a finished unit off the factory, and a unit left on its footprint would
+        // hold the next build up (CFactoryBuildTask asks Sim::LocationIsFree).
+        REQUIRE(state.do_string("for _, id in {'test_tank', 'test_experimental'} do\n"
+                                "    local bp = __blueprints[id]\n"
+                                "    bp.SizeX, bp.SizeY, bp.SizeZ = 0, 0, 0\n"
+                                "end\n"));
     }
 };
 

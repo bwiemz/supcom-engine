@@ -1681,6 +1681,11 @@ private:
     /// army's resting ones are sent off (SIM_TryToBuild) and the build waits
     /// kSiteRetryTicks to look again. Whether it waits (build_site_units.cpp).
     bool units_on_site(UnitCommand& cmd, SimContext& ctx);
+    /// Moho's CFactoryBuildTask, its unit not yet made (TASKSTATE_Preparing):
+    /// with idle units on its own footprint, its army's idle ones are sent off
+    /// and it looks again kSiteRetryTicks later, for as long as it takes.
+    /// Whether it waits (build_site_units.cpp).
+    bool units_on_pad(UnitCommand& cmd, SimContext& ctx);
     bool nav_step(f64 dt, const map::Terrain* terrain);
     void set_course(const AirCourse& course);
     /// Moho's one CalcMove* a tick: the course its orders set, else its navigator's step.

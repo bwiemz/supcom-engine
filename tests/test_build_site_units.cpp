@@ -149,6 +149,26 @@ struct Site {
         return raw;
     }
 
+    /// A T1 land factory's shape (ueb0101) of the first army: its footprint the
+    /// cells round (x, z) 5 by 5, its box 4.2 by 0.6 by 4.4.
+    Unit* factory(f32 x, f32 z) {
+        auto u = std::make_unique<Unit>();
+        u->set_army(0);
+        u->set_position({x, 0.0f, z});
+        u->set_max_health(100.0f);
+        u->set_health(100.0f);
+        u->set_footprint_size(5.0f, 5.0f);
+        u->set_skirt(8.0f, 8.0f, -1.5f, -1.5f);
+        u->set_build_rate(10.0f);
+        u->add_category("FACTORY");
+        u->set_collision_shape(
+            {osc::sim::CollisionShapeType::BOX, 0.0f, 0.3f, 0.0f, 2.1f, 0.3f, 2.2f});
+        Unit* raw = u.get();
+        sim.entity_registry().register_entity(std::move(u));
+        bind(*raw, "Engineer");
+        return raw;
+    }
+
     /// The engineer ordered to build the factory on the cells 48-53 by 48-53.
     void build() {
         UnitCommand c;
@@ -312,4 +332,61 @@ TEST_CASE("SIM_TryToBuild sends only its army's resting land units, each to its 
     CHECK(osc::sim::location_is_free(s.sim, foe, cells, false));
     CHECK(a->command_queue().empty());
     CHECK(b->command_queue().empty());
+}
+
+TEST_CASE("A factory waits for its army's idle tank to be sent off its footprint, then builds",
+          "[build][build_site]") {
+    Site s;
+    // Its footprint the cells 78-83 by 48-53.
+    Unit* factory = s.factory(80.5f, 50.5f);
+    Unit* tank = s.walker(0, 81.0f, 50.5f);
+    s.sim.tick();
+    UnitCommand c;
+    c.type = CommandType::BuildFactory;
+    c.blueprint_id = "ueb0101";
+    factory->push_command(c, true);
+    s.sim.tick();
+    CHECK_FALSE(s.built());
+    CHECK(tank->stepping_aside());
+    const int ticks =
+        tick_until([&] { s.sim.tick(); }, "the factory builds", 100, [&] { return s.built(); });
+    // Its next look, 49 ticks after the first.
+    CHECK(ticks == 49);
+    CHECK(tank->command_queue().empty());
+    const osc::sim::Vector3& p = tank->position();
+    CAPTURE(p.x, p.z);
+    CHECK((p.x < 78.0f || p.x > 83.0f || p.z < 48.0f || p.z > 53.0f));
+}
+
+TEST_CASE("A factory's footprint holds it up only by idle units: one with an order, or another "
+          "army's that never goes",
+          "[build][build_site]") {
+    Site s;
+    Unit* factory = s.factory(80.5f, 50.5f);
+    Unit* tank = s.walker(0, 81.0f, 50.5f);
+    UnitCommand c;
+    c.type = CommandType::BuildFactory;
+    c.blueprint_id = "ueb0101";
+    SECTION("its own tank, given an order") {
+        UnitCommand move;
+        move.type = CommandType::Move;
+        move.target_pos = {81.0f, 0.0f, 20.5f};
+        tank->push_command(move, true);
+        factory->push_command(c, true);
+        s.sim.tick();
+        CHECK(s.built());
+        CHECK_FALSE(tank->stepping_aside());
+    }
+    SECTION("another army's, which waits it out for good") {
+        tank->set_army(1);
+        s.sim.tick();
+        factory->push_command(c, true);
+        for (int i = 0; i < 600; ++i) {
+            s.sim.tick();
+        }
+        CHECK_FALSE(s.built());
+        CHECK(factory->command_queue().size() == 1);
+        CHECK_FALSE(tank->stepping_aside());
+        CHECK(tank->position().x == 81.0f);
+    }
 }

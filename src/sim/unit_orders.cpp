@@ -1207,6 +1207,9 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
         if (waits_paused(cmd)) {
             return OrderStep::Hold;
         }
+        if (cmd.type == CommandType::BuildFactory && units_on_pad(cmd, ctx)) {
+            return OrderStep::Hold;
+        }
         const u32 building = cmd.command_id; // cmd may go with the scripts' changes
         switch (start_build(cmd, registry, L)) {
         case BuildStart::Started: break;

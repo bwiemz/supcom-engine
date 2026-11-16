@@ -13,17 +13,23 @@
 //    waits until the tank is taken away, then starts;
 // 3. another army's tank that never goes: the build fails (OnFailedToBuild)
 //    on the 12th look, 11 waits of 49 ticks after the first.
+// And a factory (CFactoryBuildTask, Steam 0x00601357), which asks the same of
+// its own footprint, but for idle units alone, and never gives up:
+// 4. its army's idle tank parked on it is sent off, and then it builds;
+// 5. the units it makes, rolled off, don't hold the next one up.
 
 #include "integration_tests.hpp"
 #include "render_probe.hpp"
 #include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
+#include "sim/build_site_units.hpp"
 #include "sim/sim_state.hpp"
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <string>
 
 namespace osc::test {
@@ -157,6 +163,52 @@ void test_build_site_blocked(TestContext& ctx) {
                 fmt::format("3: it failed {} ticks after its order (11 waits of 49: 539)",
                             since_order));
     }
+
+    // 4 and 5: a factory looks at its own footprint (CFactoryBuildTask), for idle units alone.
+    if (!run("4 and 5: two land factories, one with its army's idle tank on its footprint", R"(
+        local near = GetUnitsInRect(250, 815, 320, 850)
+        if near and table.getn(near) > 0 then error('units near the factories') end
+        local function make(bp, x, z)
+            return CreateUnitHPR(bp, 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        __osc_blk_pad = make('ueb0101', 262.5, 830.5)
+        __osc_blk_parked = make('uel0201', 263, 830.5)
+        __osc_blk_parked:SetFireState(1)
+        __osc_blk_line = make('ueb0101', 302.5, 830.5)
+    )")) {
+        return;
+    }
+    tick_for(ctx, 2);
+    run("each factory ordered to build Strikers, the second three", R"(
+        IssueBuildFactory({__osc_blk_pad}, 'uel0201', 1)
+        IssueBuildFactory({__osc_blk_line}, 'uel0201', 3)
+    )");
+    const auto pad = tick_until(ctx, "the factory with a tank on its footprint builds", 200,
+                                "__osc_blk_pad:GetFocusUnit() ~= nil");
+    t.check(pad && *pad >= 49,
+            fmt::format("4: it waited out a look first, {} ticks", pad ? *pad : -1));
+    run("4: the tank went off its footprint, by no order", R"(
+        if __osc_blk_over(__osc_blk_parked, 260, 828, 265, 833) then
+            local p = __osc_blk_parked:GetPosition()
+            error(string.format('the tank is still on it, at (%.2f, %.2f)', p[1], p[3]))
+        end
+        if table.getn(__osc_blk_parked:GetCommandQueue()) ~= 0 then error('it was given an order') end
+    )");
+    // 5: the units it makes, rolled off it, don't hold the next up: no wait of a look between.
+    int idle = 0;
+    int longest = 0;
+    bool built_one = false;
+    const auto line_done = tick_until(ctx, "the factory makes its three Strikers", 2000, [&] {
+        if (lua_true(ctx.lua_state, "__osc_blk_line:IsUnitState('Building')")) {
+            built_one = true;
+            idle = 0;
+        } else if (built_one) {
+            longest = std::max(longest, ++idle);
+        }
+        return lua_true(ctx.lua_state, "table.getn(__osc_blk_line:GetCommandQueue()) == 0");
+    });
+    t.check(line_done && longest < sim::kSiteRetryTicks,
+            fmt::format("5: its longest pause between Strikers was {} ticks", longest));
     spdlog::info("Build site blocked test: {} passed, {} failed", t.pass, t.fail);
 }
 

@@ -302,6 +302,26 @@ bool Unit::units_on_site(UnitCommand& cmd, SimContext& ctx) {
     return true;
 }
 
+bool Unit::units_on_pad(UnitCommand& cmd, SimContext& ctx) {
+    if (!ctx.sim) {
+        return false;
+    }
+    // Its own footprint's cells where it stands (RUnitBlueprint::
+    // GetFootprintRect); only idle units count, and only idle ones are sent
+    // off (Steam 0x0060134F..0x00601392).
+    const auto size_x = static_cast<i32>(footprint_size_x());
+    const auto size_z = static_cast<i32>(footprint_size_z());
+    const auto x0 = static_cast<i32>(std::lrint(position().x - static_cast<f32>(size_x) * 0.5f));
+    const auto z0 = static_cast<i32>(std::lrint(position().z - static_cast<f32>(size_z) * 0.5f));
+    const OccupancyRect pad{x0, z0, x0 + size_x, z0 + size_z};
+    if (location_is_free(*ctx.sim, this, pad, true)) {
+        return false;
+    }
+    try_to_build(ctx, army(), pad, true);
+    cmd.task_wait = kSiteRetryTicks;
+    return true;
+}
+
 void Unit::step_aside(const Vector3& goal, const SimContext& ctx) {
     set_path_goal(goal, ctx);
     stepping_aside_ = true;
