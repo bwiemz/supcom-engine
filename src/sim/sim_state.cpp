@@ -1515,9 +1515,12 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     }
     // func_ProcessUnitCommand has no arm for an AssistMove: past the checks
     // every order has, each unit given it takes it, and its dispatch decides
-    // what each does with it.
+    // what each does with it. The engine also asks for a goal it can fly and
+    // drive to: an order from the network with none, or one not finite, is
+    // refused (a click always gives a point on the map).
     if (command.type == CommandType::AssistMove) {
-        return true;
+        return has_target(command) && std::isfinite(command.target_pos.x) &&
+               std::isfinite(command.target_pos.y) && std::isfinite(command.target_pos.z);
     }
     if (command.type == CommandType::Ferry) {
         return !carrier && unit.has_category("TRANSPORTATION") && has_transport_ai(unit);
