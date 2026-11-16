@@ -191,9 +191,10 @@ public:
     i32 retarget_misses = 0;
     i32 retarget_cooldown = 0;
     std::vector<std::pair<EntityId, i32>> blacklist;
-    /// Moho's target of the ReTargetOnMiss probe: an entity target with no
-    /// entity. It has nothing to aim or fire at, but its script wasn't told
-    /// it lost its target (see report_target_change).
+    /// Moho's entity target with no entity: the target of the ReTargetOnMiss
+    /// probe, or a target that is gone, held until the weapon next looks. It
+    /// has nothing to aim or fire at, but its script wasn't told it lost its
+    /// target (see report_target_change).
     bool target_held = false;
 
     /// Ticks between shots: 1/RateOfFire, rounded to whole ticks as Moho
@@ -290,7 +291,8 @@ public:
     /// dummy or launch-order (ManualFire) weapon.
     bool attacks_on_order() const { return !fire_on_death && !dummy && !manual_fire; }
     /// Aim at nothing now, its script told OnLostTarget at once if it had a
-    /// target (Moho's UnitWeapon::SetTarget with a cleared target).
+    /// target, a held one too (Moho's UnitWeapon::SetTarget with a cleared
+    /// target).
     void drop_target(lua_State* L);
     /// Where it is aiming: its target unit's position or its ground target.
     /// Nothing without a target, or when its target is gone.
@@ -383,6 +385,10 @@ private:
     void update_targeting(Unit& owner, EntityRegistry& registry, const SimState* sim);
     void fire_step(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
     void acquire_step(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
+    /// Tell the script of a change from `previous` as Moho's UnitWeapon::SetTarget does:
+    /// OnGotTarget for a target after none, OnLostTarget (a manual weapon's OnHaltFire first) for
+    /// none after a target, nothing for one target after another. False if the script killed
+    /// its unit or took the weapon's script away.
     bool report_target_change(const Unit& owner, lua_State* L, const TargetMark& previous);
     void fire_scripted(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
     void fire_direct(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);

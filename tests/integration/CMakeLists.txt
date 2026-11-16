@@ -105,6 +105,7 @@ add_executable(osc_integration
     runner/issue_checks_test.cpp
     runner/no_rush_test.cpp
     runner/need_unpack_test.cpp
+    runner/weapon_retarget_test.cpp
     runner/guard_engage_test.cpp
     runner/rebuilder_guard_test.cpp
     runner/capture_team_test.cpp
