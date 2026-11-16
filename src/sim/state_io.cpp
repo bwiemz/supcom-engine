@@ -197,8 +197,10 @@ template <typename Map, typename Save> void save_by_id(StateWriter& w, const Map
 void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
     w.tag("REGY");
     // entities_ in order_'s order, each with its class; live_, order_,
-    // unit_order_, slot_of_, the grids and large_colliders_ follow from them.
+    // unit_order_, the grids and large_colliders_ follow from them.
     // graveyard_ is empty between ticks, removed_slots_ is order_'s own.
+    // next_seq_ and the slots' seqs only find a slot, so a load numbers the
+    // entities afresh in order_'s order.
     std::vector<std::reference_wrapper<const Entity>> live;
     live.reserve(reg.live_count_);
     for (const auto& slot : reg.order_)
@@ -263,7 +265,7 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     reg.live_count_ = 0;
     reg.order_.clear();
     reg.unit_order_.clear();
-    reg.slot_of_.clear();
+    reg.next_seq_ = 1;
     reg.id_pools_.clear();
     reg.removed_slots_ = 0;
     reg.graveyard_.clear();
@@ -325,8 +327,10 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
         e->set_registry(&reg);
         e->set_grid_cell(-1, -1);
         e->set_prop_cell(-1);
-        reg.order_.push_back({id, e.get()});
-        if (e->is_unit()) reg.unit_order_.push_back({id, e.get()});
+        const u64 seq = reg.next_seq_++;
+        e->set_registry_seq(seq);
+        reg.order_.push_back({id, e.get(), seq});
+        if (e->is_unit()) reg.unit_order_.push_back({id, e.get(), seq});
         reg.live_.insert(e.get());
         Entity& placed = *e;
         reg.entities_[id] = std::move(e);
@@ -345,7 +349,6 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
             }
         }
     }
-    reg.index_slots();
     const size_t pools = r.size(8);
     for (size_t i = 0; i < pools && r.ok(); ++i) {
         EntityRegistry::IdPool& pool = reg.id_pools_[r.u32v()];

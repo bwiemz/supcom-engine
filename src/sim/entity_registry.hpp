@@ -269,13 +269,18 @@ private:
     struct Slot {
         EntityId id{};
         Entity* entity;
+        /// Its entity's place in the making order (Entity::registry_seq),
+        /// kept by the null slot it leaves: it rises along the list.
+        u64 seq = 0;
     };
     std::vector<Slot> order_;
     std::vector<Slot> unit_order_; ///< the units of order_, for for_each_unit
     size_t removed_slots_ = 0;     ///< null slots in order_ (and so in unit_order_)
-    /// Each live entity's slot in order_ and in unit_order_ (npos for a non-unit).
-    std::unordered_map<EntityId, std::pair<size_t, size_t>> slot_of_;
-    static constexpr size_t kNoSlot = static_cast<size_t>(-1);
+    /// The next entity's Slot::seq.
+    u64 next_seq_ = 1;
+    /// The slot of `slots` (order_ or unit_order_) whose seq is `seq`, by a
+    /// binary search; null if none is. A compaction renumbers nothing.
+    static Slot* find_slot(std::vector<Slot>& slots, u64 seq);
     /// Moho's id pools (sim/IdPool.cpp), by family and source bits.
     struct IdPool {
         u32 next = 0;
@@ -287,7 +292,6 @@ private:
     };
     std::map<u32, IdPool> id_pools_;
     EntityId reserve_id(const Entity& e);
-    void index_slots();
     /// Walks in progress (a walk's callback may start another).
     mutable u32 walking_ = 0;
     struct Walking {
