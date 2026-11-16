@@ -59,6 +59,17 @@ static WaveInfo decode_miniwaveformat(u32 fmt) {
     return info;
 }
 
+Result<void> XwbParser::check_header(std::span<const u8> data) {
+    // 4 magic + 4 version + 4 header_version + 5*8 segments, as parse reads
+    if (data.size() < 52) return Error("Too short for an XWB header");
+    if (std::memcmp(data.data(), XWB_MAGIC, 4) != 0) return Error("Invalid XWB magic");
+    const u32 version = read_u32(data.data() + 4);
+    if (version < XWB_MIN_VERSION) {
+        return Error("Unsupported XWB version: " + std::to_string(version));
+    }
+    return {};
+}
+
 Result<void> XwbParser::parse(const fs::path& xwb_path) {
     path_ = xwb_path;
     entries_.clear();

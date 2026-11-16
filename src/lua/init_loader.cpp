@@ -185,25 +185,7 @@ Result<void> InitLoader::build_vfs_from_path_table(
     return {};
 }
 
-Result<void> InitLoader::load_blueprints(
-    LuaState& state, const vfs::VirtualFileSystem& vfs,
-    blueprints::BlueprintStore& store) {
-    // Store VFS and BlueprintStore pointers for C bindings to access
-    state.set_vfs(const_cast<vfs::VirtualFileSystem*>(&vfs));
-    state.set_blueprint_store(&store);
-    store.set_file_exists([&vfs](const std::string& path) { return vfs.file_exists(path); });
-
-    // Register blueprint-context bindings
-    register_blueprint_bindings(state);
-    register_blueprint_store_bindings(state);
-
-    // Logging functions should already be registered from init phase,
-    // but re-register just in case
-    state.register_function("LOG", log::l_LOG);
-    state.register_function("WARN", log::l_WARN);
-    state.register_function("SPEW", log::l_SPEW);
-    state.register_function("_ALERT", log::l_ALERT);
-
+Result<void> run_system_scripts(LuaState& state, const vfs::VirtualFileSystem& vfs) {
     spdlog::info("Loading system Lua files...");
 
     // Pre-register Lua 5.1 compat shims needed before utils.lua loads.
@@ -246,6 +228,29 @@ Result<void> InitLoader::load_blueprints(
         }
         spdlog::info("  Loaded: {}", file);
     }
+    return {};
+}
+
+Result<void> InitLoader::load_blueprints(
+    LuaState& state, const vfs::VirtualFileSystem& vfs,
+    blueprints::BlueprintStore& store) {
+    // Store VFS and BlueprintStore pointers for C bindings to access
+    state.set_vfs(const_cast<vfs::VirtualFileSystem*>(&vfs));
+    state.set_blueprint_store(&store);
+    store.set_file_exists([&vfs](const std::string& path) { return vfs.file_exists(path); });
+
+    // Register blueprint-context bindings
+    register_blueprint_bindings(state);
+    register_blueprint_store_bindings(state);
+
+    // Logging functions should already be registered from init phase,
+    // but re-register just in case
+    state.register_function("LOG", log::l_LOG);
+    state.register_function("WARN", log::l_WARN);
+    state.register_function("SPEW", log::l_SPEW);
+    state.register_function("_ALERT", log::l_ALERT);
+
+    if (auto r = run_system_scripts(state, vfs); !r) return r;
 
     // Call LoadBlueprints() from a Lua chunk (not directly from C)
     // so that debug.getinfo() in GetSource() finds a Lua frame.

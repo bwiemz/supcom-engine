@@ -892,8 +892,8 @@ std::string dir_prefix(const std::string& path) {
     return dot == std::string::npos || dot < slash ? path : path.substr(0, slash);
 }
 
-/// RES_CompletePath: `name` against `source`'s directory, with
-/// '\' as '/'.
+} // namespace
+
 std::string complete_path(std::string name, std::string source) {
     std::replace(name.begin(), name.end(), '\\', '/');
     std::replace(source.begin(), source.end(), '\\', '/');
@@ -902,6 +902,8 @@ std::string complete_path(std::string name, std::string source) {
     }
     return collapse_path(dir_prefix(source) + "/" + name);
 }
+
+namespace {
 
 /// The OnInitBlueprint of a unit, prop or projectile: Display's MeshBlueprint
 /// completed against Source, as a resource id.

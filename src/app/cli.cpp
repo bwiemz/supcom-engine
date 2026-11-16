@@ -118,6 +118,13 @@ void print_usage() {
               << "  --fa-path <path>   Path to FA installation directory\n"
               << "  --faf-data <path>  Path to FAF data directory\n"
               << "  --print-install    Show which FA install would be used and exit\n"
+              << "  --check-mods [mod ...]  Check the installed mods, or those named (a uid,\n"
+              << "                     a mod's folder or archive on disk, or its /mods path),\n"
+              << "                     as a game reads them: mod_info.lua, hooks, blueprints\n"
+              << "                     and sound banks. Print a report (no window) and exit\n"
+              << "                     1 on an error, 0 on warnings alone\n"
+              << "  --list-mods        List the installed mods and exit\n"
+              << "  --json             With --check-mods or --list-mods: the report as JSON\n"
               << "  --screenshot <png> Render on a fixed clock, save frame N, exit\n"
               << "  --match-telemetry <file>  Write the match's statistics (each army's\n"
               << "                     economy, units and kills every 30 game seconds)\n"
@@ -567,6 +574,23 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         return std::nullopt;
     }
     return o;
+}
+
+std::vector<std::string> check_mods_names(int argc, char* argv[]) {
+    std::vector<std::string> names;
+    bool after = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        if (std::find(std::begin(kValueOptions), std::end(kValueOptions), arg) !=
+            std::end(kValueOptions)) {
+            ++i; // its value
+        } else if (arg == "--check-mods") {
+            after = true;
+        } else if (after && !arg.starts_with("--")) {
+            names.emplace_back(arg);
+        }
+    }
+    return names;
 }
 
 /// A test mode's flag given to the game (the integration runner has them),

@@ -127,6 +127,10 @@ std::string resolve_shader_name(const std::string& shader_name);
 /// The technique a ShaderName names, once resolved; Unit for any other.
 MeshTechnique mesh_technique(const std::string& shader_name);
 
+/// Whether the renderer has a technique for a ShaderName, once resolved:
+/// one it lacks draws as Unit (mesh_technique). No GPU needed (--check-mods).
+bool has_mesh_technique(const std::string& shader_name);
+
 /// One of the build techniques: translucent, drawn after the opaque meshes,
 /// fed the instance's fraction complete.
 inline bool is_build_technique(MeshTechnique t) {

@@ -352,6 +352,27 @@ Adding `--ticks N` runs the simulation headlessly for N ticks with no window:
 ./build/linux-debug/osc_integration --map "/maps/SCMP_009/SCMP_009_scenario.lua" --ticks 1200 --ai-test
 ```
 
+### Checking a Mod
+
+The game says little about a broken mod: one whose `mod_info.lua` fails just
+leaves the mod manager, and a hook of a misspelt path never runs. `--check-mods`
+reads the installed mods as a game does, without a window, and reports what is
+wrong, file and line:
+
+```bash
+opensupcom --check-mods                       # every installed mod
+opensupcom --check-mods ~/Documents/My\ Games/Gas\ Powered\ Games/Supreme\ Commander\ Forged\ Alliance/mods/MyMod
+opensupcom --check-mods <uid> --json          # a mod by its uid; the report as JSON
+opensupcom --list-mods                        # what is installed
+```
+
+It checks that `mod_info.lua` runs, with a unique uid, a whole-number version
+and a `hookdir` from `/`; that the mods it requires are installed and those it
+conflicts with aren't; that each hook hooks a file there is and compiles with
+it; that each blueprint compiles and runs, has a `ShaderName` the renderer
+knows, and names mesh and texture files that exist; and that its sound banks
+parse. It exits 1 on an error and 0 on warnings alone.
+
 ## Testing
 
 | Suite | Command | Needs game data |

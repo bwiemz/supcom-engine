@@ -14,8 +14,10 @@ namespace osc::log {
 
 /// Start logging: to the console at once, and to a file once open_file
 /// names one (M228b). Until then the file's lines are held, so what a run
-/// logs before it knows where its log belongs isn't lost.
-void init();
+/// logs before it knows where its log belongs isn't lost. A command whose
+/// output is its report (--check-mods) keeps the log off the console
+/// (`console` false): a log file, if one is opened, still has every line.
+void init(bool console = true);
 
 /// Send the log to `file` (created, or truncated), starting with the lines
 /// held so far. False, with a warning on the console, when it can't be

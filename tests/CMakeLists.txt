@@ -13,6 +13,7 @@ add_executable(osc_tests
     test_script_hooks.cpp
     test_lua_bytes.cpp
     test_game_mods.cpp
+    test_mod_check.cpp
     test_script_orders.cpp
     test_silo_blocks.cpp
     test_blueprint_categories.cpp

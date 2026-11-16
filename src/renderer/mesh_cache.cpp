@@ -303,8 +303,12 @@ std::string resolve_shader_name(const std::string& shader_name) {
     return shader_name.empty() ? std::string("Unit") : shader_name;
 }
 
-MeshTechnique mesh_technique(const std::string& shader) {
+namespace {
+/// The technique a ShaderName names, and in `known` whether the renderer has
+/// one for it (Unit's own, and Wreckage's path, count).
+MeshTechnique mesh_technique(const std::string& shader, bool& known) {
     const std::string shader_name = resolve_shader_name(shader);
+    known = true;
     if (shader_name == "Aeon") return MeshTechnique::Aeon;
     if (shader_name == "Insect") return MeshTechnique::Insect;
     if (shader_name == "Metal") return MeshTechnique::Metal;
@@ -396,7 +400,16 @@ MeshTechnique mesh_technique(const std::string& shader) {
     if (shader_name == "EditorMarker") {
         return MeshTechnique::EditorMarker;
     }
-    if (shader_name != "Unit" && !is_wreckage_shader(shader_name)) {
+    known = shader_name == "Unit" || is_wreckage_shader(shader_name);
+    return MeshTechnique::Unit;
+}
+} // namespace
+
+MeshTechnique mesh_technique(const std::string& shader) {
+    bool known = true;
+    const MeshTechnique technique = mesh_technique(shader, known);
+    if (!known) {
+        const std::string shader_name = resolve_shader_name(shader);
         static std::mutex mutex;
         static std::unordered_set<std::string> warned;
         const std::lock_guard lock(mutex);
@@ -404,7 +417,13 @@ MeshTechnique mesh_technique(const std::string& shader) {
             spdlog::warn("MeshCache: no technique for ShaderName '{}'; drawing it as Unit",
                          shader_name);
     }
-    return MeshTechnique::Unit;
+    return technique;
+}
+
+bool has_mesh_technique(const std::string& shader) {
+    bool known = true;
+    mesh_technique(shader, known);
+    return known;
 }
 
 f32 MeshCache::blueprint_scale(const std::string& blueprint_id, lua_State* L) {

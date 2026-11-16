@@ -3,6 +3,7 @@
 #include "core/result.hpp"
 #include "core/types.hpp"
 
+#include <span>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,10 @@ class XwbParser {
 public:
     /// Parse wave bank header and entry metadata from file.
     Result<void> parse(const fs::path& xwb_path);
+
+    /// Whether `data` begins as a wave bank parse() reads: its magic and
+    /// version (a mod's banks, which may be in an archive: --check-mods).
+    static Result<void> check_header(std::span<const u8> data);
 
     const std::string& bank_name() const { return bank_name_; }
     /// The bank's file (streamed waves read from it as they play).

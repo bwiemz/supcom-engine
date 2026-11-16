@@ -71,6 +71,11 @@ std::span<const ReflectedField> prop_reflected_fields();
 std::span<const ReflectedField> mesh_reflected_fields();
 std::span<const ReflectedField> mesh_lod_reflected_fields();
 
+/// RES_CompletePath: a file a blueprint names (`name`) against the directory
+/// of its `source` file, '\' read as '/' and "." and ".." collapsed; a name
+/// from '/' is already complete. As a mesh LOD's files are found.
+std::string complete_path(std::string name, std::string source);
+
 /// Write the unit blueprint table at stack index `bp` back as Moho's
 /// typed copy holds it, a mobile unit's footprint the nearest of `classes`.
 void apply_unit_reflection(lua_State* L, int bp, const std::vector<NamedFootprint>& classes);
