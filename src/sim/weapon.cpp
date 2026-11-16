@@ -420,10 +420,14 @@ void Weapon::acquire_step(Unit& owner, EntityRegistry& registry, lua_State* L,
         blacklist.clear();
     }
     if (!enabled || fire_on_death || manual_fire || max_range <= 0 || damage <= 0) return;
-    if (owner.fire_state() == 1) {
-        // Moho's acquire task counts ReTargetOnMiss's cooldown down ahead of its hold-fire check
-        if (retarget_cooldown > 0 && !unpack_search_paused(owner)) --retarget_cooldown;
-        return;
+    // A target that is gone keeps its slot until the weapon next looks: Moho's weak pointer, an
+    // entity target holding no entity. Nothing set it, so its script hears nothing of it.
+    if (target_entity_id) {
+        const Entity* target = registry.find(target_entity_id);
+        if (!target || target->destroyed()) {
+            target_entity_id = EntityId();
+            target_held = true;
+        }
     }
     const TargetMark previous = target_mark();
     update_targeting(owner, registry, sim);
@@ -518,7 +522,7 @@ void Weapon::pick_aim_spot(EntityRegistry& registry, const SimState* sim) {
 }
 
 void Weapon::drop_target(lua_State* L) {
-    const bool had = has_target();
+    const bool had = has_target() || target_held;
     set_target_entity(EntityId());
     if (had && fires_through_script()) call_script(L, "OnLostTarget");
 }
@@ -592,8 +596,11 @@ bool Weapon::report_target_change(const Unit& owner, lua_State* L, const TargetM
     if (target_mark() == previous) {
         return true;
     }
-    // A held target (ReTargetOnMiss gave its target up) was never reported lost.
-    if (previous.entity || previous.ground || previous.held) {
+    // Moho's UnitWeapon::SetTarget tells its script of a target only after none, and of none
+    // only after a target: of one target after another, a held one among them, it hears nothing.
+    const bool had = previous.entity || previous.ground || previous.held;
+    const bool has = has_target() || target_held;
+    if (had && !has) {
         // Moho's OnHaltFire: a manual weapon whose order went must not fire on.
         if (manual_fire) {
             call_script(L, "OnHaltFire");
@@ -605,8 +612,7 @@ bool Weapon::report_target_change(const Unit& owner, lua_State* L, const TargetM
         if (!still_firing()) {
             return false;
         }
-    }
-    if (has_target()) {
+    } else if (!had && has) {
         call_script(L, "OnGotTarget");
         if (!still_firing()) {
             return false;
@@ -892,12 +898,11 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     // attacker's desired target out of reach too, so it is kept through the
     // runs' loops.
     const EntityId ordered = attack_order_target(owner);
-    // Remove vanished targets before following an order or reading their priority.
-    // Range and recon are checked on TargetCheckInterval, like acquisition.
-    if (target_entity_id) {
+    // The order's target out of reach is dropped before it is followed. A vanished target is held
+    // (acquire_step); range and recon are checked on TargetCheckInterval, like acquisition.
+    if (target_entity_id && target_entity_id == ordered) {
         const Entity* target = registry.find(target_entity_id);
-        if (!target || target->destroyed() ||
-            (target_entity_id == ordered && !can_target(owner, *target, sim, !flier))) {
+        if (!target || !can_target(owner, *target, sim, !flier)) {
             target_entity_id = EntityId();
         }
     }
@@ -933,6 +938,14 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         } else if (!always_recheck_target) {
             return;
         }
+    }
+    // Moho's CAcquireTargetTask, under hold fire, drops a target it doesn't keep and looks for no
+    // other (the Steam exe's 0x5DFCD9, after its keep check). The order's target and the primary
+    // weapon's above it still reach the weapon, which doesn't fire (fire_step).
+    if (owner.fire_state() == 1) {
+        target_entity_id = EntityId();
+        target_held = false;
+        return;
     }
 
     const f32 reach = max_range * std::max(1.0f, tracking_radius);

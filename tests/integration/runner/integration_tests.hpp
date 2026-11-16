@@ -240,6 +240,8 @@ void test_upgrade_orders(TestContext& ctx);
 void test_issue_checks(TestContext& ctx);
 void test_no_rush(TestContext& ctx);
 void test_need_unpack(TestContext& ctx);
+/// --weapon-retarget-test, in weapon_retarget_test.cpp.
+void test_weapon_retarget(TestContext& ctx);
 void test_guard_engage(TestContext& ctx);
 void test_rebuilder_guard(TestContext& ctx);
 void test_mobile_build_start(TestContext& ctx);

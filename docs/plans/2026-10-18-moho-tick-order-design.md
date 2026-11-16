@@ -522,6 +522,11 @@ rather than kept; unit–unit contact is a positional push rather than Moho's im
 damage; a factory's skirt in the collision cells; production not scaled by the grant; overflow not shared
 with allies by default; economy events not all-or-nothing.
 
+*Target events: done (2026-11-16) — fix/weapon-target-events: a weapon's script hears `OnGotTarget` only for a target
+after none and `OnLostTarget` only for none after a target, as Moho's `UnitWeapon::SetTarget`; a target that is gone
+keeps the weapon's slot until its next look, which turns it to the next target unheard or drops it; under hold fire
+that look drops a target the weapon doesn't keep (`CAcquireTargetTask::Execute`).*
+
 *Production scaled by the grant: done (2026-10-21) — fix/econ-limiting-rate-2: a unit asking the economy produces at
 its request's grant (Moho's `LimitingRate`), unless its blueprint is a `NaturalProducer`.*
 

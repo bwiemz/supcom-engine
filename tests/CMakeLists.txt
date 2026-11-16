@@ -34,6 +34,7 @@ add_executable(osc_tests
     test_ground_attack.cpp
     test_primary_weapon_target.cpp
     test_retarget_on_miss.cpp
+    test_weapon_target_events.cpp
     test_projectile_bounce.cpp
     test_projectile_detonate.cpp
     test_weapon_candidates.cpp

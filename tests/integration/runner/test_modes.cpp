@@ -245,6 +245,7 @@ constexpr Mode kModesBefore[] = {
     {"--issue-checks-test", test_issue_checks, false},
     {"--no-rush-test", test_no_rush, false},
     {"--need-unpack-test", test_need_unpack, false},
+    {"--weapon-retarget-test", test_weapon_retarget, false},
     {"--guard-engage-test", test_guard_engage, false},
     {"--rebuilder-guard-test", test_rebuilder_guard, false},
     {"--mobile-build-start-test", test_mobile_build_start, false},
