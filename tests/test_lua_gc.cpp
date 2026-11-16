@@ -10,6 +10,8 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <lhost.h>
+
 #include <string>
 
 namespace {
@@ -352,4 +354,51 @@ TEST_CASE("Closing a state with frozen tables frees them", "[lua_gc]") {
     REQUIRE(luaL_loadbuffer(L, write, std::string(write).size(), "w") == 0);
     REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
     lua_close(L);
+}
+
+TEST_CASE("A host key is the string a script has, kept through collections", "[lua_gc]") {
+    Lua lua;
+    lua_State* L = lua.L;
+    // The value lua_pushstring gives
+    lua_pushhostkey(L, 0, "a host key");
+    lua_pushstring(L, "a host key");
+    CHECK(lua_rawequal(L, -1, -2));
+    const char* first = lua_tostring(L, -2);
+    lua_settop(L, 0);
+    // Nothing else holds it, and the collections pass it by: the string
+    // table still has it, so lua_pushstring finds the same string.
+    lua.collect();
+    REQUIRE(lua.run(kGarbage).empty());
+    lua.collect();
+    lua_pushhostkey(L, 0, "a host key");
+    lua_pushstring(L, "a host key");
+    CHECK(lua_tostring(L, -2) == first);
+    CHECK(lua_tostring(L, -1) == first);
+    CHECK(std::string(first) == "a host key");
+    lua_settop(L, 0);
+    // A field a script set reads through it
+    REQUIRE(lua.run("t = { ['a host key'] = 42 }").empty());
+    lua_pushstring(L, "t");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    lua_pushhostkey(L, 0, "a host key");
+    lua_rawget(L, -2);
+    CHECK(lua_tonumber(L, -1) == 42);
+    lua_settop(L, 0);
+}
+
+TEST_CASE("A state's threads share its host data and keys", "[lua_gc]") {
+    Lua lua;
+    lua_State* L = lua.L;
+    CHECK(lua_gethostdata(L) == nullptr);
+    int data = 0;
+    lua_sethostdata(L, &data);
+    lua_State* co = lua_newthread(L);
+    CHECK(lua_gethostdata(co) == &data);
+    lua_pushhostkey(L, 1, "a shared key");
+    lua_pushhostkey(co, 1, "a shared key");
+    CHECK(lua_tostring(co, -1) == lua_tostring(L, -1));
+    lua_settop(co, 0);
+    lua_sethostdata(co, nullptr);
+    CHECK(lua_gethostdata(L) == nullptr);
+    lua_settop(L, 0);
 }

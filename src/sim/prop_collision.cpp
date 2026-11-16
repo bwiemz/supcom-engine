@@ -56,6 +56,7 @@ void call_on_collision(lua_State* L, Prop& prop, const Unit& unit, const BoxCont
 
 void collide_with_props(Unit& unit, EntityRegistry& registry, lua_State* L, u32 tick,
                         bool moho_pathing) {
+    static const CategoryName kNaval{"NAVAL"};
     if (!L || EntityRegistry::moho_id(unit.entity_id()) % 5 != tick % 5 ||
         !(unit.size_x() * unit.size_z() > 0.2f)) {
         return;
@@ -76,7 +77,7 @@ void collide_with_props(Unit& unit, EntityRegistry& registry, lua_State* L, u32 
     }
     if (unit.is_dying() || unit.is_being_built() || unit.can_fly() || unit.transport_id() ||
         unit.parent_entity_id() || unit.layer() == "Air" || unit.layer() == "Sub" ||
-        unit.has_category("NAVAL") || unit.destroyed()) {
+        unit.has_category(kNaval) || unit.destroyed()) {
         return;
     }
     const OrientedBox box =

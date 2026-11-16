@@ -9,6 +9,7 @@
 
 #include "lua.h"
 
+#include "lhost.h"
 #include "lobject.h"
 #include "ltm.h"
 #include "lzio.h"
@@ -140,6 +141,10 @@ typedef struct global_State {
   Node dummynode[1];  /* common node array for all empty tables */
   TString *tmname[TM_N];  /* array with tag-method names */
   Table *mt[NUM_TAGS + 1];  /* LuaPlus: per-type metatables (indexed by LUA_T* type) */
+  /* OpenSupCom: the host's pointer (lua_sethostdata), and its keys
+     (lua_pushhostkey), marked as roots (lhost.h) */
+  void *hostdata;
+  TString *hostkey[LUA_HOSTKEYS];
 } global_State;
 
 

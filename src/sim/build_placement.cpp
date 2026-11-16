@@ -415,12 +415,13 @@ bool StructurePlacement::in_playable(const StructureSite& site) const {
 }
 
 bool structure_overlaps(const EntityRegistry& registry, const StructureSite& site) {
+    static const CategoryName kStructure{"STRUCTURE"};
     const f32 reach =
         0.5f * osc::dmath::hypot(site.x1 - site.x0, site.z1 - site.z0) + MAX_STRUCTURE_HALF_EXTENT;
     for (const auto* e :
          registry.units_in_radius((site.x0 + site.x1) * 0.5f, (site.z0 + site.z1) * 0.5f, reach)) {
         const auto& unit = static_cast<const Unit&>(*e);
-        if (!unit.has_category("STRUCTURE") || unit.footprint_size_x() <= 0 ||
+        if (!unit.has_category(kStructure) || unit.footprint_size_x() <= 0 ||
             unit.footprint_size_z() <= 0) {
             continue;
         }

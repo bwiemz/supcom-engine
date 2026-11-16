@@ -18,6 +18,7 @@
 #include "lua/lua_state.hpp"
 #include "lua/sim_bindings.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/lua_keys.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
@@ -90,8 +91,7 @@ static sim::ArmyBrain* check_brain(lua_State* L, int idx = 1) {
     if (!lua_istable(L, idx)) return nullptr;
 
     // Check sim generation — stale handles from a previous SimState return nullptr
-    lua_pushstring(L, "_c_sim_gen");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::CSimGen);
     if (lua_isnumber(L, -1)) {
         u32 stored_gen = static_cast<u32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
@@ -103,8 +103,7 @@ static sim::ArmyBrain* check_brain(lua_State* L, int idx = 1) {
         // No generation stored — legacy table, allow through
     }
 
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::CObject);
     auto* brain = static_cast<sim::ArmyBrain*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
     return brain;

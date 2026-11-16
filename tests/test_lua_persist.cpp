@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <lhost.h>
 #include <lpersist.h>
 
 extern "C" {
@@ -532,4 +533,30 @@ TEST_CASE("A snapshot that is not one fails to load", "[lua_persist]") {
         State b;
         CHECK_FALSE(lua_unpersist(b.L, good.substr(0, good.size() / 2), kNoHooks).empty());
     }
+}
+
+TEST_CASE("A load keeps the loading state's host data and keys", "[lua_persist]") {
+    State a;
+    a.run("t = { _c_object = 7 }");
+    State b;
+    int data = 0;
+    lua_sethostdata(b.L, &data);
+    lua_pushhostkey(b.L, 0, "_c_object");
+    const char* key = lua_tostring(b.L, -1);
+    lua_settop(b.L, 0);
+    copy(a, b);
+    CHECK(lua_gethostdata(b.L) == &data);
+    // The key is the loaded heap's string, and reads its tables
+    lua_pushstring(b.L, "t");
+    lua_rawget(b.L, LUA_GLOBALSINDEX);
+    lua_pushhostkey(b.L, 0, "_c_object");
+    CHECK(lua_tostring(b.L, -1) == key);
+    lua_rawget(b.L, -2);
+    CHECK(lua_tonumber(b.L, -1) == 7);
+    lua_settop(b.L, 0);
+    b.run("t = nil");
+    lua_setgcthreshold(b.L, 0);
+    lua_pushstring(b.L, "_c_object");
+    CHECK(lua_tostring(b.L, -1) == key);
+    lua_settop(b.L, 0);
 }

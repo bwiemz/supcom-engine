@@ -34,6 +34,7 @@
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
+#include <lhost.h>
 }
 
 #include <spdlog/spdlog.h>
@@ -63,7 +64,12 @@ constexpr const char* kSimKey = "osc_sim_state";
 
 } // namespace
 
+// The state keeps the sim twice: as its host data, which get_sim reads on
+// every binding call without a lookup, and in its registry, where a
+// snapshot finds the host's singletons by name (sim_snapshot.cpp) and a
+// load puts back the loading host's own -- the same pointer.
 void set_sim(lua_State* L, SimState* sim) {
+    lua_sethostdata(L, sim);
     lua_pushstring(L, kSimKey);
     if (sim) lua_pushlightuserdata(L, sim);
     else lua_pushnil(L);
@@ -71,11 +77,7 @@ void set_sim(lua_State* L, SimState* sim) {
 }
 
 SimState* get_sim(lua_State* L) {
-    lua_pushstring(L, kSimKey);
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    return sim;
+    return static_cast<SimState*>(lua_gethostdata(L));
 }
 
 u32 SimState::s_sim_generation_ = 0;
@@ -1499,9 +1501,11 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     if (clear_existing && command.type != CommandType::Stop && unit.has_unit_state("Enhancing")) {
         return false;
     }
+    static const CategoryName kPod{"POD"};
+    static const CategoryName kCarrier{"CARRIER"};
     const Unit* carrier = carrier_of(entity_registry_, unit);
-    const bool pod = unit.has_category("POD");
-    const bool may_leave = !carrier || pod || carrier->has_category("CARRIER");
+    const bool pod = unit.has_category(kPod);
+    const bool may_leave = !carrier || pod || carrier->has_category(kCarrier);
     if (command.type == CommandType::Move || command.type == CommandType::Patrol ||
         command.type == CommandType::AggressiveMove) {
         return may_leave && unit.motion_type() != "RULEUMT_None" && has_target(command) &&
