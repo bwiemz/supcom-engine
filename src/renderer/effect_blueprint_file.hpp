@@ -1,5 +1,6 @@
 #pragma once
 
+#include "blueprints/blueprint_store.hpp"
 #include "core/types.hpp"
 
 #include <functional>
@@ -7,20 +8,20 @@
 
 struct lua_State;
 
-namespace osc::vfs {
-class VirtualFileSystem;
-}
-
 namespace osc::renderer {
 
-/// Run the effect blueprint file at `path` (`EmitterBlueprint { … }`,
-/// `BeamBlueprint { … }` or `TrailEmitterBlueprint { … }`) in `L`, with the
-/// global `kind` capturing its table and the other kinds doing nothing, then
-/// hand the table to `parse(L, index)`. False when the file can't be read or
-/// run, or holds no blueprint of that kind. `L`'s globals are as they were
-/// afterwards.
-bool run_effect_blueprint(const vfs::VirtualFileSystem* vfs, const std::string& path, lua_State* L,
-                          const char* kind, const std::function<void(lua_State*, int)>& parse);
+/// Hand the effect blueprint of `type` registered under `name`
+/// (BlueprintStore::find_effect) to `parse(L, index)`: its table, read in
+/// `L`, which must be the store's Lua state. False when none is (or `L`
+/// isn't). Moho's effects keep the blueprint the rules registered
+/// (CEffectManagerImpl looks it up with GetEmitterBlueprint,
+/// GetBeamBlueprint or GetTrailBlueprint), so a mod's change to one -- a
+/// blueprint of the same id, a Merge, a ModBlueprints edit -- is what
+/// draws; and Moho never reads the file again, so an effect whose name
+/// isn't registered draws nothing. `L`'s stack is as it was afterwards.
+bool read_effect_blueprint(const blueprints::BlueprintStore* store, lua_State* L,
+                           const std::string& name, blueprints::BlueprintType type,
+                           const std::function<void(lua_State*, int)>& parse);
 
 /// t[key] of the blueprint table at absolute index `idx` as a number, or
 /// `fallback` when it isn't one.

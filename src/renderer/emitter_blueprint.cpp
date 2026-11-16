@@ -135,8 +135,8 @@ const EmitterBlueprintData* EmitterBlueprintCache::get(const std::string& path, 
     if (auto it = cache_.find(path); it != cache_.end()) return &it->second;
     if (path.empty() || failed_.count(path) || !RenderScriptScope::allowed()) return nullptr;
     EmitterBlueprintData data;
-    if (!run_effect_blueprint(vfs_, path, L, "EmitterBlueprint",
-                              [&data](lua_State* S, int t) { data = parse(S, t); })) {
+    if (!read_effect_blueprint(store_, L, path, blueprints::BlueprintType::Emitter,
+                               [&data](lua_State* S, int t) { data = parse(S, t); })) {
         failed_.insert(path);
         return nullptr;
     }

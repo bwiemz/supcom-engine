@@ -151,6 +151,8 @@ void test_refract_render(TestContext& ctx) {
     emitter_bp("half.bp", "bend_half.dds", "", "white_half.dds");
     emitter_bp("under.bp", "bend.dds", "    SortOrder = -102,\n");
     ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
+    // Registered, as Moho draws only a registered effect blueprint
+    (void)register_effect_blueprints(ctx, kRoot);
 
     // The backdrop: a prop plate over the spot, the line along z at x0.
     std::string prop_bp;

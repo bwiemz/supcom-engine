@@ -8,8 +8,8 @@
 
 struct lua_State;
 
-namespace osc::vfs {
-class VirtualFileSystem;
+namespace osc::blueprints {
+class BlueprintStore;
 }
 
 namespace osc::renderer {
@@ -31,13 +31,15 @@ struct TrailBlueprintData {
     std::string ramp_texture;       ///< sampled (age, across), clamped
 };
 
-/// Trail blueprints by VFS path, read as BeamBlueprintCache reads beams.
+/// Trail blueprints by the name an effect gives, read as
+/// EmitterBlueprintCache reads emitters: from the registered blueprint.
 class TrailBlueprintCache {
 public:
-    void set_vfs(const vfs::VirtualFileSystem* vfs) { vfs_ = vfs; }
+    /// The registered blueprints it reads (EmitterBlueprintCache's).
+    void set_blueprints(const blueprints::BlueprintStore* store) { store_ = store; }
 
-    /// The trail blueprint at `path`, loaded on first use; null if it isn't
-    /// one or can't be read. A failed path is remembered.
+    /// The trail blueprint registered as `path`, read on first use; null if
+    /// none is. A miss is remembered.
     const TrailBlueprintData* get(const std::string& path, lua_State* L);
 
     void clear() {
@@ -46,7 +48,7 @@ public:
     }
 
 private:
-    const vfs::VirtualFileSystem* vfs_ = nullptr;
+    const blueprints::BlueprintStore* store_ = nullptr;
     std::unordered_map<std::string, TrailBlueprintData> cache_;
     std::unordered_set<std::string> failed_;
 };

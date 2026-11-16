@@ -6,9 +6,10 @@ Forged Alliance/mods` at /mods/<name>; the Documents folder here is a
 temporary one, through XDG_DOCUMENTS_DIR) holds two test mods:
 
 - a game mod, a folder: a blueprint of its own that merges into the UEF
-  ACU's, and hooks of /lua/RuleInit.lua (which loads the blueprints, in
-  the state the sim then runs in), /lua/simInit.lua and /lua/userInit.lua
-  that leave a probe;
+  ACU's, an emitter blueprint that merges into one of retail's (a new
+  Lifetime and Texture), and hooks of /lua/RuleInit.lua (which loads the
+  blueprints, in the state the sim then runs in), /lua/simInit.lua and
+  /lua/userInit.lua that leave a probe;
 - a UI-only mod, a .zip: hooks of /lua/userInit.lua (which runs before UI
   mods join the session, so must not run) and /lua/UserSync.lua (which
   must).
@@ -20,7 +21,9 @@ temporary one, through XDG_DOCUMENTS_DIR) holds two test mods:
    Lua state's mods at tick 20. The sim must have the game mods only, sorted
    by uid as retail's mods.lua sorts them; the game's UI the game mods, then
    the UI mod; both the merged blueprint with doubled production; and each
-   its hooks' probes.
+   its hooks' probes. The merged emitter's values must be what the sim
+   times its emitters by and what the renderer draws them with: Moho
+   reads an effect's blueprint from the registered ones, not its file.
 2. The game's recording (LastGame) must replay headless with the same mods:
    every tick's checksum as recorded, and the game mod's hook run.
 3. Watched in the game (`--watch`), it must give the same report.
@@ -60,6 +63,13 @@ MODS_DIR = Path("My Games/Gas Powered Games/Supreme Commander Forged Alliance/mo
 ACU_MASS = 1
 ACU_ENERGY = 20
 
+# A retail emitter, and what the game mod's Merge makes of it (retail's:
+# Lifetime 0.1, Texture flare_lens_add_02.dds). The id and the
+# Texture read lowercase, as Moho canonicalizes them.
+EFFECT = "/effects/emitters/flash_01_emit.bp"
+EFFECT_LIFETIME = "7"
+EFFECT_TEXTURE = "/textures/particles/glow_02.dds"
+
 
 def probe(text: str) -> str:
     """A hook that appends `text` to the state's probe global."""
@@ -82,6 +92,15 @@ def write_mods(documents: Path) -> None:
     # Merge keeps the rest of the ACU.
     _ = (game / "units/uel0001/uel0001_unit.bp").write_text(
         "UnitBlueprint {\n    Merge = true,\n    General = { UnitName = 'ModsFlow' },\n}\n"
+    )
+    # An effect blueprint's id is its Source's path (SetBackwardsCompatId),
+    # so a mod's overrides one by naming that file as its Source.
+    (game / "effects").mkdir()
+    _ = (game / "effects/modsflow_emit.bp").write_text(
+        "EmitterBlueprint {\n    Merge = true,\n"
+        + f"    Source = '{EFFECT}',\n"
+        + f"    Lifetime = {EFFECT_LIFETIME},\n"
+        + f"    Texture = '{EFFECT_TEXTURE}',\n}}\n"
     )
 
     # The UI mod packed, as a mod downloaded from a vault is
@@ -110,6 +129,7 @@ class Expected:
     mods: dict[str, list[str]]
     name: str  # the UEF ACU's UnitName
     wanted: dict[str, list[str]]  # probes of hooks that must run
+    effect: tuple[str, str]  # EFFECT's Lifetime and Texture, as the engine reads them
     unwanted: dict[str, list[str]] = field(default_factory=dict)  # ...and must not
     user_sync_runs: int = 0  # the UI mod's UserSync.lua hook
     selected: list[str] = field(default_factory=list)  # the player's, in the UI
@@ -153,6 +173,12 @@ def check(output: str, run_name: str, want: Expected) -> list[str]:
             selected = ",".join(want.selected)
             if got.get("selected") != selected:
                 problems.append(f"ui: selected {got.get('selected')}, expected {selected}")
+    # The emitter as the sim times it and as the renderer draws it
+    got = report(output, "effect")
+    lifetime, texture = want.effect
+    for key, value in (("sim", lifetime), ("render", lifetime), ("texture", texture)):
+        if got.get(key) != value:
+            problems.append(f"effect: {key} {got.get(key)}, expected {value}")
     return [f"{run_name}: {problem}" for problem in problems]
 
 
@@ -165,6 +191,7 @@ ALL_SELECTED = Expected(
     name="ModsFlow",
     wanted={"sim": ["game:rules", "game:sim"], "ui": ["game:user", "ui:sync"]},
     unwanted={"sim": ["game:user", "ui:user", "ui:sync"], "ui": ["game:sim", "ui:user"]},
+    effect=(EFFECT_LIFETIME, EFFECT_TEXTURE),
     user_sync_runs=2,
     selected=sorted([RESOURCE_RICH, GAME_MOD, UI_MOD]),
 )
@@ -174,6 +201,7 @@ PICKED_IN_LOBBY = Expected(
     mods={"sim": [RESOURCE_RICH], "ui": [RESOURCE_RICH]},
     name="nil",
     wanted={},
+    effect=("0.1", "/textures/particles/flare_lens_add_02.dds"),  # retail's own
     unwanted={"sim": ["game:", "ui:"], "ui": ["game:", "ui:"]},
     selected=[RESOURCE_RICH],
 )

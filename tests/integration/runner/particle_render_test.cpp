@@ -173,6 +173,8 @@ void test_particle_render(TestContext& ctx) {
     emitter_bp("lowoff.bp", "    LowFidelity = false,\n" + curve("EmitRateCurve", 1) +
                                 curve("LifetimeCurve", 20));
     ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
+    // Registered, as Moho draws only a registered effect blueprint
+    (void)register_effect_blueprints(ctx, kRoot);
     const auto bp = [](const char* file) { return fmt::format("{}/{}", kRoot, file); };
 
     const auto effect_id = [&](const char* global) {

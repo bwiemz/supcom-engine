@@ -47,6 +47,15 @@ public:
     /// Find a blueprint by ID.
     const BlueprintEntry* find(std::string_view id) const;
 
+    /// The effect blueprint of `type` (Emitter, Beam or TrailEmitter) a
+    /// script names `name`, as Moho's effects find theirs: by the name as
+    /// STR_InitFilename canonicalizes it (lowercase, `\` read as `/`), among
+    /// the registered blueprints of that type (RRuleGameRules's
+    /// GetEmitterBlueprint, GetBeamBlueprint and GetTrailBlueprint). Null for
+    /// a name none is registered under: Moho makes no effect of it, and never
+    /// reads the file it names.
+    const BlueprintEntry* find_effect(std::string_view name, BlueprintType type) const;
+
     /// Get all blueprints of a given type.
     std::vector<const BlueprintEntry*> get_all(BlueprintType type) const;
 
@@ -60,6 +69,9 @@ public:
     /// since the store was made or last rebound (a rebind keeps the earlier
     /// ones, without their tables).
     size_t registered_count() const;
+
+    /// The Lua state its tables are in (null between games).
+    lua_State* lua_state() const { return L_; }
 
     /// Push the Lua table for a blueprint onto the stack.
     /// Uses the main lua_State (L_). For coroutine safety, use the overload

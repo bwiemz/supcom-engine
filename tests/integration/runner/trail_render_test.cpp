@@ -150,6 +150,8 @@ void test_trail_render(TestContext& ctx) {
              "SortOrder = -102, LODCutoff = 500,",
              "red");
     ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
+    // Registered, as Moho draws only a registered effect blueprint
+    (void)register_effect_blueprints(ctx, kRoot);
     const auto bp = [](const char* file) { return fmt::format("{}/{}", kRoot, file); };
 
     const auto effect_id = [&](const char* global) {

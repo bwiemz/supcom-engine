@@ -268,6 +268,7 @@ void test_water_render(TestContext& ctx) {
             "}}\n",
             kRoot);
         ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
+        (void)register_effect_blueprints(ctx, kRoot); // as Moho draws only those
         (void)r.texture_cache().get_blocking(fmt::format("{}/white.dds", kRoot));
         (void)r.texture_cache().get_blocking(fmt::format("{}/red.dds", kRoot));
         const Spot g{view.x - 20, view.z - 20};

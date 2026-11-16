@@ -1725,9 +1725,10 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
                            const std::vector<std::string>& preload,
                            vfs::VirtualFileSystem* vfs, lua_State* L) {
     vfs_ = vfs;
-    emitter_bp_cache_.set_vfs(vfs);
-    beam_bp_cache_.set_vfs(vfs);
-    trail_bp_cache_.set_vfs(vfs);
+    // The effects' blueprints, as registered: the store's tables are in `L`.
+    emitter_bp_cache_.set_blueprints(store);
+    beam_bp_cache_.set_blueprints(store);
+    trail_bp_cache_.set_blueprints(store);
     terrain_source_ = terrain;
     terrain_snapshot_ = terrain ? std::make_unique<map::Terrain>(*terrain) : nullptr;
     terrain_ = terrain_snapshot_.get();
