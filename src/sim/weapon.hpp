@@ -297,7 +297,8 @@ public:
     std::optional<Vector3> target_point(const EntityRegistry& registry) const;
 
     /// Moho's CanFire: a target within MaxRadius, the weapon enabled, its
-    /// fire control on target (see fire_control), the unit free (not Busy)
+    /// fire control on target (see fire_control), the unit free (not Busy),
+    /// an aircraft on the Air layer, a NeedUnpack unit Immobile (unpacked),
     /// and above water if it must be, a winged bomber at its release point
     /// (bomb_ready), and a silo weapon's missile ready (HasSiloAmmo).
     /// `sim`: for the water's surface (none: a map without water).
