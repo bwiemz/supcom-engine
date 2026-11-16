@@ -4352,16 +4352,19 @@ Vector3 Unit::dive_lean_normal(f32 diving_speed) {
 }
 
 void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {
-    std::string old_layer = layer_;
+    const std::string old_layer = layer_;
     set_layer(new_layer);
+    call_on_layer_change(L, old_layer);
+}
 
+void Unit::call_on_layer_change(lua_State* L, const std::string& old_layer) {
     // Update self.Layer on the Lua table
     if (lua_table_ref() >= 0) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
         int tbl = lua_gettop(L);
 
         lua_pushstring(L, "Layer");
-        lua_pushstring(L, new_layer.c_str());
+        lua_pushstring(L, layer_.c_str());
         lua_rawset(L, tbl);
 
         // Call self:OnLayerChange(new, old)
@@ -4369,7 +4372,7 @@ void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {
         lua_gettable(L, tbl);
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, tbl); // self
-            lua_pushstring(L, new_layer.c_str());
+            lua_pushstring(L, layer_.c_str());
             lua_pushstring(L, old_layer.c_str());
             if (lua_pcall(L, 3, 0, 0) != 0) {
                 spdlog::warn("OnLayerChange error: {}", lua_tostring(L, -1));

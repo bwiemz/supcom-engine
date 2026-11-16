@@ -324,6 +324,15 @@ static void tell_start_being_built(lua_State* L, sim::SimState& sim, sim::Entity
     }
 }
 
+/// Moho's Unit, as it is made: SetCurrentLayer(its starting layer) after OnPreCreate tells the
+/// script OnLayerChange(layer, 'None').
+static void tell_starting_layer(lua_State* L, sim::SimState& sim, sim::EntityId id) {
+    auto* made = sim.entity_registry().find(id);
+    if (made && made->is_unit() && static_cast<sim::Unit*>(made)->layer() != "None") {
+        static_cast<sim::Unit*>(made)->call_on_layer_change(L, "None");
+    }
+}
+
 /// Moho's Unit ctor: UpdateTerrainType after OnPreCreate, so its script hears
 /// the type it is made on.
 static void tell_terrain_type(lua_State* L, sim::SimState& sim, sim::EntityId id) {
@@ -720,6 +729,7 @@ static sim::EntityId spawn_complete_unit(lua_State* L, sim::SimState& sim, const
     } else {
         lua_pop(L, 1);
     }
+    tell_starting_layer(L, sim, id);
     tell_terrain_type(L, sim, id);
 
     create_unit_weapons(L, tbl, "Unit");
@@ -867,6 +877,7 @@ static int l_create_building_unit(lua_State* L) {
         lua_pop(L, 1);
     }
     if (auto* sim = get_sim(L)) {
+        tell_starting_layer(L, *sim, id);
         tell_terrain_type(L, *sim, id);
     }
 
