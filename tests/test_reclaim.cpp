@@ -1,6 +1,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
@@ -19,6 +21,7 @@ extern "C" {
 #include <cmath>
 #include <memory>
 #include <string>
+#include <vector>
 
 using osc::sim::CommandType;
 using osc::sim::EntityId;
@@ -31,14 +34,14 @@ using osc::test::tick_until;
 namespace {
 
 struct ReclaimSim {
-    lua_State* L = lua_open();
+    osc::lua::LuaState lua;
+    lua_State* L = lua.raw();
     SimState sim{L, nullptr};
     Unit* target = nullptr;
     Prop* wreck = nullptr;
 
     ReclaimSim() {
-        luaopen_base(L);
-        luaopen_table(L);
+        osc::lua::register_moho_bindings(lua, sim);
         lua_settop(L, 0);
         const char* code = R"(
             log = {}
@@ -93,7 +96,6 @@ struct ReclaimSim {
         sim.entity_registry().register_entity(std::move(w));
         bind(*wreck, nullptr, "wreck");
     }
-    ~ReclaimSim() { lua_close(L); }
     ReclaimSim(const ReclaimSim&) = delete;
     ReclaimSim& operator=(const ReclaimSim&) = delete;
 
@@ -152,6 +154,34 @@ struct ReclaimSim {
         std::string v = lua_tostring(L, -1);
         lua_pop(L, 1);
         return v;
+    }
+
+    std::string heard() {
+        const std::string take = "local s = table.concat(log, ',') log = {} return s";
+        REQUIRE(luaL_loadbuffer(L, take.c_str(), take.size(), "take") == 0);
+        REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
+        std::string s = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        return s;
+    }
+
+    void run(const std::string& code) {
+        REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "test") == 0);
+        REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+    }
+
+    bool in_state(const Unit& u, const char* state) {
+        lua_getglobal(L, "moho");
+        lua_pushstring(L, "unit_methods");
+        lua_gettable(L, -2);
+        lua_pushstring(L, "IsUnitState");
+        lua_gettable(L, -2);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, u.lua_table_ref());
+        lua_pushstring(L, state);
+        REQUIRE(lua_pcall(L, 2, 1, 0) == 0);
+        const bool in = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 3);
+        return in;
     }
 };
 
@@ -224,6 +254,87 @@ TEST_CASE("A prop's reclaim takes it down from the second tick after it starts",
     CHECK(eng->economy().reclaim_mass == 30.0);
     w.sim.tick();
     CHECK(w.wreck->fraction_complete() < 1.0f);
+}
+
+TEST_CASE("A prop's reclaimer is Reclaiming from its arm's first tick on target, and stops the "
+          "tick after the prop goes",
+          "[reclaim]") {
+    ReclaimSim w;
+    w.run(R"(
+        function Reclaimer:GetReclaimCosts(target) return 0.8, 0, 8 end
+        function Reclaimer:OnStartReclaim(target)
+            table.insert(log, 'start ' .. tostring(target ~= nil))
+        end
+        function Reclaimer:OnStopReclaim(target)
+            table.insert(log, 'stop ' .. tostring(target ~= nil))
+        end
+    )");
+    w.sim.add_army("ARMY_1", "ARMY_1");
+    Unit* eng = w.engineer(10.0f);
+    eng->set_army(0);
+    const EntityId prop_id = w.wreck->entity_id();
+    eng->push_command(order(CommandType::Reclaim, prop_id), true);
+    struct Tick {
+        bool reclaiming;
+        osc::f32 work;
+        double banked;
+        const char* heard;
+    };
+    std::vector<Tick> ticks = {{false, 0.0f, 0.0, "start true"}, {true, 0.0f, 0.0, ""}};
+    for (int i = 1; i <= 8; ++i) {
+        ticks.push_back({true, 0.125f * static_cast<osc::f32>(i), 10.0, ""});
+    }
+    ticks.push_back({false, 0.0f, 0.0, "stop false"});
+    for (size_t t = 0; t < ticks.size(); ++t) {
+        CAPTURE(t + 1);
+        w.sim.tick();
+        CHECK(w.in_state(*eng, "Reclaiming") == ticks[t].reclaiming);
+        CHECK(eng->work_progress() == ticks[t].work);
+        CHECK(eng->economy().reclaimed_mass == ticks[t].banked);
+        CHECK(w.heard() == ticks[t].heard);
+        CHECK((w.sim.entity_registry().find(prop_id) == nullptr) == (t + 1 >= 10));
+        CHECK(eng->command_queue().empty() == (t + 1 == ticks.size()));
+    }
+}
+
+TEST_CASE("A prop's reclaim banks the share it takes each tick, at least a tick's worth, of no "
+          "more than its health",
+          "[reclaim]") {
+    struct Row {
+        const char* name;
+        const char* costs;
+        osc::f32 health;
+        std::vector<double> banked;
+    };
+    const std::vector<Row> rows = {
+        {"under a tick", "0.075, 7.5, 0", 50.0f, {75.0}},
+        {"two and a half ticks", "0.25, 10, 0", 50.0f, {40.0, 40.0, 20.0}},
+        {"at 98% health", "0.1, 10, 0", 49.0f, {98.0}},
+    };
+    for (const auto& row : rows) {
+        DYNAMIC_SECTION(row.name) {
+            ReclaimSim w;
+            w.run(std::string("function Reclaimer:GetReclaimCosts(target) return ") + row.costs +
+                  " end");
+            w.sim.add_army("ARMY_1", "ARMY_1");
+            w.wreck->set_max_health(50.0f);
+            w.wreck->set_health(row.health);
+            Unit* eng = w.engineer(10.0f);
+            eng->set_army(0);
+            eng->push_command(order(CommandType::Reclaim, w.wreck->entity_id()), true);
+            std::vector<double> banked;
+            for (int t = 0; t < 8; ++t) {
+                w.sim.tick();
+                if (eng->economy().reclaimed_energy != 0.0) {
+                    banked.push_back(eng->economy().reclaimed_energy);
+                }
+            }
+            REQUIRE(banked.size() == row.banked.size());
+            for (size_t i = 0; i < banked.size(); ++i) {
+                CHECK(banked[i] == Catch::Approx(row.banked[i]));
+            }
+        }
+    }
 }
 
 TEST_CASE("A reclaim takes nothing while the reclaimer's arm is off its target", "[reclaim][arm]") {
@@ -322,28 +433,20 @@ TEST_CASE("A reclaimer hears OnAssignedFocusEntity each tick it wears a unit dow
         },
         2);
     lua_setglobal(w.L, "health");
-    const auto heard = [&] {
-        const std::string take = "local s = table.concat(log, ',') log = {} return s";
-        REQUIRE(luaL_loadbuffer(w.L, take.c_str(), take.size(), "take") == 0);
-        REQUIRE(lua_pcall(w.L, 0, 1, 0) == 0);
-        std::string s = lua_tostring(w.L, -1);
-        lua_pop(w.L, 1);
-        return s;
-    };
     Unit* eng = w.engineer(10.0f);
     eng->push_command(order(CommandType::Reclaim, target_id), true);
     w.sim.tick();
-    CHECK(heard() == "start,focus 0 100");
+    CHECK(w.heard() == "start,focus 0 100");
     for (const char* tick : {"focus 0 80", "focus 0 60", "focus 0 40"}) {
         w.sim.tick();
-        CHECK(heard() == tick);
+        CHECK(w.heard() == tick);
     }
     w.sim.tick();
-    CHECK(heard() == "focus 0 20,reclaimed,wreck 0,focus 0 20");
+    CHECK(w.heard() == "focus 0 20,reclaimed,wreck 0,focus 0 20");
     REQUIRE(eng->reclaim_target_id() == w.wreck->entity_id());
     for (int i = 0; i < 3; ++i) {
         w.sim.tick();
-        CHECK(heard().empty());
+        CHECK(w.heard().empty());
     }
 }
 
@@ -402,10 +505,7 @@ TEST_CASE("A damaged unit under construction is reclaimed from its health's shar
                [&] { return w.sim.entity_registry().find(frame_id) == nullptr; });
     CHECK(w.log() == "frame reclaimed");
     w.sim.tick(); // the army takes in the last of it
-    // 0.3 of 75 is Moho's 22.5. The engine banks one tick's 0.5 more: it banks
-    // from the tick the reclaim takes its costs, a tick before its first step,
-    // for a prop as for a unit (not changed here).
-    CHECK(w.sim.get_army(0)->economy().mass.reclaimed == Catch::Approx(23.0));
+    CHECK(w.sim.get_army(0)->economy().mass.reclaimed == Catch::Approx(22.5));
 }
 
 TEST_CASE("A guard helping reclaim a unit under construction takes its health down with it",
