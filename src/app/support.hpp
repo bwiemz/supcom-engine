@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 struct lua_State;
 
@@ -112,6 +113,9 @@ struct SessionLaunch {
     /// not from the front end's sessionConfig as it stands then (and a
     /// command line's game has none there).
     std::optional<sim::GameSetup> setup;
+    /// The UI mods --mod picked for a command line's game, which a restart
+    /// keeps (App::command_line_ui_mods); none otherwise.
+    std::optional<std::vector<std::string>> ui_mods;
 };
 
 /// RestartSession's request (core::kRestartRequestKey), taken from the UI

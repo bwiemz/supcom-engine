@@ -18,6 +18,7 @@
 #include "core/preferences.hpp"
 #include "core/tick_clock.hpp"
 #include "lua/beat_system.hpp"
+#include "lua/command_line_mods.hpp"
 #include "lua/init_loader.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/scenario_loader.hpp"
@@ -177,6 +178,12 @@ struct Options {
     bool reproducible_run = false;
     /// A player's game: their preferences, user folder and LastGame.
     bool interactive = false;
+    /// --mod <uid or path>, repeatable, in order (lua/command_line_mods.hpp).
+    std::vector<lua::ModArg> mods;
+    /// Whether --mod picks the game's mods: a new game --map starts. Anywhere
+    /// else (the front end and its lobby, a recorded game) a mod on disk is
+    /// only mounted, and a uid is refused.
+    bool mods_picked = false;
 };
 
 // cli.cpp
@@ -412,8 +419,10 @@ private:
     std::optional<int> boot_ui();
     /// A UI state's own setup: bindings, the App's objects, userInit.lua --
     /// or, for a game's (`game_mods`: its mods, as sim::GameSetup::mods),
-    /// SessionInit.lua.
-    std::optional<int> init_ui_state(const std::string* game_mods = nullptr);
+    /// SessionInit.lua, which takes the UI mods from the player's selection
+    /// unless `ui_mods` (a command line's game's, --mod's) stands in for it.
+    std::optional<int> init_ui_state(const std::string* game_mods = nullptr,
+                                     const std::vector<std::string>* ui_mods = nullptr);
     /// start()'s part of it: the registries and managers the bindings use.
     void publish_session_objects();
     /// Replace the UI state with a fresh one, as Moho starts the front end
@@ -421,7 +430,8 @@ private:
     /// controls, threads, beat functions and key maps go with it; the
     /// caller then runs SetupUI and the front end's or game's UI. A game's
     /// state (`game_mods` given) is init_ui_state's for a game.
-    void reset_ui_state(const std::string* game_mods = nullptr);
+    void reset_ui_state(const std::string* game_mods = nullptr,
+                        const std::vector<std::string>* ui_mods = nullptr);
     /// The session, the UI's registries, and the test modes' front end.
     std::optional<int> start();
 
@@ -530,6 +540,10 @@ private:
     /// The game's setup: a replay's or saved game's own, or the command
     /// line's.
     sim::GameSetup game_setup;
+    /// The UI-only mods --mod picked for the command line's game, which its
+    /// UI state's SessionInit.lua takes in place of the player's selection
+    /// (its restarts' too); none without --mod.
+    std::optional<std::vector<std::string>> command_line_ui_mods;
     /// A loaded game's save (--load, LoadSavedGame), while the game catches
     /// up with it: checked tick by tick until the player takes over.
     std::optional<sim::ReplayPlayback> catch_up;
