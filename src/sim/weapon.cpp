@@ -1430,6 +1430,8 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     proj->has_target_position =
         target != nullptr || has_ground_target || (manual_fire && last_order_point);
     proj->launcher_id = owner.entity_id();
+    // Moho's PROJ_Create takes the weapon's IgnoresAlly (Steam's exe 0x006DD26C)
+    proj->ignores_ally = ignores_ally;
     // ReTargetOnMiss: its weapon hears where it lands, if the weapon has a target unit (Moho's
     // UnitWeapon::CreateProjectile, TransmitProjectileImpactEvent)
     if (retarget_on_miss && !manual_fire && target_entity_id) {

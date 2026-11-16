@@ -14,6 +14,7 @@
 #include "sim/collision_beam.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/flight_math.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
 #include "sim/projectile_script.hpp"
@@ -1504,4 +1505,186 @@ TEST_CASE("a beam reaches its weapon's MaximumBeamLength, else its MaxRadius as 
     s.gun().max_beam_length = 24.0f; // MaximumBeamLength wins
     CHECK(s.check() == "Air");
     CHECK(s.beam().beam_setup().reached == Approx(24.0f));
+}
+
+namespace {
+
+/// Armies for IgnoresAlly: 0 and 1 allies, 2 their enemy (armies are enemies unless set), 3
+/// neutral to 0. The sim is its Lua state's, as in a game.
+struct AlliedArmies {
+    osc::lua::LuaState lua;
+    lua_State* L = lua.raw();
+    osc::sim::SimState sim{L, nullptr};
+    EntityRegistry& reg = sim.entity_registry();
+
+    AlliedArmies() {
+        for (const char* name : {"ARMY_1", "ARMY_2", "ARMY_3", "NEUTRAL_CIVILIAN"}) {
+            sim.add_army(name, name);
+        }
+        sim.set_alliance(0, 1, osc::sim::Alliance::Ally);
+        sim.set_alliance(0, 3, osc::sim::Alliance::Neutral);
+        osc::sim::set_sim(L, &sim);
+        reg.init_spatial_grid(512, 512);
+    }
+
+    /// A 2-unit box of `army`'s on `layer`, standing on y = 0. It has no script, so nothing
+    /// refuses a shot (retail's Unit.lua refuses only its own army's).
+    EntityId unit(const Vector3& at, int army, const char* layer) {
+        const EntityId id = add_unit(reg, at, box(1, 1, 1, 1), army);
+        static_cast<Unit*>(reg.find(id))->set_layer(layer);
+        return id;
+    }
+
+    Projectile* shot(const Vector3& at, const Vector3& velocity, int army,
+                     const CollisionShape& shape = {}) {
+        auto p = std::make_unique<Projectile>();
+        p->set_position(at);
+        p->velocity = velocity;
+        p->set_army(army);
+        p->set_default_collision_shape(shape);
+        return static_cast<Projectile*>(reg.find(reg.register_entity(std::move(p))));
+    }
+
+    void step(Projectile& p) {
+        p.update(0.1, reg, L);
+        reg.advance_coords();
+    }
+};
+
+/// What a shot or a beam meets first: a unit of `army` on `layer`; and whether it stops there or
+/// goes on to the enemy's aircraft behind it.
+struct InTheWay {
+    const char* what;
+    int army;
+    const char* layer;
+    bool ignores_ally;
+    bool stops_there;
+};
+
+} // namespace
+
+TEST_CASE("a shot goes through an aircraft that isn't its army's enemy, as Moho's CheckCollision",
+          "[collision]") {
+    // Steam's exe at 0x006A468D: a shot that IgnoresAlly passes what is on the Air layer, unless
+    // that is its army's enemy, before any script is asked. Retail's Unit.lua refuses only its
+    // own army's shots, so an ally's gunship in the way took the AA meant for the enemy's.
+    for (const InTheWay& c : {InTheWay{"an ally's gunship", 1, "Air", true, false},
+                              InTheWay{"a neutral's aircraft", 3, "Air", true, false},
+                              InTheWay{"its own army's aircraft", 0, "Air", true, false},
+                              InTheWay{"an ally's landed aircraft", 1, "Land", true, true},
+                              InTheWay{"the enemy's aircraft", 2, "Air", true, true},
+                              InTheWay{"an ally's gunship, the weapon saying IgnoresAlly = false",
+                                       1, "Air", false, true}}) {
+        CAPTURE(c.what);
+        AlliedArmies w;
+        const EntityId in_way = w.unit({100, 0, 104}, c.army, c.layer); // z 103..105
+        const EntityId enemy = w.unit({100, 0, 108}, 2, "Air");         // z 107..109
+        Projectile* shot = w.shot({100, 1, 100}, {0, 0, 100}, 0);
+        shot->ignores_ally = c.ignores_ally;
+        w.step(*shot);
+        REQUIRE(shot->impact_waiting());
+        CHECK(shot->impact_entity_id == (c.stops_there ? in_way : enemy));
+    }
+}
+
+TEST_CASE("a shot still hits the aircraft it was fired at, as Moho's CheckCollision",
+          "[collision]") {
+    // 0x006A463D: its target skips the tests of the launcher, of itself and of allies
+    AlliedArmies w;
+    const EntityId ally = w.unit({100, 0, 104}, 1, "Air");
+    w.unit({100, 0, 108}, 2, "Air");
+    Projectile* shot = w.shot({100, 1, 100}, {0, 0, 100}, 0);
+    shot->target_entity_id = ally;
+    w.step(*shot);
+    REQUIRE(shot->impact_waiting());
+    CHECK(shot->impact_entity_id == ally);
+}
+
+TEST_CASE("a shot that barely moves meets an ally's aircraft, as Moho's CheckCollision",
+          "[collision]") {
+    // A step under 0.01 is Moho's short move (Steam's exe 0x006A42C9), whose sphere gather has no
+    // IgnoresAlly test (0x006A4391 to 0x006A43E4)
+    AlliedArmies w;
+    const EntityId ally = w.unit({100, 0, 100}, 1, "Air");
+    Projectile* shot = w.shot({100, 1, 100}, {0, 0, 0.05f}, 0); // 0.005 a tick
+    w.step(*shot);
+    REQUIRE(shot->impact_waiting());
+    CHECK(shot->impact_entity_id == ally);
+}
+
+TEST_CASE("a shell goes through an ally's missile in the air, not under the water, as Moho's "
+          "CheckCollision",
+          "[collision]") {
+    // A projectile is on the Air layer above the water. Retail's artillery and anti-missile shots
+    // took an ally's tactical missile in their way (its Projectile.lua refuses only its own
+    // army's).
+    for (const bool under : {false, true}) {
+        CAPTURE(under);
+        AlliedArmies w;
+        Projectile* missile = w.shot({100, 1, 104}, {}, 1, box(0.5f, 0.5f, 0.5f));
+        missile->in_water = under;
+        const EntityId enemy = w.unit({100, 0, 108}, 2, "Air");
+        Projectile* shell = w.shot({100, 1, 100}, {0, 0, 100}, 0);
+        w.step(*shell);
+        REQUIRE(shell->impact_waiting());
+        CHECK(shell->impact_entity_id == (under ? missile->entity_id() : enemy));
+    }
+}
+
+TEST_CASE("a beam goes through an aircraft that isn't its unit's enemy, as Moho's "
+          "GetClosestCollision",
+          "[collision]") {
+    // Steam's exe at 0x006DD4C4: once the struck unit's OnCollisionCheckWeapon agrees, a unit on
+    // the Air layer that isn't the enemy of the beam's unit is passed when the weapon
+    // IgnoresAlly. Only units: a projectile in its way still stops it. The beam reaches its
+    // weapon's range, as far as the centre of what it strikes (CreateCollisionBeamHelper).
+    const auto beam_reach = [](AlliedArmies& w, bool ignores_ally) {
+        const EntityId shooter = add_unit(w.reg, {100, 1, 100}, CollisionShape{});
+        static_cast<Unit*>(w.reg.find(shooter))->set_size_y(0); // its muzzle (bone -1) at 1 up
+        auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->max_range = 20;
+        gun->ignores_ally = ignores_ally;
+        static_cast<Unit*>(w.reg.find(shooter))->add_weapon(std::move(gun));
+        auto beam = std::make_unique<osc::sim::Entity>();
+        beam->set_collision_beam(true);
+        beam->set_beam_launcher_id(shooter);
+        beam->beam_setup().weapon = 0;
+        beam->beam_setup().length = 20;
+        const EntityId beam_id = w.reg.register_entity(std::move(beam));
+        osc::sim::check_collision_beam(w.sim, w.L, beam_id, false);
+        return w.reg.find(beam_id)->beam_endpoint().z;
+    };
+    for (const InTheWay& c : {InTheWay{"an ally's gunship", 1, "Air", true, false},
+                              InTheWay{"a neutral's aircraft", 3, "Air", true, false},
+                              InTheWay{"an ally's landed aircraft", 1, "Land", true, true},
+                              InTheWay{"the enemy's aircraft", 2, "Air", true, true},
+                              InTheWay{"an ally's gunship, the weapon saying IgnoresAlly = false",
+                                       1, "Air", false, true}}) {
+        CAPTURE(c.what);
+        AlliedArmies w;
+        const EntityId first = w.unit({100, 0, 104}, c.army, c.layer); // z 103..105
+        const EntityId behind = w.unit({100, 0, 108}, 2, "Air");       // z 107..109
+        for (const EntityId id : {first, behind}) {
+            static_cast<Unit*>(w.reg.find(id))->set_size_y(2); // its centre at 1 up
+        }
+        CHECK(beam_reach(w, c.ignores_ally) == Approx(c.stops_there ? 104.0f : 108.0f));
+    }
+    AlliedArmies w;
+    w.shot({100, 1, 104}, {}, 1, box(0.5f, 0.5f, 0.5f)); // an ally's missile: z 103.5..104.5
+    static_cast<Unit*>(w.reg.find(w.unit({100, 0, 108}, 2, "Air")))->set_size_y(2);
+    CHECK(beam_reach(w, true) == Approx(104.0f)); // as far as the missile's position
+}
+
+TEST_CASE("a weapon's shots carry its IgnoresAlly, as Moho's PROJ_Create", "[collision]") {
+    DrawScene scene;
+    for (const bool ignores_ally : {true, false}) {
+        CAPTURE(ignores_ally);
+        osc::sim::Weapon gun;
+        gun.muzzle_velocity = 25;
+        gun.projectile_bp_id = "/shell";
+        gun.ignores_ally = ignores_ally;
+        for (const Projectile* shot : scene.fire(gun, {0, 0, 1})) {
+            CHECK(shot->ignores_ally == ignores_ally);
+        }
+    }
 }

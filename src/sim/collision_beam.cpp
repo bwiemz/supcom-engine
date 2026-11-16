@@ -213,8 +213,21 @@ void check_collision_beam(SimState& sim, lua_State* L, EntityId beam_id, bool be
     }
     std::sort(hits.begin(), hits.end());
 
+    // IgnoresAlly (Moho's UnitWeapon::GetClosestCollision, Steam's exe 0x006DD4C4): when its
+    // weapon has it, a unit on the Air layer that isn't the enemy of the beam's unit doesn't
+    // stop it (Moho's IsEnemy is no for an entity of no army).
+    bool passes_allies = false;
+    i32 owner_army = -1;
+    if (const Entity* e = registry.find(launcher_id); e && !e->destroyed() && e->is_unit()) {
+        const auto& owner = static_cast<const Unit&>(*e);
+        const i32 index = setup.weapon;
+        passes_allies = index >= 0 && static_cast<size_t>(index) < owner.weapons().size() &&
+                        owner.weapons()[static_cast<size_t>(index)]->ignores_ally;
+        owner_army = owner.army();
+    }
+
     // The first that lets the weapon hit it (its script may say no: an ally
-    // without CollideFriendly, a category on DoNotCollideList).
+    // without CollideFriendly, a category on DoNotCollideList), then the test above.
     EntityId hit_id{};
     f32 hit_t = 0.0f;
     const int weapon = weapon_ref(registry, *beam);
@@ -227,6 +240,10 @@ void check_collision_beam(SimState& sim, lua_State* L, EntityId beam_id, bool be
         if (!beam || beam->destroyed()) return;
         e = registry.find(id);
         if (!allowed || !e || e->destroyed()) continue;
+        if (passes_allies && e->is_unit() && static_cast<const Unit*>(e)->is_air_unit() &&
+            (e->army() < 0 || !sim.is_enemy(owner_army, e->army()))) {
+            continue;
+        }
         hit_id = id;
         hit_t = t;
         break;

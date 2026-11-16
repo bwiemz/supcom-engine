@@ -126,6 +126,10 @@ public:
     Vector3 scale_velocity;          // SetScaleVelocity: scale (x UniformScale) change per second
     bool collide_surface = true;     // SetCollideSurface: the terrain and water
     bool collide_entity = true;      // SetCollideEntity: units, props, shields
+    /// Its weapon's IgnoresAlly; true for a projectile a script made (Moho's PROJ_Create
+    /// argument, which faf-re calls mIsChildProjectile). It goes through what is in the air
+    /// and isn't its army's enemy, unless that is its target (CheckCollision).
+    bool ignores_ally = true;
     bool stay_underwater = false;    // StayUnderwater
     /// Moho's mImpactInterpolation (negative: none), mCollidedEntity and mImpactType.
     f32 impact_interpolation = -1.0f;

@@ -7,6 +7,7 @@
 #include "sim/entity_registry.hpp"
 #include "sim/flight_math.hpp"
 #include "sim/lua_sim.hpp"
+#include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/weapon.hpp"
 #include "map/terrain.hpp"
@@ -43,6 +44,13 @@ Quaternion spun(const Quaternion& o, const Quaternion& s) {
 /// The water's height, or Moho's -10000 on a map without
 f32 water_line(const map::Terrain* terrain) {
     return terrain && terrain->has_water() ? terrain->water_elevation() : -10000.0f;
+}
+
+/// Whether `e` is on Moho's Air layer, as IgnoresAlly tests it: an aircraft in flight, or a
+/// projectile above the water.
+bool on_air_layer(const Entity& e) {
+    if (e.is_unit()) return static_cast<const Unit&>(e).is_air_unit();
+    return e.is_projectile() && !static_cast<const Projectile&>(e).in_water;
 }
 
 /// ReTargetOnMiss (Moho's Projectile::Impact, after OnImpact): while the target unit it was fired
@@ -421,6 +429,23 @@ std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
                             from.z - d.z * kSweepBeyond};
         const Vector3 end{to.x + d.x * kSweepBeyond, to.y + d.y * kSweepBeyond,
                           to.z + d.z * kSweepBeyond};
+        // IgnoresAlly (Moho's CheckCollision, Steam's exe 0x006A468D): a shot that has it goes
+        // through what is on the Air layer and isn't its army's enemy, its target apart, before
+        // any script is asked. Moho's IsEnemy is no for an entity of no army; with no sim to
+        // ask, only its own army isn't. A step under 0.01 Moho gathers by a sphere, with no such
+        // test (0x006A42C9).
+        const bool passes_allies =
+            ignores_ally && army() >= 0 && !(std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) < 0.01f);
+        const SimState* sim = nullptr;
+        bool sim_asked = false;
+        const auto not_enemy = [&](i32 other) {
+            if (other < 0) return true;
+            if (!sim_asked) {
+                sim = L ? get_sim(L) : nullptr;
+                sim_asked = true;
+            }
+            return sim ? !sim->is_enemy(army(), other) : other == army();
+        };
         std::vector<EntityId> candidates;
         registry.collect_colliders(start.x, start.z, end.x, end.z, candidates);
         std::vector<std::pair<f32, EntityId>> hits;
@@ -430,6 +455,10 @@ std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
             if (!e || e->destroyed()) continue;
             // A corpse is in the way (Moho's CheckCollision); a unit in a hold isn't.
             if (e->is_unit() && static_cast<const Unit*>(e)->transport_id()) {
+                continue;
+            }
+            if (passes_allies && id != target_entity_id && on_air_layer(*e) &&
+                not_enemy(e->army())) {
                 continue;
             }
             // A shield stops what comes in, not what goes out.
