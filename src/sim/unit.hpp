@@ -729,6 +729,16 @@ public:
     /// is its focus each tick it does (OnAssignedFocusEntity, through `L`).
     bool progress_reclaim_assist(f64 dt, EntityRegistry& registry, lua_State* L);
     static bool reclaim_wears_down(const Entity& target);
+    /// Moho's CUnitReclaimTask as it starts reclaiming (its Processing state):
+    /// a unit under construction is made no more complete than its health's
+    /// share (Entity::UpdateFractionComplete). For a prop the task does the
+    /// same; that is not ported yet.
+    static void reclaim_from_health(Entity& target);
+    /// One reclaim step of `amount` (the task's Complete state), returning the
+    /// fraction left: a unit under construction steps back by Unit::Materialize,
+    /// its health with it, and its health is then cut to its fraction's share;
+    /// a prop loses `amount` of its fraction.
+    static f32 reclaim_step(Entity& target, f32 amount);
     bool reclaim_arm_ready(const Entity& target) const;
     bool awaits_arm();
     bool turns_to_face(const Vector3& at);
@@ -1746,8 +1756,9 @@ private:
     void tend_unfinished(SimContext& ctx);
     void decay(lua_State* L);
     /// Moho's Unit::Materialize: `step` more of it built, its health with it.
-    /// Unfinished, it first comes level with its health (which starts at 1, so
-    /// a step smaller than that hit point's share lifts it to the share).
+    /// Unfinished, a step forward first brings it level with its health (which
+    /// starts at 1, so a step smaller than that hit point's share lifts it to
+    /// the share); a step back (decay, reclaim) takes off just the step.
     void materialize(f32 step);
 
     // The order handlers (unit_orders.cpp), one per kind of order.

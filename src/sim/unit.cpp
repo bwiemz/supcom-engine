@@ -1164,9 +1164,7 @@ void Unit::decay(lua_State* L) {
     if (span <= 0.0f) {
         return;
     }
-    const f32 step = -0.1f / span;
-    set_fraction_complete(std::clamp(fraction_complete() + step, 0.0f, 1.0f));
-    set_health(std::min(max_health(), health() + max_health() * step));
+    materialize(-0.1f / span);
     if (health() <= 0.0f) {
         call_lua_method(L, "OnDecayed");
     }
@@ -1177,9 +1175,13 @@ void Unit::materialize(f32 step) {
         return;
     }
     if (is_being_built()) {
-        const f32 health_ratio = max_health() > 0.0f ? health() / max_health() : 0.0f;
         const f32 progressed = std::clamp(fraction_complete() + step, 0.0f, 1.0f);
-        set_fraction_complete(std::max(health_ratio, progressed));
+        if (step > 0.0f) {
+            const f32 health_ratio = max_health() > 0.0f ? health() / max_health() : 0.0f;
+            set_fraction_complete(std::max(health_ratio, progressed));
+        } else {
+            set_fraction_complete(progressed);
+        }
     }
     set_health(std::min(max_health(), health() + max_health() * step));
 }
@@ -1946,6 +1948,37 @@ bool Unit::reclaim_wears_down(const Entity& target) {
     return target.is_unit() && !static_cast<const Unit&>(target).is_being_built();
 }
 
+void Unit::reclaim_from_health(Entity& target) {
+    if (!target.is_unit() || !static_cast<const Unit&>(target).is_being_built() ||
+        target.max_health() <= 0.0f) {
+        return;
+    }
+    // min(health's share, fraction), as the shipped exe takes it (0x6267EB)
+    const f32 share = target.health() / target.max_health();
+    if (target.fraction_complete() > share) {
+        target.set_fraction_complete(share);
+    }
+}
+
+f32 Unit::reclaim_step(Entity& target, f32 amount) {
+    if (!target.is_unit()) {
+        target.set_fraction_complete(std::max(0.0f, target.fraction_complete() - amount));
+        return target.fraction_complete();
+    }
+    auto& unit = static_cast<Unit&>(target);
+    unit.materialize(-amount);
+    // Its health no more than max x min(fraction, health's share), set only
+    // when that differs (Entity::SetHealth at 0x6269FD)
+    if (unit.max_health() > 0.0f) {
+        const f32 share = std::min(unit.fraction_complete(), unit.health() / unit.max_health());
+        const f32 capped = unit.max_health() * share;
+        if (capped != unit.health()) {
+            unit.set_health(capped);
+        }
+    }
+    return unit.fraction_complete();
+}
+
 bool Unit::wear_down(Unit& target) const {
     f32 delta = target.max_health() / std::max(1.0f, 10.0f / reclaim_rate_);
     if (target.regen_rate() > 0.0f) {
@@ -2019,9 +2052,7 @@ bool Unit::progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L) {
         return false;
     }
 
-    f32 new_frac = std::max(0.0f,
-        target->fraction_complete() - reclaim_rate_ * static_cast<f32>(dt));
-    target->set_fraction_complete(new_frac);
+    const f32 new_frac = reclaim_step(*target, reclaim_rate_ * static_cast<f32>(dt));
 
     if (new_frac <= 0.0f) {
         EntityId tid = reclaim_target_id_;
@@ -2046,6 +2077,9 @@ bool Unit::progress_reclaim_assist(f64 dt, EntityRegistry& registry, lua_State* 
     if (reclaim_wait_ > 0) {
         if (reclaim_wait_ > 1 || reclaim_arm_ready(*target)) {
             --reclaim_wait_;
+            if (reclaim_wait_ == 0) {
+                reclaim_from_health(*target);
+            }
         }
         return true;
     }
@@ -2073,11 +2107,7 @@ bool Unit::progress_reclaim_assist(f64 dt, EntityRegistry& registry, lua_State* 
     if (target->fraction_complete() <= 0.0f)
         return false;
 
-    f32 new_frac = std::max(0.0f,
-        target->fraction_complete() - reclaim_rate_ * static_cast<f32>(dt));
-    target->set_fraction_complete(new_frac);
-
-    return new_frac > 0.0f;
+    return reclaim_step(*target, reclaim_rate_ * static_cast<f32>(dt)) > 0.0f;
 }
 
 BuildEconomy blueprint_build_economy(lua_State* L, const std::string& blueprint_id) {
