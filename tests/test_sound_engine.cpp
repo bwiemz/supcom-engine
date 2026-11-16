@@ -644,6 +644,23 @@ TEST_CASE("Sound engine: a mod's sounds folder mounted at /sounds plays", "[audi
     fs::remove_all(mod);
 }
 
+TEST_CASE("Sound engine: a bank or cue that isn't there warns once a name", "[audio][engine]") {
+    // Moho's CSndParams::DoResolve: "Error resolving bank '%s' to audio
+    // engine", "Error resolving cue '%s' in bank '%s'"; a modder sees them.
+    Sounds s;
+    SoundManager sm(s.vfs, false);
+    LogCapture log;
+    CHECK(sm.play("Test", "Nope") == INVALID_SOUND);
+    CHECK(sm.play("test", "NOPE") == INVALID_SOUND); // the same name, in any case
+    CHECK(sm.play("Missing", "Click") == INVALID_SOUND);
+    CHECK(sm.play("Missing", "Click") == INVALID_SOUND);
+    CHECK(sm.play("Test", "Click") != INVALID_SOUND);
+    CHECK(log.count("Error resolving cue 'Nope' in bank 'Test'") == 1);
+    CHECK(log.count("Error resolving cue") == 1);
+    CHECK(log.count("Error resolving bank 'Missing' to audio engine") == 1);
+    CHECK(log.count("Error resolving bank") == 1);
+}
+
 TEST_CASE("Sound engine: replace-lowest-priority stops the lowest priority", "[audio][engine]") {
     // Music holds two and replaces its lowest priority; Click (priority 3)
     // and Shot (7) both play in it.

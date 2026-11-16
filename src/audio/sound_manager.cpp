@@ -468,7 +468,15 @@ SoundManager::CueInstance* SoundManager::create(const std::string& bank, const s
     const xact::SoundBank* sb = registry_->sound_bank(bank);
     const xact::Cue* cue_def = sb ? sb->find_cue(cue) : nullptr;
     if (!cue_def) {
-        spdlog::debug("Cue not found: {}/{}", bank, cue);
+        // Once a name, in Moho's words (CSndParams::DoResolve warns once
+        // for each Sound{} params object): a modder sees what is missing
+        std::string key = bank + "/" + cue;
+        std::transform(key.begin(), key.end(), key.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (unresolved_warned_.insert(std::move(key)).second) {
+            if (!sb) spdlog::warn("Error resolving bank '{}' to audio engine", bank);
+            else spdlog::warn("Error resolving cue '{}' in bank '{}'", cue, bank);
+        }
         return nullptr;
     }
     const xact::Sound& sound = sb->sounds[cue_def->sound];

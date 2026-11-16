@@ -323,6 +323,7 @@ private:
     u32 dedupe_beat_ = 0xFFFFFFFF;
     std::vector<std::pair<std::string, std::string>> dedupe_; ///< this beat's one-shots
     std::unordered_set<sim::EntityId> nowhere_warned_;
+    std::unordered_set<std::string> unresolved_warned_; ///< "bank/cue", lower case
 
     struct VariationState {
         u32 last = 0xFFFFFFFF;
