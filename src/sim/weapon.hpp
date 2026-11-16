@@ -89,6 +89,10 @@ public:
     /// (missiles, torpedoes), never units (M206b).
     bool targets_projectiles = false;
     bool overcharge = false;         // OverChargeWeapon
+    /// IgnoresAlly (RUnitBlueprintWeapon's default true, which no retail or FAF weapon changes):
+    /// its shots and its beams go through what flies and isn't its army's enemy (Moho's
+    /// Projectile::CheckCollision, UnitWeapon::GetClosestCollision).
+    bool ignores_ally = true;
     /// It fires collision beams (a DefaultBeamWeapon made them for it, M206c).
     bool beam = false;
     /// MaximumBeamLength: how far its beams reach (0: its MaxRadius).

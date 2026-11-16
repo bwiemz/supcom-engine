@@ -9078,7 +9078,92 @@ void test_collide(TestContext& ctx) {
         if __osc_hitter_asked then error('the shot was asked') end
     )");
 
-    check(osc::test_status::failure_count() - fail == failures_before, "Test 15: no script errors");
+    // IgnoresAlly (Moho's CheckCollision): a shot goes through what is in the air and isn't its
+    // army's enemy, before any script is asked. A projectile above the water is in the air.
+    // Retail's Projectile.lua lets an artillery shell strike another army's shell or missile, so
+    // an ally's in the way took it. An enemy's still does. (The one in the way is a shell held
+    // still: a missile that tracks, made by a script with no target, Moho destroys at once.)
+    lua_check("setup: an ally's shell and an enemy's, each held in an artillery shell's way", R"(
+        SetAlliance('ARMY_1', 'ARMY_3', 'Ally')
+        SetAlliance('ARMY_3', 'ARMY_1', 'Ally')
+        -- Tests 4 and 5 are done with their lines, whose point defences shoot at each other
+        for _, l in {__osc_enemy, __osc_friend} do
+            for _, u in {l.shooter, l.between, l.target} do
+                u:Destroy()
+            end
+        end
+        for _, p in GetReclaimablesInRect(Rect(560, 118, 640, 152)) or {} do
+            if IsProp(p) then
+                p:Destroy()
+            end
+        end
+        local line = function(z, other_army)
+            local t = {rec = {}}
+            local shooter = __osc_spawn('uel0201', 'ARMY_1', 600, z)
+            t.target = __osc_spawn('ueb1101', 'ARMY_2', 628, z)
+            t.target:SetCanTakeDamage(false)
+            -- The shell's line: from a unit over the shooter to half a unit over the target
+            local from = shooter:GetPosition()
+            local to = t.target:GetPosition()
+            -- other_army's shell, held still on that line halfway; its launcher goes
+            local owner = __osc_spawn('uel0201', other_army, 570, z)
+            local m = owner:CreateProjectile('/projectiles/TIFArtillery01/TIFArtillery01_proj.bp',
+                                             0, 1, 0, 0, 0, 1)
+            m:SetCollisionShape('Sphere', 0, 0, 0, 1)
+            m:SetVelocity(0, 0, 0)
+            m:SetBallisticAcceleration(0)
+            m:SetLifetime(10)
+            Warp(m, {(from[1] + to[1]) / 2, (from[2] + to[2]) / 2 + 0.75, z})
+            owner:Destroy()
+            t.held = m
+            local check = m.OnCollisionCheck
+            m.OnCollisionCheck = function(self, other)
+                t.asked = check(self, other)
+                return t.asked
+            end
+            -- An artillery shell along it, flying straight
+            local d = {to[1] - from[1], to[2] - from[2] - 0.5, to[3] - from[3]}
+            local k = 30 / math.sqrt(d[1] * d[1] + d[2] * d[2] + d[3] * d[3])
+            local s = shooter:CreateProjectile('/projectiles/TIFArtillery01/TIFArtillery01_proj.bp',
+                                               0, 1, 0, d[1], d[2], d[3])
+            s:SetBallisticAcceleration(0)
+            s:SetLifetime(5)
+            s:SetVelocity(d[1] * k, d[2] * k, d[3] * k)
+            local impact = s.OnImpact
+            s.OnImpact = function(self, type, target)
+                if not t.rec.type then t.rec.type, t.rec.target = type, target end
+                return impact(self, type, target)
+            end
+            return t
+        end
+        __osc_past_ally = line(125, 'ARMY_3')
+        __osc_past_enemy = line(145, 'ARMY_2')
+        -- What a shell struck, for a failure's message
+        function __osc_struck(l)
+            local r = l.rec
+            local what = r.target == l.held and 'the shell held in its way'
+                         or r.target == l.target and 'its target' or tostring(r.target)
+            local held = l.held:BeenDestroyed() and 'gone' or table.concat(l.held:GetPosition(), ' ')
+            return tostring(r.type) .. ' on ' .. what .. '; the held shell, asked: ' ..
+                   tostring(l.asked) .. ', at ' .. held
+        end
+    )");
+    if (!tick_until(ctx, "the shells past the held ones end", 60,
+                    "__osc_past_ally.rec.type ~= nil and __osc_past_enemy.rec.type ~= nil")) {
+        fail++;
+    }
+    lua_check("Test 15: a shell goes through an ally's shell in the air, onto its target", R"(
+        local l = __osc_past_ally
+        if l.rec.type ~= 'Unit' or l.rec.target ~= l.target or l.asked ~= nil then
+            error(__osc_struck(l))
+        end
+    )");
+    lua_check("Test 16: an enemy's shell in the way takes it", R"(
+        local l = __osc_past_enemy
+        if l.rec.type ~= 'Projectile' or l.rec.target ~= l.held then error(__osc_struck(l)) end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 17: no script errors");
     spdlog::info("Collide test: {}/{} passed", pass, pass + fail);
 }
 

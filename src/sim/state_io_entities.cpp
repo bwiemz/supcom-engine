@@ -643,6 +643,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.i32v(wp.max_projectile_storage);
     w.b(wp.targets_projectiles);
     w.b(wp.overcharge);
+    w.b(wp.ignores_ally);
     w.b(wp.beam);
     w.f32v(wp.max_beam_length);
     w.str(wp.muzzle_bone_name);
@@ -742,6 +743,7 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.max_projectile_storage = r.i32v();
     wp.targets_projectiles = r.b();
     wp.overcharge = r.b();
+    wp.ignores_ally = r.b();
     wp.beam = r.b();
     wp.max_beam_length = r.f32v();
     wp.muzzle_bone_name = r.str();
@@ -2070,6 +2072,7 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.vec3(p.scale_velocity);
     w.b(p.collide_surface);
     w.b(p.collide_entity);
+    w.b(p.ignores_ally);
     w.b(p.stay_underwater);
     w.b(p.impacted);
     w.f32v(p.impact_interpolation);
@@ -2128,6 +2131,7 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.scale_velocity = r.vec3();
     p.collide_surface = r.b();
     p.collide_entity = r.b();
+    p.ignores_ally = r.b();
     p.stay_underwater = r.b();
     p.impacted = r.b();
     p.impact_interpolation = r.f32v();
