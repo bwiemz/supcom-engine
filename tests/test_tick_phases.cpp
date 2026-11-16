@@ -1742,11 +1742,15 @@ TEST_CASE("Cargo and a carrier's stored unit take their own step as they ride: t
     CHECK(rider.stun_ticks() == 4);
 }
 
-TEST_CASE("A tree a projectile hits leans in the tick of the hit", "[tick-phases][walk]") {
+TEST_CASE("A tree a shot's impact knocks over leans in the tick of the hit",
+          "[tick-phases][walk]") {
     Phases w;
+    // Made before the shot, so it has taken its step when the impact comes. A shot passes a
+    // prop (Moho's line gather walks none): this one stands beside what the shot hits, as a
+    // blast's Force damage fells a tree (retail's Tree.OnDamage).
     auto owned = std::make_unique<osc::sim::Prop>();
     osc::sim::Prop& tree = *owned;
-    tree.set_position({110.0f, 10.0f, 100.0f});
+    tree.set_position({115.0f, 10.0f, 103.0f});
     osc::sim::CollisionShape box;
     box.type = osc::sim::CollisionShapeType::BOX;
     box.cy = 1.0f;
@@ -1756,20 +1760,21 @@ TEST_CASE("A tree a projectile hits leans in the tick of the hit", "[tick-phases
     tree.set_collision_shape(box);
     w.sim.entity_registry().register_entity(std::move(owned));
     lua_handle(w, "tree", tree);
-    // As retail's Prop.lua answers (none is no collision, as Moho's)
-    REQUIRE(w.run("function tree:OnCollisionCheck(other) return true end"));
     w.make("shooter", "tank", 1, 100.0f, 100.0f);
+    give_box(w.make("target", "tank", 1, 115.0f, 100.0f));
+    // As retail's Unit.lua answers (none is no collision, as Moho's)
+    REQUIRE(w.run("function target:OnCollisionCheck(other) return true end"));
     w.projectile_class("/shell", "OnImpact = function(self, kind, other)"
                                  "   hit = GetGameTick() hit_kind = kind"
-                                 "   moho.prop_methods.FallDown(other):Whack(1, 0, 0, 0.25, true)"
+                                 "   moho.prop_methods.FallDown(tree):Whack(1, 0, 0, 0.25, true)"
                                  "   EM.Destroy(self)"
                                  " end");
     REQUIRE(w.run("hit = 0 hit_kind = ''"
                   " shot = EM.CreateProjectile(shooter, '/shell', 0, 1, 0)"
                   " PM.SetBallisticAcceleration(shot, 0) PM.SetVelocity(shot, 35, 0, 0)"));
-    tick_until([&] { w.sim.tick(); }, "the shell hits the tree", 40,
+    tick_until([&] { w.sim.tick(); }, "the shell hits the target", 40,
                [&] { return w.number("hit") != 0; });
-    REQUIRE(w.text("hit_kind") == "Prop");
+    REQUIRE(w.text("hit_kind") == "Unit");
     const osc::sim::Vector3 up = osc::sim::quat_rotate(tree.orientation(), {0.0f, 1.0f, 0.0f});
     CHECK(up.x == Catch::Approx(std::sin(0.25f)));
 }

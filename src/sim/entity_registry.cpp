@@ -630,11 +630,22 @@ bool EntityRegistry::any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1,
 
 void EntityRegistry::collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1,
                                        std::vector<EntityId>& out) const {
+    gather_colliders(x0, z0, x1, z1, true, out);
+}
+
+void EntityRegistry::collect_line_colliders(f32 x0, f32 z0, f32 x1, f32 z1,
+                                            std::vector<EntityId>& out) const {
+    gather_colliders(x0, z0, x1, z1, false, out);
+}
+
+void EntityRegistry::gather_colliders(f32 x0, f32 z0, f32 x1, f32 z1, bool props,
+                                      std::vector<EntityId>& out) const {
     out.clear();
     if (x0 > x1) std::swap(x0, x1);
     if (z0 > z1) std::swap(z0, z1);
     const auto consider = [&](const Entity& e, f32 reach) {
         if (e.destroyed() || e.collision_shape().type == CollisionShapeType::NONE) return;
+        if (!props && e.is_prop()) return;
         const Vector3& p = e.position();
         if (p.x >= x0 - reach && p.x <= x1 + reach && p.z >= z0 - reach && p.z <= z1 + reach)
             out.push_back(e.entity_id());

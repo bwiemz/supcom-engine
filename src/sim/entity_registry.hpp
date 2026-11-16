@@ -194,6 +194,12 @@ public:
     /// shape that could meet the segment from (x0, z0) to (x1, z1).
     void collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1, std::vector<EntityId>& out) const;
 
+    /// collect_colliders without the props: what a shot's or a beam's line
+    /// meets. Moho keeps props in collision buckets of their own (AddColShapeAt,
+    /// Steam's exe 0x503A20), and its line gather (GetEntityCollisionsInLine,
+    /// marching at 0x503DB9) walks only the units' and the entities'.
+    void collect_line_colliders(f32 x0, f32 z0, f32 x1, f32 z1, std::vector<EntityId>& out) const;
+
     /// Whether `visit` says yes to a live unit with a collision shape that
     /// could reach the rectangle [x0, x1] x [z0, z1] (its position within
     /// the shape's reach of it, as collision_reach bounds the shape's box
@@ -334,6 +340,8 @@ private:
 
     bool any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1, bool (*visit)(const Entity&, void*),
                                 void* ctx) const;
+    void gather_colliders(f32 x0, f32 z0, f32 x1, f32 z1, bool props,
+                          std::vector<EntityId>& out) const;
     void world_to_cell(f32 wx, f32 wz, i32& cx, i32& cz) const;
     size_t cell_index(i32 cx, i32 cz) const;
     void grid_insert(Entity& entity, i32 cx, i32 cz);

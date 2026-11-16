@@ -9045,9 +9045,10 @@ void test_collide(TestContext& ctx) {
         if d > 1.5 then error(r.type .. ' ' .. d .. ' from the spot') end
     )");
 
-    // A rock stands in the way; a tree group breaks up into trees as a shot
-    // comes, and lets it through (retail's TreeGroup.OnCollisionCheck). A
-    // shield stops what comes in, not what goes out.
+    // A shot passes the props in its way, onto what stands behind them: Moho's
+    // line gather walks no prop, so none is asked OnCollisionCheck, and a tree
+    // group stands (the original game on this ground, tools/moho_probes/
+    // shotprops). A shield stops what comes in, not what goes out.
     lua_check("setup: a rock, a tree group and a shield", R"(
         for _, r in {Rect(640, 80, 680, 130), Rect(318, 788, 372, 812), Rect(205, 850, 240, 870)} do
             for _, p in GetReclaimablesInRect(r) or {} do
@@ -9058,30 +9059,35 @@ void test_collide(TestContext& ctx) {
         end
         __osc_rock = CreatePropHPR('/env/evergreen/props/rocks/fieldstone03_prop.bp',
                                    660, __osc_ground(660, 90), 90, 0, 0, 0)
+        __osc_past_rock = __osc_spawn('ueb1101', 'ARMY_2', 673, 90)
         __osc_on_rock = {}
         local s = __osc_spawn('uel0201', 'ARMY_1', 645, 90)
-        __osc_shoot(s, 675, __osc_ground(675, 90) + 0.5, 90, 0.5, __osc_on_rock)
+        __osc_shoot(s, 675, __osc_ground(675, 90) + 0.3, 90, 0.3, __osc_on_rock)
         __osc_trees = CreatePropHPR('/env/evergreen/props/trees/groups/pine06_big_groupa_prop.bp',
                                     660, __osc_ground(660, 120), 120, 0, 0, 0)
+        __osc_past_trees = __osc_spawn('ueb1101', 'ARMY_2', 673, 120)
         __osc_through = {}
         local t = __osc_spawn('uel0201', 'ARMY_1', 645, 120)
-        __osc_shoot(t, 675, __osc_ground(675, 120) + 0.5, 120, 0.5, __osc_through)
+        __osc_shoot(t, 675, __osc_ground(675, 120) + 0.3, 120, 0.3, __osc_through)
         __osc_gen = __osc_spawn('ueb4202', 'ARMY_2', 330, 800)
     )");
-    if (!tick_until(ctx, "the shot meets the rock, the tree group breaks up, the shield is up", 40,
-                    "__osc_on_rock.type ~= nil and __osc_trees:BeenDestroyed() and "
+    if (!tick_until(ctx, "the shots past the rock and the tree group end, the shield is up", 40,
+                    "__osc_on_rock.type ~= nil and __osc_through.type ~= nil and "
                     "__osc_gen.MyShield ~= nil and __osc_gen.MyShield:IsOn()")) {
         fail++;
     }
-    lua_check("Test 10: a rock stops a low shot", R"(
+    lua_check("Test 10: a low shot passes a rock, onto the target behind it", R"(
         local r = __osc_on_rock
-        if r.type ~= 'Prop' or r.target ~= __osc_rock then
+        if r.type ~= 'Unit' or r.target ~= __osc_past_rock then
             error(tostring(r.type) .. ' on ' .. tostring(r.target))
         end
     )");
-    lua_check("Test 11: a tree group breaks up and lets it through", R"(
-        if not __osc_trees:BeenDestroyed() then error('the group stands') end
-        if __osc_through.target == __osc_trees then error('it stopped the shot') end
+    lua_check("Test 11: a tree group stands and lets it through, onto the target", R"(
+        if __osc_trees:BeenDestroyed() then error('the group broke up') end
+        local r = __osc_through
+        if r.type ~= 'Unit' or r.target ~= __osc_past_trees then
+            error(tostring(r.type) .. ' on ' .. tostring(r.target))
+        end
     )");
     lua_check("setup: shots at the shield, from outside and from inside", R"(
         local shield = __osc_gen.MyShield
