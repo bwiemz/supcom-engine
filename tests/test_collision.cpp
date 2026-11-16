@@ -168,9 +168,11 @@ TEST_CASE("a segment enters a box where it crosses its face", "[collision]") {
     CHECK(*t == Approx(0.5f)); // x = -1 of -3..1
     CHECK_FALSE(osc::sim::segment_enters(s, {0, 0, 0}, level, {-3, 2, 0}, {3, 2, 0}));
     CHECK_FALSE(osc::sim::segment_enters(s, {0, 0, 0}, level, {-3, 0, 0}, {-2, 0, 0}));
-    // Starting inside: a hit at once, unless only coming in counts.
+    // Starting inside, it is met where it starts if it leaves before its end, and not at all if
+    // it stays in (Moho's CColPrimitive_Box::CollideLine: Wild Magic's segment-box test, not
+    // solid).
     CHECK(osc::sim::segment_enters(s, {0, 0, 0}, level, {0, 0, 0}, {3, 0, 0}) == 0.0f);
-    CHECK_FALSE(osc::sim::segment_enters(s, {0, 0, 0}, level, {0, 0, 0}, {3, 0, 0}, false));
+    CHECK_FALSE(osc::sim::segment_enters(s, {0, 0, 0}, level, {-0.5f, 0, 0}, {0.5f, 0, 0}));
 }
 
 TEST_CASE("a box turns with its entity", "[collision]") {
@@ -192,8 +194,16 @@ TEST_CASE("a segment enters a sphere at its surface", "[collision]") {
     REQUIRE(t);
     CHECK(*t == Approx(0.8f));
     CHECK_FALSE(osc::sim::segment_enters(s, {10, 0, 0}, level, {0, 3, 0}, {20, 3, 0}));
-    // Leaving from inside is no hit on a shield.
-    CHECK_FALSE(osc::sim::segment_enters(s, {10, 0, 0}, level, {10, 0, 0}, {20, 0, 0}, false));
+    // Through it, both ends outside: where it comes in (x = 8 of 0..20).
+    const auto through = osc::sim::segment_enters(s, {10, 0, 0}, level, {0, 0, 0}, {20, 0, 0});
+    REQUIRE(through);
+    CHECK(*through == Approx(0.4f));
+    // Starting inside, it is met where it leaves (x = 12 of 10..20), and not at all if it stays
+    // in (Moho's CColPrimitive_Sphere::CollideLine: Wild Magic's FindSegment3Sphere3).
+    const auto out = osc::sim::segment_enters(s, {10, 0, 0}, level, {10, 0, 0}, {20, 0, 0});
+    REQUIRE(out);
+    CHECK(*out == Approx(0.2f));
+    CHECK_FALSE(osc::sim::segment_enters(s, {10, 0, 0}, level, {9, 0, 0}, {11, 0, 0}));
     // Heading away, outside it.
     CHECK_FALSE(osc::sim::segment_enters(s, {10, 0, 0}, level, {13, 0, 0}, {20, 0, 0}));
 }
@@ -328,6 +338,31 @@ TEST_CASE("a beam stops at a dying unit as at a living one", "[collision]") {
     }
 }
 
+TEST_CASE("a beam from inside a shield meets it where it leaves, as Moho's", "[collision]") {
+    osc::lua::LuaState state;
+    osc::sim::SimState sim{state.raw(), nullptr};
+    EntityRegistry& reg = sim.entity_registry();
+    reg.init_spatial_grid(512, 512);
+    const EntityId shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
+    auto shield = std::make_unique<osc::sim::Shield>();
+    shield->set_position({100, 0, 100});
+    shield->set_collision_shape(sphere(10));
+    reg.register_entity(std::move(shield));
+    auto beam = std::make_unique<osc::sim::Entity>();
+    beam->set_collision_beam(true);
+    beam->set_beam_launcher_id(shooter);
+    beam->beam_setup().length = 20;
+    const EntityId beam_id = reg.register_entity(std::move(beam));
+    osc::sim::check_collision_beam(sim, nullptr, beam_id, false);
+    // On the bubble, ahead: not at the muzzle, and not at its full length.
+    const Vector3 end = reg.find(beam_id)->beam_endpoint();
+    const f32 dy = end.y;
+    const f32 dz = end.z - 100.0f;
+    CHECK(end.x == Approx(100.0f));
+    CHECK(dz > 9.0f);
+    CHECK(std::sqrt(dy * dy + dz * dz) == Approx(10.0f).margin(1e-3));
+}
+
 TEST_CASE("a beam passes what has no OnCollisionCheckWeapon or fails it", "[collision]") {
     osc::lua::LuaState state;
     lua_State* L = state.raw();
@@ -427,7 +462,8 @@ TEST_CASE("a shot with entity collision off flies through", "[collision]") {
     CHECK(shot->position().z == Approx(104.0f));
 }
 
-TEST_CASE("a shield stops shots coming in, not going out", "[collision]") {
+TEST_CASE("a shield stops shots where they cross it, going out as coming in, as Moho's",
+          "[collision]") {
     EntityRegistry reg;
     reg.init_spatial_grid(512, 512);
     auto shield = std::make_unique<osc::sim::Shield>();
@@ -435,9 +471,18 @@ TEST_CASE("a shield stops shots coming in, not going out", "[collision]") {
     shield->set_collision_shape(sphere(10));
     reg.register_entity(std::move(shield));
 
+    // One that stays inside meets nothing.
+    Projectile* within = add_shot(reg, {100, 1, 100}, {0, 0, 20});
+    fly(reg, *within);
+    CHECK_FALSE(within->destroyed());
+    CHECK(within->position().z == Approx(102.0f));
+
+    // One going out is stopped where it leaves (CColPrimitive_Sphere::CollideLine's exit point).
     Projectile* out = add_shot(reg, {100, 1, 105}, {0, 0, 80});
     fly(reg, *out);
-    CHECK_FALSE(out->destroyed());
+    CHECK(out->position().z == Approx(100.0f + std::sqrt(100.0f - 1.0f)).margin(1e-3));
+    fly(reg, *out);
+    CHECK(out->destroyed());
 
     Projectile* in = add_shot(reg, {100, 1, 115}, {0, 0, -80});
     fly(reg, *in);
@@ -1680,10 +1725,11 @@ TEST_CASE("a shot still hits the aircraft it was fired at, as Moho's CheckCollis
 TEST_CASE("a shot that barely moves meets an ally's aircraft, as Moho's CheckCollision",
           "[collision]") {
     // A step under 0.01 is Moho's short move (Steam's exe 0x006A42C9), whose sphere gather has no
-    // IgnoresAlly test (0x006A4391 to 0x006A43E4)
+    // IgnoresAlly test (0x006A4391 to 0x006A43E4). The shot starts just short of the aircraft's
+    // box (z 99 to 101), so its step comes in through the face, which the line test meets.
     AlliedArmies w;
     const EntityId ally = w.unit({100, 0, 100}, 1, "Air");
-    Projectile* shot = w.shot({100, 1, 100}, {0, 0, 0.05f}, 0); // 0.005 a tick
+    Projectile* shot = w.shot({100, 1, 98.998f}, {0, 0, 0.05f}, 0); // 0.005 a tick
     w.step(*shot);
     REQUIRE(shot->impact_waiting());
     CHECK(shot->impact_entity_id == ally);

@@ -9100,9 +9100,15 @@ void test_collide(TestContext& ctx) {
         __osc_out = {}
         local inside = __osc_spawn('uel0201', 'ARMY_1', 334, 800)
         __osc_shoot(inside, 380, __osc_ground(380, 800) + 1.0, 800, 1.0, __osc_out)
+        -- The shield's own side, inside it, firing out.
+        __osc_own_out = {}
+        local own = __osc_spawn('uel0201', 'ARMY_2', 326, 800)
+        own:SetFireState(1)
+        __osc_shoot(own, 280, __osc_ground(280, 800) + 1.0, 800, 1.0, __osc_own_out)
     )");
     if (!tick_until(ctx, "the shots at the shield, from outside and from inside, end", 80,
-                    "__osc_in.type ~= nil and __osc_out.type ~= nil")) {
+                    "__osc_in.type ~= nil and __osc_out.type ~= nil and "
+                    "__osc_own_out.type ~= nil")) {
         fail++;
     }
     lua_check("Test 12: an enemy shield takes a shot from outside", R"(
@@ -9111,8 +9117,78 @@ void test_collide(TestContext& ctx) {
             error(tostring(r.type) .. ' on ' .. tostring(r.target))
         end
     )");
-    lua_check("Test 13: a shot from inside goes out through it", R"(
-        if __osc_out.type == 'Shield' then error('the shield stopped it') end
+    // Moho's line test (CColPrimitive_Sphere::CollideLine, Wild Magic's FindSegment3Sphere3)
+    // meets a segment leaving the bubble where it leaves, and retail's Shield.OnCollisionCheck
+    // takes any enemy's shot: it is stopped there, at the surface, not where it was fired.
+    lua_check("Test 13: an enemy's shot from inside strikes it on the way out", R"(
+        local r, shield = __osc_out, __osc_gen.MyShield
+        if r.type ~= 'Shield' or r.target ~= shield then
+            error(tostring(r.type) .. ' on ' .. tostring(r.target))
+        end
+        local d = VDist3(r.at, shield:GetPosition())
+        if math.abs(d - shield.Size / 2) > 0.5 then
+            error(string.format('it stopped %.2f from the centre of a bubble of radius %.2f', d,
+                                shield.Size / 2))
+        end
+    )");
+    lua_check("Test 14: its own side's shot from inside goes out through it", R"(
+        local r, shield = __osc_own_out, __osc_gen.MyShield
+        if r.type == 'Shield' then error('the shield stopped it') end
+        local d = VDist3(r.at, shield:GetPosition())
+        if d < shield.Size / 2 + 1 then
+            error(string.format('it ended (%s) %.2f from the centre, inside the bubble', tostring(r.type), d))
+        end
+    )");
+
+    // A beam meets the bubble by the same line test (CreateCollisionBeamHelper gathers with
+    // COGrid::GetEntityCollisionsInLine), and Shield.OnCollisionCheckWeapon takes an enemy's.
+    const auto beam_spot = quiet_spot(ctx.sim);
+    lua_check("setup: a shield of its own, and a target outside it",
+              fmt::format(R"(
+        local x, z = {}, {}
+        __osc_beam_gen = __osc_spawn('ueb4202', 'ARMY_2', x, z)
+        __osc_beam_gen:SetDoNotTarget(true)
+        __osc_beam_target = __osc_spawn('ueb1101', 'ARMY_2', x + 25, z)
+        __osc_beam_target:SetCanTakeDamage(false)
+    )",
+                          beam_spot ? beam_spot->x : 600.0f, beam_spot ? beam_spot->z : 600.0f)
+                  .c_str());
+    if (!tick_until(ctx, "the second shield is up", 40,
+                    "__osc_beam_gen.MyShield ~= nil and __osc_beam_gen.MyShield:IsOn()")) {
+        fail++;
+    }
+    lua_check("setup: an enemy Cerberus inside it", R"(
+        local gp = __osc_beam_gen:GetPosition()
+        __osc_cerberus = __osc_spawn('urb2301', 'ARMY_1', gp[1] + 4, gp[3])
+        __osc_beam_hits = {}
+        for _, b in (__osc_cerberus:GetWeapon(1).Beams or {}) do
+            local on_impact = b.Beam.OnImpact
+            b.Beam.OnImpact = function(self, kind, target)
+                table.insert(__osc_beam_hits, {kind = kind, target = target, ['end'] = self:GetPosition(1)})
+                return on_impact(self, kind, target)
+            end
+        end
+    )");
+    if (!tick_until(ctx, "the Cerberus's beams strike 12 times", 200,
+                    "table.getn(__osc_beam_hits) >= 12")) {
+        fail++;
+    }
+    lua_check("Test 15: an enemy's beam from inside strikes it on the way out", R"(
+        local shield = __osc_beam_gen.MyShield
+        local seen = {}
+        local on_shield = 0
+        for _, h in __osc_beam_hits do
+            local d = VDist3(h['end'], shield:GetPosition())
+            table.insert(seen, string.format('%s %.2f', tostring(h.kind), d))
+            if h.target == __osc_beam_target then error('a beam reached the target: ' .. table.concat(seen, ', ')) end
+            if h.kind == 'Shield' and h.target == shield then
+                on_shield = on_shield + 1
+                if math.abs(d - shield.Size / 2) > 0.5 then
+                    error('a beam met it off its surface: ' .. table.concat(seen, ', '))
+                end
+            end
+        end
+        if on_shield == 0 then error('no beam met it: ' .. table.concat(seen, ', ')) end
     )");
 
     // Only what is struck is asked whether it is hit (faf-re
@@ -9134,7 +9210,7 @@ void test_collide(TestContext& ctx) {
     if (!tick_until(ctx, "the refusing shot ends", 40, "__osc_refused.type ~= nil")) {
         fail++;
     }
-    lua_check("Test 14: it hits the tank, and was never asked itself", R"(
+    lua_check("Test 16: it hits the tank, and was never asked itself", R"(
         local r = __osc_refused
         if r.type ~= 'Unit' or r.target ~= __osc_refuser_target then
             error(tostring(r.type) .. ' on ' .. tostring(r.target))
@@ -9216,18 +9292,18 @@ void test_collide(TestContext& ctx) {
                     "__osc_past_ally.rec.type ~= nil and __osc_past_enemy.rec.type ~= nil")) {
         fail++;
     }
-    lua_check("Test 15: a shell goes through an ally's shell in the air, onto its target", R"(
+    lua_check("Test 17: a shell goes through an ally's shell in the air, onto its target", R"(
         local l = __osc_past_ally
         if l.rec.type ~= 'Unit' or l.rec.target ~= l.target or l.asked ~= nil then
             error(__osc_struck(l))
         end
     )");
-    lua_check("Test 16: an enemy's shell in the way takes it", R"(
+    lua_check("Test 18: an enemy's shell in the way takes it", R"(
         local l = __osc_past_enemy
         if l.rec.type ~= 'Projectile' or l.rec.target ~= l.held then error(__osc_struck(l)) end
     )");
 
-    check(osc::test_status::failure_count() - fail == failures_before, "Test 17: no script errors");
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 19: no script errors");
     spdlog::info("Collide test: {}/{} passed", pass, pass + fail);
 }
 

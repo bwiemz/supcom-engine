@@ -464,9 +464,8 @@ std::optional<Projectile::PathImpact> Projectile::collide(const Vector3& from,
                 not_enemy(e->army())) {
                 continue;
             }
-            // A shield stops what comes in, not what goes out.
-            const auto t = segment_enters(e->collision_shape(), e->position(), e->orientation(),
-                                          start, end, !e->is_shield());
+            const auto t =
+                segment_enters(e->collision_shape(), e->position(), e->orientation(), start, end);
             if (t && *t * kSweepLength < surface_t) {
                 hits.emplace_back(*t, id);
             }

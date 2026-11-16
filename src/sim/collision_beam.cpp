@@ -208,9 +208,8 @@ void check_collision_beam(SimState& sim, lua_State* L, EntityId beam_id, bool be
         if (e->is_unit() && static_cast<const Unit*>(e)->transport_id()) {
             continue;
         }
-        // A shield stops what comes in, not what goes out.
-        const auto t = segment_enters(e->collision_shape(), e->position(), e->orientation(), from,
-                                      to, !e->is_shield());
+        const auto t =
+            segment_enters(e->collision_shape(), e->position(), e->orientation(), from, to);
         if (t) hits.emplace_back(*t, id);
     }
     std::sort(hits.begin(), hits.end());
