@@ -146,8 +146,8 @@ TEST_CASE("the init file has io and os, and the game's scripts after it don't, a
 
     REQUIRE(result.ok());
     CHECK(state.do_string("assert(listed and opened and timed)").ok());
-    // The game's scripts, which run in it next, have neither: no file access,
-    // no command (os.execute)
+    // The game's scripts, which run in it next, have neither: no writing or
+    // listing the player's files, no command (os.execute)
     CHECK(state.do_string("assert(io == nil)").ok());
     CHECK(state.do_string("assert(os == nil)").ok());
 }
