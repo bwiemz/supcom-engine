@@ -18,6 +18,7 @@ extern "C" {
 }
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 using osc::f32;
@@ -203,6 +204,59 @@ TEST_CASE("A saved game takes a held Moho id again on the beat the unsaved one d
         CHECK(serial(s->entity_registry().register_entity(script_entity(0))) == 1);
     }
     CHECK(sim.entity_registry().live_id(second) == loaded.entity_registry().live_id(second));
+}
+
+TEST_CASE("A loaded game removes each entity from its own place in the walks", "[sim][ids][save]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.add_army("ARMY_1", "ARMY_1");
+    EntityRegistry& reg = sim.entity_registry();
+    std::vector<EntityId> made;
+    for (int i = 0; i < 12; ++i) {
+        if (i % 3 == 0) {
+            auto u = std::make_unique<Unit>();
+            u->set_army(0);
+            made.push_back(reg.register_entity(std::move(u)));
+        } else {
+            made.push_back(reg.register_entity(script_entity(0)));
+        }
+    }
+    reg.unregister_entity(made[1]);
+    reg.collect_garbage();
+
+    LuaGuard g2;
+    SimState loaded(g2.L, nullptr);
+    loaded.add_army("ARMY_1", "ARMY_1");
+    // What the loaded sim held goes, a removed one's slot with it.
+    for (int i = 0; i < 3; ++i) {
+        loaded.entity_registry().register_entity(script_entity(0));
+    }
+    loaded.entity_registry().unregister_entity(loaded.entity_registry().live_id(0x500u << 20));
+    REQUIRE(osc::sim::load_sim_state(loaded, osc::sim::save_sim_state(sim)).empty());
+    const auto walks = [](const EntityRegistry& r) {
+        std::vector<EntityId> all;
+        std::vector<EntityId> units;
+        r.for_each([&](const Entity& e) { all.push_back(e.entity_id()); });
+        r.for_each_unit([&](const Entity& e) { units.push_back(e.entity_id()); });
+        return std::pair{all, units};
+    };
+    for (SimState* s : {&sim, &loaded}) {
+        EntityRegistry& r = s->entity_registry();
+        // The first entity and the first unit: every later slot moves down.
+        r.unregister_entity(made[0]);
+        r.unregister_entity(made[11]);
+        r.collect_garbage();
+        const EntityId later = r.register_entity(script_entity(0));
+        r.unregister_entity(made[3]);
+        r.unregister_entity(made[7]);
+        r.collect_garbage();
+        r.unregister_entity(later);
+        r.unregister_entity(made[9]);
+        r.collect_garbage();
+    }
+    const std::vector<EntityId> left{made[2], made[4], made[5], made[6], made[8], made[10]};
+    CHECK(walks(sim.entity_registry()) == std::pair{left, std::vector<EntityId>{made[6]}});
+    CHECK(walks(loaded.entity_registry()) == walks(sim.entity_registry()));
 }
 
 TEST_CASE("A command carries entity keys past 32 bits", "[sim][ids][replay]") {

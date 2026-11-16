@@ -121,6 +121,77 @@ TEST_CASE("for_each_unit visits the units alone, in id order", "[determinism]") 
     CHECK(unit_walk() == units);
 }
 
+TEST_CASE("An entity leaves its own slot after compactions move the slots", "[determinism]") {
+    EntityRegistry reg;
+    std::vector<EntityId> all;   // the live entities, in the order made
+    std::vector<EntityId> units; // the live units, in the order made
+    int made = 0;
+    const auto make = [&] {
+        const bool unit = made++ % 3 == 0;
+        const EntityId id = unit ? add(reg) : reg.register_entity(std::make_unique<Prop>());
+        all.push_back(id);
+        if (unit) units.push_back(id);
+    };
+    const auto remove = [&](EntityId id) {
+        reg.unregister_entity(id);
+        std::erase(all, id);
+        std::erase(units, id);
+    };
+    const auto unit_walk = [&reg] {
+        std::vector<EntityId> ids;
+        reg.for_each_unit([&](const Entity& e) { ids.push_back(e.entity_id()); });
+        return ids;
+    };
+    const auto check = [&] {
+        CHECK(walk(reg) == all);
+        CHECK(unit_walk() == units);
+        CHECK(reg.count() == all.size());
+        for (const EntityId id : all) {
+            const Entity* e = reg.find(id);
+            REQUIRE(e != nullptr);
+            CHECK(e->entity_id() == id);
+        }
+    };
+    for (int i = 0; i < 120; ++i) make();
+
+    // Each round removes the first entity (every slot after it moves down at
+    // the compaction), a scattering of others and the newest, then makes
+    // more: the next round removes entities whose slots have moved, the
+    // first unit among them.
+    for (int round = 0; round < 6; ++round) {
+        std::vector<EntityId> gone{all.front(), units.front(), all.back()};
+        for (size_t i = 4; i < all.size(); i += 7) gone.push_back(all[i]);
+        std::sort(gone.begin(), gone.end());
+        gone.erase(std::unique(gone.begin(), gone.end()), gone.end());
+        for (const EntityId id : gone) remove(id);
+        check();
+        reg.collect_garbage();
+        for (const EntityId id : gone) CHECK(reg.find(id) == nullptr);
+        check();
+        for (int i = 0; i < 25; ++i) make();
+        check();
+    }
+
+    // Removed during a walk, they wait for the compaction after it: no slot
+    // moves under a walk, and the next walk skips them.
+    const std::vector<EntityId> before = all;
+    reg.for_each([&](const Entity& e) {
+        if (e.entity_id() == before[1]) {
+            remove(before[0]);
+            remove(before[2]);
+            remove(units.back());
+            reg.collect_garbage();
+        }
+    });
+    check();
+    reg.collect_garbage();
+    check();
+    remove(all.front());
+    remove(units.front());
+    reg.collect_garbage();
+    check();
+}
+
 TEST_CASE("Spatial queries return ids in ascending order", "[determinism]") {
     EntityRegistry reg;
     reg.init_spatial_grid(512, 512);

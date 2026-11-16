@@ -449,6 +449,10 @@ public:
     /// False once unregistered (the object may outlive that until the beat ends).
     bool in_registry() const { return registry_ != nullptr; }
     const EntityRegistry* registry() const { return registry_; }
+    /// Its place in the order its registry took entities (the registry's
+    /// to set): how the registry finds its slot in that order.
+    u64 registry_seq() const { return registry_seq_; }
+    void set_registry_seq(u64 seq) { registry_seq_ = seq; }
 
     virtual bool is_unit() const { return false; }
     virtual bool is_projectile() const { return false; }
@@ -550,6 +554,7 @@ private:
     i32 prop_cell_ = -1;
     CellLink cell_link_;                 // the registry's CollisionCells'
     EntityRegistry* registry_ = nullptr; // back-pointer for auto grid update
+    u64 registry_seq_ = 0;               // see registry_seq
     bool script_destroy_notified_ = false;
     bool script_owns_death_ = false;
     // CollisionBeam fields
