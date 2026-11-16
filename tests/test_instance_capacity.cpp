@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "renderer/entity_cache.hpp"
 #include "renderer/unit_renderer.hpp"
+
+#include <vector>
 
 using namespace osc;
 using namespace osc::renderer;
@@ -89,4 +92,90 @@ TEST_CASE("a mesh instance's tick holds whatever order its entities come in",
     CHECK(births.tick(ent(4), 0, 100) == 40);
     CHECK(births.tick(ent(6), 0, 100) == 60);
     CHECK(births.tick(ent(8), 0, 100) == 80);
+}
+
+TEST_CASE("an entity's cached entry lasts while updates ask for it", "[renderer][unit_renderer]") {
+    EntityCache<int> cache;
+    // Update 1: three entities appear, each new
+    for (u32 n : {3u, 7u, 9u}) {
+        CHECK(cache.at(ent(n)) == 0);
+        cache.at(ent(n)) = static_cast<int>(n);
+    }
+    cache.finish();
+    CHECK(cache.size() == 3);
+
+    // Update 2: 3 is gone, 5 appears; 7 and 9 keep theirs
+    CHECK(cache.at(ent(5)) == 0);
+    cache.at(ent(5)) = 5;
+    CHECK(cache.at(ent(7)) == 7);
+    CHECK(cache.at(ent(9)) == 9);
+    cache.finish();
+    CHECK(cache.size() == 3);
+
+    // Update 3: 3 comes back as new; 1 and 11 appear either side
+    CHECK(cache.at(ent(1)) == 0);
+    CHECK(cache.at(ent(3)) == 0);
+    CHECK(cache.at(ent(5)) == 5);
+    CHECK(cache.at(ent(7)) == 7);
+    CHECK(cache.at(ent(9)) == 9);
+    CHECK(cache.at(ent(11)) == 0);
+    cache.finish();
+    CHECK(cache.size() == 6);
+
+    // An update that asks for none forgets them all
+    cache.finish();
+    CHECK(cache.size() == 0);
+    CHECK(cache.at(ent(7)) == 0);
+}
+
+TEST_CASE("an entity's cached entry is one, whatever order its entities come in",
+          "[renderer][unit_renderer]") {
+    EntityCache<int> cache;
+    for (u32 n : {2u, 4u, 6u, 8u}) cache.at(ent(n)) = static_cast<int>(n);
+    cache.finish();
+
+    // The world's entities ascending, then ghosts below them (remembered
+    // structures, after the walk passed the end of the last update's)
+    CHECK(cache.at(ent(6)) == 6);
+    CHECK(cache.at(ent(8)) == 8);
+    CHECK(cache.at(ent(2)) == 2);
+    CHECK(cache.at(ent(4)) == 4);
+    // One asked twice (a ghost of a live entity) is the same entry
+    cache.at(ent(6)) = 60;
+    CHECK(cache.at(ent(6)) == 60);
+    // New ones, out of order and asked twice
+    cache.at(ent(9)) = 9;
+    cache.at(ent(5)) = 5;
+    cache.at(ent(1)) = 1;
+    CHECK(cache.at(ent(9)) == 9);
+    CHECK(cache.at(ent(5)) == 5);
+    CHECK(cache.at(ent(1)) == 1);
+    cache.finish();
+    CHECK(cache.size() == 7);
+    for (u32 n : {1u, 2u, 4u, 5u, 8u, 9u}) CHECK(cache.at(ent(n)) == static_cast<int>(n));
+    CHECK(cache.at(ent(6)) == 60);
+    cache.finish();
+    CHECK(cache.size() == 7);
+}
+
+TEST_CASE("the frames between two ticks move no cached entry", "[renderer][unit_renderer]") {
+    EntityCache<int> cache;
+    for (u32 n = 1; n <= 100; ++n) cache.at(ent(n)) = static_cast<int>(n);
+    cache.finish();
+    std::vector<const int*> where;
+    for (u32 n = 1; n <= 100; ++n) where.push_back(&cache.at(ent(n)));
+    cache.finish();
+    // The same entities asked for again: each where it was
+    for (u32 n = 1; n <= 100; ++n) CHECK(&cache.at(ent(n)) == where[n - 1]);
+    cache.finish();
+}
+
+TEST_CASE("a later entity of an id is another entity", "[renderer][unit_renderer]") {
+    EntityCache<int> cache;
+    cache.at(sim::EntityId::of(7, 1)) = 1;
+    cache.finish();
+    // Moho's id 7 handed out again: not the entry of the one before
+    CHECK(cache.at(sim::EntityId::of(7, 2)) == 0);
+    cache.finish();
+    CHECK(cache.size() == 1);
 }
