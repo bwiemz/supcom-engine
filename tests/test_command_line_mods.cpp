@@ -170,7 +170,7 @@ using Uids = std::vector<std::string>;
 
 } // namespace
 
-TEST_CASE("--mod's argument is a mod on disk when it names one, else a uid", "[app][mods]") {
+TEST_CASE("A --mod argument is a mod on disk when it names one, else a uid", "[app][mods]") {
     ModsOnDisk disk;
     const auto by_uid = osc::lua::mod_arg("74A9EAB2-E851-11DB-A1F1-F2C755D89593");
     CHECK(by_uid.path.empty());
@@ -197,7 +197,8 @@ TEST_CASE("--mod's argument is a mod on disk when it names one, else a uid", "[a
         osc::lua::check_mod_args({folder, osc::lua::mod_arg(disk.folder.string() + "/")}).empty());
 }
 
-TEST_CASE("--mod picks the mods of a game --map starts; elsewhere it only mounts", "[app][mods]") {
+TEST_CASE("The --mod switch picks the mods of a game --map starts; elsewhere it only mounts",
+          "[app][mods]") {
     ModsOnDisk disk;
     const std::string map = "/maps/SCMP_009/SCMP_009_scenario.lua";
     const auto game = parse({"--map", map, "--mod", "B-GAME", "--mod", disk.folder.string()});
@@ -230,7 +231,8 @@ TEST_CASE("--mod picks the mods of a game --map starts; elsewhere it only mounts
         parse({"--map", map, "--mod", disk.folder.string(), "--mod", disk.folder.string()}));
 }
 
-TEST_CASE("--mod resolves through mods.lua: game mods sorted, UI-only ones apart", "[app][mods]") {
+TEST_CASE("The --mod switch resolves through mods.lua: game mods sorted, UI-only ones apart",
+          "[app][mods]") {
     // (b-game: a uid matches whatever its case)
     const auto mods = resolve({uid("b-game"), uid("C-UI"), uid("A-GAME")});
     REQUIRE(mods.ok());
@@ -261,7 +263,7 @@ TEST_CASE("--mod resolves through mods.lua: game mods sorted, UI-only ones apart
     CHECK_FALSE(ui_only.value().game.empty());
 }
 
-TEST_CASE("--mod brings in what a mod requires, and refuses what the mod manager would",
+TEST_CASE("The --mod switch brings in what a mod requires, and refuses what the mod manager would",
           "[app][mods]") {
     const auto needs = resolve({uid("D-NEEDS-A")});
     REQUIRE(needs.ok());
