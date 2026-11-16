@@ -2309,8 +2309,9 @@ static std::optional<f64> emitter_blueprint_lifetime(lua_State* L, sim::SimState
                                                      const std::string& path) {
     return sim.effect_registry().blueprint_lifetime(path, [&]() -> std::optional<f64> {
         auto* store = sim.blueprint_store();
-        const auto* entry = store && !path.empty() ? store->find(path) : nullptr;
-        if (!entry || entry->type != blueprints::BlueprintType::Emitter) return std::nullopt;
+        const auto* entry =
+            store ? store->find_effect(path, blueprints::BlueprintType::Emitter) : nullptr;
+        if (!entry) return std::nullopt;
         store->push_lua_table(*entry, L);
         lua_pushstring(L, "Lifetime");
         lua_rawget(L, -2);

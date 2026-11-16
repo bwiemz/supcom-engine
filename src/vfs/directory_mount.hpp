@@ -26,6 +26,7 @@ public:
         std::string_view pattern) const override;
     std::optional<FileInfo> get_file_info(
         std::string_view relative_path) const override;
+    std::optional<std::filesystem::path> disk_path(std::string_view relative_path) const override;
 
 private:
     std::filesystem::path root_;

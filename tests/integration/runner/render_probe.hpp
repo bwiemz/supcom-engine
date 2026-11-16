@@ -39,6 +39,15 @@ struct Tally {
 /// wait, at most 600 frames.
 void draw_until_loaded(renderer::Renderer& r, const std::function<void()>& draw);
 
+/// Register the effect blueprints of every .bp file under `dir` (a test's
+/// scratch mount) in the sim's blueprints, as Blueprints.lua's
+/// LoadBlueprints registers the game's: each EmitterBlueprint, BeamBlueprint
+/// or TrailEmitterBlueprint table with its Source the file, unless it names
+/// one, and its BlueprintId that path in lowercase. Moho makes an effect
+/// only from a registered blueprint, and so do the sim and the renderer.
+/// False, recorded as a failure, on a script error.
+bool register_effect_blueprints(TestContext& ctx, const std::string& dir);
+
 /// A frame's middle (35%-65% each way), rgb in [0, 1] per pixel.
 using Pixels = std::vector<std::array<f32, 3>>;
 

@@ -244,6 +244,14 @@ struct UnitWorld {
                  " Physics = {MotionType = 'RULEUMT_None'}}",
                  "{BlueprintId = 'tank', Categories = {'LAND'}, Defense = {MaxHealth = 100},"
                  " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Land'}}",
+                 "{BlueprintId = 'sbed', Categories = {'STRUCTURE'}, Defense = {MaxHealth = 100},"
+                 " Footprint = {SizeX = 2, SizeZ = 2},"
+                 " Physics = {MotionType = 'RULEUMT_None', BuildOnLayerCaps = {LAYER_Seabed = "
+                 "true}}}",
+                 "{BlueprintId = 'naval', Categories = {'STRUCTURE'}, Defense = {MaxHealth = 100},"
+                 " Footprint = {SizeX = 2, SizeZ = 2},"
+                 " Physics = {MotionType = 'RULEUMT_None', BuildOnLayerCaps = {LAYER_Water = "
+                 "true}}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
@@ -256,7 +264,7 @@ struct UnitWorld {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"pgen", "gate", "beacon", "tank"}) {
+        for (const char* id : {"pgen", "gate", "beacon", "tank", "sbed", "naval"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -294,6 +302,84 @@ TEST_CASE("An immobile unit claims its ground as it is made, and frees it as it 
     w.sim.tick();
     CHECK_FALSE(grid.ground_at(39, 9));
     CHECK(grid.ground_at(37, 27));
+}
+
+TEST_CASE("A structure's ground freed under another's: the other keeps its cells on that grid "
+          "whatever its caps, and the other grid's claims stand",
+          "[occupancy]") {
+    UnitWorld w;
+    const auto& grid = w.sim.occupancy();
+    // In the water west of x = 32: a seabed structure (SEABED), a land one
+    // (LAND) over its corner -- other caps, the same ground grid -- and a
+    // floating one (WATER) over both. Their cells: 19-20 x 9-10, 20-21 x
+    // 10-11 and 20-21 x 9-10.
+    REQUIRE(w.state
+                .do_string("sbed = CreateUnit('sbed', 1, 20, 0, 10)"
+                           " pgen = CreateUnit('pgen', 1, 21, 0, 11)"
+                           " naval = CreateUnit('naval', 1, 21, 5, 10)")
+                .ok());
+    CHECK(grid.ground_at(19, 9));
+    CHECK(grid.ground_at(20, 10));
+    CHECK(grid.ground_at(21, 11));
+    CHECK(grid.water_at(21, 9));
+    CHECK_FALSE(grid.water_at(19, 9));
+    // The seabed structure goes: its own cells are free, the land one's
+    // stay, and the water above is untouched.
+    REQUIRE(w.state.do_string("moho.entity_methods.Destroy(sbed)").ok());
+    w.sim.tick();
+    CHECK_FALSE(grid.ground_at(19, 9));
+    CHECK_FALSE(grid.ground_at(20, 9));
+    CHECK(grid.ground_at(20, 10));
+    CHECK(grid.ground_at(21, 11));
+    CHECK(grid.water_at(20, 9));
+    CHECK(grid.water_at(21, 10));
+    // The floating one goes: its water is free, the ground under it held.
+    REQUIRE(w.state.do_string("moho.entity_methods.Destroy(naval)").ok());
+    w.sim.tick();
+    CHECK_FALSE(grid.water_at(20, 9));
+    CHECK_FALSE(grid.water_at(21, 10));
+    CHECK(grid.ground_at(20, 10));
+    CHECK(grid.ground_at(21, 10));
+    CHECK_FALSE(grid.ground_at(21, 9));
+}
+
+TEST_CASE("A claim with no caps, a tree's or a wreck's, fills nothing, and its release clears "
+          "nothing",
+          "[occupancy]") {
+    LuaGuard g;
+    osc::sim::SimState sim(g.L, nullptr);
+    sim.set_terrain(terrain(true));
+    GroundOccupant land;
+    land.caps = oc::kLand;
+    land.rects.push_back({40, 10, 44, 14});
+    GroundOccupant water;
+    water.caps = oc::kWater;
+    water.rects.push_back({10, 10, 14, 14});
+    sim.occupy_ground(EntityId::of(101, 1), land);
+    sim.occupy_ground(EntityId::of(102, 1), water);
+    const auto cells = [&] {
+        std::vector<bool> out;
+        for (osc::i32 z = 0; z < 64; ++z) {
+            for (osc::i32 x = 0; x < 64; ++x) {
+                out.push_back(sim.occupancy().ground_at(x, z));
+                out.push_back(sim.occupancy().water_at(x, z));
+            }
+        }
+        return out;
+    };
+    const std::vector<bool> claimed = cells();
+    // A wreck across both claims and the free ground between them.
+    GroundOccupant wreck;
+    wreck.rects.push_back({12, 12, 42, 13});
+    sim.occupy_ground(EntityId::of(103, 1), wreck);
+    CHECK(cells() == claimed);
+    sim.release_ground(EntityId::of(103, 1));
+    CHECK(cells() == claimed);
+    CHECK(sim.ground_occupant_count() == 2);
+    CHECK(sim.occupancy().ground_at(41, 12));
+    CHECK(sim.occupancy().water_at(12, 12));
+    CHECK_FALSE(sim.occupancy().ground_at(20, 12));
+    CHECK_FALSE(sim.occupancy().water_at(20, 12));
 }
 
 TEST_CASE("The starting layer: air footprints fly, a beacon floats, the rest by the water",

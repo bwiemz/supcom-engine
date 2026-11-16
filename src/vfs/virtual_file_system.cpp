@@ -200,6 +200,19 @@ std::optional<FileInfo> VirtualFileSystem::get_file_info(
     return std::nullopt;
 }
 
+std::optional<std::filesystem::path> VirtualFileSystem::disk_path(std::string_view path) const {
+    auto norm = normalize(path);
+
+    for (const auto& entry : mounts_) {
+        auto remainder = strip_mountpoint(norm, entry.mountpoint);
+        if (remainder && entry.source->file_exists(*remainder)) {
+            return entry.source->disk_path(*remainder);
+        }
+    }
+
+    return std::nullopt;
+}
+
 void VirtualFileSystem::clear() {
     mounts_.clear();
     drop_listings();

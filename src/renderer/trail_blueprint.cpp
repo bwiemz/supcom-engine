@@ -37,8 +37,8 @@ const TrailBlueprintData* TrailBlueprintCache::get(const std::string& path, lua_
     if (auto it = cache_.find(path); it != cache_.end()) return &it->second;
     if (path.empty() || failed_.count(path) || !RenderScriptScope::allowed()) return nullptr;
     TrailBlueprintData data;
-    if (!run_effect_blueprint(vfs_, path, L, "TrailEmitterBlueprint",
-                              [&data](lua_State* S, int t) { data = parse(S, t); })) {
+    if (!read_effect_blueprint(store_, L, path, blueprints::BlueprintType::TrailEmitter,
+                               [&data](lua_State* S, int t) { data = parse(S, t); })) {
         failed_.insert(path);
         return nullptr;
     }

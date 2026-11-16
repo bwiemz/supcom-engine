@@ -52,8 +52,9 @@ void DeferredFileSink::flush_() {
     if (open_) file_.flush();
 }
 
-void init() {
+void init(bool console) {
     auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+    if (!console) console_sink->set_level(spdlog::level::off);
     g_file_sink = std::make_shared<DeferredFileSink>();
 
     auto logger =

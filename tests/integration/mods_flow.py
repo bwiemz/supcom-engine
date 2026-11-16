@@ -6,11 +6,15 @@ Forged Alliance/mods` at /mods/<name>; the Documents folder here is a
 temporary one, through XDG_DOCUMENTS_DIR) holds two test mods:
 
 - a game mod, a folder: a blueprint of its own that merges into the UEF
-  ACU's, and hooks of /lua/simInit.lua and /lua/userInit.lua that leave a
-  probe;
+  ACU's, an emitter blueprint that merges into one of retail's (a new
+  Lifetime and Texture), and hooks of /lua/RuleInit.lua (which loads the
+  blueprints, in the state the sim then runs in), /lua/simInit.lua and
+  /lua/userInit.lua that leave a probe;
 - a UI-only mod, a .zip: hooks of /lua/userInit.lua (which runs before UI
   mods join the session, so must not run) and /lua/UserSync.lua (which
-  must).
+  must);
+- a broken mod: its mod_info.lua doesn't compile, so the game leaves it out;
+  it hooks a misspelt /lua/simInt.lua, and its unit's .bp doesn't compile.
 
 1. The player's preferences select both and retail's Resource Rich (from
    gamedata/mods.scd), whose ModBlueprints hook doubles every unit's
@@ -19,7 +23,9 @@ temporary one, through XDG_DOCUMENTS_DIR) holds two test mods:
    Lua state's mods at tick 20. The sim must have the game mods only, sorted
    by uid as retail's mods.lua sorts them; the game's UI the game mods, then
    the UI mod; both the merged blueprint with doubled production; and each
-   its hooks' probes.
+   its hooks' probes. The merged emitter's values must be what the sim
+   times its emitters by and what the renderer draws them with: Moho
+   reads an effect's blueprint from the registered ones, not its file.
 2. The game's recording (LastGame) must replay headless with the same mods:
    every tick's checksum as recorded, and the game mod's hook run.
 3. Watched in the game (`--watch`), it must give the same report.
@@ -27,6 +33,11 @@ temporary one, through XDG_DOCUMENTS_DIR) holds two test mods:
    end, skirmish lobby and mod manager as a player would, picking Resource
    Rich alone: the game must have it, and only it, and the player's
    selection must be saved.
+5. `--check-mods --json` checks every installed mod: the broken one has its
+   three errors, each in its file (and the first two on their lines), and
+   the two good ones are clean; it exits 1. Named by its folder on disk, the
+   broken mod alone is checked, and the text report names its errors;
+   `--list-mods --json` lists the three.
 
 Any script error fails a run.
 
@@ -38,6 +49,7 @@ Exits 77 (skipped) when the game has no data.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -46,6 +58,7 @@ import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 TIMEOUT_SECONDS = 600
 SKIPPED = 77
@@ -53,11 +66,19 @@ SKIPPED = 77
 RESOURCE_RICH = "74A9EAB2-E851-11DB-A1F1-F2C755D89593"
 GAME_MOD = "osc-mods-flow-game"
 UI_MOD = "osc-mods-flow-ui"
+BROKEN_MOD = "/mods/oscmodsflowbroken"  # its uid is unreadable: named by location
 MODS_DIR = Path("My Games/Gas Powered Games/Supreme Commander Forged Alliance/mods")
 
 # The UEF ACU's production before Resource Rich doubles it
 ACU_MASS = 1
 ACU_ENERGY = 20
+
+# A retail emitter, and what the game mod's Merge makes of it (retail's:
+# Lifetime 0.1, Texture flare_lens_add_02.dds). The id and the
+# Texture read lowercase, as Moho canonicalizes them.
+EFFECT = "/effects/emitters/flash_01_emit.bp"
+EFFECT_LIFETIME = "7"
+EFFECT_TEXTURE = "/textures/particles/glow_02.dds"
 
 
 def probe(text: str) -> str:
@@ -74,12 +95,22 @@ def write_mods(documents: Path) -> None:
         f'name = "OSC mods flow: game"\nuid = "{GAME_MOD}"\nversion = 1\n'
         + 'description = "A test game mod"\nauthor = "OpenSupCom"\nui_only = false\n'
     )
+    _ = (game / "hook/lua/RuleInit.lua").write_text(probe("game:rules"))
     _ = (game / "hook/lua/simInit.lua").write_text(probe("game:sim"))
     _ = (game / "hook/lua/userInit.lua").write_text(probe("game:user"))
     # Named as the ACU's own file, so Blueprints.lua gives it the ACU's id;
     # Merge keeps the rest of the ACU.
     _ = (game / "units/uel0001/uel0001_unit.bp").write_text(
         "UnitBlueprint {\n    Merge = true,\n    General = { UnitName = 'ModsFlow' },\n}\n"
+    )
+    # An effect blueprint's id is its Source's path (SetBackwardsCompatId),
+    # so a mod's overrides one by naming that file as its Source.
+    (game / "effects").mkdir()
+    _ = (game / "effects/modsflow_emit.bp").write_text(
+        "EmitterBlueprint {\n    Merge = true,\n"
+        + f"    Source = '{EFFECT}',\n"
+        + f"    Lifetime = {EFFECT_LIFETIME},\n"
+        + f"    Texture = '{EFFECT_TEXTURE}',\n}}\n"
     )
 
     # The UI mod packed, as a mod downloaded from a vault is
@@ -91,6 +122,86 @@ def write_mods(documents: Path) -> None:
         )
         ui.writestr("hook/lua/userInit.lua", probe("ui:user"))
         ui.writestr("hook/lua/UserSync.lua", probe("ui:sync"))
+
+    # A mod with a defect of each kind --check-mods reports
+    broken = mods / "OscModsFlowBroken"
+    (broken / "hook/lua").mkdir(parents=True)
+    (broken / "units/xyz0001").mkdir(parents=True)
+    _ = (broken / "mod_info.lua").write_text(
+        'name = "OSC mods flow: broken"\nuid = "osc-mods-flow-broken"\nversion is 1\n'
+    )
+    _ = (broken / "hook/lua/simInt.lua").write_text(probe("broken:sim"))
+    _ = (broken / "units/xyz0001/xyz0001_unit.bp").write_text(
+        "UnitBlueprint {\n    General = { UnitName = 'Broken' }\n    Display = {},\n}\n"
+    )
+
+
+@dataclass
+class Diagnostic:
+    """A finding --check-mods must report for the broken mod."""
+
+    check: str
+    file: str
+    line: int  # 0: any
+    words: str  # in its message
+
+
+BROKEN_FINDINGS = [
+    Diagnostic("mod_info", f"{BROKEN_MOD}/mod_info.lua", 3, "doesn't run"),
+    Diagnostic(
+        "hook_target", f"{BROKEN_MOD}/hook/lua/simint.lua", 0, "did you mean /lua/siminit.lua"
+    ),
+    Diagnostic(
+        "blueprint_compile", f"{BROKEN_MOD}/units/xyz0001/xyz0001_unit.bp", 3, "doesn't compile"
+    ),
+]
+
+
+def check_mods_report(output: str) -> tuple[dict[str, dict[str, object]], list[str]]:
+    """--check-mods --json's report: the mods by location, or the problem reading it."""
+    try:
+        report = cast(object, json.loads(output))
+    except json.JSONDecodeError as e:
+        return {}, [f"check-mods: not JSON ({e}): {output[:200]!r}"]
+    listed = cast(dict[str, object], report).get("mods") if isinstance(report, dict) else None
+    if not isinstance(listed, list):
+        return {}, ["check-mods: no list of mods"]
+    mods: dict[str, dict[str, object]] = {}
+    for mod in cast(list[dict[str, object]], listed):
+        mods[str(mod.get("location"))] = mod
+    return mods, []
+
+
+def check_mods_problems(mods: dict[str, dict[str, object]]) -> list[str]:
+    """What --check-mods got wrong about the three test mods."""
+    problems: list[str] = []
+    for location in ("/mods/oscmodsflowgame", "/mods/oscmodsflowui"):
+        mod = mods.get(location)
+        if mod is None:
+            problems.append(f"check-mods: {location} not checked")
+        elif mod.get("findings"):
+            problems.append(f"check-mods: {location} isn't clean: {mod.get('findings')}")
+    broken = mods.get(BROKEN_MOD)
+    if broken is None:
+        return [*problems, f"check-mods: {BROKEN_MOD} not checked"]
+    findings = cast(list[dict[str, object]], broken.get("findings") or [])
+    for want in BROKEN_FINDINGS:
+        if not any(
+            f.get("check") == want.check
+            and f.get("file") == want.file
+            and (want.line == 0 or f.get("line") == want.line)
+            and f.get("severity") == "error"
+            and want.words in str(f.get("message"))
+            for f in findings
+        ):
+            problems.append(
+                f"check-mods: no {want.check} error in {want.file}"
+                + (f":{want.line}" if want.line else "")
+                + f" saying {want.words!r}: {findings}"
+            )
+    if len(findings) != len(BROKEN_FINDINGS):
+        problems.append(f"check-mods: {len(findings)} findings for {BROKEN_MOD}: {findings}")
+    return problems
 
 
 def report(output: str, state: str) -> dict[str, str]:
@@ -108,6 +219,7 @@ class Expected:
     mods: dict[str, list[str]]
     name: str  # the UEF ACU's UnitName
     wanted: dict[str, list[str]]  # probes of hooks that must run
+    effect: tuple[str, str]  # EFFECT's Lifetime and Texture, as the engine reads them
     unwanted: dict[str, list[str]] = field(default_factory=dict)  # ...and must not
     user_sync_runs: int = 0  # the UI mod's UserSync.lua hook
     selected: list[str] = field(default_factory=list)  # the player's, in the UI
@@ -151,6 +263,12 @@ def check(output: str, run_name: str, want: Expected) -> list[str]:
             selected = ",".join(want.selected)
             if got.get("selected") != selected:
                 problems.append(f"ui: selected {got.get('selected')}, expected {selected}")
+    # The emitter as the sim times it and as the renderer draws it
+    got = report(output, "effect")
+    lifetime, texture = want.effect
+    for key, value in (("sim", lifetime), ("render", lifetime), ("texture", texture)):
+        if got.get(key) != value:
+            problems.append(f"effect: {key} {got.get(key)}, expected {value}")
     return [f"{run_name}: {problem}" for problem in problems]
 
 
@@ -161,8 +279,9 @@ GAME_MODS = sorted([RESOURCE_RICH, GAME_MOD])
 ALL_SELECTED = Expected(
     mods={"sim": GAME_MODS, "ui": [*GAME_MODS, UI_MOD]},
     name="ModsFlow",
-    wanted={"sim": ["game:sim"], "ui": ["game:user", "ui:sync"]},
+    wanted={"sim": ["game:rules", "game:sim"], "ui": ["game:user", "ui:sync"]},
     unwanted={"sim": ["game:user", "ui:user", "ui:sync"], "ui": ["game:sim", "ui:user"]},
+    effect=(EFFECT_LIFETIME, EFFECT_TEXTURE),
     user_sync_runs=2,
     selected=sorted([RESOURCE_RICH, GAME_MOD, UI_MOD]),
 )
@@ -172,6 +291,7 @@ PICKED_IN_LOBBY = Expected(
     mods={"sim": [RESOURCE_RICH], "ui": [RESOURCE_RICH]},
     name="nil",
     wanted={},
+    effect=("0.1", "/textures/particles/flare_lens_add_02.dds"),  # retail's own
     unwanted={"sim": ["game:", "ui:"], "ui": ["game:", "ui:"]},
     selected=[RESOURCE_RICH],
 )
@@ -289,6 +409,30 @@ def main(argv: list[str]) -> int:
         problems += check(clicked, "lobby", PICKED_IN_LOBBY)
         if lobby.returncode != 0:
             problems.append(f"lobby: failed, exit {lobby.returncode}")
+        # The mods checked as a modder would check them
+        checked = run([exe, "--check-mods", "--json"], env)
+        mods, unread = check_mods_report(checked.stdout)
+        problems += unread or check_mods_problems(mods)
+        print(f"check-mods: exit {checked.returncode}, {len(mods)} mods checked")
+        if checked.returncode != 1:
+            problems.append(f"check-mods: exit {checked.returncode}, not 1 (errors)")
+        named = run([exe, "--check-mods", str(documents / MODS_DIR / "OscModsFlowBroken")], env)
+        print(named.stdout, end="")
+        for want in BROKEN_FINDINGS:
+            line = f"{want.file}:{want.line}: error:" if want.line else f"{want.file}: error:"
+            if line not in named.stdout:
+                problems.append(f"check-mods by folder: no {line!r} line")
+        if "Checked 1 mod: 3 errors, 0 warnings." not in named.stdout:
+            problems.append("check-mods by folder: not the broken mod's 3 errors alone")
+        listed = run([exe, "--list-mods", "--json"], env)
+        try:
+            entries = cast(list[dict[str, object]], json.loads(listed.stdout))
+            locations = {str(m.get("location")) for m in entries}
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            locations = set[str]()
+        for location in ("/mods/oscmodsflowgame", "/mods/oscmodsflowui", BROKEN_MOD):
+            if location not in locations:
+                problems.append(f"list-mods: {location} not listed (exit {listed.returncode})")
     for problem in problems:
         print(f"FAIL: {problem}")
     if problems:

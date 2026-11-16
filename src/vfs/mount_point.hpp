@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -34,6 +35,13 @@ public:
     /// Get file info or nullopt if not found.
     virtual std::optional<FileInfo> get_file_info(
         std::string_view relative_path) const = 0;
+
+    /// The file on disk that holds `relative_path`, for a mount of a folder;
+    /// nullopt for a file in an archive (or one that doesn't exist).
+    virtual std::optional<std::filesystem::path>
+    disk_path(std::string_view /*relative_path*/) const {
+        return std::nullopt;
+    }
 };
 
 } // namespace osc::vfs

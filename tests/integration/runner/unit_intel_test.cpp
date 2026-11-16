@@ -420,6 +420,8 @@ void test_effect_intel(TestContext& ctx) {
         std::ofstream(dir / "steady_create_emit.bp") << text;
     }
     ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
+    // Registered, as Moho draws only a registered effect blueprint
+    (void)register_effect_blueprints(ctx, kRoot);
     const std::string steady = std::string(kRoot) + "/steady_emit.bp";
     const std::string create = std::string(kRoot) + "/steady_create_emit.bp";
 

@@ -48,16 +48,12 @@ const BeamBlueprintData* BeamBlueprintCache::get(const std::string& path, lua_St
     if (auto it = cache_.find(path); it != cache_.end()) return &it->second;
     if (path.empty() || failed_.count(path) || !RenderScriptScope::allowed()) return nullptr;
     BeamBlueprintData data;
-    if (!load(path, L, data)) {
+    if (!read_effect_blueprint(store_, L, path, blueprints::BlueprintType::Beam,
+                               [&data](lua_State* S, int t) { data = parse(S, t); })) {
         failed_.insert(path);
         return nullptr;
     }
     return &cache_.emplace(path, std::move(data)).first->second;
-}
-
-bool BeamBlueprintCache::load(const std::string& path, lua_State* L, BeamBlueprintData& out) const {
-    return run_effect_blueprint(vfs_, path, L, "BeamBlueprint",
-                                [&out](lua_State* S, int t) { out = parse(S, t); });
 }
 
 } // namespace osc::renderer

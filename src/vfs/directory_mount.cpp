@@ -85,6 +85,14 @@ std::optional<std::vector<char>> DirectoryMount::read_file(
     return buffer;
 }
 
+std::optional<std::filesystem::path>
+DirectoryMount::disk_path(std::string_view relative_path) const {
+    auto full_path = resolve(relative_path);
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(full_path, ec)) return std::nullopt;
+    return full_path;
+}
+
 bool DirectoryMount::file_exists(std::string_view relative_path) const {
     auto full_path = resolve(relative_path);
     return std::filesystem::exists(full_path);

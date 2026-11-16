@@ -13,7 +13,10 @@
 // Once the game has run to kReportTick it reports, for the sim's Lua state
 // and the game UI's, what their mods made of them: __active_mods (uids, in
 // order), the UEF ACU's blueprint, the probes test mods' hooks set, and the
-// player's selected mods (preference active_mods).
+// player's selected mods (preference active_mods). And one emitter
+// blueprint a test mod merges into, as the engine reads it: the Lifetime
+// the sim times its emitters by, and the Lifetime and Texture the renderer
+// draws them with.
 // tests/integration/mods_flow.py sets up the mods and reads the report. A
 // script error fails it.
 
@@ -26,6 +29,9 @@ struct lua_State;
 
 namespace osc::lua {
 class LuaState;
+}
+namespace osc::renderer {
+class Renderer;
 }
 namespace osc::sim {
 class SimState;
@@ -50,9 +56,11 @@ public:
     /// (reported) on a script error.
     bool start(lua::LuaState& ui);
     /// Each frame: in the lobby, its next step; in the game, the report at
-    /// kReportTick. `input` is where a player's clicks go.
+    /// kReportTick. `input` is where a player's clicks go; `renderer` draws
+    /// the game, with the UI state's blueprints.
     void frame(lua::LuaState& ui, lua::LuaState* sim_lua, const sim::SimState* sim,
-               ui::UIDispatch& input, ui::UIControlRegistry& controls);
+               ui::UIDispatch& input, ui::UIControlRegistry& controls,
+               renderer::Renderer& renderer);
     bool done() const { return done_; }
     /// The result, as test_status failures or a [PASS] line.
     void finish() const;
@@ -75,6 +83,10 @@ private:
     void lobby_frame(lua::LuaState& ui, ui::UIDispatch& input, ui::UIControlRegistry& controls);
     /// The report line for one Lua state, or why it has none.
     static std::string report(lua_State* L);
+    /// The report line for kEffect: as the sim times its emitters, and as
+    /// `renderer` draws them.
+    static std::string effect_report(lua_State* sim_L, const sim::SimState& sim, lua_State* ui_L,
+                                     renderer::Renderer& renderer);
     void fail(const std::string& why);
 
     Launch launch_;

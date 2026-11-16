@@ -36,4 +36,9 @@ Result<void> run_vfs_script(lua_State* L, std::string_view path, int env_index =
 std::vector<std::string> script_hooks(lua_State* L, const vfs::VirtualFileSystem& vfs,
                                       std::string_view path);
 
+/// Append a file's bytes to a script's chunk as Moho's concatenating reader
+/// does: a newline follows a file that doesn't end in one. A UTF-8 BOM is
+/// dropped (e.g. loc/us/strings_db.lua); an empty file adds nothing.
+void append_script_file(std::string& chunk, const std::vector<char>& data);
+
 } // namespace osc::lua

@@ -1,8 +1,10 @@
 #pragma once
 
 #include "renderer/vk_types.hpp"
+#include "renderer/entity_cache.hpp"
 #include "renderer/mesh_cache.hpp"
 #include "renderer/frustum.hpp"
+#include "core/interned_string.hpp"
 #include "core/types.hpp"
 #include "sim/entity_id.hpp"
 #include "sim/game_colors.hpp"
@@ -253,19 +255,21 @@ private:
 
     // Per-frame draw groups (rebuilt each frame)
     std::vector<MeshDrawGroup> mesh_groups_;
-    /// Each entity's LOD reach, by entity id (Moho's ids are sparse, a pool
-    /// per family in their high bits), each read at the entity's
-    /// mesh_changes and blueprint (a SetMesh, or a later entity of the id,
-    /// reads it again). A whole map's props then cost a look each, not a
-    /// blueprint lookup.
+    /// Each entity's LOD reach, read at the entity's mesh_changes and
+    /// blueprint (a SetMesh, or a later entity of the id, reads it again),
+    /// and the LOD it last drew. A whole map's props then cost a look each,
+    /// not a blueprint lookup. Every entity is looked at every frame, before
+    /// any cull (a new mesh's textures load as its entity appears), so the
+    /// look is a step along the snapshot's walk, not a hash, and its
+    /// blueprint an interned pointer, not a string to compare.
     struct CachedReach {
         u32 mesh_changes = 0;
         f32 reach = -1.0f; ///< below 0: not read
-        std::string blueprint_id;
+        InternedString blueprint_id;
         const GPUMesh* last_drawn = nullptr;
         f32 last_drawn_scale = 0.0f;
     };
-    std::unordered_map<sim::EntityId, CachedReach> reaches_;
+    EntityCache<CachedReach> reaches_;
     std::unordered_set<const GPUMesh*> ready_;
 
     sim::GameColors game_colors_;

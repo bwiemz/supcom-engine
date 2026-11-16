@@ -9,26 +9,21 @@
 #include "renderer/camera.hpp"
 #include "sim/world_snapshot.hpp"
 #include "renderer/render_scripts.hpp"
-#include "vfs/directory_mount.hpp"
-#include "vfs/virtual_file_system.hpp"
-#include "support/temp_path.hpp"
+#include "support/effect_blueprints.hpp"
 
 extern "C" {
 #include <lua.h>
 }
 
-#include <filesystem>
-#include <fstream>
-#include <memory>
+#include <string>
 
-TEST_CASE("emitter blueprints load through the VFS as FA writes them", "[renderer][emitter]") {
+TEST_CASE("emitter blueprints read as FA writes them", "[renderer][emitter]") {
     // Retail keeps them in effects.scd under effects/Emitters/, and each file
     // is an `EmitterBlueprint { ... }` statement, not a `return`.
-    namespace fs = std::filesystem;
-    const fs::path root = osc::test::unique_temp_path("osc_emitter_bp_test");
-    fs::create_directories(root / "effects" / "Emitters");
-    {
-        std::ofstream(root / "effects" / "Emitters" / "mist_emit.bp") << R"(
+    osc::lua::LuaState lua;
+    lua_State* L = lua.raw();
+    osc::test::EffectBlueprints blueprints(lua);
+    blueprints.add("/effects/Emitters/mist_emit.bp", R"(
 EmitterBlueprint {
     BlueprintId = 'mist',
     Lifetime = 80.00,
@@ -46,31 +41,25 @@ EmitterBlueprint {
         },
     },
 }
-)";
-        // Some of retail's blueprints spell it BlendMode.
-        std::ofstream(root / "effects" / "Emitters" / "spark_emit.bp") << R"(
+)");
+    // Some of retail's blueprints spell it BlendMode.
+    blueprints.add("/effects/Emitters/spark_emit.bp", R"(
 EmitterBlueprint {
     BlendMode = 3,
     Lifetime = -1,
 }
-)";
-        std::ofstream(root / "effects" / "Emitters" / "empty_emit.bp") << "local x = 1\n";
-    }
-    osc::vfs::VirtualFileSystem vfs;
-    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
-
-    osc::lua::LuaState lua;
-    lua_State* L = lua.raw();
+)");
+    blueprints.add("/effects/Emitters/ray_beam.bp", "BeamBlueprint { Length = 4 }\n");
     osc::renderer::EmitterBlueprintCache cache;
 
-    SECTION("no VFS, no blueprint") {
+    SECTION("no blueprints, no blueprint") {
         CHECK(cache.get("/effects/emitters/mist_emit.bp", L) == nullptr);
     }
 
-    cache.set_vfs(&vfs);
+    cache.set_blueprints(blueprints.store());
     const int top = lua_gettop(L);
 
-    SECTION("loads, parses, and restores the global") {
+    SECTION("reads and parses the registered blueprint, and leaves the stack") {
         const auto* bp = cache.get("/effects/emitters/mist_emit.bp", L);
         REQUIRE(bp != nullptr);
         CHECK(bp->lifetime == 80.0f);
@@ -102,23 +91,20 @@ EmitterBlueprint {
         CHECK_FALSE(spark->animated());
         CHECK(cache.get("/effects/emitters/mist_emit.bp", L) == bp); // cached
         CHECK(lua_gettop(L) == top);
-        lua_getglobal(L, "EmitterBlueprint");
-        CHECK(lua_isnil(L, -1));
-        lua_pop(L, 1);
     }
 
-    SECTION("busy draws defer script cache misses and retry after the sim settles") {
-        std::ofstream(root / "effects" / "Emitters" / "deferred.bp") << R"(
-            loads = (loads or 0) + 1
-            EmitterBlueprint { Lifetime = 12 }
-            BeamBlueprint { Lifetime = 13 }
-            TrailEmitterBlueprint { Lifetime = 14 }
-        )";
+    SECTION("busy draws defer cache misses and retry after the sim settles") {
+        blueprints.add("/effects/emitters/deferred_emit.bp", "EmitterBlueprint { Lifetime = 12 }");
+        blueprints.add("/effects/emitters/deferred_beam.bp", "BeamBlueprint { Lifetime = 13 }");
+        blueprints.add("/effects/emitters/deferred_trail.bp",
+                       "TrailEmitterBlueprint { Lifetime = 14 }");
         osc::renderer::BeamBlueprintCache beams;
         osc::renderer::TrailBlueprintCache trails;
-        beams.set_vfs(&vfs);
-        trails.set_vfs(&vfs);
-        const std::string path = "/effects/emitters/deferred.bp";
+        beams.set_blueprints(blueprints.store());
+        trails.set_blueprints(blueprints.store());
+        const std::string emitter_path = "/effects/emitters/deferred_emit.bp";
+        const std::string beam_path = "/effects/emitters/deferred_beam.bp";
+        const std::string trail_path = "/effects/emitters/deferred_trail.bp";
         osc::renderer::TrailRenderer renderer;
         osc::renderer::TextureCache textures;
         osc::renderer::Camera camera;
@@ -128,23 +114,20 @@ EmitterBlueprint {
         effect.id = 10;
         effect.type = osc::sim::EffectType::TRAIL_EMITTER;
         effect.anchored = true;
-        effect.blueprint_path = path;
+        effect.blueprint_path = trail_path;
         snapshot.effects.push_back(effect);
         const osc::sim::FrameView view(&snapshot, &snapshot, 1.0f);
         {
             const osc::renderer::RenderScriptScope busy(false);
-            CHECK(cache.get(path, L) == nullptr);
-            CHECK(beams.get(path, L) == nullptr);
-            CHECK(trails.get(path, L) == nullptr);
+            CHECK(cache.get(emitter_path, L) == nullptr);
+            CHECK(beams.get(beam_path, L) == nullptr);
+            CHECK(trails.get(trail_path, L) == nullptr);
             renderer.update(view, camera, nullptr, trails, textures, L, nullptr, 0);
             CHECK_FALSE(renderer.draws_effect(10));
-            lua_getglobal(L, "loads");
-            CHECK(lua_isnil(L, -1));
-            lua_pop(L, 1);
         }
-        const auto* emitter = cache.get(path, L);
-        const auto* beam = beams.get(path, L);
-        const auto* trail = trails.get(path, L);
+        const auto* emitter = cache.get(emitter_path, L);
+        const auto* beam = beams.get(beam_path, L);
+        const auto* trail = trails.get(trail_path, L);
         REQUIRE(emitter);
         REQUIRE(beam);
         REQUIRE(trail);
@@ -155,21 +138,74 @@ EmitterBlueprint {
         CHECK(renderer.draws_effect(10)); // same tick, now settled
         {
             const osc::renderer::RenderScriptScope busy(false);
-            CHECK(cache.get(path, L) == emitter);
-            CHECK(beams.get(path, L) == beam);
-            CHECK(trails.get(path, L) == trail);
-            lua_getglobal(L, "loads");
-            CHECK(lua_tonumber(L, -1) == 3);
-            lua_pop(L, 1);
+            CHECK(cache.get(emitter_path, L) == emitter);
+            CHECK(beams.get(beam_path, L) == beam);
+            CHECK(trails.get(trail_path, L) == trail);
         }
         CHECK(lua_gettop(L) == top);
     }
 
-    SECTION("missing or emitter-less files fail, and stay failed") {
+    SECTION("names of no emitter blueprint fail, and stay failed") {
         CHECK(cache.get("/effects/emitters/missing_emit.bp", L) == nullptr);
         CHECK(cache.get("/effects/emitters/missing_emit.bp", L) == nullptr);
-        CHECK(cache.get("/effects/emitters/empty_emit.bp", L) == nullptr);
+        // A beam's: Moho looks an emitter up among the emitters alone.
+        CHECK(cache.get("/effects/emitters/ray_beam.bp", L) == nullptr);
         CHECK(lua_gettop(L) == top);
     }
-    fs::remove_all(root);
+}
+
+TEST_CASE("Effects draw with their registered blueprints: a mod's, not the file's",
+          "[renderer][emitter]") {
+    // Moho makes an effect from the blueprint the rules registered under its
+    // name (CEffectManagerImpl's GetEmitterBlueprint, GetBeamBlueprint and
+    // GetTrailBlueprint lookups), so what Blueprints.lua registered -- after
+    // the mods' blueprints, their Merges and ModBlueprints -- is what draws;
+    // it never reads the file again. A mod replaces retail's effect blueprint
+    // with one whose Source names that file, so that it takes the same id.
+    osc::lua::LuaState lua;
+    lua_State* L = lua.raw();
+    osc::test::EffectBlueprints blueprints(lua);
+    blueprints.add("/effects/Emitters/flash_01_emit.bp",
+                   "EmitterBlueprint { Lifetime = 0.1,"
+                   " Texture = [[/textures/particles/flare_lens_add_02.dds]] }\n");
+    blueprints.add("/effects/Emitters/ray_01_beam.bp",
+                   "BeamBlueprint { Length = 4, TextureName = '/textures/ray.dds' }\n");
+    blueprints.add("/effects/Emitters/smoke_01_trail.bp",
+                   "TrailEmitterBlueprint { TrailLength = 5, Size = 0.5 }\n");
+    // The mod's, run after retail's as LoadBlueprints runs the active mods'.
+    blueprints.add("/mods/osc/effects/flash_emit.bp",
+                   "EmitterBlueprint { Source = '/effects/emitters/flash_01_emit.bp',\n"
+                   "    Lifetime = 7, Texture = '/Textures/Particles/Glow_02.dds' }\n");
+    blueprints.add("/mods/osc/effects/ray_beam.bp",
+                   "BeamBlueprint { Source = '/effects/emitters/ray_01_beam.bp', Length = 9 }\n");
+    blueprints.add("/mods/osc/effects/smoke_trail.bp",
+                   "TrailEmitterBlueprint { Source = '/effects/emitters/smoke_01_trail.bp',\n"
+                   "    TrailLength = 12 }\n");
+
+    osc::renderer::EmitterBlueprintCache emitters;
+    osc::renderer::BeamBlueprintCache beams;
+    osc::renderer::TrailBlueprintCache trails;
+    emitters.set_blueprints(blueprints.store());
+    beams.set_blueprints(blueprints.store());
+    trails.set_blueprints(blueprints.store());
+
+    const auto* flash = emitters.get("/effects/emitters/flash_01_emit.bp", L);
+    REQUIRE(flash);
+    CHECK(flash->lifetime == 7.0f);
+    CHECK(flash->texture == "/textures/particles/glow_02.dds");
+    const auto* ray = beams.get("/effects/emitters/ray_01_beam.bp", L);
+    REQUIRE(ray);
+    CHECK(ray->length == 9.0f);
+    CHECK(ray->texture.empty()); // the mod's replaced it whole: no Merge
+    const auto* smoke = trails.get("/effects/emitters/smoke_01_trail.bp", L);
+    REQUIRE(smoke);
+    CHECK(smoke->trail_length == 12.0f);
+    CHECK(smoke->size == 0.0f);
+
+    // The name as STR_InitFilename makes it: in any case, either slash.
+    const auto* named = emitters.get("\\EFFECTS\\Emitters\\Flash_01_emit.bp", L);
+    REQUIRE(named);
+    CHECK(named->lifetime == 7.0f);
+    // The mod's own file names no blueprint of its own: its Source does.
+    CHECK(emitters.get("/mods/osc/effects/flash_emit.bp", L) == nullptr);
 }

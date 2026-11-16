@@ -10,8 +10,8 @@
 
 struct lua_State;
 
-namespace osc::vfs {
-class VirtualFileSystem;
+namespace osc::blueprints {
+class BlueprintStore;
 }
 
 namespace osc::renderer {
@@ -95,7 +95,7 @@ constexpr i32 kBlendRefract = 5;
 constexpr i32 kBlendAdd = 3;
 
 struct EmitterBlueprintData {
-    std::string blueprint_id; ///< its VFS path
+    std::string blueprint_id; ///< the name an effect gives it (its path)
     f32 lifetime = 0.0f;      ///< ticks it emits (negative: until its effect ends)
     f32 repeattime = 0.0f;    ///< ticks: the period its curves are read over
     f32 frame_count = 0.0f;   ///< TextureFramecount: frames across its texture
@@ -135,12 +135,17 @@ struct EmitterBlueprintData {
     mutable u32 draw_bucket = 0;
 };
 
-/// Emitter blueprints by VFS path, read as the beam and trail caches read
-/// theirs. Null for a path that isn't an emitter's; a failed path is
-/// remembered.
+/// Emitter blueprints by the name an effect gives (a path), each read once
+/// from the registered blueprint (read_effect_blueprint), as the beam and
+/// trail caches read theirs. Null for a name no emitter blueprint is
+/// registered under; a miss is remembered. A busy draw leaves a miss to a
+/// settled one (RenderScriptScope): a read in the Lua state can start its
+/// collection.
 class EmitterBlueprintCache {
 public:
-    void set_vfs(const vfs::VirtualFileSystem* vfs) { vfs_ = vfs; }
+    /// The registered blueprints it reads: the scene's, whose Lua state is
+    /// the one get is given.
+    void set_blueprints(const blueprints::BlueprintStore* store) { store_ = store; }
     const EmitterBlueprintData* get(const std::string& path, lua_State* L);
     void clear() {
         cache_.clear();
@@ -148,7 +153,7 @@ public:
     }
 
 private:
-    const vfs::VirtualFileSystem* vfs_ = nullptr;
+    const blueprints::BlueprintStore* store_ = nullptr;
     std::unordered_map<std::string, EmitterBlueprintData> cache_;
     std::unordered_set<std::string> failed_;
 };

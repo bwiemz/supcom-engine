@@ -350,13 +350,15 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
     // One entity's mesh instance (or cube): the world's, then the player's
     // remembered structures gone from it unseen (MaybeDead; M215d).
     const auto draw = [&](const sim::EntityRecord& entity) {
+        // Kept while the entity has no mesh too: the LOD it last drew stands
+        // in while the textures of the mesh it's given next load.
+        CachedReach& cached = reaches_.at(entity.id);
         // Any other entity draws once it has a mesh (M211k): a shield, its
         // depth fill and its impacts, script entities given one by SetMesh.
         const bool script_mesh = !entity.is_unit && !entity.is_prop && !entity.is_projectile;
         if (script_mesh && entity.mesh_override.empty()) return;
         // A mesh no LOD of which takes the metric shows nothing
         // (Mesh::ComputeLOD).
-        CachedReach& cached = reaches_[entity.id];
         if (cached.reach < 0.0f || cached.mesh_changes != entity.mesh_changes ||
             cached.blueprint_id != entity.blueprint_id) {
             f32 r =
@@ -554,6 +556,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
 
     // Entities gone since the last update take their mesh instances with them.
     births_.finish();
+    reaches_.finish();
 
     // The slot's buffers grow to hold the frame: its cubes, its mesh
     // instances and the build ghost's, and its groups' bones. What a buffer

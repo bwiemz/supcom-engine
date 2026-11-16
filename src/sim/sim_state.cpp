@@ -123,11 +123,19 @@ void SimState::release_ground(EntityId id) {
         occupancy_.fill(gone.caps, r, false);
         if (path_tables_) path_tables_->dirty(r);
     }
-    // What still stands on any of those cells claims them again.
+    // What still stands on any of those cells claims them again, on the
+    // grids the release cleared. Only occupy_ground and release_ground write
+    // the grids (a new map or a load starts them empty, with no claims), and
+    // each leaves every claim's cells set, so a claim on no cleared grid
+    // would only set bits already set. A tree, a rock or a wreck claims no
+    // caps: its release cleared nothing.
+    const u8 cleared = OccupancyGrid::grids_of(gone.caps);
+    if (cleared == 0) return;
     const auto overlaps = [](const OccupancyRect& a, const OccupancyRect& b) {
         return a.x0 < b.x1 && b.x0 < a.x1 && a.z0 < b.z1 && b.z0 < a.z1;
     };
     for (const auto& [other_id, other] : ground_occupants_) {
+        if ((OccupancyGrid::grids_of(other.caps) & cleared) == 0) continue;
         for (const OccupancyRect& r : other.rects) {
             const bool shared = std::any_of(gone.rects.begin(), gone.rects.end(),
                                             [&](const OccupancyRect& g) { return overlaps(g, r); });
@@ -2070,6 +2078,17 @@ void SimState::terminate_command_source(u32 source) {
     }
 }
 
+namespace {
+
+/// Whether an order's place and facing are finite numbers.
+bool finite_place(const UnitCommand& command) {
+    return std::isfinite(command.target_pos.x) && std::isfinite(command.target_pos.y) &&
+           std::isfinite(command.target_pos.z) &&
+           (!command.has_facing || std::isfinite(command.facing));
+}
+
+} // namespace
+
 void SimState::dispatch_due_commands() {
     PROFILE_ZONE("Sim::commands");
     command_scheduler_.dispatch_due(beat_count_, [&](const ScheduledCommand& scheduled) {
@@ -2087,6 +2106,17 @@ void SimState::dispatch_due_commands() {
              sc.callback->func_name == kCommandSourceTerminatedCallback)) {
             spdlog::warn("[commands] source {} sent the engine's {}; ignored", sc.source,
                          sc.callback->func_name);
+            return;
+        }
+        // A player's order to a place, or with a facing, that isn't a finite
+        // number is dropped: no click gives one, and one sent by a peer or a
+        // UI script would steer units toward it. Every peer drops the same
+        // orders, so they stay in step, and a replay's are taken as they
+        // were applied.
+        if (sc.source != kEngineSource && !playback_ && !sc.callback && !finite_place(sc.command)) {
+            spdlog::warn("[commands] source {} sent an order to a place that isn't a number; "
+                         "ignored",
+                         sc.source);
             return;
         }
         // A player's order, or UI callback, moves only the units its source
@@ -2192,7 +2222,7 @@ bool SimState::outside_no_rush(i32 army, const Vector3& at) const {
 
 void SimState::tick() {
     PROFILE_ZONE("Sim::tick");
-    if (L_ && Profiler::instance().enabled()) lua_profile::attach(L_);
+    if (L_ && lua_profile::enabled()) lua_profile::attach(L_);
     ++beat_count_;
     if (!beat_observer_) {
         print_lines_.clear();

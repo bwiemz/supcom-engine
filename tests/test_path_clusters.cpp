@@ -15,6 +15,7 @@
 #include "sim/saved_game.hpp"
 #include "sim/sim_snapshot.hpp"
 #include "sim/sim_state.hpp"
+#include "support/tick_until.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -602,4 +603,37 @@ TEST_CASE("The sim keeps a map a class: one budget a tick in class order, dirtie
                         after.cluster(level, cx, cz)->same_content(*before.cluster(level, cx, cz)));
                 }
     }
+}
+
+TEST_CASE("A claim with no caps fills nothing, but its claim and its release still dirty the "
+          "clusters under it",
+          "[path_clusters]") {
+    // Moho's ExecuteOccupy dirties the clusters whatever the caps; a
+    // release that clears no grid still does.
+    LuaGuard g;
+    osc::blueprints::BlueprintStore store(g.L);
+    store.add_footprint_class(land_class(1, "Vehicle1x1"));
+    osc::sim::SimState sim(g.L, &store);
+    sim.set_terrain(flat_terrain(96));
+    sim.build_pathfinding_grid();
+    sim.add_army("ARMY_1", "ARMY_1");
+    osc::sim::GameSetup game;
+    game.scenario = "/maps/test/test_scenario.lua";
+    game.seed = 3;
+    sim.set_game_setup(game);
+    REQUIRE(sim.path_tables());
+    const ClusterMap& map = sim.path_tables()->map(0);
+    const auto tick = [&] { sim.tick(); };
+    const auto done = [&] { return sim.path_tables()->done(); };
+    osc::test::tick_until(tick, "the first build", 10, done);
+
+    osc::sim::GroundOccupant tree;
+    tree.rects.push_back({40, 40, 41, 41});
+    sim.occupy_ground(EntityId::of(9, 1), tree);
+    CHECK_FALSE(sim.occupancy().ground_at(40, 40));
+    CHECK(map.dirty(1, 5, 5));
+    osc::test::tick_until(tick, "the claim's rebuild", 10, done);
+    sim.release_ground(EntityId::of(9, 1));
+    CHECK(map.dirty(1, 5, 5));
+    CHECK_FALSE(map.dirty(1, 0, 0));
 }

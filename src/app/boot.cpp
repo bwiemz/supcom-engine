@@ -25,6 +25,7 @@
 #include "platform/paths.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
+#include "sim/lua_profile.hpp"
 #include "sim/lua_sim.hpp"
 
 extern "C" {
@@ -55,6 +56,9 @@ std::optional<int> App::boot_engine() {
         spdlog::error("Init failed: {}", init_result.error().message);
         return 1;
     }
+    // The sound banks the init file mounted at /sounds: FA's, and any mod's
+    // or map's it mounted there too
+    sound.load_banks(vfs);
 
     // Phase 2: Blueprint loading (sim Lua state owns the store), with a
     // recorded game's mods (M221b); a new game from the command line has
@@ -308,7 +312,7 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
-    // Run init sequence on UI state (polyfills, config, class system, import)
+    // Run the init file on the UI state (the VFS's mounts and hook directories)
     auto ui_init_result = loader.execute_init(ui_lua_state, config, vfs);
     if (!ui_init_result) {
         spdlog::error("UI Lua init failed: {}", ui_init_result.error().message);
@@ -760,6 +764,7 @@ std::optional<int> App::start() {
     // Enable profiler if requested
     if (opt.profile_enabled) {
         osc::Profiler::instance().set_enabled(true);
+        osc::sim::lua_profile::set_enabled(true);
         spdlog::info("Performance profiling enabled");
     }
 

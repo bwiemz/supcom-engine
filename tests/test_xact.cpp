@@ -6,7 +6,10 @@
 #include "audio/xact/global_settings.hpp"
 #include "audio/xact/sound_bank.hpp"
 #include "audio/xwb_parser.hpp"
+#include "vfs/directory_mount.hpp"
+#include "vfs/virtual_file_system.hpp"
 #include "xact_fixtures.hpp"
+#include "support/memory_mount.hpp"
 #include "support/temp_path.hpp"
 
 #include <cstring>
@@ -170,12 +173,14 @@ TEST_CASE("XACT: wave banks resolve by their internal name", "[audio][xact]") {
     // otherwise (as retail's XAS_Weapons.xwb is internally XAS_Weapon).
     write(dir / "Test.xsb", make_xsb("TestWaves"));
     write(dir / "Other_File_Name.xwb", make_xwb("TestWaves", 4));
-    write(dir / "Game.xgs", make_xgs());
+    write(dir / "SupCom.xgs", make_xgs());
 
-    BankRegistry reg(dir);
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/sounds", std::make_unique<osc::vfs::DirectoryMount>(dir));
+    BankRegistry reg(vfs, "/sounds");
     REQUIRE(reg.global_settings());
     CHECK(reg.global_settings()->categories.size() == 2);
-    CHECK(reg.sound_bank_names() == std::vector<std::string>{"Test"});
+    CHECK(reg.sound_bank_names() == std::vector<std::string>{"test"});
     const SoundBank* sb = reg.sound_bank("test"); // case-blind
     REQUIRE(sb);
     CHECK(reg.sound_bank("Missing") == nullptr);
@@ -195,6 +200,177 @@ TEST_CASE("XACT: wave banks resolve by their internal name", "[audio][xact]") {
     missing.wave = 9; // past the wave bank's 4 entries
     CHECK_FALSE(reg.resolve(*sb, missing));
     fs::remove_all(dir);
+}
+
+namespace {
+
+std::vector<char> as_chars(const std::vector<u8>& bytes) {
+    return {bytes.begin(), bytes.end()};
+}
+
+/// A wave bank built as a streaming one (XACT's WAVEBANK_TYPE_STREAMING:
+/// bit 0 of the bank data's flags, which follow the 52-byte header).
+std::vector<u8> make_streaming_xwb(const std::string& name) {
+    auto bytes = make_xwb(name, 4);
+    bytes[52] |= 1;
+    return bytes;
+}
+
+} // namespace
+
+TEST_CASE("XACT: /sounds holds every mount's banks, the first mount's on a clash",
+          "[audio][xact]") {
+    // FAF's init mounts a mod's sounds folder at /sounds ahead of FA's
+    // (init_faf.lua's MountModContent); retail's mounts FA's folder at /.
+    // Moho's engine lists /sounds through the VFS (func_LoadSoundPath).
+    namespace fs = std::filesystem;
+    const fs::path root = osc::test::unique_temp_path("osc_xact_mounts_test");
+    const fs::path mod = root / "mod_sounds";
+    const fs::path fa = root / "fa";
+    fs::create_directories(mod / "Extra");
+    fs::create_directories(fa / "Sounds");
+    write(fa / "Sounds" / "SupCom.xgs", make_xgs());
+    write(fa / "Sounds" / "Test.xsb", make_xsb("TestWaves"));
+    write(fa / "Sounds" / "TestWaves.xwb", make_xwb("TestWaves", 4));
+    // The mod's bank and its waves, a Test.xsb of its own, a streaming
+    // bank, and a bank in a folder below /sounds (Moho lists the folder
+    // itself only)
+    write(mod / "Mod.xsb", make_xsb("ModWaves"));
+    write(mod / "ModWaves.xwb", make_xwb("ModWaves", 4));
+    write(mod / "Test.xsb", make_xsb("ModWaves"));
+    write(mod / "ModStream.xwb", make_streaming_xwb("ModStream"));
+    write(mod / "Extra" / "Deep.xsb", make_xsb("ModWaves"));
+    write(mod / "Extra" / "DeepWaves.xwb", make_xwb("DeepWaves", 4));
+
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/sounds", std::make_unique<osc::vfs::DirectoryMount>(mod));
+    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(fa));
+    BankRegistry reg(vfs, "/sounds");
+    REQUIRE(reg.global_settings()); // FA's, from the second mount
+    CHECK(reg.sound_bank_names() == std::vector<std::string>{"mod", "test"});
+    CHECK(reg.sound_bank("Deep") == nullptr);
+    CHECK(reg.wave_bank("DeepWaves") == nullptr);
+    REQUIRE(reg.wave_bank("TestWaves"));
+    const osc::audio::XwbParser* mod_waves = reg.wave_bank("ModWaves");
+    REQUIRE(mod_waves);
+    CHECK(mod_waves->path() == mod / "ModWaves.xwb"); // read from its file
+    CHECK_FALSE(mod_waves->in_memory());
+    // A streaming bank in a folder streams from its file, as Moho's does
+    const osc::audio::XwbParser* stream = reg.wave_bank("ModStream");
+    REQUIRE(stream);
+    CHECK(stream->streaming());
+
+    // The mod's cue resolves to the mod's waves
+    const SoundBank* mod_bank = reg.sound_bank("Mod");
+    REQUIRE(mod_bank);
+    const Cue* click = mod_bank->find_cue("Click");
+    REQUIRE(click);
+    const auto wave =
+        reg.resolve(*mod_bank, mod_bank->sounds[click->sound].tracks[0].plays[0].waves[0]);
+    REQUIRE(wave);
+    CHECK(wave->bank == mod_waves);
+    CHECK(wave->bank->read_wave_data(wave->index).size() == 8);
+
+    // Both mounts hold Test.xsb: the first's is the one
+    const SoundBank* test = reg.sound_bank("Test");
+    REQUIRE(test);
+    REQUIRE(test->wave_banks.size() == 1);
+    CHECK(test->wave_banks[0] == "ModWaves");
+
+    // Mounted the other way round, FA's is
+    osc::vfs::VirtualFileSystem fa_first;
+    fa_first.mount("/", std::make_unique<osc::vfs::DirectoryMount>(fa));
+    fa_first.mount("/sounds", std::make_unique<osc::vfs::DirectoryMount>(mod));
+    BankRegistry reg2(fa_first, "/sounds");
+    CHECK(reg2.sound_bank_names() == std::vector<std::string>{"mod", "test"});
+    const SoundBank* test2 = reg2.sound_bank("Test");
+    REQUIRE(test2);
+    REQUIRE(test2->wave_banks.size() == 1);
+    CHECK(test2->wave_banks[0] == "TestWaves");
+    fs::remove_all(root);
+}
+
+TEST_CASE("XACT: a bank in an archive is read into memory, but not a streaming one",
+          "[audio][xact]") {
+    // An archive mounted at /sounds (a mod's .scd, say). Moho reads an
+    // in-memory wave bank and a sound bank from it, but opens a streaming
+    // wave bank as a file (AudioStreamingWaveBankLoader::Load's CreateFileA),
+    // which fails inside an archive: "Error loading WaveBank".
+    auto archive = std::make_unique<osc::test::MemoryMount>();
+    archive->add("/SupCom.xgs", as_chars(make_xgs()));
+    archive->add("/Arc.xsb", as_chars(make_xsb("ArcWaves")));
+    archive->add("/ArcWaves.xwb", as_chars(make_xwb("ArcWaves", 4)));
+    archive->add("/Stream.xwb", as_chars(make_streaming_xwb("StreamWaves")));
+    // A folder mounted after it holds the same files: the archive's are the
+    // ones, read from it, not from the folder's files on disk
+    namespace fs = std::filesystem;
+    const fs::path folder = osc::test::unique_temp_path("osc_xact_archive_test");
+    fs::create_directories(folder);
+    write(folder / "Arc.xsb", make_xsb("FolderWaves"));
+    write(folder / "ArcWaves.xwb", make_xwb("ArcWaves", 6));
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/sounds", std::move(archive));
+    vfs.mount("/sounds", std::make_unique<osc::vfs::DirectoryMount>(folder));
+
+    BankRegistry reg(vfs, "/sounds");
+    REQUIRE(reg.global_settings());
+    CHECK(reg.sound_bank_names() == std::vector<std::string>{"arc"});
+    CHECK(reg.wave_bank("StreamWaves") == nullptr);
+    const osc::audio::XwbParser* waves = reg.wave_bank("ArcWaves");
+    REQUIRE(waves);
+    CHECK(waves->in_memory());
+    CHECK(waves->path().empty());
+    CHECK(waves->entry_count() == 4);
+
+    const SoundBank* sb = reg.sound_bank("arc");
+    REQUIRE(sb);
+    REQUIRE(sb->wave_banks.size() == 1);
+    CHECK(sb->wave_banks[0] == "ArcWaves");
+    const Cue* click = sb->find_cue("Click");
+    REQUIRE(click);
+    const auto wave = reg.resolve(*sb, sb->sounds[click->sound].tracks[0].plays[0].waves[0]);
+    REQUIRE(wave);
+    CHECK(wave->bank == waves);
+    const auto data = waves->read_wave_data(wave->index);
+    REQUIRE(data.size() == 8);
+    CHECK(data[0] == 24); // wave 3 starts at byte 24 of the data segment
+
+    // A bank cut short in memory fails as one on disk does
+    const auto good = make_xwb("ArcWaves", 4);
+    osc::audio::XwbParser cut;
+    CHECK_FALSE(
+        cut.parse(std::make_shared<const std::vector<u8>>(good.begin(), good.begin() + 60)).ok());
+    fs::remove_all(folder);
+}
+
+TEST_CASE("XACT: a wave bank's header asks for no more than the bank holds", "[audio][xact]") {
+    // A bank from a mod or a map is untrusted: a length past its end is refused
+    // before anything is allocated for it.
+    const auto good = make_xwb("BadWaves", 2);
+    const auto patch = [](std::vector<u8>& b, size_t at, u32 v) {
+        for (size_t i = 0; i < 4; ++i) b[at + i] = static_cast<u8>(v >> (8 * i));
+    };
+    const auto parse = [](const std::vector<u8>& b, osc::audio::XwbParser& p) {
+        return p.parse(std::make_shared<const std::vector<u8>>(b)).ok();
+    };
+    SECTION("a segment past the bank's end refuses the bank") {
+        for (const size_t length_at : {12 + 4, 12 + 8 + 4}) { // BANKDATA's, ENTRYMETADATA's
+            auto bytes = good;
+            patch(bytes, length_at, 0xFFFFFFF0u);
+            osc::audio::XwbParser p;
+            INFO("segment length at " << length_at);
+            CHECK_FALSE(parse(bytes, p));
+        }
+    }
+    SECTION("a wave past it plays nothing, and the others still play") {
+        auto bytes = good;
+        const size_t entry0 = 52 + 96;          // the entries follow 96 bytes of bank data
+        patch(bytes, entry0 + 12, 0x7FFFFFFFu); // its play length
+        osc::audio::XwbParser p;
+        REQUIRE(parse(bytes, p));
+        CHECK(p.read_wave_data(0).empty());
+        CHECK(p.read_wave_data(1).size() == 8);
+    }
 }
 
 TEST_CASE("XACT: a damaged wave bank fails to load", "[audio][xact]") {

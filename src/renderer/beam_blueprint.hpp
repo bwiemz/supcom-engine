@@ -9,8 +9,8 @@
 
 struct lua_State;
 
-namespace osc::vfs {
-class VirtualFileSystem;
+namespace osc::blueprints {
+class BlueprintStore;
 }
 
 namespace osc::renderer {
@@ -31,16 +31,15 @@ struct BeamBlueprintData {
     i32 blendmode = 3;                          ///< particle.fx's TBeam suffix (3: ADD)
 };
 
-/// Beam blueprints by VFS path, read as EmitterBlueprintCache reads
-/// emitters: the file is run in a Lua state with BeamBlueprint capturing
-/// its table.
+/// Beam blueprints by the name an effect gives, read as
+/// EmitterBlueprintCache reads emitters: from the registered blueprint.
 class BeamBlueprintCache {
 public:
-    void set_vfs(const vfs::VirtualFileSystem* vfs) { vfs_ = vfs; }
+    /// The registered blueprints it reads (EmitterBlueprintCache's).
+    void set_blueprints(const blueprints::BlueprintStore* store) { store_ = store; }
 
-    /// The beam blueprint at `path`, loaded on first use; null if it isn't
-    /// one (an emitter's, say) or can't be read. A failed path is
-    /// remembered.
+    /// The beam blueprint registered as `path`, read on first use; null if
+    /// none is (an emitter's, say). A miss is remembered.
     const BeamBlueprintData* get(const std::string& path, lua_State* L);
 
     void clear() {
@@ -49,9 +48,7 @@ public:
     }
 
 private:
-    bool load(const std::string& path, lua_State* L, BeamBlueprintData& out) const;
-
-    const vfs::VirtualFileSystem* vfs_ = nullptr;
+    const blueprints::BlueprintStore* store_ = nullptr;
     std::unordered_map<std::string, BeamBlueprintData> cache_;
     std::unordered_set<std::string> failed_;
 };

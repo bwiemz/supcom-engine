@@ -17,6 +17,7 @@
 #include "map/terrain.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/lua_bytes.hpp"
+#include "sim/lua_profile.hpp"
 #include "sim/projectile.hpp"
 #include "sim/prop.hpp"
 #include "sim/sca_parser.hpp"
@@ -2404,6 +2405,36 @@ TEST_CASE("The sim's beat is profiled as Sim::tick", "[tick-phases][beats]") {
     profiler.end_frame();
     profiler.set_enabled(false);
     CHECK(us > 0.0);
+}
+
+TEST_CASE("The Profiler's zones alone leave the sim's Lua unsampled", "[tick-phases][profile]") {
+    // The render benchmark turns the Profiler on for its zones. The Lua
+    // profile's hook runs on every Lua call and return, so only --profile
+    // (lua_profile::set_enabled) attaches it: to the sim's state as it ticks,
+    // and to each thread as it resumes.
+    Phases w;
+    REQUIRE(w.run("ForkThread(function()"
+                  "  while true do"
+                  "    local n = 0 for i = 1, 5000 do n = n + i end"
+                  "    WaitTicks(1)"
+                  "  end"
+                  " end)"));
+    auto& profiler = osc::Profiler::instance();
+    profiler.set_enabled(true);
+    profiler.begin_frame();
+    const uint64_t before = osc::sim::lua_profile::total();
+    w.sim.tick();
+    CHECK(lua_gethook(w.state.raw()) == nullptr);
+    CHECK(osc::sim::lua_profile::total() == before);
+
+    osc::sim::lua_profile::set_enabled(true);
+    w.sim.tick();
+    osc::sim::lua_profile::set_enabled(false);
+    profiler.end_frame();
+    profiler.set_enabled(false);
+    CHECK(lua_gethook(w.state.raw()) != nullptr);
+    // the thread's 5,000 turns: samples, one per lua_profile::kInstructions
+    CHECK(osc::sim::lua_profile::total() > before);
 }
 
 TEST_CASE("Two beats in a frame give the user two Sync tables", "[tick-phases][beats]") {

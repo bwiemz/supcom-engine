@@ -194,6 +194,9 @@ u32 parse_ticks_arg(int argc, char* argv[]);
 std::string parse_map_arg(int argc, char* argv[]);
 /// The test mode flag on the command line, if any.
 const char* test_mode_flag(int argc, char* argv[]);
+/// The mods --check-mods names: the arguments after it that are neither
+/// options nor an option's value.
+std::vector<std::string> check_mods_names(int argc, char* argv[]);
 /// An option that takes a value given last, with none after it, or null.
 /// parse_args and parse_options refuse such a command line, naming it.
 const char* option_without_value(int argc, char* argv[]);

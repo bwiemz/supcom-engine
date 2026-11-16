@@ -109,3 +109,35 @@ TEST_CASE("push_blueprints pushes the table keyed by lowercase id", "[blueprints
     CHECK(lua_istable(b.L, -1));
     lua_settop(b.L, 0);
 }
+
+TEST_CASE("find_effect finds an effect blueprint as Moho's STR_InitFilename names it",
+          "[blueprints]") {
+    Blueprints b;
+    // Blueprints.lua's id for an effect: its Source, lowercase.
+    b.run("return { BlueprintId = '/effects/emitters/flash_01_emit.bp' }");
+    b.store.register_blueprint(b.L, BlueprintType::Emitter, lua_gettop(b.L));
+    b.run("return { BlueprintId = '/effects/emitters/ray_01_beam.bp' }");
+    b.store.register_blueprint(b.L, BlueprintType::Beam, lua_gettop(b.L));
+    lua_settop(b.L, 0);
+
+    const auto* flash = b.store.find("/effects/emitters/flash_01_emit.bp");
+    REQUIRE(flash);
+    // In any case, with either slash.
+    CHECK(b.store.find_effect("/effects/emitters/flash_01_emit.bp", BlueprintType::Emitter) ==
+          flash);
+    CHECK(b.store.find_effect("/Effects/Emitters/FLASH_01_emit.bp", BlueprintType::Emitter) ==
+          flash);
+    CHECK(b.store.find_effect("\\effects\\emitters\\flash_01_emit.bp", BlueprintType::Emitter) ==
+          flash);
+    // Among that kind alone: Moho looks an emitter up among the emitters.
+    CHECK(b.store.find_effect("/effects/emitters/flash_01_emit.bp", BlueprintType::Beam) ==
+          nullptr);
+    CHECK(b.store.find_effect("/effects/emitters/ray_01_beam.bp", BlueprintType::Beam) != nullptr);
+    CHECK(b.store.find_effect("/effects/emitters/ray_01_beam.bp", BlueprintType::Emitter) ==
+          nullptr);
+    // Nothing for a name none is registered under, nor for a unit's id.
+    CHECK(b.store.find_effect("/effects/emitters/missing_emit.bp", BlueprintType::Emitter) ==
+          nullptr);
+    CHECK(b.store.find_effect("xea3204", BlueprintType::Emitter) == nullptr);
+    CHECK(b.store.find_effect("", BlueprintType::Emitter) == nullptr);
+}

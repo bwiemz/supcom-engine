@@ -15,6 +15,10 @@
 #include <unordered_set>
 #include <vector>
 
+namespace osc::vfs {
+class VirtualFileSystem;
+}
+
 namespace osc::audio {
 
 namespace xact {
@@ -51,7 +55,10 @@ constexpr SoundHandle INVALID_SOUND = 0;
 class SoundManager {
 public:
     /// `output`: open an audio device (false for tests and headless runs).
-    explicit SoundManager(const fs::path& sounds_dir, bool output = true);
+    /// There are no banks until load_banks.
+    explicit SoundManager(bool output = true);
+    /// The same, with `vfs`'s banks loaded at once.
+    SoundManager(const vfs::VirtualFileSystem& vfs, bool output);
     ~SoundManager();
 
     SoundManager(const SoundManager&) = delete;
@@ -62,17 +69,25 @@ public:
     /// Whether FA's sound data was found.
     bool has_data() const { return registry_ != nullptr; }
 
-    /// FA's banks in the sounds directory, or nullptr when there is none.
+    /// The banks `vfs` holds in /sounds, as Moho's CUserSoundManager makes
+    /// its engine from "/sounds" (and its global settings from
+    /// /sounds/SupCom.xgs): once, after the init file has mounted the VFS,
+    /// so a mod's or a map's sounds folder mounted there plays with FA's.
+    /// `vfs` must outlive this manager (the voice banks load from it later).
+    void load_banks(const vfs::VirtualFileSystem& vfs);
+
+    /// The banks, or nullptr when there are none.
     xact::BankRegistry* registry() { return registry_.get(); }
 
-    /// Load the voice banks of language `la` (sounds/Voice/<la> and its
-    /// tutorials, found in any case): EVA, the campaign's and briefings' VO,
-    /// the movies' voices. Moho's AudioSetLanguage makes its VO engines from
-    /// the same directories; retail's Localization.lua calls it in every
-    /// state at start. The first language loaded stays (its voices may be
-    /// playing); false when `la` has no voice banks or another is loaded.
+    /// Load the voice banks of language `la` (/sounds/voice/<la> and its
+    /// tutorials): EVA, the campaign's and briefings' VO, the movies'
+    /// voices. Moho's AudioSetLanguage makes its VO engines from the same
+    /// folders; retail's Localization.lua calls it in every state at start.
+    /// The first language loaded stays (its voices may be playing); false
+    /// when `la` has no voice banks or another is loaded.
     bool set_voice_language(std::string_view la);
-    /// Whether FA's data has voice banks for `la` (HasLocalizedVO).
+    /// Whether the VFS has the folder /sounds/voice/<la> (HasLocalizedVO,
+    /// Moho's func_GetVoiceDir).
     bool has_voice_language(std::string_view la) const;
 
     /// Play cue `cue` of sound bank `bank`: 2D, or at `pos` in the world.
@@ -270,7 +285,7 @@ private:
     void apply(CueInstance& inst);
     u32 pick_wave(const xact::PlayEvent& ev);
 
-    fs::path sounds_dir_;
+    const vfs::VirtualFileSystem* vfs_ = nullptr; ///< load_banks'
     std::string voice_language_; ///< lower case; empty until set_voice_language
     bool output_ = false;
     bool sim_clocked_ = false;
@@ -308,6 +323,7 @@ private:
     u32 dedupe_beat_ = 0xFFFFFFFF;
     std::vector<std::pair<std::string, std::string>> dedupe_; ///< this beat's one-shots
     std::unordered_set<sim::EntityId> nowhere_warned_;
+    std::unordered_set<std::string> unresolved_warned_; ///< "bank/cue", lower case
 
     struct VariationState {
         u32 last = 0xFFFFFFFF;

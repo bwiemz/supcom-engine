@@ -638,15 +638,20 @@ std::optional<int> IntegrationModes::before_boot(int argc, char* argv[]) {
     return std::nullopt;
 }
 
-std::optional<int> IntegrationModes::before_init(const lua::InitConfig& config) {
-    if (has("--audio-data-test")) {
-        osc::test::run_audio_data_test(config.fa_path / "sounds");
-        return finish_test_run("audio-data-test");
-    }
+std::optional<int> IntegrationModes::before_init(const lua::InitConfig& /*config*/) {
     return std::nullopt;
 }
 
 std::optional<int> IntegrationModes::front_end(Engine& e) {
+    if (has("--audio-data-test")) {
+        if (!e.map_path.empty()) {
+            spdlog::error("--audio-data-test runs from the no-map front-end boot; omit --map");
+            return 1;
+        }
+        // The banks the engine loaded from the VFS the init file mounted
+        osc::test::run_audio_data_test(e.sound);
+        return finish_test_run("audio-data-test");
+    }
     if (has("--movie-test")) {
         if (!e.map_path.empty()) {
             spdlog::error("--movie-test runs from the no-map front-end boot; omit --map");
