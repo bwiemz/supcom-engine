@@ -228,8 +228,8 @@ std::vector<std::string> set_keys(lua_State* L, int t, const char* key) {
 }
 
 /// The environment a mod's .bp runs in: a constructor records each blueprint
-/// the file makes in `found` ({kind, bp}), the rest is the state's globals,
-/// as a blueprint's file sees them in the game. FAF's .bp files may set a
+/// the file makes in `found` ({kind, bp}), the rest is kSafeGlobals' allowlist
+/// (in the game a blueprint's file sees all the globals). FAF's .bp files may set a
 /// function over all blueprints (SetModBlueprintFunction): kept out.
 constexpr const char* kBlueprintEnv = R"lua(
 return function(found, globals)
@@ -243,6 +243,30 @@ return function(found, globals)
     end
     env.SetModBlueprintFunction = function(f) return f end
     return setmetatable(env, { __index = globals })
+end
+)lua";
+
+/// What a mod's blueprint may reach besides its constructors: an allowlist,
+/// not the state's globals. A player may check a mod before trusting it, so
+/// it gets no file, library or environment access: no io, os, debug, require,
+/// dofile, loadfile, loadstring or getfenv, whose chunks or answers lead back
+/// to the globals. The libraries are copies, so a mod can't change the
+/// checker's own. print is left out too: the report is the checker's stdout.
+constexpr const char* kSafeGlobals = R"lua(
+return function(globals)
+    local safe = {}
+    for _, name in ipairs({ 'math', 'string', 'table' }) do
+        local copy = {}
+        for k, v in pairs(rawget(globals, name) or {}) do copy[k] = v end
+        safe[name] = copy
+    end
+    for _, name in ipairs({ 'Sound', 'LOG', 'WARN', 'SPEW', 'LOC', 'LOCF', 'ipairs', 'pairs',
+                            'next', 'type', 'tostring', 'tonumber', 'unpack', 'assert', 'error',
+                            'pcall', 'rawget', 'rawequal', 'getmetatable', 'setmetatable',
+                            '_VERSION' }) do
+        safe[name] = rawget(globals, name)
+    end
+    return safe
 end
 )lua";
 
@@ -281,10 +305,13 @@ public:
         if (auto ran = lua::run_system_scripts(state_, vfs); !ran)
             spdlog::warn("check-mods: {}", ran.error().message);
         // A player may check a mod before trusting it, and the checker runs
-        // its mod_info.lua and blueprints: they get no file access here
-        // (the game's scripts reach the data through the VFS, never io).
+        // its mod_info.lua (in a table of defaults, no globals) and its
+        // blueprints (in kSafeGlobals' allowlist). As a second fence, the
+        // checker's own globals lose what reads, writes or runs files: its
+        // system scripts are loaded, and the rest reach the data through the
+        // VFS.
         lua_State* L = state_.raw();
-        for (const char* name : {"io", "dofile", "loadfile"}) {
+        for (const char* name : {"io", "os", "dofile", "loadfile", "require", "loadlib"}) {
             lua_pushstring(L, name);
             lua_pushnil(L);
             lua_rawset(L, LUA_GLOBALSINDEX);
@@ -294,6 +321,7 @@ public:
         if (dependencies_ != LUA_NOREF) luaL_unref(state_.raw(), LUA_REGISTRYINDEX, dependencies_);
         if (blueprint_env_ != LUA_NOREF)
             luaL_unref(state_.raw(), LUA_REGISTRYINDEX, blueprint_env_);
+        if (safe_globals_ != LUA_NOREF) luaL_unref(state_.raw(), LUA_REGISTRYINDEX, safe_globals_);
     }
     Checker(const Checker&) = delete;
     Checker& operator=(const Checker&) = delete;
@@ -500,6 +528,7 @@ private:
     int dependencies_ = LUA_NOREF; ///< the data's GetDependencies
     bool dependencies_loaded_ = false;
     int blueprint_env_ = LUA_NOREF; ///< kBlueprintEnv's maker
+    int safe_globals_ = LUA_NOREF;  ///< kSafeGlobals' allowlist
 
     static void add(ModReport& r, Severity severity, const char* check, const std::string& file,
                     int line, std::string message) {
@@ -804,9 +833,24 @@ private:
             }
             blueprint_env_ = luaL_ref(L, LUA_REGISTRYINDEX);
         }
+        if (safe_globals_ == LUA_NOREF) {
+            if (luaL_loadbuffer(L, kSafeGlobals, std::char_traits<char>::length(kSafeGlobals),
+                                "=check-mods") != 0 ||
+                lua_pcall(L, 0, 1, 0) != 0) {
+                spdlog::error("check-mods: {}", lua_isstring(L, -1) ? lua_tostring(L, -1) : "");
+                lua_pop(L, 1);
+                return false;
+            }
+            lua_pushvalue(L, LUA_GLOBALSINDEX);
+            if (lua_pcall(L, 1, 1, 0) != 0 || !lua_istable(L, -1)) {
+                lua_pop(L, 1);
+                return false;
+            }
+            safe_globals_ = luaL_ref(L, LUA_REGISTRYINDEX);
+        }
         lua_rawgeti(L, LUA_REGISTRYINDEX, blueprint_env_);
         lua_pushvalue(L, found);
-        lua_pushvalue(L, LUA_GLOBALSINDEX);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, safe_globals_);
         if (lua_pcall(L, 2, 1, 0) != 0 || !lua_istable(L, -1)) {
             lua_pop(L, 1);
             return false;

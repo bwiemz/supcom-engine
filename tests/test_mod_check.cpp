@@ -274,18 +274,37 @@ TEST_CASE("check-mods: hooks", "[mods][check-mods]") {
 }
 
 TEST_CASE("check-mods: a mod's code runs with no file access", "[mods][check-mods]") {
+    // Its blueprints run in an allowlist: every way to a file, a library or
+    // the checker's globals fails, and nothing is written.
     Game game;
     const std::filesystem::path out = game.dir.path() / "written.txt";
+    const std::string path = out.generic_string();
     write(game.dir.path(), "mods/sneaky/mod_info.lua", "name = 'Sneaky'\nuid = 'sneaky'\n");
-    write(game.dir.path(), "mods/sneaky/units/w/w_unit.bp",
-          "local f = io.open('" + out.generic_string() +
-              "', 'w')\nf:write('x')\nf:close()\nUnitBlueprint {}\n");
-    write(game.dir.path(), "mods/sneaky/units/d/d_unit.bp",
-          "dofile('" + out.generic_string() + "')\nUnitBlueprint {}\n");
+    const std::vector<std::string> attempts = {
+        "io.open('" + path + "', 'w'):write('x')",
+        "os.execute('echo x > " + path + "')",
+        "require('" + path + "')",
+        "dofile('" + path + "')",
+        "loadstring('return io')().open('" + path + "', 'w')",
+        "getfenv(0).io.open('" + path + "', 'w')",
+        "debug.getinfo(1)",
+        "print('not in the report')",
+    };
+    for (size_t i = 0; i < attempts.size(); ++i) {
+        write(game.dir.path(),
+              "mods/sneaky/units/a" + std::to_string(i) + "/a" + std::to_string(i) + "_unit.bp",
+              attempts[i] + "\nUnitBlueprint {}\n");
+    }
+    // What a blueprint may use still works
+    write(game.dir.path(), "mods/sneaky/units/ok/ok_unit.bp",
+          "local n = math.floor(2.5) + table.getn({1}) + string.len('ab')\n"
+          "UnitBlueprint { Value = tostring(n) }\n");
     osc::vfs::VirtualFileSystem vfs;
     vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(game.dir.path()));
     const Report report = check_mods(vfs, {"sneaky"});
-    CHECK(of(mod_at(report, "/mods/sneaky"), "blueprint_run").size() == 2);
+    const auto ran = of(mod_at(report, "/mods/sneaky"), "blueprint_run");
+    CHECK(ran.size() == attempts.size());
+    for (const Finding& f : ran) CHECK_FALSE(has(f.file, "ok_unit"));
     CHECK_FALSE(std::filesystem::exists(out));
 }
 
