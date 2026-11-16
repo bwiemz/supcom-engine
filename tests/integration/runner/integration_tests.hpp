@@ -52,6 +52,7 @@ void test_platoon(TestContext& ctx);
 void test_repair(TestContext& ctx);
 void test_upgrade(TestContext& ctx);
 void test_capture(TestContext& ctx);
+void test_capture_team(TestContext& ctx);
 void test_path(TestContext& ctx);
 void test_toggle(TestContext& ctx);
 void test_enhance(TestContext& ctx);

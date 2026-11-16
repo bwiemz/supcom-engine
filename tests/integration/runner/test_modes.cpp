@@ -117,6 +117,7 @@ constexpr Mode kModesBefore[] = {
     {"--repair-test", test_repair, false},
     {"--upgrade-test", test_upgrade, false},
     {"--capture-test", test_capture, false},
+    {"--capture-team-test", test_capture_team, false},
     {"--path-test", test_path, false},
     {"--toggle-test", test_toggle, false},
     {"--enhance-test", test_enhance, false},
@@ -373,6 +374,7 @@ void IntegrationModes::print_usage() const {
               << "  --repair-test      Build pgen, damage it, repair it, verify health\n"
               << "  --upgrade-test     Build T1 mex, upgrade to T2, verify completion\n"
               << "  --capture-test     Build enemy pgen, capture it, verify ownership\n"
+              << "  --capture-team-test Engineers capture a tank together, as Moho's task\n"
               << "  --path-test        A* pathfinding around obstacles + terrain height\n"
               << "  --toggle-test      Script bits, toggle caps, and dive command\n"
               << "  --enhance-test     ACU enhancement (AdvancedEngineering)\n"

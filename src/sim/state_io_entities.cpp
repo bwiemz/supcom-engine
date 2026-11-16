@@ -1228,6 +1228,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(ec.silo_energy);
     w.f64v(ec.dock_repair_mass);
     w.f64v(ec.dock_repair_energy);
+    w.f64v(ec.capture_mass);
     w.f64v(ec.capture_energy);
     for (const EconRequest* q : {&ec.silo_request, &ec.dock_repair_request, &ec.capture_request}) {
         save(w, *q);
@@ -1261,10 +1262,10 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(u.repair_cost_mass_);
     w.f64v(u.repair_cost_energy_);
     w.id(u.capture_target_id_);
-    w.f64v(u.capture_time_);
-    w.f64v(u.capture_energy_cost_);
+    w.i32v(u.capture_ticks_);
+    w.i32v(u.capture_progress_);
     w.b(u.capturable_);
-    w.b(u.being_captured_);
+    w.i32v(u.captor_count_);
     w.b(u.paused_);
     enum8(w, u.motion_horz_);
     enum8(w, u.motion_turn_);
@@ -1663,6 +1664,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     ec.silo_energy = r.f64v();
     ec.dock_repair_mass = r.f64v();
     ec.dock_repair_energy = r.f64v();
+    ec.capture_mass = r.f64v();
     ec.capture_energy = r.f64v();
     for (EconRequest* q : {&ec.silo_request, &ec.dock_repair_request, &ec.capture_request}) {
         load(r, *q);
@@ -1699,10 +1701,10 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.repair_cost_mass_ = r.f64v();
     u.repair_cost_energy_ = r.f64v();
     u.capture_target_id_ = r.id();
-    u.capture_time_ = r.f64v();
-    u.capture_energy_cost_ = r.f64v();
+    u.capture_ticks_ = r.i32v();
+    u.capture_progress_ = r.i32v();
     u.capturable_ = r.b();
-    u.being_captured_ = r.b();
+    u.captor_count_ = r.i32v();
     u.paused_ = r.b();
     u.motion_horz_ = enum8<Unit::MotionHorz>(r);
     u.motion_turn_ = enum8<Unit::MotionTurn>(r);

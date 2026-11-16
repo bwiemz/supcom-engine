@@ -332,6 +332,12 @@ void mix_unit_work(Fnv& units, const Unit& u) {
     }
     units.mix(u.repair_target_id());
     units.mix(u.capture_target_id());
+    // A unit being captured: how many capture it, its captors' pace (only
+    // then, so other units hash as before)
+    if (u.captor_count() != 0) {
+        units.mix(0x43415054u); // "CAPT"
+        units.mix(static_cast<u64>(static_cast<u32>(u.captor_count())));
+    }
     units.mix_f32(u.work_progress());
     units.mix(static_cast<u64>(static_cast<u32>(u.nuke_silo_ammo())));
     units.mix(static_cast<u64>(static_cast<u32>(u.tactical_silo_ammo())));

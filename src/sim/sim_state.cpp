@@ -233,7 +233,7 @@ void SimState::on_destroy(Entity& entity) {
             add_death_event(pos.x, pos.y, pos.z, scale, unit.army());
         }
         if (unit.is_capturing()) {
-            unit.stop_capturing(L_, entity_registry_, true);
+            unit.stop_capturing(L_, entity_registry_);
         }
     }
     notify_script_destroy(entity);

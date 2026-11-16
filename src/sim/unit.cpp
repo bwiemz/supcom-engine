@@ -839,7 +839,7 @@ bool Unit::end_gone_tasks(SimContext& ctx) {
         head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
     }
     if (is_capturing() && !(head && head->type == CommandType::Capture)) {
-        stop_capturing(ctx.L, ctx.registry, true);
+        stop_capturing(ctx.L, ctx.registry);
         if (destroyed() || !in_registry()) {
             return false;
         }
@@ -2334,23 +2334,51 @@ void Unit::stop_repairing(lua_State* L, EntityRegistry& registry) {
     }
 }
 
-bool Unit::start_capture(const UnitCommand& cmd, EntityRegistry& registry,
-                         lua_State* L) {
-    auto* target = registry.find(cmd.target_id);
-    if (!target || target->destroyed() || !target->is_unit()) return false;
-    auto* target_unit = static_cast<Unit*>(target);
+namespace {
 
-    // Don't capture own or allied units, units being built, or uncapturable
-    if (target_unit->army() == army()) return false;
-    if (target_unit->is_being_built()) return false;
-    if (!target_unit->capturable()) return false;
-    if (build_rate_ <= 0) return false;
-
-    // Read BuildTime and BuildCostEnergy from target's blueprint
-    f64 build_time = 0;
-    f64 build_cost_energy = 0;
-
-    if (blueprints::push_blueprint(L, target_unit->unit_id())) {
+/// One answer to captor:GetCaptureCosts(target), as Moho's CUnitCaptureTask
+/// takes it (RunScriptMultiRet): exactly three values, seconds, energy and
+/// mass, as floats (Moho's Lua numbers), else none. Retail's Unit answers
+/// half the target's BuildTime over the captor's build rate, times its
+/// CaptureTimeMultiplier, and the target's BuildCostEnergy. A unit with no
+/// such method (no script: the engine's tests) answers retail's formula.
+std::optional<std::array<f32, 3>> ask_capture_costs(lua_State* L, const Unit& captor,
+                                                    const Unit& target) {
+    const int top = lua_gettop(L);
+    if (captor.lua_table_ref() >= 0 && target.lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, captor.lua_table_ref());
+        const int self = lua_gettop(L);
+        lua_pushstring(L, "GetCaptureCosts");
+        lua_gettable(L, self);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, self);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, target.lua_table_ref());
+            if (lua_pcall(L, 2, LUA_MULTRET, 0) != 0) {
+                log_script_warning(&captor, "GetCaptureCosts", lua_tostring(L, -1));
+                lua_settop(L, top);
+                return std::nullopt;
+            }
+            // A number past a float's range is infinite, as Moho's float Lua has it
+            const auto number = [&](int i) {
+                const f64 v = lua_tonumber(L, i);
+                constexpr f64 kMax = std::numeric_limits<f32>::max();
+                return v > kMax    ? std::numeric_limits<f32>::infinity()
+                       : v < -kMax ? -std::numeric_limits<f32>::infinity()
+                                   : static_cast<f32>(v);
+            };
+            std::optional<std::array<f32, 3>> costs;
+            if (lua_gettop(L) - self == 3) {
+                costs = std::array<f32, 3>{number(self + 1), number(self + 2), number(self + 3)};
+            }
+            lua_settop(L, top);
+            return costs;
+        }
+        lua_settop(L, top);
+    }
+    if (captor.build_rate() <= 0) return std::nullopt;
+    f64 build_time = 10.0;
+    f64 energy = 100.0;
+    if (blueprints::push_blueprint(L, target.unit_id())) {
         lua_pushstring(L, "Economy");
         lua_gettable(L, -2);
         if (lua_istable(L, -1)) {
@@ -2358,292 +2386,183 @@ bool Unit::start_capture(const UnitCommand& cmd, EntityRegistry& registry,
             lua_gettable(L, -2);
             if (lua_isnumber(L, -1)) build_time = lua_tonumber(L, -1);
             lua_pop(L, 1);
-
             lua_pushstring(L, "BuildCostEnergy");
             lua_gettable(L, -2);
-            if (lua_isnumber(L, -1)) build_cost_energy = lua_tonumber(L, -1);
+            if (lua_isnumber(L, -1)) energy = lua_tonumber(L, -1);
             lua_pop(L, 1);
         }
-        lua_pop(L, 2); // Economy, the blueprint
     }
+    lua_settop(L, top);
+    return std::array<f32, 3>{static_cast<f32>(build_time / captor.build_rate() / 2.0),
+                              static_cast<f32>(energy), 0.0f};
+}
 
-    if (build_time <= 0) return false;
+/// What capturing a unit takes one captor: its ticks, and the energy and
+/// mass over them.
+struct CaptureCosts {
+    i32 ticks = 0;
+    f32 energy = 0.0f;
+    f32 mass = 0.0f;
+};
 
-    // Capture time = (BuildTime / BuildRate) / 2  (FA formula: half build time)
-    capture_time_ = (build_time / static_cast<f64>(build_rate_)) / 2.0;
-    if (capture_time_ <= 0) capture_time_ = 0.01;
-    capture_energy_cost_ = build_cost_energy;
-    capture_target_id_ = cmd.target_id;
-    target_unit->set_being_captured(true);
+/// Moho's CUnitCaptureTask totals the costs as it starts: the target's
+/// answer, then each live unit attached to it (a transport's cargo among
+/// them) adds its own. Each answer's seconds count as ticks, at least one,
+/// the running total cut to whole ticks (cvttss2si) each time; the costs are
+/// at least 0. None when the target's own answer fails (the task then ends);
+/// an attached unit's failing is passed over.
+std::optional<CaptureCosts> capture_costs(lua_State* L, const Unit& captor, const Unit& target,
+                                          const EntityRegistry& registry) {
+    CaptureCosts costs;
+    bool past_range = false;
+    const auto add_ticks = [&](f32 seconds) {
+        const f32 ticks = static_cast<f32>(costs.ticks) + std::max(1.0f, seconds * 10.0f);
+        if (!(ticks < 2147483648.0f)) {
+            past_range = true;
+            return;
+        }
+        costs.ticks = static_cast<i32>(ticks);
+    };
+    const auto own = ask_capture_costs(L, captor, target);
+    if (!own) return std::nullopt;
+    add_ticks((*own)[0]);
+    costs.energy = (*own)[1];
+    costs.mass = (*own)[2];
+    // What is attached to it, then the cargo it carries (Moho's attached
+    // entities). Its own answer ran scripts: the target may be gone.
+    std::vector<EntityId> held;
+    if (const Entity* still = registry.find(target.entity_id()); still == &target) {
+        for (const auto& c : target.children()) held.push_back(c.entity_id);
+        for (const EntityId id : target.cargo_ids()) held.push_back(id);
+    }
+    for (const EntityId id : held) {
+        const Entity* e = registry.find(id);
+        if (!e || e->destroyed() || !e->is_unit() || static_cast<const Unit*>(e)->is_dying()) {
+            continue;
+        }
+        const auto more = ask_capture_costs(L, captor, static_cast<const Unit&>(*e));
+        if (!more) continue;
+        add_ticks((*more)[0]);
+        costs.energy += (*more)[1];
+        costs.mass += (*more)[2];
+    }
+    if (past_range) return std::nullopt;
+    costs.energy = std::max(costs.energy, 0.0f);
+    costs.mass = std::max(costs.mass, 0.0f);
+    return costs;
+}
+
+} // namespace
+
+bool Unit::start_capture(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L) {
+    // Its order's target, kept: the scripts below may take the order away
+    const EntityId target_id = cmd.target_id;
+    Entity* target = registry.find(target_id);
+    if (!target || !target->is_unit() || static_cast<Unit*>(target)->is_being_built()) {
+        return false;
+    }
+    const std::optional<CaptureCosts> costs =
+        capture_costs(L, *this, static_cast<const Unit&>(*target), registry);
+    if (destroyed() || !in_registry()) return false;
+    if (!costs) {
+        spdlog::warn("Failed to get valid capture costs from the target");
+        return false;
+    }
+    target = registry.find(target_id); // its scripts ran
+    if (!target || !target->is_unit()) return false;
+    auto* target_unit = static_cast<Unit*>(target);
+
+    // Its share a tick (Moho's mCaptureRate), asked from the army as the
+    // ticks go; each tick paid moves it on by the target's count of captors
+    capture_ticks_ = costs->ticks;
+    capture_progress_ = 0;
     work_progress_ = 0.0f;
-
-    economy_.capture_energy = capture_energy_cost_ / capture_time_;
+    const f32 energy_rate = costs->energy / static_cast<f32>(capture_ticks_);
+    const f32 mass_rate = costs->mass / static_cast<f32>(capture_ticks_);
+    economy_.capture_energy = energy_rate / SimState::SECONDS_PER_TICK;
+    economy_.capture_mass = mass_rate / SimState::SECONDS_PER_TICK;
     economy_.capture_request = {};
-    economy_.capture_request.ask(0.0, economy_.capture_energy * SimState::SECONDS_PER_TICK);
+    economy_.capture_request.ask(mass_rate, energy_rate);
+    capture_target_id_ = target_id;
+    ++target_unit->captor_count_;
 
-    spdlog::info("start_capture: entity #{} capturing #{} "
-                 "(BuildTime={:.0f} BuildRate={:.1f} captureTime={:.1f}s energy={:.0f})",
-                 entity_id(), cmd.target_id, build_time, build_rate_,
-                 capture_time_, capture_energy_cost_);
+    spdlog::info("start_capture: entity #{} capturing #{} ({} ticks, {:.1f} energy, {:.1f} mass; "
+                 "{} captor(s))",
+                 entity_id(), target_id, capture_ticks_, costs->energy, costs->mass,
+                 target_unit->captor_count_);
 
     {
         const Vector3 at = target->position();
         aim_builder_arms(&at, L);
     }
 
-    // Call self:OnStartCapture(target)
-    if (lua_table_ref() >= 0 && target->lua_table_ref() >= 0) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-        int self_tbl = lua_gettop(L);
-        lua_pushstring(L, "OnStartCapture");
-        lua_gettable(L, self_tbl);
-        if (lua_isfunction(L, -1)) {
-            lua_pushvalue(L, self_tbl);
-            lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
-            if (lua_pcall(L, 2, 0, 0) != 0) {
-                spdlog::warn("OnStartCapture error: {}", lua_tostring(L, -1));
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1); // self_tbl
+    // DoCallback(true): the target hears OnStartBeingCaptured, then the
+    // captor OnStartCapture (each script may end the capture, or the unit)
+    const auto going = [&] {
+        return !destroyed() && in_registry() && capture_target_id_ == target_id;
+    };
+    if (!going()) return false;
+    target = registry.find(target_id);
+    if (target && target->is_unit()) {
+        static_cast<Unit*>(target)->call_lua_method_with_entity(L, "OnStartBeingCaptured", this);
     }
-
-    // Re-validate target after pcall
-    target = registry.find(capture_target_id_);
-    if (!target || target->destroyed()) {
-        stop_capturing(L, registry, true);
-        return false;
-    }
-
-    // Call target:OnStartBeingCaptured(self)
-    if (target->lua_table_ref() >= 0 && lua_table_ref() >= 0) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
-        int target_tbl = lua_gettop(L);
-        lua_pushstring(L, "OnStartBeingCaptured");
-        lua_gettable(L, target_tbl);
-        if (lua_isfunction(L, -1)) {
-            lua_pushvalue(L, target_tbl);
-            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-            if (lua_pcall(L, 2, 0, 0) != 0) {
-                spdlog::warn("OnStartBeingCaptured error: {}",
-                             lua_tostring(L, -1));
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1); // target_tbl
-    }
-
-    // Re-validate target after pcall
-    target = registry.find(capture_target_id_);
-    if (!target || target->destroyed()) {
-        stop_capturing(L, registry, true);
-        return false;
-    }
-
-    return true;
+    if (!going()) return false;
+    call_lua_method_with_entity(L, "OnStartCapture", registry.find(target_id));
+    return going();
 }
 
-bool Unit::progress_capture(f64 dt, EntityRegistry& registry, lua_State* L,
-                             f32 efficiency) {
-    auto* target = registry.find(capture_target_id_);
-    if (!target || target->destroyed()) {
-        stop_capturing(L, registry, true);
+bool Unit::progress_capture(EntityRegistry& registry, lua_State* L, bool paid) {
+    Entity* target = registry.find(capture_target_id_);
+    if (!target || !target->is_unit()) {
+        stop_capturing(L, registry);
         return false;
     }
-
-    if (capture_time_ <= 0) {
-        stop_capturing(L, registry, true);
-        return false;
+    if (paid) {
+        capture_progress_ = std::min(
+            capture_progress_ + static_cast<const Unit*>(target)->captor_count_, capture_ticks_);
+        work_progress_ = static_cast<f32>(capture_progress_) / static_cast<f32>(capture_ticks_);
     }
+    if (capture_progress_ < capture_ticks_) return true;
 
-    f32 progress_per_tick = static_cast<f32>(dt / capture_time_) * efficiency;
-    work_progress_ = std::min(1.0f, work_progress_ + progress_per_tick);
-
-    if (work_progress_ >= 1.0f) {
-        // Capture complete
-        EntityId target_id = capture_target_id_;
-
-        // Clear being_captured on target
-        if (target->is_unit())
-            static_cast<Unit*>(target)->set_being_captured(false);
-
-        // Zero capture state BEFORE lua_pcall (re-entrancy protection)
-        capture_target_id_ = EntityId();
-        capture_time_ = 0;
-        capture_energy_cost_ = 0;
-        economy_.capture_energy = 0;
-        work_progress_ = 0.0f;
-
-        spdlog::info("capture complete: entity #{} captured #{}",
-                     entity_id(), target_id);
-
-        // Call self:OnStopCapture(target)
-        if (lua_table_ref() >= 0 && target->lua_table_ref() >= 0) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-            int self_tbl = lua_gettop(L);
-            lua_pushstring(L, "OnStopCapture");
-            lua_gettable(L, self_tbl);
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, self_tbl);
-                lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
-                if (lua_pcall(L, 2, 0, 0) != 0) {
-                    spdlog::warn("OnStopCapture error: {}",
-                                 lua_tostring(L, -1));
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1); // self_tbl
-        }
-
-        // Re-validate target
+    // TASKSTATE_Complete: the captor hears OnStopCapture, the target
+    // OnStopBeingCaptured and OnCaptured, whose script hands it over
+    // (ChangeUnitArmy makes the captor's army a new unit). Moho does nothing
+    // more; a script that doesn't leaves the unit where it was. Then the task
+    // ends: a target alive still loses its captor (the task's DoCallback).
+    const EntityId target_id = capture_target_id_;
+    spdlog::info("capture complete: entity #{} captured #{}", entity_id(), target_id);
+    call_lua_method_with_entity(L, "OnStopCapture", target);
+    for (const char* heard : {"OnStopBeingCaptured", "OnCaptured"}) {
         target = registry.find(target_id);
-        if (!target || target->destroyed()) return false;
-
-        // Call target:OnCaptured(self): the script hands the unit over
-        // (ChangeUnitArmy makes the captor's new unit). Moho does nothing
-        // more; a script that doesn't leaves the unit where it was.
-        if (target->lua_table_ref() >= 0 && lua_table_ref() >= 0) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
-            int target_tbl = lua_gettop(L);
-            lua_pushstring(L, "OnCaptured");
-            lua_gettable(L, target_tbl);
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, target_tbl);
-                lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-                if (lua_pcall(L, 2, 0, 0) != 0) {
-                    spdlog::warn("OnCaptured error: {}",
-                                 lua_tostring(L, -1));
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1); // target_tbl
+        if (target && target->is_unit()) {
+            static_cast<Unit*>(target)->call_lua_method_with_entity(L, heard, this);
         }
-
-        return false; // capture done
     }
-
-    return true; // still capturing
+    stop_capturing(L, registry);
+    return false;
 }
 
-void Unit::stop_capturing(lua_State* L, EntityRegistry& registry, bool failed) {
-    EntityId target_id = capture_target_id_;
-
-    // Zero capture state BEFORE lua_pcall (re-entrancy protection)
-    capture_target_id_ = EntityId();
-    capture_time_ = 0;
-    capture_energy_cost_ = 0;
+void Unit::stop_capturing(lua_State* L, EntityRegistry& registry) {
+    // Cleared before any script runs (one may end it again)
+    const EntityId target_id = std::exchange(capture_target_id_, EntityId());
+    capture_ticks_ = 0;
+    capture_progress_ = 0;
     economy_.capture_energy = 0;
+    economy_.capture_mass = 0;
     work_progress_ = 0.0f;
+    if (!target_id) return;
 
-    if (!target_id) {
-        return;
-    }
-
-    auto* target = registry.find(target_id);
-    if (!target || target->destroyed()) return;
-
-    // Clear being_captured on target
-    if (target->is_unit())
-        static_cast<Unit*>(target)->set_being_captured(false);
-
-    if (failed) {
-        // Call self:OnFailedCapture(target)
-        if (lua_table_ref() >= 0 && target->lua_table_ref() >= 0) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-            int self_tbl = lua_gettop(L);
-            lua_pushstring(L, "OnFailedCapture");
-            lua_gettable(L, self_tbl);
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, self_tbl);
-                lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
-                if (lua_pcall(L, 2, 0, 0) != 0) {
-                    spdlog::warn("OnFailedCapture error: {}",
-                                 lua_tostring(L, -1));
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1); // self_tbl
-        }
-
-        // Re-validate target
-        target = registry.find(target_id);
-        if (!target || target->destroyed()) return;
-
-        // Call target:OnFailedBeingCaptured(self)
-        if (target->lua_table_ref() >= 0 && lua_table_ref() >= 0) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
-            int target_tbl = lua_gettop(L);
-            lua_pushstring(L, "OnFailedBeingCaptured");
-            lua_gettable(L, target_tbl);
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, target_tbl);
-                lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-                if (lua_pcall(L, 2, 0, 0) != 0) {
-                    spdlog::warn("OnFailedBeingCaptured error: {}",
-                                 lua_tostring(L, -1));
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1); // target_tbl
-        }
-    } else {
-        // Normal stop/interrupt
-        // Call self:OnStopCapture(target)
-        if (lua_table_ref() >= 0 && target->lua_table_ref() >= 0) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-            int self_tbl = lua_gettop(L);
-            lua_pushstring(L, "OnStopCapture");
-            lua_gettable(L, self_tbl);
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, self_tbl);
-                lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
-                if (lua_pcall(L, 2, 0, 0) != 0) {
-                    spdlog::warn("OnStopCapture error: {}",
-                                 lua_tostring(L, -1));
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1); // self_tbl
-        }
-
-        // Re-validate target
-        target = registry.find(target_id);
-        if (!target || target->destroyed()) return;
-
-        // Call target:OnStopBeingCaptured(self)
-        if (target->lua_table_ref() >= 0 && lua_table_ref() >= 0) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
-            int target_tbl = lua_gettop(L);
-            lua_pushstring(L, "OnStopBeingCaptured");
-            lua_gettable(L, target_tbl);
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, target_tbl);
-                lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-                if (lua_pcall(L, 2, 0, 0) != 0) {
-                    spdlog::warn("OnStopBeingCaptured error: {}",
-                                 lua_tostring(L, -1));
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1); // target_tbl
-        }
-    }
+    // DoCallback(false): a target dead, or queued for deletion, hears
+    // nothing; one alive loses a captor (it is BeingCaptured while any are
+    // left), then hears OnFailedBeingCaptured, and the captor
+    // OnFailedCapture.
+    Entity* target = registry.find(target_id);
+    if (!target || target->destroyed() || !target->is_unit()) return;
+    auto* target_unit = static_cast<Unit*>(target);
+    if (target_unit->is_dying()) return;
+    target_unit->captor_count_ = std::max(target_unit->captor_count_ - 1, 0);
+    target_unit->call_lua_method_with_entity(L, "OnFailedBeingCaptured", this);
+    call_lua_method_with_entity(L, "OnFailedCapture", registry.find(target_id));
 }
 
 // --- Stats/telemetry system ---
