@@ -11,7 +11,6 @@ namespace oc = blueprints::occupancy;
 
 namespace {
 
-constexpr u8 kGroundCaps = oc::kLand | oc::kSeabed | oc::kSub; // the ground grid's
 constexpr u8 kLandSeabed = oc::kLand | oc::kSeabed;
 constexpr u8 kWaterSubSeabed = oc::kWater | oc::kSub | oc::kSeabed;
 constexpr f32 kNoWater = -10000.0f; // Moho's water elevation on a dry map
@@ -71,8 +70,9 @@ void OccupancyGrid::set(std::vector<u8>& cells, const OccupancyRect& r, bool occ
 }
 
 void OccupancyGrid::fill(u8 caps, const OccupancyRect& r, bool occupied) {
-    if ((caps & kGroundCaps) != 0) set(ground_, r, occupied);
-    if ((caps & oc::kWater) != 0) set(water_, r, occupied);
+    const u8 grids = grids_of(caps);
+    if ((grids & kGroundGrid) != 0) set(ground_, r, occupied);
+    if ((grids & kWaterGrid) != 0) set(water_, r, occupied);
 }
 
 u8 map_caps(const blueprints::Footprint& fp, const map::Terrain& terrain, i32 x0, i32 z0) {

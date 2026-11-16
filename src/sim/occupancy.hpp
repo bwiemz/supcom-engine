@@ -29,6 +29,10 @@ struct OccupancyRect {
 /// has its corner in, lrint(world - size / 2).
 OccupancyRect footprint_rect(const blueprints::Footprint& fp, f32 wx, f32 wz);
 
+/// The caps whose claims the ground grid holds; the water grid holds WATER's.
+constexpr u8 kGroundGridCaps =
+    blueprints::occupancy::kLand | blueprints::occupancy::kSeabed | blueprints::occupancy::kSub;
+
 /// Moho's COGrid: one bit a map cell for what stands on the ground (LAND,
 /// SEABED or SUB caps) and one for what floats (WATER). Off the map counts
 /// as occupied.
@@ -36,6 +40,16 @@ class OccupancyGrid {
 public:
     OccupancyGrid() = default;
     OccupancyGrid(u32 width, u32 height);
+
+    /// The grids a claim with `caps` writes, as fill does: kGroundGrid for
+    /// LAND, SEABED or SUB, kWaterGrid for WATER. None for a claim with
+    /// neither, such as a tree's, a rock's or a wreck's.
+    static constexpr u8 kGroundGrid = 0x01;
+    static constexpr u8 kWaterGrid = 0x02;
+    static constexpr u8 grids_of(u8 caps) {
+        return static_cast<u8>(((caps & kGroundGridCaps) != 0 ? kGroundGrid : 0) |
+                               ((caps & blueprints::occupancy::kWater) != 0 ? kWaterGrid : 0));
+    }
 
     u32 width() const { return width_; }
     u32 height() const { return height_; }

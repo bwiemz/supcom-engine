@@ -121,11 +121,19 @@ void SimState::release_ground(EntityId id) {
         occupancy_.fill(gone.caps, r, false);
         if (path_tables_) path_tables_->dirty(r);
     }
-    // What still stands on any of those cells claims them again.
+    // What still stands on any of those cells claims them again, on the
+    // grids the release cleared. Only occupy_ground and release_ground write
+    // the grids (a new map or a load starts them empty, with no claims), and
+    // each leaves every claim's cells set, so a claim on no cleared grid
+    // would only set bits already set. A tree, a rock or a wreck claims no
+    // caps: its release cleared nothing.
+    const u8 cleared = OccupancyGrid::grids_of(gone.caps);
+    if (cleared == 0) return;
     const auto overlaps = [](const OccupancyRect& a, const OccupancyRect& b) {
         return a.x0 < b.x1 && b.x0 < a.x1 && a.z0 < b.z1 && b.z0 < a.z1;
     };
     for (const auto& [other_id, other] : ground_occupants_) {
+        if ((OccupancyGrid::grids_of(other.caps) & cleared) == 0) continue;
         for (const OccupancyRect& r : other.rects) {
             const bool shared = std::any_of(gone.rects.begin(), gone.rects.end(),
                                             [&](const OccupancyRect& g) { return overlaps(g, r); });
