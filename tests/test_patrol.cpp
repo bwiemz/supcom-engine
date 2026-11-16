@@ -1485,30 +1485,108 @@ TEST_CASE("A TARGETCHASER in a FormAttack heads for the target itself",
     CHECK(a->command_queue().front().has_slot);
 }
 
-TEST_CASE("A FormAttack's unit with no weapon that can hit its target gives it up",
+TEST_CASE("A plain attack's unit with no weapon that can hit its target gives it up",
           "[attack][lua][formation]") {
-    // TaskTick's first test: no target weapon, on a FormAttack, ends the
-    // task -- unless the unit is DIRECTFIRE. A plain attack's unit carries on.
+    // CUnitAttackTargetTask::TaskTick's first test (Steam 0x5FA0C9): with no
+    // target weapon, a task whose byte +0x8D is clear ends -- the one
+    // UNITCOMMAND_Attack makes (0x5F9220 passes 0) -- unless its unit is
+    // DIRECTFIRE, or a surfacing sub under water (AI.AutoSurfaceToAttack).
     FormAttackWorld w;
-    Unit* aa = w.tank(10.0f, 10.0f, 20.0f);
-    aa->weapons().front()->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
+    Unit* plain = w.tank(10.0f, 10.0f, 20.0f);
     Unit* direct = w.tank(10.0f, 14.0f, 20.0f);
-    direct->weapons().front()->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
     direct->add_category("DIRECTFIRE");
-    Unit* plain = w.tank(10.0f, 18.0f, 20.0f);
-    plain->weapons().front()->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
+    Unit* sub = w.tank(10.0f, 18.0f, 20.0f);
+    sub->set_motion_type("RULEUMT_SurfacingSub");
+    sub->set_layer("Sub");
+    Unit* surfaced = w.tank(10.0f, 22.0f, 20.0f);
+    surfaced->set_motion_type("RULEUMT_SurfacingSub");
+    surfaced->set_layer("Water");
+    // Each has only an anti-air gun, and the target is on land.
+    for (Unit* u : {plain, direct, sub, surfaced}) {
+        u->weapons().front()->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
+    }
     const Unit* enemy = still(w.sim, 1, 60.0f, 12.0f);
-    w.global("aa", aa);
-    w.global("direct", direct);
     w.global("plain", plain);
+    w.global("direct", direct);
+    w.global("sub", sub);
+    w.global("surfaced", surfaced);
     w.global("enemy", enemy);
-    w.run("IssueFormAttack({aa}, enemy, 'Line', 90) IssueFormAttack({direct}, enemy, 'Line', 90) "
-          "IssueAttack({plain}, enemy)");
-    REQUIRE(aa->command_queue().size() == 1);
+    w.run("IssueAttack({plain, direct, sub, surfaced}, enemy)");
+    for (const Unit* u : {plain, direct, sub, surfaced}) {
+        REQUIRE(u->command_queue().size() == 1);
+    }
     w.sim.tick();
-    CHECK(aa->command_queue().empty());
+    CHECK(plain->command_queue().empty());
     CHECK(direct->command_queue().size() == 1);
-    CHECK(plain->command_queue().size() == 1);
+    CHECK(sub->command_queue().size() == 1);
+    CHECK(sub->layer() == "Sub"); // still under water: kept for that
+    CHECK(surfaced->command_queue().empty());
+}
+
+TEST_CASE("A plain attack goes on while a weapon's layers take its target", "[attack][lua]") {
+    // Moho's UnitWeapon::CanAttackTarget (Steam 0x6DC1A0) asks only the
+    // weapon's layers and target categories: a switched-off weapon still
+    // counts (unless IgnoreIfDisabled), and a cloaked target, or one not to
+    // be targeted, is still one it can hit.
+    FormAttackWorld w;
+    // A Cybran Ferret in its anti-air mode: its AA gun on, its land gun off
+    Unit* off = w.tank(10.0f, 10.0f, 20.0f);
+    off->weapons().front()->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
+    auto land_gun = std::make_unique<osc::sim::Weapon>();
+    land_gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
+    land_gun->max_range = 20.0f;
+    land_gun->fire_target_layer_caps = osc::sim::parse_layer_caps("Land");
+    land_gun->enabled = false;
+    off->add_weapon(std::move(land_gun));
+    Unit* on_cloaked = w.tank(10.0f, 14.0f, 20.0f);
+    Unit* on_hidden = w.tank(10.0f, 18.0f, 20.0f);
+    const Unit* enemy = still(w.sim, 1, 60.0f, 4.0f);
+    Unit* cloaked = still(w.sim, 1, 60.0f, 12.0f);
+    cloaked->set_cloaked(true);
+    Unit* hidden = still(w.sim, 1, 60.0f, 20.0f);
+    hidden->set_do_not_target(true);
+    w.global("off", off);
+    w.global("on_cloaked", on_cloaked);
+    w.global("on_hidden", on_hidden);
+    w.global("enemy", enemy);
+    w.global("cloaked", cloaked);
+    w.global("hidden", hidden);
+    w.run("IssueAttack({off}, enemy) IssueAttack({on_cloaked}, cloaked) "
+          "IssueAttack({on_hidden}, hidden)");
+    for (const Unit* u : {off, on_cloaked, on_hidden}) {
+        REQUIRE(u->command_queue().size() == 1);
+    }
+    for (int i = 0; i < 3; ++i) w.sim.tick();
+    for (const Unit* u : {off, on_cloaked, on_hidden}) {
+        CHECK(u->command_queue().size() == 1);
+    }
+}
+
+TEST_CASE("A FormAttack's unit with no weapon that can hit its target keeps its slot",
+          "[attack][lua][formation]") {
+    // FormAttack's task is made with +0x8D set (0x5F92A0 passes 1), so
+    // TaskTick's first test lets it carry on: the unit keeps heading for its
+    // slot about the target.
+    FormAttackWorld w;
+    Unit* a = w.tank(10.0f, 10.0f, 5.0f);
+    Unit* b = w.tank(10.0f, 14.0f, 5.0f);
+    for (Unit* u : {a, b}) {
+        u->weapons().front()->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
+    }
+    const Unit* enemy = still(w.sim, 1, 60.0f, 12.0f);
+    w.global("a", a);
+    w.global("b", b);
+    w.global("enemy", enemy);
+    w.run("IssueFormAttack({a, b}, enemy, 'Line', 90)");
+    for (int i = 0; i < 3; ++i) w.sim.tick();
+    for (const Unit* u : {a, b}) {
+        REQUIRE(u->command_queue().size() == 1);
+        const auto& cmd = u->command_queue().front();
+        CHECK(cmd.form_attack);
+        REQUIRE(cmd.has_slot);
+        CHECK(u->navigator().goal().x == enemy->position().x + cmd.slot_offset.x);
+        CHECK(u->navigator().goal().z == enemy->position().z + cmd.slot_offset.z);
+    }
 }
 
 TEST_CASE("Each Issue order goes only to units with its command", "[lua]") {

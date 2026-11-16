@@ -159,9 +159,9 @@ struct UnitCommand {
     bool formed = false;
     /// Moho's FormAttack (IssueFormAttack): the order keeps its formation,
     /// each unit heading for its slot about the target until a weapon can
-    /// reach the target; one with no weapon that can hit it gives the order
-    /// up (faf-re CAttackTargetTask::CreateRespectFormation). A plain Attack
-    /// given a formation (a platoon's) is not one.
+    /// reach the target; one with no weapon that can hit it carries on,
+    /// where a plain Attack's gives the order up (CUnitAttackTargetTask's
+    /// byte +0x8D). A plain Attack given a formation (a platoon's) is not one.
     bool form_attack = false;
     /// A formation attack's slot, as an offset from its target: the sim sets
     /// it as it lays the order out, Moho's formation centred on the target.
