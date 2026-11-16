@@ -1435,6 +1435,49 @@ constexpr OrderSpec kOrders[] = {
     {"RULEUCC_SpecialAction", sim::CommandType::SpecialAction, "SpecialAction", false},
 };
 
+/// A unit a ferry order goes to: a mobile air transport (Moho's
+/// SplitSelectionForFerryCommand)
+bool ferries(const sim::Unit& u) {
+    return u.is_mobile() && u.has_category("TRANSPORTATION") &&
+           (u.has_category("AIR") || u.has_category("AIRSTAGINGPLATFORM"));
+}
+
+/// Where a ferry route given to `ids` starts (Moho's
+/// ResolveGroupFerryAnchorOrDetectFerry): the mean of where each one's last
+/// order is, those not yet applied too (the unit it targets, else its point),
+/// or of where the unit is when it has none. None when every last order is a
+/// Ferry: the click joins the routes they run. There is no Shift test.
+std::optional<std::pair<f32, f32>> ferry_anchor(const sim::SimState& sim,
+                                                const std::vector<sim::EntityId>& ids) {
+    const auto queues = sim.queues_with_pending();
+    bool ferrying = true;
+    f32 x = 0;
+    f32 z = 0;
+    for (const sim::EntityId id : ids) {
+        const auto& u = static_cast<const sim::Unit&>(*sim.entity_registry().find(id));
+        const sim::UnitCommand* last = nullptr;
+        if (const auto it = queues.find(id); it != queues.end()) {
+            last = it->second.orders.empty() ? nullptr : &it->second.orders.back();
+        } else if (!u.command_queue().empty()) {
+            last = &u.command_queue().back();
+        }
+        sim::Vector3 at = u.position();
+        if (last) {
+            const sim::Entity* target =
+                last->target_id ? sim.entity_registry().find(last->target_id) : nullptr;
+            at = target && !target->destroyed() ? target->position() : last->target_pos;
+        }
+        ferrying = ferrying && last && last->type == sim::CommandType::Ferry;
+        x += at.x;
+        z += at.z;
+    }
+    if (ferrying) {
+        return std::nullopt;
+    }
+    const f32 inv = 1.0f / static_cast<f32>(ids.size());
+    return std::pair{x * inv, z * inv};
+}
+
 } // namespace
 
 std::optional<IssuedCommand> InputHandler::click_in_command_mode(
@@ -1517,11 +1560,17 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         }
         cmd.type = spec->type;
         out.type = spec->fa_type;
-        cmd.target_id = target_under(sim, wx, wz, spec->type);
+        // A ferry is a ground order, whatever is under the click (Moho's
+        // IssueFerryOrderForDrag)
+        const bool ferry = spec->type == sim::CommandType::Ferry;
+        cmd.target_id = ferry ? sim::EntityId() : target_under(sim, wx, wz, spec->type);
         if (spec->targets_unit && !cmd.target_id) {
             return std::nullopt;
         }
         live_selected([&](const sim::Unit& u) {
+            if (ferry) {
+                return ferries(u);
+            }
             return u.has_command_cap(spec->cap) && u.entity_id() != cmd.target_id;
         });
     } else {
@@ -1547,6 +1596,31 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     out.target_id = cmd.target_id;
     // Player-issued order: routed so a networked match broadcasts it.
     sim.set_human_input_active(true);
+    if (cmd.type == sim::CommandType::Ferry) {
+        // Moho's ferry arm (IssueFerryOrderForDrag): unless the transports
+        // all run a route already, a Ferry where they are, on the surface,
+        // starts one (where they load), and the click's is added behind it
+        // (where they unload). Each order tells OnCommandIssued, as
+        // ISSUE_Command does.
+        std::optional<IssuedCommand> start;
+        if (const auto anchor = ferry_anchor(sim, ids)) {
+            const auto [ax, az] = *anchor;
+            sim::UnitCommand from = cmd;
+            from.target_pos = {ax, surface_y(ax, az), az};
+            sim.route_player_command(ids, from, out.clear);
+            start = out;
+            start->position = from.target_pos;
+            start->units = ids;
+            out.clear = false;
+        }
+        sim.route_player_command(ids, cmd, out.clear);
+        sim.set_human_input_active(false);
+        out.units = std::move(ids);
+        if (start && mode_hooks_.issued) {
+            mode_hooks_.issued(*start);
+        }
+        return out;
+    }
     // Moho's patrol starts where the group stands, or where the last unit's queue ends with the
     // orders not yet run, unless one is patrolling (ResolveGroupMoveAnchorOrDetectPatrol). The
     // queue is the one the patrol joins: a factory's rally orders (its factory command queue),
