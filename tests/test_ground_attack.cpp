@@ -253,6 +253,9 @@ TEST_CASE("A weapon that cannot attack the ground never takes the point", "[grou
     SimState sim(g.L, nullptr);
     land(sim);
     Unit* u = tank(sim, 70.0f, 64.0f);
+    // DIRECTFIRE, so the order outlasts its having no weapon for the point
+    // (TaskTick's first test); any other unit's ends at once.
+    u->add_category("DIRECTFIRE");
     gun(*u).cannot_attack_ground = true;
     const Vector3 at{100.0f, 7.8f, 64.0f};
     u->push_command(ground_attack(at), true);
@@ -267,8 +270,13 @@ TEST_CASE("A weapon that cannot attack the ground never takes the point", "[grou
                [&] { return gun(*u).has_ground_target; });
 }
 
-TEST_CASE("A FormAttack on the ground with no weapon for it ends; a plain one waits there",
+TEST_CASE("A plain attack on the ground with no weapon for it ends; a FormAttack waits there",
           "[ground-attack]") {
+    // TaskTick's first test ends the task of UNITCOMMAND_Attack, made with
+    // byte +0x8D clear, when no weapon can hit the point and its unit isn't
+    // DIRECTFIRE; FormAttack's task, made with it set, carries on. The
+    // dispatch sends an ended ground attack round when another order
+    // follows, and drops it when none does.
     LuaGuard g;
     SimState sim(g.L, nullptr);
     land(sim);
@@ -276,10 +284,24 @@ TEST_CASE("A FormAttack on the ground with no weapon for it ends; a plain one wa
     Unit* formed = tank(sim, 70.0f, 90.0f);
     Unit* alone = tank(sim, 70.0f, 110.0f);
     Unit* platoon = tank(sim, 70.0f, 60.0f);
-    for (Unit* u : {plain, formed, alone, platoon}) gun(*u).cannot_attack_ground = true;
+    Unit* direct = tank(sim, 70.0f, 10.0f);
+    direct->add_category("DIRECTFIRE");
+    for (Unit* u : {plain, formed, alone, platoon, direct}) gun(*u).cannot_attack_ground = true;
+    // A gun switched off still counts (Moho's CanAttackTarget, without
+    // IgnoreIfDisabled)
+    Unit* off = tank(sim, 70.0f, 120.0f);
+    gun(*off).enabled = false;
     UnitCommand attack = ground_attack({100.0f, 7.8f, 40.0f});
     plain->push_command(attack, true);
     plain->push_command(move_to({70.0f, 7.8f, 20.0f}), false);
+    attack.target_pos = {100.0f, 7.8f, 110.0f};
+    alone->push_command(attack, true);
+    attack.target_pos = {100.0f, 7.8f, 10.0f};
+    direct->push_command(attack, true);
+    direct->push_command(move_to({70.0f, 7.8f, 5.0f}), false);
+    attack.target_pos = {100.0f, 7.8f, 120.0f};
+    off->push_command(attack, true);
+    off->push_command(move_to({70.0f, 7.8f, 125.0f}), false);
     // A platoon's attack carries its formation, but isn't a FormAttack.
     attack.target_pos = {100.0f, 7.8f, 60.0f};
     attack.formation = "AttackFormation";
@@ -290,19 +312,20 @@ TEST_CASE("A FormAttack on the ground with no weapon for it ends; a plain one wa
     attack.form_attack = true;
     formed->push_command(attack, true);
     formed->push_command(move_to({70.0f, 7.8f, 70.0f}), false);
-    attack.target_pos = {100.0f, 7.8f, 110.0f};
-    alone->push_command(attack, true);
     ticks(sim, *plain, 5);
-    // The plain attacks hold their queues (Moho's attack task has no end for
-    // them), a platoon's with a formation as well.
+    // The plain attacks went round behind their moves, a platoon's with a
+    // formation as well; alone, it ended.
     for (const Unit* u : {plain, platoon}) {
+        REQUIRE(u->command_queue().size() == 2);
+        CHECK(u->command_queue().front().type == CommandType::Move);
+    }
+    CHECK(alone->command_queue().empty());
+    // The FormAttack, the DIRECTFIRE unit's attack and the one with its gun
+    // off hold their queues.
+    for (const Unit* u : {formed, direct, off}) {
         REQUIRE(u->command_queue().size() == 2);
         CHECK(u->command_queue().front().type == CommandType::Attack);
     }
-    // The FormAttack went round behind the move; alone, it ended.
-    REQUIRE(formed->command_queue().size() == 2);
-    CHECK(formed->command_queue().front().type == CommandType::Move);
-    CHECK(alone->command_queue().empty());
 }
 
 TEST_CASE("A structure takes the point at once, and fires only within its range",

@@ -675,6 +675,22 @@ OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
     return OrderStep::Hold; // Still moving
 }
 
+namespace {
+
+/// An attack order its unit keeps with no weapon that can hit its target
+/// (CUnitAttackTargetTask::TaskTick's first test, which ends the task
+/// otherwise): a FormAttack's, whose task the dispatch makes with byte +0x8D
+/// set (0x5F92A0; UNITCOMMAND_Attack's, 0x5F9220, clears it), a DIRECTFIRE
+/// unit's, or a surfacing sub's under water, which surfaces to attack.
+/// Moho's sub test reads AI.AutoSurfaceToAttack too, true unless a blueprint
+/// says otherwise; no retail or FAF blueprint does, so it is not read here.
+bool keeps_attack_without_weapon(const Unit& unit, const UnitCommand& cmd) {
+    return cmd.form_attack || unit.has_category("DIRECTFIRE") ||
+           (unit.motion_type() == "RULEUMT_SurfacingSub" && unit.layer() == "Sub");
+}
+
+} // namespace
+
 OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
     // A structure or a TARGETCHASER keeps no slot in its formation (Moho's
@@ -755,13 +771,23 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     const Weapon* const weapon = target_weapon(*this, *target, ctx.sim);
     const f32 reach = weapon ? weapon->max_range : best_range;
     const bool in_reach = dist2 <= reach * reach;
-    // A FormAttack's unit with no weapon that can hit its target gives the
-    // order up, unless it is DIRECTFIRE (CUnitAttackTargetTask::TaskTick's
-    // first test, every tick: its attacker's target weapon is gone).
-    if (cmd.form_attack && !weapon && !has_category("DIRECTFIRE")) {
-        release_navigator();
-        command_queue_.pop_front();
-        return OrderStep::Next;
+    // A plain attack's unit with no weapon that can hit its target gives the
+    // order up, unless it is DIRECTFIRE or a sub under water
+    // (CUnitAttackTargetTask::TaskTick's first test, every tick: its
+    // attacker's target weapon is gone). A FormAttack's carries on. A weapon
+    // can hit it if its layers and categories take it, switched off or not:
+    // Moho's UnitWeapon::CanAttackTarget asks nothing of alliance, cloak or
+    // DoNotTarget, and passes over a disabled weapon only with
+    // IgnoreIfDisabled, which the engine doesn't read.
+    if (!keeps_attack_without_weapon(*this, cmd)) {
+        const bool can_hit = std::any_of(weapons_.begin(), weapons_.end(), [&](const auto& w) {
+            return w->attacks_on_order() && w->can_attack(*target, ctx.sim);
+        });
+        if (!can_hit) {
+            release_navigator();
+            command_queue_.pop_front();
+            return OrderStep::Next;
+        }
     }
     // A winged aircraft flies at its target and, once within a weapon's
     // reach or its EngageDistance, makes its runs: Moho's attack task hands
@@ -873,10 +899,10 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, SimContext& ctx) {
     // here the first enabled one) brings its unit within its range, and the
     // attacker's desired target is the point from then on (cmd.engaged:
     // Weapon::update_targeting hands it to every weapon that can hit it).
-    // The order never ends by itself. Only when another order follows, and
-    // that weapon has fired AttackGroundTries shots at the point, does it go
-    // to the back of the queue: Moho's command dispatch sends a ground attack
-    // round as it does a patrol.
+    // While a weapon can hit the point, the order never ends by itself. Only
+    // when another order follows, and that weapon has fired AttackGroundTries
+    // shots at the point, does it go to the back of the queue: Moho's command
+    // dispatch sends a ground attack round as it does a patrol.
     const Vector3 at = cmd.target_pos;
     const Weapon* weapon = nullptr;
     for (const auto& w : weapons_) {
@@ -886,22 +912,24 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, SimContext& ctx) {
             break;
         }
     }
-    // A formation's attack (IssueFormAttack; Moho's CreateRespectFormation)
-    // with no weapon that can hit the point ends at once, unless its unit is
-    // DIRECTFIRE (TaskTick's first test), going round like the rest when
-    // another order follows; a plain attack's unit goes to the point and
-    // stays.
+    // A plain attack with no weapon that can hit the point, switched off or
+    // not, ends at once, unless its unit is DIRECTFIRE or a sub under water
+    // (TaskTick's first test), going round like the rest when another order
+    // follows; a FormAttack's unit goes to the point and stays.
     const bool spent = weapon && cmd.engaged && weapon->ground_from_order &&
                        weapon->has_ground_target && weapon->ground_target.x == at.x &&
                        weapon->ground_target.z == at.z &&
                        static_cast<i64>(weapon->shots_at_target) >= weapon->attack_ground_tries;
-    const bool form_attack_unarmed = !weapon && cmd.form_attack && !has_category("DIRECTFIRE");
-    if (form_attack_unarmed && command_queue_.size() < 2) {
+    const bool unarmed = !keeps_attack_without_weapon(*this, cmd) &&
+                         std::none_of(weapons_.begin(), weapons_.end(), [&](const auto& w) {
+                             return w->attacks_on_order() && w->can_attack_ground(at, ctx.terrain);
+                         });
+    if (unarmed && command_queue_.size() < 2) {
         abort_move();
         command_queue_.pop_front();
         return OrderStep::Next;
     }
-    if (command_queue_.size() >= 2 && (spent || form_attack_unarmed)) {
+    if (command_queue_.size() >= 2 && (spent || unarmed)) {
         abort_move();
         auto finished = std::move(cmd); // cmd is the element pop_front destroys
         finished.begun = false;
