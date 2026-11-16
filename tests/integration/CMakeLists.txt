@@ -80,6 +80,7 @@ add_executable(osc_integration
     runner/mobile_build_start_test.cpp
     runner/assist_beam_test.cpp
     runner/build_site_join_test.cpp
+    runner/build_site_blocked_test.cpp
     runner/drown_test.cpp
     runner/assist_move_test.cpp
     runner/layer_transition_test.cpp

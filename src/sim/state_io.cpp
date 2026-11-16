@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 118; // 2: entities' wanted loops (M216b);
+constexpr u32 kVersion = 119; // 2: entities' wanted loops (M216b);
                               // 3: emitter overrides (M214d);
                               // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                               // 6: weapons' lead physics;
@@ -162,6 +162,8 @@ constexpr u32 kVersion = 118; // 2: entities' wanted loops (M216b);
                               // 117: an AssistMove's phase (Moho's CUnitAssistMoveTask)
                               // 118: the attack order whose task runs (a unit's attacker
                               //      stops as it ends)
+                              // 119: a mobile build's tries at a site units stand on, and
+                              //      units' walks off one (step_aside)
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a

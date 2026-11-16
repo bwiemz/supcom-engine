@@ -271,6 +271,9 @@ struct UnitCommand {
     i32 task_wait = 0;
     /// Where an AssistMove is (runtime state).
     AssistPhase assist_phase = AssistPhase::Start;
+    /// A mobile build: the times it has found units on its site (Moho's
+    /// CUnitMobileBuildTask::mPlacementRetryCount; runtime state).
+    i32 site_tries = 0;
     /// A sacrifice whose OnStartSacrifice has run: ticks until it gives
     /// itself (Moho's task returns 10, which retail runs 9 ticks on).
     /// Runtime state.
