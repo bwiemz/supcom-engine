@@ -124,7 +124,7 @@ App::App(int arg_count, char* arg_values[], TestModes* test_modes, lua::InitConf
       // Audio: FA's sounds for the whole run (front end, lobby, games). Tests
       // and captures run it without an output device; headless runs have no
       // frames, so their sim tick is its clock.
-      sound(config.fa_path / "sounds", !opt.headless && !opt.silent_capture),
+      sound(!opt.headless && !opt.silent_capture), // banks: once the VFS is mounted
       ui_store(ui_lua_state.raw()), ui_thread_manager(ui_lua_state.raw()),
       engine{config,
              opt.map_path,

@@ -1,5 +1,6 @@
 #include "audio_data_test.hpp"
 
+#include "audio/sound_manager.hpp"
 #include "audio/xact/bank_registry.hpp"
 #include "audio/xact/global_settings.hpp"
 #include "core/test_status.hpp"
@@ -12,12 +13,16 @@
 
 namespace osc::test {
 
-void run_audio_data_test(const std::filesystem::path& sounds_dir) {
+void run_audio_data_test(audio::SoundManager& sound) {
     spdlog::info("=== AUDIO DATA TEST (M188) ===");
-    audio::xact::BankRegistry registry(sounds_dir);
+    if (!sound.registry()) {
+        test_status::fail("[FAIL] no sound banks in /sounds");
+        return;
+    }
+    auto& registry = *sound.registry();
     const auto* gs = registry.global_settings();
     if (!gs || gs->categories.empty()) {
-        test_status::fail("[FAIL] no XACT global settings (.xgs) in {}", sounds_dir.string());
+        test_status::fail("[FAIL] no XACT global settings (/sounds/SupCom.xgs)");
         return;
     }
     spdlog::info("[PASS] global settings: {} categories, {} variables, {} RPC curves",
@@ -42,18 +47,21 @@ void run_audio_data_test(const std::filesystem::path& sounds_dir) {
     }
 
     // The voice banks (EVA, campaign and briefing VO, the movies' voices)
-    // in sounds/Voice/US and its tutorials, as AudioSetLanguage('us') loads.
-    const auto voice =
-        audio::xact::child_any_case(audio::xact::child_any_case(sounds_dir, "voice"), "us");
-    if (!voice.empty()) {
-        registry.add_directory(voice);
-        if (const auto tutorials = audio::xact::child_any_case(voice, "tutorials");
-            !tutorials.empty())
-            registry.add_directory(tutorials);
-        if (registry.sound_bank("XGG") && registry.sound_bank("X_FMV"))
+    // in /sounds/voice/us and its tutorials, as AudioSetLanguage('us') loads
+    // (retail's Localization.lua has asked for the player's language)
+    if (sound.has_voice_language("us")) {
+        if (!sound.set_voice_language("us"))
+            test_status::fail("[FAIL] the US voice banks don't load");
+        else if (registry.sound_bank("XGG") && registry.sound_bank("X_FMV"))
             spdlog::info("[PASS] the voice banks load (XGG, X_FMV)");
-        else test_status::fail("[FAIL] no XGG or X_FMV voice bank in {}", voice.string());
+        else test_status::fail("[FAIL] no XGG or X_FMV voice bank in /sounds/voice/us");
     }
+    std::string names;
+    for (const auto& name : registry.sound_bank_names()) {
+        if (!names.empty()) names += ',';
+        names += name;
+    }
+    spdlog::info("Audio data: sound banks {}", names);
 
     size_t banks = 0, cues = 0, waves = 0;
     int reported = 0;
@@ -61,7 +69,7 @@ void run_audio_data_test(const std::filesystem::path& sounds_dir) {
         if (reported++ < 25) spdlog::error("  {}", what);
         test_status::record_failure(what);
     };
-    std::set<const audio::XwbParser*> read_back; // one wave per wave bank from disk
+    std::set<const audio::XwbParser*> read_back; // one wave per wave bank, read back
 
     for (const auto& name : registry.sound_bank_names()) {
         const auto* sb = registry.sound_bank(name);
@@ -120,7 +128,7 @@ void run_audio_data_test(const std::filesystem::path& sounds_dir) {
                     if (play.new_variation_on_loop) repicking.insert(name + "/" + cue.name);
         }
     }
-    if (repicking == std::set<std::string>{"Music/Base_Building", "Music/Battle"})
+    if (repicking == std::set<std::string>{"music/Base_Building", "music/Battle"})
         spdlog::info("[PASS] Music's Base_Building and Battle pick a new track each loop");
     else
         problem("the cues that pick a new wave each loop are not Music's two: " +
@@ -128,7 +136,7 @@ void run_audio_data_test(const std::filesystem::path& sounds_dir) {
     if (reported > 25) spdlog::error("  ... {} more", reported - 25);
     spdlog::info("Audio data: {} sound banks, {} cues, {} wave references ({} wave banks read back)",
                  banks, cues, waves, read_back.size());
-    if (banks == 0) test_status::fail("[FAIL] no sound banks in {}", sounds_dir.string());
+    if (banks == 0) test_status::fail("[FAIL] no sound banks in /sounds");
     else if (reported == 0) spdlog::info("[PASS] every cue resolves to playable waves");
 }
 

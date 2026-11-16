@@ -41,6 +41,12 @@ public:
     /// Get file info from the VFS.
     std::optional<FileInfo> get_file_info(std::string_view path) const;
 
+    /// The file on disk that read_file(path) reads: the first mount that
+    /// holds `path` decides, as Moho's CVFSImpl::FindFile resolves a path.
+    /// nullopt when no mount holds it, or when the first that does is an
+    /// archive (whose file only read_file can read).
+    std::optional<std::filesystem::path> disk_path(std::string_view path) const;
+
     /// Number of active mounts.
     size_t mount_count() const { return mounts_.size(); }
 

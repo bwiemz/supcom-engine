@@ -635,6 +635,16 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
+    # A mod's sounds folder mounted at /sounds by the init file, as FAF's
+    # init_faf.lua mounts each mod's: its bank loads with FA's, and its cue
+    # resolves (Moho lists /sounds through the VFS).
+    add_test(NAME data.mod_sounds
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/mod_sounds.py
+                     $<TARGET_FILE:osc_integration>)
+    set_tests_properties(data.mod_sounds PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
 
     # M218c: retail's LAN lobby (lobby.lua) from hosting to a game, by two
     # processes: one hosts, one joins, both ready, the host presses Launch,
