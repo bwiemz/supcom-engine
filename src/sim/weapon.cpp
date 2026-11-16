@@ -989,16 +989,18 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         target_held = false;
         return;
     }
+    // An idle aircraft's weapon with AutoInitiateAttackCommand makes the enemy it found its unit's
+    // attack order, whether or not it had it already: Moho's CAcquireTargetTask::Execute (Steam
+    // 0x5DF7E0) issues the order after each such search while CheckAutoInitiate passes. So a
+    // weapon that kept its pick through a move attacks it once the move ends.
+    if (auto_initiate_attack_command && owner.is_mobile() && owner.auto_initiate_allowed(registry))
+        owner.request_auto_attack(best_id);
     if (best_id == target_entity_id) {
         return;
     }
     target_entity_id = best_id;
     retarget_misses = 0;
     target_held = false;
-    // An idle aircraft's weapon with AutoInitiateAttackCommand makes the pick
-    // its unit's attack order (Moho's CAcquireTargetTask, CheckAutoInitiate).
-    if (auto_initiate_attack_command && owner.is_mobile() && owner.auto_initiate_allowed(registry))
-        owner.request_auto_attack(best_id);
     if (Entity* target = registry.find(best_id); target && target->is_projectile())
         static_cast<Projectile&>(*target).shooters.emplace_back(owner.entity_id(), weapon_index);
 }

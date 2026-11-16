@@ -877,13 +877,14 @@ public:
     bool has_unit_state(const std::string& state) const { return unit_states_.count(state) > 0; }
     const std::unordered_set<std::string>& unit_states() const { return unit_states_; }
     /// Moho's CheckAutoInitiate: an idle unit -- no orders, or only an
-    /// attack whose target is gone -- may take an attack order of its
-    /// weapons' own choosing.
+    /// attack (a FormAttack too) whose target is dying or gone -- may take an
+    /// attack order of its weapons' own choosing.
     bool auto_initiate_allowed(const EntityRegistry& registry) const;
     /// Whether Moho's FindBestEnemy skips `enemy` whatever the weapon.
     bool passes_over(const Unit& enemy, const SimState* sim, const EntityRegistry& registry) const;
     /// A weapon with AutoInitiateAttackCommand picked `target`: the unit
-    /// attacks it once its weapons are done this tick (the first pick wins).
+    /// attacks it once that weapon's update is done, so the weapons after it
+    /// find the order queued (tick_weapons).
     void request_auto_attack(EntityId target) {
         if (!auto_attack_target_) {
             auto_attack_target_ = target;
@@ -1718,6 +1719,17 @@ private:
     /// SetDesiredTarget's notice: each NeedPrep weapon hears OnGotTarget.
     /// False when a script took the unit.
     bool ready_prep_weapons(lua_State* L);
+    /// Moho's CAiAttackerImpl::Stop, SetDesiredTarget with no target: every
+    /// weapon drops its target, its script told, and looks again two ticks on
+    /// with AutoInitiateAttackCommand, else a TargetCheckInterval on.
+    void stop_attacker(lua_State* L);
+    /// Moho's ~CUnitAttackTargetTask: once the attack order whose task ran
+    /// is gone from the head of the queue (done, cleared or replaced), the
+    /// attacker stops. False when a script took the unit.
+    bool end_gone_attack(lua_State* L);
+    /// The attack order a weapon's search asked for (request_auto_attack),
+    /// issued now to this unit alone, its queue cleared.
+    void issue_auto_attack(Weapon& weapon, EntityId target_id, SimContext& ctx);
     /// Fuel, the layer, the step its orders asked for, coasting.
     bool motion_tick(f64 dt, SimContext& ctx);
     /// Moho's CUnitMotion::UpdateCurrentLayer starting a shore crossing:
@@ -2315,6 +2327,11 @@ private:
     bool lifts_off_ = false;
     /// The order running as its move was aborted (its command id, 0: none).
     u32 aborted_command_ = 0;
+    /// An attack order's task runs (Moho's CUnitAttackTargetTask on the
+    /// unit's order thread): from the tick the order began, until it is gone
+    /// from the head of the queue (end_gone_attack). Its order's command id.
+    bool attack_task_ = false;
+    u32 attack_task_order_ = 0;
     bool auto_overcharge_ = false;
     bool overcharge_paused_ = false;
     bool cloaked_ = false;

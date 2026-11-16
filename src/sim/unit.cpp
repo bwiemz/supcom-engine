@@ -702,19 +702,66 @@ void Unit::tick_weapons(SimContext& ctx) {
             break;
         }
         weapon->update(*this, registry, ctx.L, ctx.sim);
-    }
-    // Moho's CAcquireTargetTask issues its pick's attack order to this unit alone.
-    if (const EntityId target_id = auto_attack_target_; target_id) {
-        auto_attack_target_ = EntityId();
-        const Entity* target = registry.find(target_id);
-        if (ctx.sim && target && !target->destroyed() && !destroyed() && !dying_) {
-            UnitCommand attack;
-            attack.type = CommandType::Attack;
-            attack.target_id = target_id;
-            attack.target_pos = target->position();
-            ctx.sim->route_command({entity_id()}, attack, true);
+        // Moho's CAcquireTargetTask issues its pick's attack order in its own step, so the
+        // weapons after it find the order queued.
+        if (const EntityId target_id = std::exchange(auto_attack_target_, EntityId()); target_id) {
+            issue_auto_attack(*weapon, target_id, ctx);
         }
     }
+}
+
+void Unit::issue_auto_attack(Weapon& weapon, EntityId target_id, SimContext& ctx) {
+    const Entity* target = ctx.registry.find(target_id);
+    if (!ctx.sim || !target || target->destroyed() || destroyed() || dying_) {
+        return;
+    }
+    UnitCommand attack;
+    attack.type = CommandType::Attack;
+    attack.target_id = target_id;
+    attack.target_pos = target->position();
+    // The order clears the queue (IssueCommandToSelectedUnits' clear), and with it an attack
+    // whose target is dead: that task's end stops the attacker at once (stop_attacker). The
+    // weapon's own next look stays as its search set it: its task's return value sets its pending
+    // frames after the stop's refresh did.
+    const u32 next_look = weapon.target_check_clock;
+    ctx.sim->route_command({entity_id()}, attack, true);
+    weapon.target_check_clock = next_look;
+}
+
+void Unit::stop_attacker(lua_State* L) {
+    // CAiAttackerImpl::Stop (Steam 0x5DC1C0) is SetDesiredTarget (0x5DE080) with no target: each
+    // weapon's UnitWeapon::SetTarget with none, then each weapon's acquire task rescheduled
+    // (RefreshAcquireTargetTaskScheduling, 0x5DFFF0): two frames on for AutoInitiateAttackCommand
+    // (the blueprint's byte at +0x4C), else ceil(TargetCheckInterval x 10).
+    for (size_t i = 0; i < weapons_.size(); ++i) {
+        // A script may kill the unit, and with it its weapons.
+        if (destroyed() || dying_) {
+            return;
+        }
+        weapons_[i]->drop_target(L);
+    }
+    if (destroyed() || dying_) {
+        return;
+    }
+    for (auto& weapon : weapons_) {
+        weapon->look_again_in(weapon->auto_initiate_attack_command ? 2
+                                                                   : weapon->target_check_period);
+    }
+}
+
+bool Unit::end_gone_attack(lua_State* L) {
+    if (!attack_task_) {
+        return true;
+    }
+    const UnitCommand* head = command_queue_.empty() ? nullptr : &command_queue_.front();
+    if (head && head->begun && head->type == CommandType::Attack &&
+        head->command_id == attack_task_order_) {
+        return true;
+    }
+    attack_task_ = false;
+    attack_task_order_ = 0;
+    stop_attacker(L);
+    return !destroyed() && in_registry();
 }
 
 bool Unit::end_gone_loading(SimContext& ctx) {
@@ -737,6 +784,10 @@ bool Unit::end_gone_loading(SimContext& ctx) {
 }
 
 bool Unit::end_gone_tasks(SimContext& ctx) {
+    // An attack order taken away (cleared, replaced, removed): its task's end.
+    if (!end_gone_attack(ctx.L)) {
+        return false;
+    }
     // A teleport or an OverCharge whose order was taken away unfinished.
     if (teleporting_ || overcharge_armed_) {
         settle_interrupted_orders(ctx.L);
@@ -1344,6 +1395,9 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx) {
 }
 
 bool Unit::auto_initiate_allowed(const EntityRegistry& registry) const {
+    // CheckAutoInitiate (Steam 0x5DF710): no order, or only an Attack or a FormAttack (one
+    // CommandType here) at a unit that is gone, its destruction queued, or dead -- the entity's
+    // byte at +0x99, set as a unit is killed (this engine's dying).
     if (command_queue_.empty()) return true;
     if (command_queue_.size() != 1) return false;
     const UnitCommand& only = command_queue_.front();
@@ -1351,7 +1405,8 @@ bool Unit::auto_initiate_allowed(const EntityRegistry& registry) const {
         return false;
     }
     const Entity* target = registry.find(only.target_id);
-    return !target || target->destroyed();
+    return !target || target->destroyed() ||
+           (target->is_unit() && static_cast<const Unit*>(target)->is_dying());
 }
 
 Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L) {

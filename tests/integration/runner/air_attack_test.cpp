@@ -37,6 +37,7 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -302,7 +303,10 @@ namespace osc::test {
 //    reach (25 x TrackingRadius 1.25);
 // 2. one on hold fire stays idle;
 // 3. one on a move order keeps it;
-// 4. an idle bomber (UEA0103) attacks an enemy tank 45 out (its reach 50).
+// 4. an idle bomber (UEA0103) attacks an enemy tank 45 out (its reach 50);
+// 5. a fighter whose weapon took an enemy bomber during its move, the bomber within its reach
+//    throughout, attacks it within TargetCheckInterval + 2 ticks of the move's end: Moho issues
+//    the attack after every search that finds an enemy, the pick new or not.
 void test_air_auto_engage(TestContext& ctx) {
     spdlog::info("=== AIR AUTO ENGAGE TEST: idle aircraft attack on their own ===");
     int pass = 0, fail = 0;
@@ -333,6 +337,12 @@ void test_air_auto_engage(TestContext& ctx) {
         -- The bomber and the tank, well away.
         __auto_b1, __auto_b1_id = make('uea0103', 'ARMY_1', 200, -150, 18)
         __auto_tank, __auto_tank_id = make('uel0201', 'ARMY_2', 245, -150, 0)
+        -- A fighter's short move north beside an enemy bomber flying north on hold fire.
+        __auto_f5, __auto_f5_id = make('uea0102', 'ARMY_1', 135, 100, 20)
+        IssueMove({__auto_f5}, {x + 135, 0, z + 150})
+        __auto_b5, __auto_b5_id = make('uea0103', 'ARMY_2', 128, 120, 18)
+        __auto_b5:SetFireState(1)
+        IssueMove({__auto_b5}, {x + 128, 0, z + 300})
     )");
     record(static_cast<bool>(r), r ? "setup" : "setup: " + r.error().message);
     if (!r) return;
@@ -357,8 +367,41 @@ void test_air_auto_engage(TestContext& ctx) {
         const auto* c = head(id(name));
         return c && c->type == sim::CommandType::Attack && c->target_id == target;
     };
+    // Test 5's fighter, watched from the start: whether its weapon took the bomber while it
+    // moved, how far the bomber got from it (across the ground, as the weapon looks) against the
+    // weapon's reach, and the ticks its move ended and its attack began.
+    const sim::EntityId f5 = id("__auto_f5_id");
+    const sim::EntityId b5 = id("__auto_b5_id");
+    bool f5_picked = false;
+    u32 f5_period = 0;
+    f32 f5_reach = 0;
+    f32 f5_farthest = 0;
+    std::optional<u32> f5_arrived;
+    std::optional<u32> f5_attacked;
+    const auto f5_seen = [&] {
+        auto* e = registry.find(f5);
+        const auto* b = registry.find(b5);
+        if (!e || e->destroyed() || !e->is_unit() || !b || b->destroyed()) return;
+        const auto& fighter = static_cast<const sim::Unit&>(*e);
+        const auto* c = head(f5);
+        const u32 now = ctx.sim.tick_count();
+        if (!f5_attacked)
+            f5_farthest = std::max(f5_farthest, flat(b->position(), fighter.position()));
+        for (const auto& w : fighter.weapons()) {
+            if (!w->auto_initiate_attack_command) continue;
+            f5_reach = w->max_range * std::max(1.0f, w->tracking_radius);
+            if (w->target_entity_id == b5) {
+                f5_period = w->target_check_period;
+                f5_picked = f5_picked || (c && c->type == sim::CommandType::Move);
+            }
+        }
+        if (!f5_arrived && !(c && c->type == sim::CommandType::Move)) f5_arrived = now;
+        if (!f5_attacked && c && c->type == sim::CommandType::Attack && c->target_id == b5)
+            f5_attacked = now;
+    };
     bool b1_attacked = false;
     const auto b1_seen = [&] {
+        f5_seen();
         b1_attacked = b1_attacked || attacks("__auto_b1_id", tank);
         return b1_attacked;
     };
@@ -372,6 +415,19 @@ void test_air_auto_engage(TestContext& ctx) {
            "Test 2: a fighter on hold fire stays idle");
     const auto* f3 = head(id("__auto_f3_id"));
     record(f3 && f3->type == sim::CommandType::Move, "Test 3: a fighter on a move order keeps it");
+    tick_until(ctx, "Test 5: the fighter's move ends and it attacks", 300, [&] {
+        f5_seen();
+        return f5_attacked.has_value();
+    });
+    record(
+        f5_picked && f5_farthest <= f5_reach && f5_arrived && f5_attacked &&
+            *f5_attacked - *f5_arrived <= f5_period + 2,
+        fmt::format("Test 5: a fighter whose weapon took an enemy bomber on its move, the "
+                    "bomber at most {:.1f} away (its reach {:.1f}), attacks it {} ticks after "
+                    "the move ends (TargetCheckInterval {} ticks)",
+                    f5_farthest, f5_reach,
+                    f5_arrived && f5_attacked ? static_cast<int>(*f5_attacked - *f5_arrived) : -1,
+                    f5_period));
     spdlog::info("Air auto engage test: {}/{} passed", pass, pass + fail);
 }
 

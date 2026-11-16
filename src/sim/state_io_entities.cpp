@@ -1548,6 +1548,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.id(u.creator_id_);
     w.b(u.lifts_off_);
     w.u32v(u.aborted_command_);
+    w.b(u.attack_task_);
+    w.u32v(u.attack_task_order_);
     w.b(u.auto_overcharge_);
     w.b(u.overcharge_paused_);
     w.b(u.cloaked_);
@@ -1990,6 +1992,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.creator_id_ = r.id();
     u.lifts_off_ = r.b();
     u.aborted_command_ = r.u32v();
+    u.attack_task_ = r.b();
+    u.attack_task_order_ = r.u32v();
     u.auto_overcharge_ = r.b();
     u.overcharge_paused_ = r.b();
     u.cloaked_ = r.b();
