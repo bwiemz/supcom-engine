@@ -1,8 +1,9 @@
 #pragma once
 
 // A Lua state's sim: the sim's own state holds it, and the UI's while a game
-// runs, in the state's registry under one key (sim_state.cpp). The bindings
-// and the sim read it through get_sim.
+// runs, as the state's host data (lhost.h), shared by all its threads, and
+// in its registry under one key for snapshots (sim_state.cpp). The bindings
+// and the sim read it through get_sim, which costs no lookup.
 
 struct lua_State;
 

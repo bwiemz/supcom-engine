@@ -19,6 +19,7 @@
 #include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
 #include "sim/lua_bytes.hpp"
+#include "sim/lua_keys.hpp"
 #include "sim/entity.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/ieffect.hpp"
@@ -92,8 +93,7 @@ namespace osc::lua {
 
 /// True for a weapon's Lua table: its _c_object is a Weapon*, not an Entity*.
 static bool is_weapon_table(lua_State* L, int idx) {
-    lua_pushstring(L, "_c_unit");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::CUnit);
     const bool weapon = lua_isuserdata(L, -1);
     lua_pop(L, 1);
     return weapon;
@@ -103,8 +103,7 @@ sim::Entity* check_entity(lua_State* L, int idx) {
     if (!lua_istable(L, idx) || is_weapon_table(L, idx)) return nullptr;
 
     // Check sim generation — stale handles from a previous SimState return nullptr
-    lua_pushstring(L, "_c_sim_gen");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::CSimGen);
     if (lua_isnumber(L, -1)) {
         u32 stored_gen = static_cast<u32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
@@ -116,8 +115,7 @@ sim::Entity* check_entity(lua_State* L, int idx) {
         // No generation stored — legacy table, allow through
     }
 
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::CObject);
     if (lua_isuserdata(L, -1)) {
         auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
         lua_pop(L, 1);
@@ -129,8 +127,7 @@ sim::Entity* check_entity(lua_State* L, int idx) {
     // entity -- scripts keep avatars, idle lists and selections -- so each
     // call resolves the id; the registry stops listing an entity as soon as
     // it is unregistered, long before its memory is freed.
-    lua_pushstring(L, "_c_entity_id");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::CEntityId);
     const bool by_id = lua_isnumber(L, -1);
     const sim::EntityId id = sim::to_entity_key(L, -1);
     lua_pop(L, 1);
@@ -148,8 +145,7 @@ sim::Unit* check_unit(lua_State* L, int idx) {
 
 sim::Weapon* check_weapon(lua_State* L, int idx) {
     if (!lua_istable(L, idx)) return nullptr;
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::CObject);
     auto* w = lua_isuserdata(L, -1)
                   ? static_cast<sim::Weapon*>(lua_touserdata(L, -1))
                   : nullptr;
@@ -159,8 +155,7 @@ sim::Weapon* check_weapon(lua_State* L, int idx) {
 
 sim::Platoon* check_platoon(lua_State* L, int idx) {
     if (!lua_istable(L, idx)) return nullptr;
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::CObject);
     auto* p = lua_isuserdata(L, -1)
                   ? static_cast<sim::Platoon*>(lua_touserdata(L, -1))
                   : nullptr;

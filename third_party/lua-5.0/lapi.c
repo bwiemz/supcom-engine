@@ -13,6 +13,7 @@
 #include "lua.h"
 
 #include "lapi.h"
+#include "lhost.h"
 #include "ldebug.h"
 #include "ldo.h"
 #include "lfunc.h"
@@ -837,6 +838,39 @@ LUA_API int lua_sweepstep (lua_State *L, int work) {
   ended = luaC_sweepstep(L, work);
   lua_unlock(L);
   return ended;
+}
+
+
+/*
+** OpenSupCom: the host's pointer and keys (lhost.h)
+*/
+
+LUA_API void lua_sethostdata (lua_State *L, void *p) {
+  lua_lock(L);
+  G(L)->hostdata = p;
+  lua_unlock(L);
+}
+
+LUA_API void *lua_gethostdata (lua_State *L) {
+  void *p;
+  lua_lock(L);
+  p = G(L)->hostdata;
+  lua_unlock(L);
+  return p;
+}
+
+LUA_API void lua_pushhostkey (lua_State *L, int k, const char *s) {
+  TString *ts;
+  lua_lock(L);
+  api_check(L, 0 <= k && k < LUA_HOSTKEYS);
+  luaC_checkGC(L);  /* as lua_pushstring's */
+  ts = G(L)->hostkey[k];
+  if (ts == NULL)
+    ts = G(L)->hostkey[k] = luaS_new(L, s);
+  api_check(L, strcmp(getstr(ts), s) == 0);
+  setsvalue2s(L->top, ts);
+  api_incr_top(L);
+  lua_unlock(L);
 }
 
 
