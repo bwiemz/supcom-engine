@@ -1128,6 +1128,14 @@ lua_Number global_number(lua_State* L, const char* name) {
     return n;
 }
 
+std::string global_string(lua_State* L, const char* name) {
+    lua_getglobal(L, name);
+    const char* s = lua_tostring(L, -1);
+    std::string out = s ? s : "";
+    lua_pop(L, 1);
+    return out;
+}
+
 } // namespace
 
 TEST_CASE("a shot an entity turned away is asked again the next tick, as Moho asks",
@@ -1252,4 +1260,73 @@ TEST_CASE("a homing shot sent to a point on the water goes in, and on to the gro
     REQUIRE(shot->impact_waiting());
     CHECK(shot->impact_kind == "Terrain");
     CHECK(shot->position().y == Approx(0.0f).margin(0.05f));
+}
+
+TEST_CASE("a shot its OnImpact leaves alive flies on, and meets what comes after, as Moho's",
+          "[collision]") {
+    // Moho's Projectile::Impact (faf-re 0x0069DEC0, the Steam exe's 0x006A4950) runs OnImpact,
+    // then clears the impact and nothing more: MotionTick steps the shot on the next tick, and
+    // only its script ends it. Retail's Projectile.OnImpactDestroy spares a DestroyOnImpact =
+    // false shot (a UEF cruise missile) that struck an ANTIMISSILE projectile.
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    EntityRegistry reg;
+    reg.init_spatial_grid(512, 512);
+    run_lua(L, "hits = ''");
+    // An interceptor in its way, which says no once struck (the blast killed it), and a wall
+    // beyond it.
+    Projectile* interceptor = add_shot(reg, {100, 1, 104}, {0, 0, 0});
+    interceptor->set_collision_shape(sphere(1)); // z 103 to 105
+    interceptor->set_lua_table_ref(
+        script_of(L, "{ OnCollisionCheck = function() return hits == '' end }"));
+    const EntityId wall = add_unit(reg, {100, 0, 110}, box(5, 1, 1, 1)); // z 109 to 111
+    reg.find(wall)->set_lua_table_ref(
+        script_of(L, "{ OnCollisionCheck = function() return true end }"));
+    Projectile* shot = add_shot(reg, {100, 1, 101}, {0, 0, 10}); // a unit a tick
+    shot->set_lua_table_ref(
+        script_of(L, "{ OnImpact = function(self, kind) hits = hits .. kind .. ' ' end }"));
+    const auto step = [&] {
+        shot->update(0.1, reg, L);
+        reg.advance_coords();
+    };
+    tick_until(step, "the shot strikes the interceptor", 10,
+               [&] { return !global_string(L, "hits").empty(); });
+    CHECK(global_string(L, "hits") == "Projectile ");
+    CHECK(shot->position().z == Approx(103.0f));
+    tick_until(step, "the shot flies on and strikes the wall", 20,
+               [&] { return global_string(L, "hits") != "Projectile "; });
+    CHECK(global_string(L, "hits") == "Projectile Unit ");
+    CHECK(shot->position().z == Approx(109.0f));
+    CHECK_FALSE(shot->destroyed());
+}
+
+TEST_CASE("a shot its OnImpact leaves alive meets what it struck again while that is still in "
+          "its way, as Moho's",
+          "[collision]") {
+    // Moho's Impact lets go of what it struck, and CheckCollision keeps no memory of it: the
+    // sweep starts a tenth of the step behind the shot (a hundredth in FAF's exe), so a shot
+    // still at the face of what it struck meets it again, and stays there.
+    for (const bool faf : {false, true}) {
+        CAPTURE(faf);
+        osc::lua::LuaState state;
+        lua_State* L = state.raw();
+        EntityRegistry reg;
+        reg.init_spatial_grid(512, 512);
+        reg.set_faf_exe(faf);
+        run_lua(L, "hits = 0");
+        Projectile* interceptor = add_shot(reg, {100, 1, 104}, {0, 0, 0});
+        interceptor->set_collision_shape(sphere(1)); // z 103 to 105
+        interceptor->set_lua_table_ref(
+            script_of(L, "{ OnCollisionCheck = function() return true end }"));
+        Projectile* shot = add_shot(reg, {100, 1, 101}, {0, 0, 10});
+        shot->set_lua_table_ref(script_of(L, "{ OnImpact = function() hits = hits + 1 end }"));
+        tick_until(
+            [&] {
+                shot->update(0.1, reg, L);
+                reg.advance_coords();
+            },
+            "the shot strikes the interceptor twice", 10,
+            [&] { return global_number(L, "hits") == 2; });
+        CHECK(shot->position().z == Approx(103.0f));
+    }
 }

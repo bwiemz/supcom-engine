@@ -183,6 +183,7 @@ constexpr Mode kModesBefore[] = {
     {"--range-render-test", test_range_render, false},
     {"--feedback-render-test", test_feedback_render, false},
     {"--hull-facing-test", test_hull_facing, false},
+    {"--attack-reach-test", test_attack_reach, false},
     {"--footfall-test", test_footfall, false},
     {"--trail-render-test", test_trail_render, false},
     {"--particle-render-test", test_particle_render, false},
@@ -441,6 +442,7 @@ void IntegrationModes::print_usage() const {
               << "  --range-render-test FA's range overlays (RangeRenderer's rings)\n"
               << "  --feedback-render-test An order's mark, drawn as CommandFeedback\n"
               << "  --hull-facing-test Slaved weapons and AttackAngle turn the hull\n"
+              << "  --attack-reach-test An attack closes to the range of its target weapon\n"
               << "  --footfall-test    Collision detectors: walkers' footfalls, terrain checks\n"
               << "  --trail-render-test FA's trails: segments, ages, offsets, intel catch-up, blends\n"
               << "  --particle-render-test FA's particles: emission, motion, quads, water, intel\n"
