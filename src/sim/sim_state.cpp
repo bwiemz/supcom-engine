@@ -2178,7 +2178,7 @@ bool SimState::outside_no_rush(i32 army, const Vector3& at) const {
 
 void SimState::tick() {
     PROFILE_ZONE("Sim::tick");
-    if (L_ && Profiler::instance().enabled()) lua_profile::attach(L_);
+    if (L_ && lua_profile::enabled()) lua_profile::attach(L_);
     ++beat_count_;
     if (!beat_observer_) {
         print_lines_.clear();

@@ -21,9 +21,16 @@ namespace osc::sim::lua_profile {
 /// How often a sample is taken, in Lua instructions.
 constexpr int kInstructions = 1000;
 
+/// Whether the sim samples its Lua: --profile asks for it. The Profiler's
+/// zones alone don't, as the render benchmark turns them on: the hook runs
+/// on every Lua call and return, and slows the sim it samples.
+void set_enabled(bool on);
+bool enabled();
+
 /// Sample `L` from now on: the sim's state (its callbacks), and each
 /// thread's coroutine (ThreadManager attaches them as it resumes them; a
-/// new coroutine doesn't take its creator's hook).
+/// new coroutine doesn't take its creator's hook). The sim attaches only
+/// when enabled().
 void attach(lua_State* L);
 /// The `count` functions with the most samples: where (source:line it
 /// starts on, and its name), and how many.

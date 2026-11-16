@@ -38,6 +38,9 @@ The Lua instruction sampler reports functions by source and definition line.
 Set `OSC_LUA_PROFILE_LINES=1` to group samples by the executing source line.
 Samples are taken every 1,000 instructions; they measure instruction share,
 not wall time. Slow Lua resumes are logged with their resume and fork sites.
+The sampler's hook runs on every Lua call and return, so only `--profile`
+and `--profile-frames` attach it. `--render-bench` turns on the profiler's
+zones but leaves the sim's Lua unhooked.
 
 ## Measuring a saved moment
 

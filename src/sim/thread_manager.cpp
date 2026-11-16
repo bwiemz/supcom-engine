@@ -305,9 +305,11 @@ void ThreadManager::resume_all(u32 current_tick) {
         // we clear the stack (settop 0), so gettop - 1 = -1 → clamp to 0.
         int nargs = std::max(0, lua_gettop(t.coroutine) - 1);
         // Under --profile, a resume long enough to be a hitch says where
-        // it stopped and where it was forked: a stutter's script.
+        // it stopped and where it was forked: a stutter's script. The Lua
+        // profile's hook only when one was asked for (not the render
+        // benchmark's zones: it runs on every call).
         const bool timed = Profiler::instance().enabled();
-        if (timed && !need_hook) lua_profile::attach(t.coroutine);
+        if (lua_profile::enabled() && !need_hook) lua_profile::attach(t.coroutine);
         const auto started =
             timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         int status = lua_resume(t.coroutine, nargs);

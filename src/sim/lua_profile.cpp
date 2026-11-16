@@ -7,6 +7,7 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstdint>
@@ -20,6 +21,9 @@ extern "C" {
 namespace osc::sim::lua_profile {
 
 namespace {
+
+/// Set once at startup, read by the sim's thread.
+std::atomic<bool> requested{false};
 
 struct Function {
     std::string where; ///< source:line it starts on (name)
@@ -92,6 +96,14 @@ void hook(lua_State* L, lua_Debug* ar) {
 }
 
 } // namespace
+
+void set_enabled(bool on) {
+    requested.store(on, std::memory_order_relaxed);
+}
+
+bool enabled() {
+    return requested.load(std::memory_order_relaxed);
+}
 
 void attach(lua_State* L) {
     if (L && lua_gethook(L) != hook)
