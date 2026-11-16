@@ -186,6 +186,9 @@ public:
     bool enabled = true;
     u32 fire_clock = 0; // ticks until the fire clock is ready again
     u32 target_check_clock = 0; // ticks until the next target scan
+    /// Look for targets again `ticks` ticks on (at least one): Moho's acquire task given that many
+    /// pending frames.
+    void look_again_in(u32 ticks) { target_check_clock = ticks > 1 ? ticks - 1 : 0; }
     /// ReTargetOnMiss's state (Moho's UnitWeapon mUnknown170 and mBlacklist,
     /// its CAcquireTargetTask's mTargetCooldown): misses in a row of a
     /// target standing still, since a hit or a change of target; ticks its

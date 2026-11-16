@@ -387,6 +387,10 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         if (!running) end_attack_run(*this);
     }
     while (!command_queue_.empty()) {
+        // An attack order that ended (done or taken away) ends its task first; its weapons'
+        // scripts may change the queue.
+        if (!end_gone_attack(ctx.L)) return false;
+        if (command_queue_.empty()) break;
         note_queue_head();
         // Orders run script callbacks, which may destroy this unit (it stays
         // allocated until the beat ends, see EntityRegistry::collect_garbage).
@@ -410,11 +414,17 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         if (step == OrderStep::Hold) return true;
         if (step == OrderStep::Gone) return false;
     }
-    return true;
+    return end_gone_attack(ctx.L);
 }
 
 void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
     cmd.begun = true;
+    // Moho's command dispatch makes an attack order's task as the order comes up
+    // (CUnitAttackTargetTask); its end stops the attacker (end_gone_attack).
+    if (cmd.type == CommandType::Attack) {
+        attack_task_ = true;
+        attack_task_order_ = cmd.command_id;
+    }
     if (cmd.type == CommandType::Patrol || cmd.type == CommandType::AggressiveMove) {
         cmd.patrol_from = position();
     }
