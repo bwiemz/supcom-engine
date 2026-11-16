@@ -267,7 +267,7 @@ In order of how much they change what the player feels:
 
 `--arc-test` (gate). **M201d ✅** Shots meet what is in their way:
 - Each tick's path is swept against units, props and shields (their blueprint boxes, or the shapes scripts set), the ground and the water. The nearest hit that both sides' `OnCollisionCheck` allow wins.
-- Friends let shots past, tree groups break up, and wrecks and rocks stop them. Shields stop enemy shots coming in, not those going out.
+- Friends let shots past, tree groups break up, and wrecks and rocks stop them. Shields stop enemy shots where they cross the bubble, going out as well as coming in (Moho's `CollideLine` meets a path leaving a sphere where it leaves).
 - Shots aimed where a unit was now miss. `FiringRandomness` scatters over Moho's circle, 12 times narrower than before.
 - Expiring shots burst in the air, tracking shots end at their ground target, bombs fall, and script-made projectiles take their blueprint's physics.
 
