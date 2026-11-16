@@ -27,6 +27,7 @@ add_library(osc_sim STATIC
     unit_orders.cpp
     unit_facing.cpp
     unit_patrol.cpp
+    unit_assist_move.cpp
     unit_staging.cpp
     unit_storage.cpp
     unit_fall.cpp

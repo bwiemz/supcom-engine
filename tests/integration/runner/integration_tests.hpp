@@ -232,6 +232,7 @@ void test_prebuilt(TestContext& ctx);
 void test_transport_slots(TestContext& ctx);
 void test_transport_pickup(TestContext& ctx);
 void test_transport_drop(TestContext& ctx);
+void test_assist_move(TestContext& ctx);
 void test_carrier(TestContext& ctx);
 void test_right_click(TestContext& ctx);
 void test_carrier_land(TestContext& ctx);

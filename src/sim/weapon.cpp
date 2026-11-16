@@ -236,8 +236,8 @@ bool unpack_search_paused(const Unit& owner) {
     const auto& queue = owner.command_queue();
     const CommandType head = queue.empty() ? CommandType::Stop : queue.front().type;
     return owner.need_unpack() &&
-           (head == CommandType::Move || head == CommandType::TransportLoad ||
-            head == CommandType::WaitForFerry);
+           (head == CommandType::Move || head == CommandType::AssistMove ||
+            head == CommandType::TransportLoad || head == CommandType::WaitForFerry);
 }
 
 bool same_bits(f32 a, f32 b) {

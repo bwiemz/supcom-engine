@@ -1282,18 +1282,12 @@ Boarding boarding(const EntityRegistry& registry, const Unit& unit, EntityId tar
     if (&target == &unit) {
         return Boarding::Takes;
     }
-    if (!unit.is_mobile() || unit.has_category("AIR") != target.is_staging_platform() ||
-        (unit.has_category("COMMAND") && !target.has_category("CANTRANSPORTCOMMANDER"))) {
-        return Boarding::Rejects;
-    }
-    const TransportSlots* slots = const_cast<Unit&>(target).transport_slots();
-    return !slots || slots->can_carry_class(unit.transport_class()) ? Boarding::Takes
-                                                                    : Boarding::Rejects;
+    return const_cast<Unit&>(target).transport_can_carry(unit) ? Boarding::Takes
+                                                               : Boarding::Rejects;
 }
 
 bool has_transport_ai(const Unit& unit) {
-    return unit.has_command_cap("RULEUCC_Transport") || unit.has_category("PODSTAGINGPLATFORM") ||
-           unit.is_staging_platform();
+    return unit.has_transport_ai();
 }
 
 } // namespace
@@ -1525,6 +1519,15 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     }
     if (command.type == CommandType::SpecialAction) {
         return unit.has_command_cap("RULEUCC_SpecialAction");
+    }
+    // func_ProcessUnitCommand has no arm for an AssistMove: past the checks
+    // every order has, each unit given it takes it, and its dispatch decides
+    // what each does with it. The engine also asks for a goal it can fly and
+    // drive to: an order from the network with none, or one not finite, is
+    // refused (a click always gives a point on the map).
+    if (command.type == CommandType::AssistMove) {
+        return has_target(command) && std::isfinite(command.target_pos.x) &&
+               std::isfinite(command.target_pos.y) && std::isfinite(command.target_pos.z);
     }
     if (command.type == CommandType::Ferry) {
         return !carrier && unit.has_category("TRANSPORTATION") && has_transport_ai(unit);

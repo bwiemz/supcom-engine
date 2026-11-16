@@ -91,9 +91,7 @@ EntityId guarded(const Unit& u) {
 
 /// The transport its head order waits for, or 0.
 EntityId awaited_transport(const Unit& u) {
-    const auto& q = u.command_queue();
-    return !q.empty() && q.front().type == CommandType::TransportLoad ? q.front().target_id
-                                                                      : EntityId();
+    return u.awaited_transport();
 }
 
 /// Both in one formation (attacking or not), of one army: a formation is an

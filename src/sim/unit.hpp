@@ -1444,8 +1444,20 @@ public:
     i32 pickup_ticks() const { return pickup_ticks_; }
     /// Ticks left of a unit's beam up into its transport (0: not beaming).
     i32 beam_up_ticks() const { return beam_up_ticks_; }
-    /// Whether the unit's head order is a load onto that transport.
+    /// Whether the unit's head order calls that transport (awaited_transport).
     bool calls_transport(EntityId transport_id) const;
+    /// The transport its head order calls (Moho's UNITSTATE_WaitingForTransport,
+    /// and its focus): a load order's target, or the transport that took it
+    /// for its AssistMove; 0 for none.
+    EntityId awaited_transport() const;
+    /// Whether this transport could carry `cargo` at all (Moho's
+    /// TransportCanCarryUnit): a mobile unit, an aircraft only onto a staging
+    /// platform and nothing else onto one, a commander only onto a
+    /// CANTRANSPORTCOMMANDER, and a class its slots can hold.
+    bool transport_can_carry(const Unit& cargo);
+    /// Whether it has a transport's AI (Moho's AiTransport): the Transport
+    /// order's cap, or a pod or air staging platform.
+    bool has_transport_ai() const;
 
     void attach_to_transport(Unit* transport, EntityRegistry& registry, lua_State* L);
     /// Hang from the transport's bone that holds our slot (or sit at its
@@ -1908,8 +1920,21 @@ private:
     /// The transport's side (CUnitLoadUnits): slots for the units calling
     /// it, a flight to their centre, a low hover while they board.
     OrderStep order_transport_pickup(UnitCommand& cmd, SimContext& ctx);
-    /// A unit's side (CUnitCallTransport): to its place, then a beam up.
+    /// A unit's side (CUnitCallTransport): to its place, then a beam up. A
+    /// load order calls its target; an AssistMove, the transport that took
+    /// the unit.
     OrderStep order_call_transport(UnitCommand& cmd, SimContext& ctx);
+    /// A pickup's start (CUnitLoadUnits::DoTask): slots for `wanted`, the
+    /// largest first, and the flight to their centre (or, on the ground,
+    /// the wait where it is). `announce_full`: the script hears
+    /// OnTransportFull when one has no room. False if a script destroyed
+    /// the unit; pickup_ids_ empty when none got a slot.
+    bool begin_pickup(const std::vector<Unit*>& wanted, bool announce_full, lua_State* L);
+    /// The pickup under way: its flight, its descent to its hover height,
+    /// its wait while the units board. Done: the wait is over, and the
+    /// pickup finished.
+    enum class PickupStep : u8 { Running, Done, Gone };
+    PickupStep pickup_step(SimContext& ctx);
     /// End the pickup: slots of units that never came are given up.
     void finish_pickup(bool completed, lua_State* L);
     /// A transport at its drop (M206n, Moho's CUnitUnloadUnits): it comes
@@ -1937,6 +1962,30 @@ private:
     void set_motion_state(MotionState next, lua_State* L);
     /// A transport flies to the point and drops all its cargo.
     OrderStep order_transport_unload(UnitCommand& cmd, SimContext& ctx);
+    /// Whether any of `ids` (none: any cargo at all) is aboard.
+    bool cargo_aboard(const std::vector<EntityId>& ids) const;
+    /// A transport's drop at `at` (CUnitUnloadUnits): it flies within 5 of
+    /// it, then unload_step sets `ids` (or all of it) down. Done at once
+    /// with none of them aboard.
+    enum class UnloadStep : u8 { Holding, Done, Gone };
+    UnloadStep unload_at(Vector3 at, const std::vector<EntityId>& ids, SimContext& ctx);
+    /// An AssistMove (unit_assist_move.cpp; Moho's IAiCommandDispatchImpl
+    /// arm for it): a transport carries the land units given it, and a land
+    /// unit drives to the goal or boards the transport that takes it.
+    OrderStep order_assist_move(UnitCommand& cmd, SimContext& ctx);
+    /// A transport's (CUnitAssistMoveTask): it picks up the units that need a
+    /// lift, sets them down at the goal, and goes on until none is left; then
+    /// it goes to the goal, and the order ends.
+    OrderStep order_assist_transport(UnitCommand& cmd, SimContext& ctx);
+    /// The units it picks up next (GetEntitiesAlreadyAtLoc); `pathfinding`:
+    /// one of the order's is still waiting for its path.
+    std::vector<Unit*> assist_pickups(const UnitCommand& cmd, SimContext& ctx, bool& pathfinding);
+    /// Whether this land unit gets to its goal sooner if `transport` comes
+    /// for it (Unit::NeedsPickup).
+    bool needs_pickup(const Unit& transport) const;
+    /// A transport's AssistMove is over (~CUnitAssistMoveTask):
+    /// AssistMoving goes, and its cargo loses its orders.
+    void end_assist_move(SimContext& ctx);
     /// A cheat's DestroySelf order: the unit destroyed.
     OrderStep order_destroy_self(SimContext& ctx);
     /// A SpecialAction order: its script hears OnSpecialAction(location), and

@@ -439,6 +439,7 @@ void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
     if (!immobile_ || !need_unpack_) return;
     switch (cmd.type) {
     case CommandType::Move:
+    case CommandType::AssistMove: // a land unit's move task, a transport's at its end
     case CommandType::Patrol:
     case CommandType::AggressiveMove:
     case CommandType::Guard:
@@ -511,6 +512,7 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     case CommandType::DestroySelf: return order_destroy_self(ctx);
     case CommandType::SpecialAction: return order_special_action(cmd, ctx);
     case CommandType::Pause: return order_pause(ctx.L);
+    case CommandType::AssistMove: return order_assist_move(cmd, ctx);
     default: // an order no handler runs: dropped
         command_queue_.pop_front();
         return OrderStep::Next;
@@ -2707,8 +2709,14 @@ bool loads_itself(const UnitCommand& cmd, EntityId id) {
 } // namespace
 
 bool Unit::calls_transport(EntityId transport_id) const {
-    return transport_id != entity_id() && !command_queue_.empty() &&
-           loads_itself(command_queue_.front(), transport_id);
+    return transport_id && transport_id != entity_id() && awaited_transport() == transport_id;
+}
+
+EntityId Unit::awaited_transport() const {
+    if (command_queue_.empty()) return {};
+    const UnitCommand& head = command_queue_.front();
+    if (head.type == CommandType::TransportLoad) return head.target_id;
+    return head.type == CommandType::AssistMove ? head.assigned_id : EntityId{};
 }
 
 OrderStep Unit::order_transport_load(UnitCommand& cmd, SimContext& ctx) {
@@ -2767,12 +2775,7 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
     if (pickup_phase_ == PickupPhase::Holding) {
         // The units ordered aboard: the army's with a load order onto us in
         // their queue. Moho holds until each has it at its head.
-        struct Candidate {
-            Unit* unit;
-            f32 metric;
-            f32 d2;
-        };
-        std::vector<Candidate> wanted;
+        std::vector<Unit*> wanted;
         bool holding = false;
         registry.for_each_unit([&](Entity& e) {
             if (e.destroyed() || !e.is_unit() || e.army() != army() || e.entity_id() == me) return;
@@ -2788,66 +2791,95 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
                 holding = true;
                 return;
             }
-            const f32 dx = position().x - u.position().x;
-            const f32 dy = position().y - u.position().y;
-            const f32 dz = position().z - u.position().z;
-            wanted.push_back({&u, u.load_metric(), dx * dx + dy * dy + dz * dz});
+            wanted.push_back(&u);
         });
         if (holding) return OrderStep::Hold;
-        // The largest first, the nearer on ties (then the older, so it is
-        // the same everywhere).
-        std::sort(wanted.begin(), wanted.end(), [](const Candidate& a, const Candidate& b) {
-            if (a.metric != b.metric) return a.metric > b.metric;
-            if (a.d2 != b.d2) return a.d2 < b.d2;
-            return a.unit->entity_id() < b.unit->entity_id();
-        });
-        TransportSlots* slots = transport_slots();
-        const bool slotted = slots && slots->has_points();
-        i32 room = transport_capacity_ > 0
-                       ? transport_capacity_ - static_cast<i32>(cargo_ids_.size())
-                       : std::numeric_limits<i32>::max();
-        Vector3 centre{0.0f, 0.0f, 0.0f};
-        bool full = false;
-        for (const Candidate& c : wanted) {
-            const bool fits = slotted ? slots
-                                            ->assign(c.unit->entity_id(), c.unit->transport_class(),
-                                                     c.unit->transport_attach_bone())
-                                            .has_value()
-                                      : room-- > 0;
-            if (!fits) {
-                full = true;
-                continue;
-            }
-            pickup_ids_.push_back(c.unit->entity_id());
-            centre = {centre.x + c.unit->position().x, centre.y + c.unit->position().y,
-                      centre.z + c.unit->position().z};
-        }
-        if (full) {
-            call_lua_method(L, "OnTransportFull");
-            if (destroyed() || !in_registry()) return OrderStep::Gone;
-        }
+        if (!begin_pickup(wanted, true, L)) return OrderStep::Gone;
         if (pickup_ids_.empty()) {
             finish_pickup(false, L);
             if (destroyed() || !in_registry()) return OrderStep::Gone;
             return finish_order();
         }
-        const f32 inv = 1.0f / static_cast<f32>(pickup_ids_.size());
-        pickup_center_ = {centre.x * inv, centre.y * inv, centre.z * inv};
-        // It faces from where it is toward the centre (TransportAddPickupUnits).
-        const f32 fx = pickup_center_.x - position().x;
-        const f32 fz = pickup_center_.z - position().z;
-        pickup_facing_ =
-            fx * fx + fz * fz > 1e-6f ? euler_to_quat(dmath::atan2(fx, fz), 0, 0) : orientation();
-        if (is_air_unit()) {
-            call_lua_method(L, "OnTransportOrdered");
-            if (destroyed() || !in_registry()) return OrderStep::Gone;
-            pickup_phase_ = PickupPhase::Flying;
-        } else {
-            abort_move();
-            pickup_center_ = position();
-            pickup_phase_ = PickupPhase::Waiting;
-        }
     }
+    switch (pickup_step(ctx)) {
+    case PickupStep::Running: return OrderStep::Hold;
+    case PickupStep::Gone: return OrderStep::Gone;
+    case PickupStep::Done: break;
+    }
+    return finish_order();
+}
+
+bool Unit::begin_pickup(const std::vector<Unit*>& wanted, bool announce_full, lua_State* L) {
+    struct Candidate {
+        Unit* unit;
+        f32 metric;
+        f32 d2;
+    };
+    std::vector<Candidate> candidates;
+    candidates.reserve(wanted.size());
+    for (Unit* u : wanted) {
+        const f32 dx = position().x - u->position().x;
+        const f32 dy = position().y - u->position().y;
+        const f32 dz = position().z - u->position().z;
+        candidates.push_back({u, u->load_metric(), dx * dx + dy * dy + dz * dz});
+    }
+    // The largest first, the nearer on ties (then the older, so it is
+    // the same everywhere).
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+        if (a.metric != b.metric) return a.metric > b.metric;
+        if (a.d2 != b.d2) return a.d2 < b.d2;
+        return a.unit->entity_id() < b.unit->entity_id();
+    });
+    TransportSlots* slots = transport_slots();
+    const bool slotted = slots && slots->has_points();
+    i32 room = transport_capacity_ > 0 ? transport_capacity_ - static_cast<i32>(cargo_ids_.size())
+                                       : std::numeric_limits<i32>::max();
+    Vector3 centre{0.0f, 0.0f, 0.0f};
+    bool full = false;
+    for (const Candidate& c : candidates) {
+        const bool fits = slotted ? slots
+                                        ->assign(c.unit->entity_id(), c.unit->transport_class(),
+                                                 c.unit->transport_attach_bone())
+                                        .has_value()
+                                  : room-- > 0;
+        if (!fits) {
+            full = true;
+            continue;
+        }
+        pickup_ids_.push_back(c.unit->entity_id());
+        centre = {centre.x + c.unit->position().x, centre.y + c.unit->position().y,
+                  centre.z + c.unit->position().z};
+    }
+    if (full && announce_full) {
+        call_lua_method(L, "OnTransportFull");
+        if (destroyed() || !in_registry()) return false;
+    }
+    if (pickup_ids_.empty()) {
+        return true;
+    }
+    const f32 inv = 1.0f / static_cast<f32>(pickup_ids_.size());
+    pickup_center_ = {centre.x * inv, centre.y * inv, centre.z * inv};
+    // It faces from where it is toward the centre (TransportAddPickupUnits).
+    const f32 fx = pickup_center_.x - position().x;
+    const f32 fz = pickup_center_.z - position().z;
+    pickup_facing_ =
+        fx * fx + fz * fz > 1e-6f ? euler_to_quat(dmath::atan2(fx, fz), 0, 0) : orientation();
+    if (is_air_unit()) {
+        call_lua_method(L, "OnTransportOrdered");
+        if (destroyed() || !in_registry()) return false;
+        pickup_phase_ = PickupPhase::Flying;
+    } else {
+        abort_move();
+        pickup_center_ = position();
+        pickup_phase_ = PickupPhase::Waiting;
+    }
+    return true;
+}
+
+Unit::PickupStep Unit::pickup_step(SimContext& ctx) {
+    auto& registry = ctx.registry;
+    auto* L = ctx.L;
+    const EntityId me = entity_id();
     if (pickup_phase_ == PickupPhase::Flying) {
         const Vector3 goal = navigator_.goal();
         if ((!navigator_.is_moving() && !navigator_.ended()) ||
@@ -2856,7 +2888,7 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
             set_path_goal(pickup_center_, ctx);
         }
         if (nav_update()) {
-            return OrderStep::Hold;
+            return PickupStep::Running;
         }
         abort_move();
         pickup_phase_ = PickupPhase::Landing;
@@ -2867,7 +2899,7 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
         if (is_air_unit()) {
             set_course({.kind = AirCourse::Kind::HoverLow});
         }
-        return OrderStep::Hold;
+        return PickupStep::Running;
     };
     if (pickup_phase_ == PickupPhase::Landing) {
         if (is_air_unit() && current_altitude_ != transport_hover_height_) {
@@ -2891,8 +2923,8 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
         return hover();
     }
     finish_pickup(pickup_ticks_ <= kPickupTimeoutTicks, L);
-    if (destroyed() || !in_registry()) return OrderStep::Gone;
-    return finish_order();
+    if (destroyed() || !in_registry()) return PickupStep::Gone;
+    return PickupStep::Done;
 }
 
 void Unit::finish_pickup(bool completed, lua_State* L) {
@@ -2974,23 +3006,29 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, SimContext& ctx) {
         release_navigator(); // its walk to the transport ends with it
         return finish_order();
     };
-    if (!cmd.target_id || transport_id_) {
+    const bool assist = cmd.type == CommandType::AssistMove;
+    const EntityId called = assist ? cmd.assigned_id : cmd.target_id;
+    if (!called || transport_id_) {
         return end();
     }
-    Entity* target = registry.find(cmd.target_id);
+    Entity* target = registry.find(called);
     if (!target || target->destroyed() || !target->is_unit()) return end();
     auto* transport = static_cast<Unit*>(target);
     if (transport->is_dying()) return end();
     const EntityId tid = transport->entity_id();
 
-    // The transport runs the pickup once its head is the load order; one
-    // without it queued is given it (Moho's command is the transport's too).
-    // Once the unit has a slot, a transport no longer loading ends its order.
+    // The transport runs the pickup once its head is the load order, or
+    // under its AssistMove (CUnitCallTransport takes an AssistMoving
+    // transport's whatever its order); one without the load order queued is
+    // given it (Moho's command is the transport's too). Once the unit has a
+    // slot, a transport no longer loading ends its order; an AssistMove's,
+    // whose transport took it, ends with that transport's pickup.
     const bool running = !transport->command_queue_.empty() &&
-                         loads_itself(transport->command_queue_.front(), tid) &&
+                         (loads_itself(transport->command_queue_.front(), tid) ||
+                          transport->command_queue_.front().type == CommandType::AssistMove) &&
                          transport->pickup_phase_ != PickupPhase::None &&
                          transport->pickup_phase_ != PickupPhase::Holding;
-    if (!running && cmd.started) return end();
+    if (!running && (cmd.started || assist)) return end();
     if (!running) {
         if (std::none_of(transport->command_queue_.begin(), transport->command_queue_.end(),
                          [&](const UnitCommand& c) { return loads_itself(c, tid); })) {
@@ -3093,55 +3131,64 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, SimContext& ctx) {
 OrderStep Unit::order_transport_unload(UnitCommand& cmd, SimContext& ctx) {
     // A carrier launches what it keeps in storage instead (M206q).
     if (cmd.launch_wait >= 0 || launches_on_unload()) return order_carrier_launch(cmd, ctx);
+    if (is_staging_platform() && cargo_aboard(cmd.unload_ids)) {
+        return order_staging_release(cmd, ctx);
+    }
     // Transport drops its cargo at target position: the order's
     // (IssueTransportUnloadSpecific) or all of it. With none of it aboard,
-    // the order ends.
-    const bool any_aboard =
-        cmd.unload_ids.empty()
-            ? !cargo_ids_.empty()
-            : std::any_of(cmd.unload_ids.begin(), cmd.unload_ids.end(), [&](EntityId id) {
-                  return std::find(cargo_ids_.begin(), cargo_ids_.end(), id) != cargo_ids_.end();
-              });
-    if (!any_aboard) {
-        set_unit_state("TransportUnloading", false);
-        command_queue_.pop_front();
-        return OrderStep::Next;
+    // the order ends. Scripts ran, which may have cleared the queue (and cmd
+    // with it): the order goes only if it is still the head.
+    const u32 order_id = cmd.command_id;
+    const std::vector<EntityId> ids = cmd.unload_ids;
+    switch (unload_at(cmd.target_pos, ids, ctx)) {
+    case UnloadStep::Holding: return OrderStep::Hold;
+    case UnloadStep::Gone: return OrderStep::Gone;
+    case UnloadStep::Done: break;
     }
-    if (is_staging_platform()) return order_staging_release(cmd, ctx);
+    if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+        command_queue_.front().command_id == order_id)
+        command_queue_.pop_front();
+    return OrderStep::Next;
+}
 
+bool Unit::cargo_aboard(const std::vector<EntityId>& ids) const {
+    if (ids.empty()) return !cargo_ids_.empty();
+    return std::any_of(ids.begin(), ids.end(), [&](EntityId id) {
+        return std::find(cargo_ids_.begin(), cargo_ids_.end(), id) != cargo_ids_.end();
+    });
+}
+
+Unit::UnloadStep Unit::unload_at(Vector3 at, const std::vector<EntityId>& ids, SimContext& ctx) {
+    if (!cargo_aboard(ids)) {
+        set_unit_state("TransportUnloading", false);
+        return UnloadStep::Done;
+    }
     // Move to drop position
     constexpr f32 unload_range = 5.0f;
-    f32 udx = cmd.target_pos.x - position().x;
-    f32 udz = cmd.target_pos.z - position().z;
+    f32 udx = at.x - position().x;
+    f32 udz = at.z - position().z;
     f32 udist2 = udx * udx + udz * udz;
     if (udist2 > unload_range * unload_range) {
         set_unit_state("TransportUnloading", true);
-        if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
-            navigator_.goal().z != cmd.target_pos.z) {
-            set_path_goal(cmd.target_pos, ctx);
+        if (!navigator_.is_moving() || navigator_.goal().x != at.x || navigator_.goal().z != at.z) {
+            set_path_goal(at, ctx);
         }
         // Flown, for an aircraft (the ground navigator had dragged transports
         // along the ground).
         nav_update();
-        return OrderStep::Hold;
+        return UnloadStep::Holding;
     }
     abort_move();
     set_unit_state("TransportUnloading", true);
 
     // Over the drop: down to its hover height, then its cargo is set down
-    // where it fits. Scripts ran, which may have cleared the queue (and cmd
-    // with it): the order goes only if it is still the head.
-    const u32 order_id = cmd.command_id;
-    const std::vector<EntityId> ids = cmd.unload_ids;
+    // where it fits.
     if (!unload_step(ctx, ids)) {
-        return OrderStep::Hold;
+        return UnloadStep::Holding;
     }
-    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    if (destroyed() || !in_registry()) return UnloadStep::Gone;
     set_unit_state("TransportUnloading", false);
-    if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
-        command_queue_.front().command_id == order_id)
-        command_queue_.pop_front();
-    return OrderStep::Next;
+    return UnloadStep::Done;
 }
 
 OrderStep Unit::order_staging_release(UnitCommand& cmd, SimContext& ctx) {
