@@ -113,7 +113,7 @@ void mix_entity(Fnv& entities, const Entity& e) {
 }
 
 /// A projectile's flight: its velocity, its target and where it homes,
-/// its lifetime, whether it has hit and whether it tracks.
+/// its lifetime and whether it tracks.
 void mix_projectile(Fnv& projectiles, const Projectile& p) {
     projectiles.mix(p.entity_id());
     mix_vec(projectiles, p.velocity);
@@ -123,7 +123,7 @@ void mix_projectile(Fnv& projectiles, const Projectile& p) {
         projectiles.mix(0x5450543a00000000ull | static_cast<u32>(p.target_point)); // "TPT:"
     mix_vec(projectiles, p.target_position);
     projectiles.mix(p.lifetime_end);
-    projectiles.mix((p.impacted ? 1u : 0u) | (p.tracking ? 2u : 0u));
+    projectiles.mix(p.tracking ? 2u : 0u);
 }
 
 /// What mix_unit_script_state sorts, kept unit to unit.

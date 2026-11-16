@@ -114,9 +114,6 @@ public:
     bool collide_surface = true;     // SetCollideSurface: the terrain and water
     bool collide_entity = true;      // SetCollideEntity: units, props, shields
     bool stay_underwater = false;    // StayUnderwater
-    /// It hit something: it no longer moves or collides, and its script plays
-    /// the rest out (a projectile with an ImpactTimeout lingers for it).
-    bool impacted = false;
     /// Moho's mImpactInterpolation (negative: none), mCollidedEntity and mImpactType.
     f32 impact_interpolation = -1.0f;
     EntityId impact_entity_id{};
