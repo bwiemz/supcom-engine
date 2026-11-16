@@ -188,6 +188,52 @@ Result<void> InitLoader::build_vfs_from_path_table(
     return {};
 }
 
+Result<void> run_system_scripts(LuaState& state, const vfs::VirtualFileSystem& vfs) {
+    spdlog::info("Loading system Lua files...");
+
+    // Pre-register Lua 5.1 compat shims needed before utils.lua loads.
+    // utils.lua defines string.match/gmatch polyfills, but repr.lua loads
+    // first and needs string.match. Pre-register them here.
+    state.do_string(R"(
+        rawset(string, 'match', function(input, exp, init)
+            local match
+            string.gsub(input:sub(init or 1), exp, function(...) match = arg end, 1)
+            if match then return unpack(match) end
+        end)
+        rawset(string, 'gmatch', string.gfind)
+    )");
+
+    // Load system Lua files in dependency order.
+    // These must be loaded via doscript from the VFS.
+    const char* system_files[] = {
+        "/lua/system/repr.lua",
+        "/lua/system/config.lua",
+        "/lua/system/utils.lua",
+        "/lua/system/class.lua",
+        "/lua/system/import.lua",
+        // The footprint classes, before the blueprints (RuleInit.lua's order).
+        "/lua/footprints.lua",
+        "/lua/system/Blueprints.lua",
+    };
+
+    for (const char* file : system_files) {
+        if (!vfs.file_exists(file)) {
+            spdlog::warn("System file not found in VFS: {}", file);
+            continue;
+        }
+
+        auto result = run_vfs_script(state.raw(), file);
+        if (!result) {
+            spdlog::error("Failed to load {}: {}", file,
+                          result.error().message);
+            return Error("Failed to load system file " + std::string(file) +
+                         ": " + result.error().message);
+        }
+        spdlog::info("  Loaded: {}", file);
+    }
+    return {};
+}
+
 Result<void> InitLoader::load_blueprints(
     LuaState& state, const vfs::VirtualFileSystem& vfs,
     blueprints::BlueprintStore& store) {

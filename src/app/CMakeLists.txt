@@ -13,6 +13,7 @@ add_library(osc_app STATIC
     lan_game_test.cpp
     loading_screen_test.cpp
     log_bundle.cpp
+    mod_check.cpp
     mods_flow_test.cpp
     self_destruct_flow_test.cpp
     restart_flow_test.cpp

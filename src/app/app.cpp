@@ -1,5 +1,6 @@
 #include "app/app_internal.hpp"
 #include "app/log_bundle.hpp"
+#include "app/mod_check.hpp"
 #include "core/log.hpp"
 #include "core/test_status.hpp"
 #include "core/version.hpp"
@@ -38,7 +39,11 @@ int run(int argc, char* argv[], TestModes* tests) {
             return collect_logs(named ? argv[i + 1] : "");
         }
     }
-    osc::log::init();
+    // --check-mods and --list-mods print a report: the log stays off the
+    // console, kept only by --log
+    const bool mod_command =
+        parse_flag(argc, argv, "--check-mods") || parse_flag(argc, argv, "--list-mods");
+    osc::log::init(!mod_command);
     osc::platform::install_crash_handler();
     // The log's file (M228b): --log's, or the integration runner's (its
     // working directory's), at once; the game's once its options say whose
@@ -48,6 +53,11 @@ int run(int argc, char* argv[], TestModes* tests) {
     else if (tests) osc::log::open_file("opensupcom.log");
 
     auto config = parse_args(argc, argv, tests);
+    if (mod_command) {
+        return mods::run_mod_command(config, check_mods_names(argc, argv),
+                                     parse_flag(argc, argv, "--list-mods"),
+                                     parse_flag(argc, argv, "--json"));
+    }
 
     // The test modes (the integration runner's): which the command line
     // asks for, and those that need no engine.

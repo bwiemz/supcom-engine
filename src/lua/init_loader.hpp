@@ -29,6 +29,13 @@ struct InitConfig {
     fs::path faf_data_path; ///< FAF data directory (parent of gamedata/)
 };
 
+/// The blueprint state's system scripts, repr.lua to Blueprints.lua (so
+/// `import` and the blueprint constructors), in `state`, as load_blueprints
+/// runs them before LoadBlueprints(); one the VFS lacks is skipped. The state
+/// needs the init and blueprint bindings and the VFS. An error names the
+/// script that failed.
+Result<void> run_system_scripts(LuaState& state, const vfs::VirtualFileSystem& vfs);
+
 /// Orchestrates the two-phase initialization:
 /// Phase 1: Execute init.lua to discover VFS mount points.
 /// Phase 2: Load blueprints using the VFS.

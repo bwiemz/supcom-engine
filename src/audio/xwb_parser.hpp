@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,10 @@ public:
     /// Parse a bank held in memory (one read from an archive), which it
     /// keeps: its waves are read from these bytes.
     Result<void> parse(std::shared_ptr<const std::vector<u8>> bytes);
+
+    /// Whether `data` begins as a wave bank parse() reads: its magic and
+    /// version (a mod's banks, which may be in an archive: --check-mods).
+    static Result<void> check_header(std::span<const u8> data);
 
     const std::string& bank_name() const { return bank_name_; }
     /// The bank's file (streamed waves read from it as they play); empty

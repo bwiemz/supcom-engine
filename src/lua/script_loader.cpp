@@ -33,10 +33,9 @@ std::string string_field(lua_State* L, const char* key) {
     return value;
 }
 
-/// Append a file's bytes to the chunk as Moho's concatenating reader does:
-/// a newline follows a file that doesn't end in one. A UTF-8 BOM is dropped
-/// (e.g. loc/us/strings_db.lua); an empty file adds nothing.
-void append_file(std::string& chunk, const std::vector<char>& data) {
+} // namespace
+
+void append_script_file(std::string& chunk, const std::vector<char>& data) {
     const char* buf = data.data();
     size_t len = data.size();
     if (len >= 3 && static_cast<unsigned char>(buf[0]) == 0xEF &&
@@ -49,8 +48,6 @@ void append_file(std::string& chunk, const std::vector<char>& data) {
     chunk.append(buf, len);
     if (buf[len - 1] != '\n') chunk.push_back('\n');
 }
-
-} // namespace
 
 std::vector<std::string> script_hooks(lua_State* L, const vfs::VirtualFileSystem& vfs,
                                       std::string_view path) {
@@ -112,9 +109,9 @@ Result<void> run_vfs_script(lua_State* L, std::string_view path, int env_index) 
     // The script and its hooks are one chunk, as Moho loads them, so a hook
     // sees (and can replace) the script's locals.
     std::string chunk;
-    append_file(chunk, *data);
+    append_script_file(chunk, *data);
     for (const std::string& hook : script_hooks(L, *vfs, script)) {
-        if (auto hook_data = vfs->read_file(hook)) append_file(chunk, *hook_data);
+        if (auto hook_data = vfs->read_file(hook)) append_script_file(chunk, *hook_data);
     }
 
     const std::string chunk_name = "@" + script;
