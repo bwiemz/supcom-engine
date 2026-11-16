@@ -142,6 +142,14 @@ const BlueprintEntry* BlueprintStore::find(std::string_view id) const {
     return (it != blueprints_.end()) ? &it->second : nullptr;
 }
 
+const BlueprintEntry* BlueprintStore::find_effect(std::string_view name, BlueprintType type) const {
+    std::string key(name);
+    for (char& c : key)
+        c = c == '\\' ? '/' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const auto it = blueprints_.find(key);
+    return it != blueprints_.end() && it->second.type == type ? &it->second : nullptr;
+}
+
 std::vector<const BlueprintEntry*> BlueprintStore::get_all(
     BlueprintType type) const {
     std::vector<const BlueprintEntry*> result;

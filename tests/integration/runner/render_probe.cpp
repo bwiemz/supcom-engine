@@ -6,13 +6,71 @@
 #include "sim/sim_state.hpp"
 #include "tick_until.hpp"
 
+#include "vfs/virtual_file_system.hpp"
+
+#include <lauxlib.h>
+#include <lua.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <utility>
 
 namespace osc::test {
+
+namespace {
+
+/// Runs a .bp file's text as Blueprints.lua runs it, registering what it
+/// defines (SetBackwardsCompatId's id, then Register*Blueprint).
+constexpr const char* kRegisterEffects = R"(
+    return function(text, path)
+        local function kind(register)
+            return function(bp)
+                bp.Source = bp.Source or path
+                bp.BlueprintId = string.lower(bp.Source)
+                register(bp)
+            end
+        end
+        local chunk, err = loadstring(text, '@' .. path)
+        if not chunk then error(err) end
+        setfenv(chunk, setmetatable({
+            EmitterBlueprint = kind(RegisterEmitterBlueprint),
+            BeamBlueprint = kind(RegisterBeamBlueprint),
+            TrailEmitterBlueprint = kind(RegisterTrailEmitterBlueprint),
+        }, { __index = _G }))
+        chunk()
+    end
+)";
+
+} // namespace
+
+bool register_effect_blueprints(TestContext& ctx, const std::string& dir) {
+    lua_State* L = ctx.L;
+    const int top = lua_gettop(L);
+    bool ok = true;
+    for (const std::string& path : ctx.vfs.find_files(dir, "*.bp")) {
+        const auto text = ctx.vfs.read_file(path);
+        if (!text) continue;
+        if (luaL_loadbuffer(L, kRegisterEffects, std::strlen(kRegisterEffects),
+                            "=register_effect_blueprints") != 0 ||
+            lua_pcall(L, 0, 1, 0) != 0) {
+            ok = false;
+        } else {
+            lua_pushlstring(L, text->data(), text->size());
+            lua_pushstring(L, path.c_str());
+            ok = lua_pcall(L, 2, 0, 0) == 0;
+        }
+        if (!ok) {
+            osc::test_status::fail("[FAIL] registering {}: {}", path,
+                                   lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "?");
+            lua_settop(L, top);
+            return false;
+        }
+        lua_settop(L, top);
+    }
+    return true;
+}
 
 void Tally::check(bool ok, const std::string& what) {
     if (ok) {

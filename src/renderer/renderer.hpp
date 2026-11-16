@@ -260,6 +260,12 @@ public:
     const UserPlayableRect& playable_rect() const { return playable_rect_; }
     /// The effects' emitters and particles (tests read them).
     const ParticleSystem& particle_system() const { return particle_system_; }
+    /// The emitter blueprint the particles draw an effect naming `path` with,
+    /// read in `L`, the scene's Lua state; null for none (--mods-flow-test
+    /// reports it).
+    const EmitterBlueprintData* emitter_blueprint(const std::string& path, lua_State* L) {
+        return emitter_bp_cache_.get(path, L);
+    }
     /// The meshes this frame draws, in their groups (M211k's tests).
     const UnitRenderer& unit_renderer() const { return unit_renderer_; }
     /// Each frame slot's bone set was written with the unit renderer's SSBO

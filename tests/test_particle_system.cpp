@@ -19,20 +19,13 @@
 #include "sim/emitter_params.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/world_snapshot.hpp"
-#include "vfs/directory_mount.hpp"
-#include "vfs/virtual_file_system.hpp"
-#include "support/temp_path.hpp"
+#include "support/effect_blueprints.hpp"
 
 #include <cmath>
-#include <filesystem>
-#include <fstream>
-#include <memory>
 #include <string>
 #include <vector>
 
 namespace {
-
-namespace fs = std::filesystem;
 
 /// A curve of constant keys (no spread).
 osc::renderer::EmitterCurve keys(std::vector<osc::renderer::CurveKey> k) {
@@ -60,9 +53,8 @@ TEST_CASE("Emitter curves read as Moho's SEfxCurve::GetValue", "[renderer][emitt
 
 TEST_CASE("Emitters emit their rate's whole part each tick, curves read at their clock",
           "[renderer][emitter]") {
-    const fs::path root = osc::test::unique_temp_path("osc_particle_system_test");
-    const fs::path dir = root / "effects" / "Emitters";
-    fs::create_directories(dir);
+    osc::lua::LuaState lua;
+    osc::test::EffectBlueprints blueprints(lua);
     // 2.5 a tick; and one whose rate is 1 for phases 0-2 and 5 at phase 3,
     // over a Repeattime of 4. Both emit straight along their frame's +X at 2
     // a tick, falling 1 a tick², living 50 ticks, emitting at the tick's
@@ -74,21 +66,16 @@ TEST_CASE("Emitters emit their rate's whole part each tick, curves read at their
                                "    XDirectionCurve = { Keys = { { x = 0, y = 1, z = 0 } } },\n"
                                "    VelocityCurve = { Keys = { { x = 0, y = 2, z = 0 } } },\n"
                                "    YAccelCurve = { Keys = { { x = 0, y = -1, z = 0 } } },\n";
-    std::ofstream(dir / "steady_emit.bp")
-        << "EmitterBlueprint {\n"
-        << common << "    Repeattime = 10,\n"
-        << "    EmitRateCurve = { Keys = { { x = 0, y = 2.5, z = 0 } } },\n}\n";
-    std::ofstream(dir / "pulse_emit.bp")
-        << "EmitterBlueprint {\n"
-        << common << "    Repeattime = 4,\n"
-        << "    EmitRateCurve = { Keys = { { x = 0, y = 1, z = 0 }, { x = 2, y = 1, z = 0 }, "
-           "{ x = 2.001, y = 5, z = 0 } } },\n}\n";
+    blueprints.add("/effects/Emitters/steady_emit.bp",
+                   "EmitterBlueprint {\n" + common + "    Repeattime = 10,\n" +
+                       "    EmitRateCurve = { Keys = { { x = 0, y = 2.5, z = 0 } } },\n}\n");
+    blueprints.add("/effects/Emitters/pulse_emit.bp",
+                   "EmitterBlueprint {\n" + common + "    Repeattime = 4,\n" +
+                       "    EmitRateCurve = { Keys = { { x = 0, y = 1, z = 0 }, "
+                       "{ x = 2, y = 1, z = 0 }, { x = 2.001, y = 5, z = 0 } } },\n}\n");
 
-    osc::vfs::VirtualFileSystem vfs;
-    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
-    osc::lua::LuaState lua;
     osc::renderer::EmitterBlueprintCache cache;
-    cache.set_vfs(&vfs);
+    cache.set_blueprints(blueprints.store());
     osc::renderer::Camera camera;
     osc::renderer::ParticleSystem ps;
 
@@ -156,27 +143,22 @@ TEST_CASE("Emitters emit their rate's whole part each tick, curves read at their
     }
     CHECK(steady_moves);
     CHECK(pulse_turned);
-    fs::remove_all(root);
 }
 
 TEST_CASE("A script's emitter params and curves reach its emitter", "[renderer][emitter]") {
     // SetEmitterParam's REPEATTIME and TICKCOUNT, SetEmitterCurveParam and
     // ResizeEmitterCurve (M214d), as the effect's record carries them.
-    const fs::path root = osc::test::unique_temp_path("osc_particle_overrides_test");
-    const fs::path dir = root / "effects" / "Emitters";
-    fs::create_directories(dir);
-    // 1 a tick for phases 0-2 and 5 at phase 3, over a Repeattime of 4.
-    std::ofstream(dir / "pulse_emit.bp")
-        << "EmitterBlueprint {\n    Lifetime = -1,\n    InterpolateEmission = false,\n"
-           "    EmitIfVisible = false,\n    SnapToWaterline = false,\n    Repeattime = 4,\n"
-           "    LifetimeCurve = { Keys = { { x = 0, y = 50, z = 0 } } },\n"
-           "    EmitRateCurve = { XRange = 4, Keys = { { x = 0, y = 1, z = 0 }, "
-           "{ x = 2, y = 1, z = 0 }, { x = 2.001, y = 5, z = 0 } } },\n}\n";
-    osc::vfs::VirtualFileSystem vfs;
-    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
     osc::lua::LuaState lua;
+    osc::test::EffectBlueprints blueprints(lua);
+    // 1 a tick for phases 0-2 and 5 at phase 3, over a Repeattime of 4.
+    blueprints.add("/effects/Emitters/pulse_emit.bp",
+                   "EmitterBlueprint {\n    Lifetime = -1,\n    InterpolateEmission = false,\n"
+                   "    EmitIfVisible = false,\n    SnapToWaterline = false,\n    Repeattime = 4,\n"
+                   "    LifetimeCurve = { Keys = { { x = 0, y = 50, z = 0 } } },\n"
+                   "    EmitRateCurve = { XRange = 4, Keys = { { x = 0, y = 1, z = 0 }, "
+                   "{ x = 2, y = 1, z = 0 }, { x = 2.001, y = 5, z = 0 } } },\n}\n");
     osc::renderer::EmitterBlueprintCache cache;
-    cache.set_vfs(&vfs);
+    cache.set_blueprints(blueprints.store());
     osc::renderer::Camera camera;
     osc::renderer::ParticleSystem ps;
 
@@ -234,7 +216,6 @@ TEST_CASE("A script's emitter params and curves reach its emitter", "[renderer][
     CHECK(clock == std::vector<size_t>{5, 6, 7, 8, 13, 14, 15, 16});
     // Keys at 0, 4, 4.002 over 8: phases 0-4 give 1, 5-7 give 5.
     CHECK(stretched == std::vector<size_t>{1, 2, 3, 4, 5, 10, 15, 20});
-    fs::remove_all(root);
 }
 
 TEST_CASE("Effects are made at the fidelities their blueprints allow, as Moho's are",
@@ -251,33 +232,29 @@ TEST_CASE("Effects are made at the fidelities their blueprints allow, as Moho's 
     CHECK_FALSE(fidelity_allows(0b111, 3)); // no such fidelity: 1 << 3 is in no mask
     CHECK_FALSE(fidelity_allows(0b111, -1));
 
-    const fs::path root = osc::test::unique_temp_path("osc_effect_fidelity_test");
-    const fs::path emitters = root / "effects" / "Emitters";
-    fs::create_directories(emitters);
+    osc::lua::LuaState lua;
+    osc::test::EffectBlueprints blueprints(lua);
     const std::string common = "    Lifetime = -1, InterpolateEmission = false,\n"
                                "    EmitIfVisible = false, SnapToWaterline = false,\n"
                                "    LifetimeCurve = { Keys = { { x = 0, y = 50, z = 0 } } },\n"
                                "    EmitRateCurve = { Keys = { { x = 0, y = 1, z = 0 } } },\n";
-    std::ofstream(emitters / "every_emit.bp") << "EmitterBlueprint {\n" << common << "}\n";
-    std::ofstream(emitters / "lowoff_emit.bp") << "EmitterBlueprint {\n"
-                                               << common << "    LowFidelity = false,\n}\n";
-    std::ofstream(emitters / "medoff_emit.bp")
-        << "EmitterBlueprint {\n"
-        << common << "    LowFidelity = true, MedFidelity = false, HighFidelity = true,\n}\n";
-    std::ofstream(emitters / "lowbeam.bp")
-        << "BeamBlueprint {\n    TextureName = '/t.dds', LowFidelity = false,\n}\n";
-    std::ofstream(emitters / "hightrail.bp")
-        << "TrailEmitterBlueprint {\n    TrailLength = 5, HighFidelity = false,\n}\n";
+    blueprints.add("/effects/Emitters/every_emit.bp", "EmitterBlueprint {\n" + common + "}\n");
+    blueprints.add("/effects/Emitters/lowoff_emit.bp",
+                   "EmitterBlueprint {\n" + common + "    LowFidelity = false,\n}\n");
+    blueprints.add("/effects/Emitters/medoff_emit.bp",
+                   "EmitterBlueprint {\n" + common +
+                       "    LowFidelity = true, MedFidelity = false, HighFidelity = true,\n}\n");
+    blueprints.add("/effects/Emitters/lowbeam.bp",
+                   "BeamBlueprint {\n    TextureName = '/t.dds', LowFidelity = false,\n}\n");
+    blueprints.add("/effects/Emitters/hightrail.bp",
+                   "TrailEmitterBlueprint {\n    TrailLength = 5, HighFidelity = false,\n}\n");
 
-    osc::vfs::VirtualFileSystem vfs;
-    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
-    osc::lua::LuaState lua;
     osc::renderer::EmitterBlueprintCache cache;
-    cache.set_vfs(&vfs);
+    cache.set_blueprints(blueprints.store());
     osc::renderer::BeamBlueprintCache beams;
-    beams.set_vfs(&vfs);
+    beams.set_blueprints(blueprints.store());
     osc::renderer::TrailBlueprintCache trails;
-    trails.set_vfs(&vfs);
+    trails.set_blueprints(blueprints.store());
 
     // Read from each kind of blueprint.
     const auto* every = cache.get("/effects/emitters/every_emit.bp", lua.raw());
@@ -332,7 +309,6 @@ TEST_CASE("Effects are made at the fidelities their blueprints allow, as Moho's 
     CHECK(count(3) == 4); // medium alone is left out
     CHECK_FALSE(ps.unmade(4));
     CHECK(count(4) == 2);
-    fs::remove_all(root);
 }
 
 namespace {
@@ -440,17 +416,17 @@ TEST_CASE("A LightParticleIntel is made only where the player's army sees it",
 TEST_CASE("Particles draw by bucket -- under the water, SortOrder, textures, blend; refracting "
           "last -- each bucket in the order it emitted",
           "[renderer][emitter]") {
-    const fs::path root = osc::test::unique_temp_path("osc_particle_order_test");
-    const fs::path dir = root / "effects" / "Emitters";
-    fs::create_directories(dir);
+    osc::lua::LuaState lua;
+    osc::test::EffectBlueprints blueprints(lua);
     const auto emitter_bp = [&](const char* name, const char* fields) {
-        std::ofstream(dir / (std::string(name) + "_emit.bp"))
-            << "EmitterBlueprint {\n    Lifetime = -1,\n    Repeattime = 10,\n"
-            << "    InterpolateEmission = false,\n    EmitIfVisible = false,\n"
-            << "    SnapToWaterline = false,\n"
-            << "    LifetimeCurve = { Keys = { { x = 0, y = 50, z = 0 } } },\n"
-            << "    EmitRateCurve = { Keys = { { x = 0, y = 1, z = 0 } } },\n"
-            << fields << "}\n";
+        blueprints.add(
+            std::string("/effects/Emitters/") + name + "_emit.bp",
+            std::string("EmitterBlueprint {\n    Lifetime = -1,\n    Repeattime = 10,\n"
+                        "    InterpolateEmission = false,\n    EmitIfVisible = false,\n"
+                        "    SnapToWaterline = false,\n"
+                        "    LifetimeCurve = { Keys = { { x = 0, y = 50, z = 0 } } },\n"
+                        "    EmitRateCurve = { Keys = { { x = 0, y = 1, z = 0 } } },\n") +
+                fields + "}\n");
     };
     emitter_bp("under", "    Texture = 'z.dds', SortOrder = -1,\n");
     emitter_bp("tex_a", "    Texture = 'a.dds',\n");
@@ -460,11 +436,8 @@ TEST_CASE("Particles draw by bucket -- under the water, SortOrder, textures, ble
     emitter_bp("later", "    Texture = 'a.dds', SortOrder = 2,\n");
     emitter_bp("refract", "    Texture = 'a.dds', Blendmode = 5, SortOrder = -5,\n");
 
-    osc::vfs::VirtualFileSystem vfs;
-    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
-    osc::lua::LuaState lua;
     osc::renderer::EmitterBlueprintCache cache;
-    cache.set_vfs(&vfs);
+    cache.set_blueprints(blueprints.store());
     osc::renderer::Camera camera;
     osc::renderer::ParticleSystem ps;
     const auto emitter = [](osc::u32 id, const char* name) {
@@ -507,25 +480,23 @@ TEST_CASE("Particles draw by bucket -- under the water, SortOrder, textures, ble
 
 TEST_CASE("Only a SortOrder below efx_ParticleWaterSurface snaps under the water",
           "[renderer][emitter]") {
-    const fs::path root = osc::test::unique_temp_path("osc_particle_water_test");
-    const fs::path dir = root / "effects" / "Emitters";
-    fs::create_directories(dir);
+    osc::lua::LuaState lua;
+    osc::test::EffectBlueprints blueprints(lua);
     const auto emitter_bp = [&](const char* name, const char* sort_order) {
-        std::ofstream(dir / (std::string(name) + "_emit.bp"))
-            << "EmitterBlueprint {\n    Lifetime = -1,\n    Repeattime = 10,\n"
-            << "    InterpolateEmission = false,\n    EmitIfVisible = false,\n"
-            << "    SnapToWaterline = true,\n    SortOrder = " << sort_order << ",\n"
-            << "    LifetimeCurve = { Keys = { { x = 0, y = 50, z = 0 } } },\n"
-            << "    EmitRateCurve = { Keys = { { x = 0, y = 1, z = 0 } } },\n}\n";
+        blueprints.add(std::string("/effects/Emitters/") + name + "_emit.bp",
+                       std::string("EmitterBlueprint {\n    Lifetime = -1,\n    Repeattime = 10,\n"
+                                   "    InterpolateEmission = false,\n    EmitIfVisible = false,\n"
+                                   "    SnapToWaterline = true,\n    SortOrder = ") +
+                           sort_order +
+                           ",\n"
+                           "    LifetimeCurve = { Keys = { { x = 0, y = 50, z = 0 } } },\n"
+                           "    EmitRateCurve = { Keys = { { x = 0, y = 1, z = 0 } } },\n}\n");
     };
     emitter_bp("glow", "-10");
     emitter_bp("deep", "-102");
 
-    osc::vfs::VirtualFileSystem vfs;
-    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
-    osc::lua::LuaState lua;
     osc::renderer::EmitterBlueprintCache cache;
-    cache.set_vfs(&vfs);
+    cache.set_blueprints(blueprints.store());
     osc::renderer::Camera camera;
     osc::renderer::ParticleSystem ps;
     std::vector<osc::u16> heights(65 * 65, 0);

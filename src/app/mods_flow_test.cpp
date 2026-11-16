@@ -1,7 +1,9 @@
 #include "app/mods_flow_test.hpp"
 
+#include "blueprints/blueprint_store.hpp"
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
+#include "renderer/renderer.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/ui_dispatch.hpp"
@@ -30,6 +32,9 @@ constexpr u32 kStepEvery = 10;
 
 /// Retail's Resource Rich (gamedata/mods.scd), which the lobby run picks.
 constexpr const char* kResourceRich = "74A9EAB2-E851-11DB-A1F1-F2C755D89593";
+
+/// The retail emitter tests/integration/mods_flow.py's game mod merges into.
+constexpr const char* kEffect = "/effects/emitters/flash_01_emit.bp";
 
 /// The front end's skirmish (as --auto-skirmish's), with the game mods
 /// retail's lobby would launch: Mods.GetGameMods() of the player's
@@ -176,7 +181,8 @@ bool ModsFlowTest::start(lua::LuaState& ui) {
 }
 
 void ModsFlowTest::frame(lua::LuaState& ui, lua::LuaState* sim_lua, const sim::SimState* sim,
-                         ui::UIDispatch& input, ui::UIControlRegistry& controls) {
+                         ui::UIDispatch& input, ui::UIControlRegistry& controls,
+                         renderer::Renderer& renderer) {
     if (done_) return;
     if (++frames_ > kMaxFrames) {
         done_ = true; // stuck: reported by finish
@@ -189,6 +195,7 @@ void ModsFlowTest::frame(lua::LuaState& ui, lua::LuaState* sim_lua, const sim::S
     if (!sim || !sim_lua || sim->tick_count() < kReportTick) return;
     spdlog::info("mods-flow: sim: {}", report(sim_lua->raw()));
     spdlog::info("mods-flow: ui: {}", report(ui.raw()));
+    spdlog::info("mods-flow: effect: {}", effect_report(sim_lua->raw(), *sim, ui.raw(), renderer));
     reported_ = true;
     done_ = true;
 }
@@ -288,6 +295,22 @@ std::string ModsFlowTest::report(lua_State* L) {
     }
     lua_settop(L, top);
     return line;
+}
+
+std::string ModsFlowTest::effect_report(lua_State* sim_L, const sim::SimState& sim, lua_State* ui_L,
+                                        renderer::Renderer& renderer) {
+    // The sim's: the registered blueprint's Lifetime, which its emitters end
+    // by (sim_bindings.cpp's emitter_blueprint_lifetime).
+    std::string sim_lifetime = "none";
+    if (const auto* store = sim.blueprint_store()) {
+        if (const auto* entry = store->find_effect(kEffect, blueprints::BlueprintType::Emitter))
+            sim_lifetime =
+                fmt::format("{}", store->get_number_field(*entry, "Lifetime", sim_L).value_or(0.0));
+    }
+    const renderer::EmitterBlueprintData* drawn = renderer.emitter_blueprint(kEffect, ui_L);
+    return fmt::format("sim={} render={} texture={}", sim_lifetime,
+                       drawn ? fmt::format("{}", drawn->lifetime) : "none",
+                       drawn ? drawn->texture : "none");
 }
 
 } // namespace osc::app

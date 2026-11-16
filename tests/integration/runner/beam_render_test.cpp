@@ -98,6 +98,8 @@ void test_beam_render(TestContext& ctx) {
     beam_bp("mod.bp", "StartColor = {x=1,y=1,z=1,w=1}, EndColor = {x=1,y=1,z=1,w=1},", 1, 500);
     beam_bp("lod.bp", "StartColor = {x=1,y=1,z=1,w=1}, EndColor = {x=1,y=1,z=1,w=1},", 3, 5);
     ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
+    // Registered, as Moho draws only a registered effect blueprint
+    (void)register_effect_blueprints(ctx, kRoot);
     const std::string add_bp = std::string(kRoot) + "/add.bp";
     const std::string mod_bp = std::string(kRoot) + "/mod.bp";
     const std::string lod_bp = std::string(kRoot) + "/lod.bp";
