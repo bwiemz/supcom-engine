@@ -1091,6 +1091,11 @@ public:
     void set_force_alt_footprint(bool on) { force_alt_footprint_ = on; }
     /// Moho's CAiPathNavigator::RequestPath.
     void set_path_goal(const Vector3& goal, const SimContext& ctx);
+    /// A goal Moho's SIM_TryToBuild hands its navigator, sending it off a
+    /// build site (build_site_units.cpp): it walks there on no order, for as
+    /// long as its navigator keeps that goal.
+    void step_aside(const Vector3& goal, const SimContext& ctx);
+    bool stepping_aside() const { return stepping_aside_; }
     f32 naval_draft() const { return naval_draft_; }
     void set_naval_draft(f32 d) { naval_draft_ = d; }
     bool is_amphibious() const {
@@ -1669,6 +1674,13 @@ private:
     /// `speed_cap` if set (a formation keeping its slowest unit's pace). True
     /// while the move goes on, as the last motion step left it.
     bool nav_update(f32 speed_cap = 0);
+    /// A tick of a walk step_aside began, its orders run (build_site_units.cpp).
+    void keep_stepping_aside();
+    /// Moho's mobile build task, its frame not yet made (TASKSTATE_Processing):
+    /// with units on the footprint of `cmd`'s site (Sim::LocationIsFree), its
+    /// army's resting ones are sent off (SIM_TryToBuild) and the build waits
+    /// kSiteRetryTicks to look again. Whether it waits (build_site_units.cpp).
+    bool units_on_site(UnitCommand& cmd, SimContext& ctx);
     bool nav_step(f64 dt, const map::Terrain* terrain);
     void set_course(const AirCourse& course);
     /// Moho's one CalcMove* a tick: the course its orders set, else its navigator's step.
@@ -2277,6 +2289,8 @@ private:
     f32 bank_angle_ = 0;         // roll in radians (visual banking on turns)
     f32 current_airspeed_ = 0;   // current speed (ramps toward max_airspeed_)
     bool nav_requested_ = false;
+    bool stepping_aside_ = false; // on a walk step_aside began, to aside_goal_
+    Vector3 aside_goal_{};
     AirCourse course_;
     f32 nav_speed_ = 0;
     f32 current_altitude_ = 0;   // actual Y offset above terrain

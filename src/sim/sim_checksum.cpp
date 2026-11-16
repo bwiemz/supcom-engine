@@ -222,6 +222,10 @@ void mix_unit_flight(Fnv& units, const Unit& u) {
         units.mix(path::pack_cell({ga.reserved.x0, ga.reserved.z0}));
         units.mix(path::pack_cell({ga.reserved.x1, ga.reserved.z1}));
     }
+    // A walk off a build site (step_aside), only on one.
+    if (u.stepping_aside()) {
+        units.mix(0x4153494400000000ull); // "ASID"
+    }
     // Its last vertical motion event (OnMotionVertEventChange tells the
     // next against it), only off Top.
     if (u.vert_event() != "Top") {
@@ -403,6 +407,11 @@ void mix_command(Fnv& orders, const UnitCommand& cmd, bool need_unpack) {
     if (cmd.task_wait != 0) {
         orders.mix(0x43415057u); // "CAPW"
         orders.mix(static_cast<u64>(static_cast<u32>(cmd.task_wait)));
+    }
+    // A mobile build that found units on its site, only then.
+    if (cmd.site_tries != 0) {
+        orders.mix(0x53495445u); // "SITE"
+        orders.mix(static_cast<u64>(static_cast<u32>(cmd.site_tries)));
     }
     if (cmd.sacrifice_wait != 0) {
         orders.mix(0x53414357u); // "SACW"

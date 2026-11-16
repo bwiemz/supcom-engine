@@ -11,6 +11,7 @@
 #include "sim/blueprint_categories.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/build_site_props.hpp"
+#include "sim/build_site_units.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/prepare_move.hpp"
@@ -1109,6 +1110,13 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         if (waits_out_task(cmd)) {
             return OrderStep::Hold;
         }
+        // Moho's TASKSTATE_Processing gives up once it has found units on
+        // its site more than kSiteTries times.
+        if (cmd.site_tries > kSiteTries) {
+            command_queue_.pop_front();
+            call_lua_method(L, "OnFailedToBuild");
+            return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+        }
         if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
             command_queue_.pop_front();
             return OrderStep::Next;
@@ -1116,11 +1124,15 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         if (turns_to_face(cmd.target_pos)) {
             return OrderStep::Hold;
         }
-        if (!find_build_site_frame(registry, cmd.blueprint_id, cmd.target_pos) &&
-            build_site_taken(L, registry, cmd.blueprint_id, cmd.target_pos)) {
-            command_queue_.pop_front();
-            call_lua_method(L, "OnFailedToBuild");
-            return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+        if (!find_build_site_frame(registry, cmd.blueprint_id, cmd.target_pos)) {
+            if (build_site_taken(L, registry, cmd.blueprint_id, cmd.target_pos)) {
+                command_queue_.pop_front();
+                call_lua_method(L, "OnFailedToBuild");
+                return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+            }
+            if (units_on_site(cmd, ctx)) {
+                return OrderStep::Hold;
+            }
         }
         if (awaits_arm() || waits_paused(cmd)) {
             return OrderStep::Hold;

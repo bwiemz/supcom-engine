@@ -69,6 +69,7 @@ add_library(osc_sim STATIC
     state_io_paths.cpp
     work_range.cpp
     build_site_props.cpp
+    build_site_units.cpp
     decal.cpp
     world_snapshot.cpp
     command_codec.cpp

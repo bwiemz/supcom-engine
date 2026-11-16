@@ -396,6 +396,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.id(c.assigned_id);
     w.i32v(c.rolloff_wait);
     w.i32v(c.task_wait);
+    w.i32v(c.site_tries);
     w.i32v(c.sacrifice_wait);
     w.i32v(c.count);
     w.i32v(c.max_count);
@@ -457,6 +458,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.assigned_id = r.id();
     c.rolloff_wait = r.i32v();
     c.task_wait = r.i32v();
+    c.site_tries = r.i32v();
     c.sacrifice_wait = r.i32v();
     c.count = r.i32v();
     c.max_count = r.i32v();
@@ -1451,6 +1453,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.i32v(u.guard_anchor_.reserved.z0);
     w.i32v(u.guard_anchor_.reserved.x1);
     w.i32v(u.guard_anchor_.reserved.z1);
+    w.b(u.stepping_aside_);
+    w.vec3(u.aside_goal_);
     w.i32v(u.beam_up_ticks_);
     w.vec3(u.beam_from_);
     w.quat(u.beam_from_orientation_);
@@ -1893,6 +1897,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.guard_anchor_.reserved.z0 = r.i32v();
     u.guard_anchor_.reserved.x1 = r.i32v();
     u.guard_anchor_.reserved.z1 = r.i32v();
+    u.stepping_aside_ = r.b();
+    u.aside_goal_ = r.vec3();
     u.beam_up_ticks_ = r.i32v();
     u.beam_from_ = r.vec3();
     u.beam_from_orientation_ = r.quat();

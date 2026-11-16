@@ -927,6 +927,7 @@ void Unit::tick_commands(f64 dt, SimContext& ctx) {
         if (!tick_orders(dt, ctx, econ_eff)) {
             return;
         }
+        keep_stepping_aside();
         for (auto& weapon : weapons_) {
             if (destroyed() || !in_registry() || dying_) {
                 return;
