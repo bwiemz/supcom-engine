@@ -290,7 +290,8 @@ std::optional<int> App::Window::set_up() {
     // the boot restored, has none to repeat)
     if (sim_state && !opt.map_path.empty() && !sim_state->loaded_from_save() &&
         !sim_state->playback())
-        session_launch = SessionLaunch{opt.map_path, {}, {}, sim_state->recorded_replay().setup};
+        session_launch = SessionLaunch{
+            opt.map_path, {}, {}, sim_state->recorded_replay().setup, app.command_line_ui_mods};
 
     if (auto code = open_replay()) return code;
     if (auto code = open_saved_game()) return code;
@@ -459,12 +460,13 @@ std::optional<int> App::Window::start_flows() {
     }
 
     // --mods-flow-test: a skirmish with mods (M221b), launched from the
-    // front end, through retail's lobby and its mod manager (M221c), or
-    // a recorded one watched
+    // front end, through retail's lobby and its mod manager (M221c), a
+    // recorded one watched, or the command line's (--map, --mod)
     if (opt.mods_flow_test) {
         using Launch = osc::app::ModsFlowTest::Launch;
         mods_flow.emplace(!opt.watch_path.empty() ? Launch::Watch
                           : opt.mods_flow_lobby   ? Launch::Lobby
+                          : !opt.map_path.empty() ? Launch::CommandLine
                                                   : Launch::Direct);
         if (!mods_flow->start(ui_lua_state)) {
             mods_flow->finish();

@@ -170,9 +170,11 @@ bool ModsFlowTest::start(lua::LuaState& ui) {
     const char* what = launch_ == Launch::Direct ? "a skirmish with the player's mods"
                        : launch_ == Launch::Lobby
                            ? "retail's lobby, its mod manager, and a skirmish"
-                           : "a recorded game's mods";
+                       : launch_ == Launch::Watch ? "a recorded game's mods"
+                                                  : "a command line's game, with --mod's mods";
     spdlog::info("=== mods flow test: {} ===", what);
-    if (launch_ != Launch::Direct) return true; // the lobby's clicks, or the replay's
+    // (the lobby's clicks, the replay's, or the command line's game)
+    if (launch_ != Launch::Direct) return true;
     if (auto r = ui.do_string(kLaunch); !r) {
         fail("launching: " + r.error().message);
         return false;

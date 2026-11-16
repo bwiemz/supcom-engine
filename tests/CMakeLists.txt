@@ -154,6 +154,7 @@ add_executable(osc_tests
     test_ai_personality.cpp
     test_projectile_launch.cpp
     test_command_line_lobby.cpp
+    test_command_line_mods.cpp
     test_overlay_footprint.cpp
     test_font_cache.cpp
     test_minimap_area.cpp

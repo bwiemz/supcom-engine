@@ -12,6 +12,7 @@
 #include "blueprints/blueprint_store.hpp"
 
 #include <algorithm>
+#include <span>
 #include <string>
 #include <spdlog/spdlog.h>
 
@@ -128,12 +129,7 @@ Result<void> InitLoader::execute_init(LuaState& state,
     return {};
 }
 
-namespace {
-
-/// Mount a single resolved path: archives as ZipMount, directories as
-/// DirectoryMount. Returns false (and logs) for anything else.
-bool mount_one(vfs::VirtualFileSystem& vfs, const fs::path& path,
-               const std::string& mountpoint) {
+bool mount_path(vfs::VirtualFileSystem& vfs, const fs::path& path, const std::string& mountpoint) {
     std::string ext_lower = path.extension().string();
     std::transform(ext_lower.begin(), ext_lower.end(), ext_lower.begin(),
                    [](unsigned char c) { return std::tolower(c); });
@@ -153,8 +149,6 @@ bool mount_one(vfs::VirtualFileSystem& vfs, const fs::path& path,
     spdlog::warn("Skipping unknown mount type: {}", path.string());
     return false;
 }
-
-} // namespace
 
 void InitLoader::read_hook_table(lua_State* L, vfs::VirtualFileSystem& vfs) {
     vfs.set_hook_dirs(string_array(L, "hook"));
@@ -209,7 +203,7 @@ Result<void> InitLoader::build_vfs_from_path_table(
                               dir_str);
             }
             for (const auto& dir_path : matches) {
-                if (mount_one(vfs, dir_path, mountpoint)) count++;
+                if (mount_path(vfs, dir_path, mountpoint)) count++;
             }
         }
 
@@ -220,6 +214,56 @@ Result<void> InitLoader::build_vfs_from_path_table(
 
     spdlog::info("VFS: {} mount points active", count);
     return {};
+}
+
+namespace {
+
+/// The system scripts each state runs first, in dependency order, through
+/// doscript (so with their hooks).
+constexpr const char* kSystemScripts[] = {
+    "/lua/system/repr.lua",  "/lua/system/config.lua", "/lua/system/utils.lua",
+    "/lua/system/class.lua", "/lua/system/import.lua",
+};
+
+/// Lua 5.1's string.match and string.gmatch: utils.lua defines them, but
+/// repr.lua, which loads first, needs string.match.
+void add_string_shims(LuaState& state) {
+    state.do_string(R"(
+        rawset(string, 'match', function(input, exp, init)
+            local match
+            string.gsub(input:sub(init or 1), exp, function(...) match = arg end, 1)
+            if match then return unpack(match) end
+        end)
+        rawset(string, 'gmatch', string.gfind)
+    )");
+}
+
+/// Run `files` from the VFS in order; one the VFS lacks is skipped (logged).
+Result<void> run_system_files(LuaState& state, const vfs::VirtualFileSystem& vfs,
+                              std::span<const char* const> files) {
+    for (const char* file : files) {
+        if (!vfs.file_exists(file)) {
+            spdlog::warn("System file not found in VFS: {}", file);
+            continue;
+        }
+        if (auto result = run_vfs_script(state.raw(), file); !result) {
+            spdlog::error("Failed to load {}: {}", file, result.error().message);
+            return Error("Failed to load system file " + std::string(file) + ": " +
+                         result.error().message);
+        }
+        spdlog::info("  Loaded: {}", file);
+    }
+    return {};
+}
+
+} // namespace
+
+Result<void> prepare_script_state(LuaState& state, vfs::VirtualFileSystem& vfs) {
+    register_init_bindings(state);
+    state.set_vfs(&vfs);
+    register_blueprint_bindings(state);
+    add_string_shims(state);
+    return run_system_files(state, vfs, kSystemScripts);
 }
 
 Result<void> run_system_scripts(LuaState& state, const vfs::VirtualFileSystem& vfs) {

@@ -68,4 +68,15 @@ private:
     std::vector<std::string> url_protocols_;
 };
 
+/// Mount `path` at `mountpoint` as the init file's path entries mount:
+/// an archive (.scd, .nx2, .nx5, .zip) or a folder. False (logged) for
+/// anything else.
+bool mount_path(vfs::VirtualFileSystem& vfs, const fs::path& path, const std::string& mountpoint);
+
+/// Make `state` able to run the data's front-end scripts outside a game,
+/// as load_blueprints' state runs them before the blueprints: the init
+/// and file bindings over `vfs`, then the system scripts (repr.lua through
+/// import.lua, each with its hooks).
+Result<void> prepare_script_state(LuaState& state, vfs::VirtualFileSystem& vfs);
+
 } // namespace osc::lua
