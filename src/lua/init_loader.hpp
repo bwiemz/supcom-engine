@@ -38,7 +38,10 @@ public:
     Result<void> execute_init(LuaState& state, const InitConfig& config,
                               vfs::VirtualFileSystem& vfs);
 
-    /// Phase 2: Load all blueprints via the VFS.
+    /// Phase 2: Load the blueprints as Moho's rules do: /lua/RuleInit.lua,
+    /// with its hooks, in a state whose __active_mods are the game's mods.
+    /// An error without the script; one in it is reported, and the load
+    /// goes on, unless it loaded no blueprints.
     Result<void> load_blueprints(LuaState& state,
                                   const vfs::VirtualFileSystem& vfs,
                                   blueprints::BlueprintStore& store);

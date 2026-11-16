@@ -24,6 +24,9 @@ namespace osc::lua {
 
 namespace {
 
+/// The script that loads the game rules: the blueprints, and what they need.
+constexpr const char* kRuleInit = "/lua/RuleInit.lua";
+
 /// The strings in the init script's global array `name` (`hook`,
 /// `protocols`), in order; empty when it sets none.
 std::vector<std::string> string_array(lua_State* L, const char* name) {
@@ -204,59 +207,47 @@ Result<void> InitLoader::load_blueprints(
     state.register_function("SPEW", log::l_SPEW);
     state.register_function("_ALERT", log::l_ALERT);
 
-    spdlog::info("Loading system Lua files...");
+    // The rules load, as Moho's RRuleGameRulesImpl constructor runs it
+    // (FUN_00529120): __active_mods is already the game's (the launch set
+    // it, or register_blueprint_bindings gave an empty one), then
+    // /lua/RuleInit.lua runs as doscript runs a script, so the init hook
+    // directories' and each active mod's hooks of it run too. The script
+    // loads the system scripts the blueprints need (config, repr and utils;
+    // FAF's also debug.lua), logs the game's mods, loads /lua/footprints.lua
+    // and Blueprints.lua, and calls LoadBlueprints().
+    if (!vfs.file_exists(kRuleInit)) {
+        return Error(std::string(kRuleInit) + " not found: the data has no blueprints to load");
+    }
+    spdlog::info("Running {}...", kRuleInit);
+    // Moho's SCR_LuaDoScript reports an error in it (or in a mod's hook of
+    // it), and the load goes on with what was registered: a hook runs after
+    // LoadBlueprints(), so a broken one costs the game no blueprints. A hook
+    // that doesn't compile stops the whole chunk, as in Moho; with no
+    // blueprints there is no game to play, so that one fails the load.
+    if (auto result = run_vfs_script(state.raw(), kRuleInit); !result) {
+        spdlog::error("Error in file {} : {}", kRuleInit, result.error().message);
+        if (store.registered_count() == 0) {
+            return Error(std::string(kRuleInit) +
+                         " loaded no blueprints: " + result.error().message);
+        }
+    }
 
-    // Pre-register Lua 5.1 compat shims needed before utils.lua loads.
-    // utils.lua defines string.match/gmatch polyfills, but repr.lua loads
-    // first and needs string.match. Pre-register them here.
-    state.do_string(R"(
-        rawset(string, 'match', function(input, exp, init)
-            local match
-            string.gsub(input:sub(init or 1), exp, function(...) match = arg end, 1)
-            if match then return unpack(match) end
-        end)
-        rawset(string, 'gmatch', string.gfind)
-    )");
-
-    // Load system Lua files in dependency order.
-    // These must be loaded via doscript from the VFS.
-    const char* system_files[] = {
-        "/lua/system/repr.lua",
-        "/lua/system/config.lua",
-        "/lua/system/utils.lua",
-        "/lua/system/class.lua",
-        "/lua/system/import.lua",
-        // The footprint classes, before the blueprints (RuleInit.lua's order).
-        "/lua/footprints.lua",
-        "/lua/system/Blueprints.lua",
-    };
-
-    for (const char* file : system_files) {
+    // The engine's own: this state goes on to be the sim's (or a game UI's),
+    // and the engine imports modules into it before simInit.lua (or
+    // userInit.lua) loads the class system and import() again -- the
+    // scenario loader's /lua/terraintypes.lua, for one. Moho's rules state
+    // has neither (its import() is a stub that answers false), so they load
+    // after RuleInit.lua, where no blueprint or hook of it can use them.
+    for (const char* file : {"/lua/system/class.lua", "/lua/system/import.lua"}) {
         if (!vfs.file_exists(file)) {
             spdlog::warn("System file not found in VFS: {}", file);
             continue;
         }
-
-        auto result = run_vfs_script(state.raw(), file);
-        if (!result) {
-            spdlog::error("Failed to load {}: {}", file,
-                          result.error().message);
-            return Error("Failed to load system file " + std::string(file) +
-                         ": " + result.error().message);
+        if (auto result = run_vfs_script(state.raw(), file); !result) {
+            spdlog::error("Failed to load {}: {}", file, result.error().message);
+            return Error("Failed to load system file " + std::string(file) + ": " +
+                         result.error().message);
         }
-        spdlog::info("  Loaded: {}", file);
-    }
-
-    // Call LoadBlueprints() from a Lua chunk (not directly from C)
-    // so that debug.getinfo() in GetSource() finds a Lua frame.
-    spdlog::info("Calling LoadBlueprints()...");
-
-    auto bp_result = state.do_string("LoadBlueprints()");
-    if (!bp_result) {
-        spdlog::error("LoadBlueprints() failed: {}",
-                       bp_result.error().message);
-        return Error("LoadBlueprints() failed: " +
-                     bp_result.error().message);
     }
 
     // Expose __blueprints global to Lua (needed by shield.lua, game.lua, etc.)

@@ -1,11 +1,16 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "blueprints/blueprint_store.hpp"
 #include "lua/engine_bindings.hpp"
 #include "lua/game_mods.hpp"
+#include "lua/init_loader.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/session_manager.hpp"
 #include "sim/lua_bytes.hpp"
+#include "support/memory_mount.hpp"
+#include "vfs/virtual_file_system.hpp"
 
+#include <memory>
 #include <string>
 
 extern "C" {
@@ -93,6 +98,85 @@ TEST_CASE("The bindings keep a launch's __active_mods", "[lua][mods]") {
     REQUIRE(bare.do_string("__active_mods = 'not a list'").ok());
     ensure_active_mods(bare.raw());
     CHECK(lua_true(bare, "type(__active_mods) == 'table'"));
+}
+
+TEST_CASE("The blueprints load through /lua/RuleInit.lua, hooked by the game's mods",
+          "[lua][mods]") {
+    // A rules script shaped as retail's: it loads Blueprints.lua and calls
+    // LoadBlueprints() itself. The game's mods hook it (Moho's doscript
+    // appends each hook to the script), the second with an error; a mod
+    // that isn't in the game hooks it too.
+    auto mount = std::make_unique<osc::test::MemoryMount>();
+    mount->add("/lua/RuleInit.lua", "__blueprints = {}\n"
+                                    "mods_seen = table.getn(__active_mods)\n"
+                                    "doscript '/lua/system/Blueprints.lua'\n"
+                                    "LoadBlueprints()\n");
+    mount->add("/lua/system/Blueprints.lua",
+               "function LoadBlueprints()\n"
+               "    RegisterUnitBlueprint { BlueprintId = 'UEL0001',\n"
+               "                            Source = '/units/uel0001/uel0001_unit.bp' }\n"
+               "    loaded = (loaded or 0) + 1\n"
+               "end\n");
+    mount->add("/mods/game/hook/lua/RuleInit.lua", "hooked = 'game:' .. tostring(loaded)\n");
+    mount->add("/mods/broken/hook/lua/RuleInit.lua", "error('a broken hook')\n");
+    mount->add("/mods/other/hook/lua/RuleInit.lua", "other_hooked = true\n");
+    // The engine loads import() after the rules script: the state goes on
+    // to import modules before simInit.lua loads it again.
+    mount->add("/lua/system/import.lua", "import_saw = hooked\n");
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/", std::move(mount));
+
+    LuaState state;
+    REQUIRE(state
+                .do_string("__active_mods = { { uid = 'game', location = '/mods/game' },"
+                           "                  { uid = 'broken', location = '/mods/broken' } }")
+                .ok());
+    osc::blueprints::BlueprintStore store(state.raw());
+    InitLoader loader;
+    const auto loaded = loader.load_blueprints(state, vfs, store);
+    REQUIRE(loaded.ok());
+
+    // RuleInit.lua ran once, with the game's mods set, then their hooks.
+    // The broken one is reported, and the load goes on (Moho's
+    // SCR_LuaDoScript): its blueprints are the store's, and __blueprints.
+    CHECK(lua_true(state, "mods_seen == 2 and loaded == 1"));
+    CHECK(lua_true(state, "hooked == 'game:1'"));
+    CHECK(lua_true(state, "rawget(_G, 'other_hooked') == nil"));
+    CHECK(lua_true(state, "import_saw == 'game:1'"));
+    CHECK(store.find("uel0001") != nullptr);
+    CHECK(store.registered_count() == 1);
+    CHECK(lua_true(state, "__blueprints.uel0001.BlueprintId == 'UEL0001'"));
+    // (a rebind for the next game's state keeps the entry, without its table)
+    store.rebind(state.raw());
+    CHECK(store.total_count() == 1);
+    CHECK(store.registered_count() == 0);
+
+    // A hook that doesn't compile stops the whole script, as in Moho: no
+    // blueprints, so no game
+    auto unparsed = std::make_unique<osc::test::MemoryMount>();
+    unparsed->add("/lua/RuleInit.lua", "doscript '/lua/system/Blueprints.lua'\n"
+                                       "LoadBlueprints()\n");
+    unparsed->add("/lua/system/Blueprints.lua",
+                  "function LoadBlueprints() RegisterUnitBlueprint { BlueprintId = 'a' } end\n");
+    unparsed->add("/mods/game/hook/lua/RuleInit.lua", "this is not lua\n");
+    osc::vfs::VirtualFileSystem broken;
+    broken.mount("/", std::move(unparsed));
+    LuaState stopped;
+    REQUIRE(stopped.do_string("__active_mods = { { location = '/mods/game' } }").ok());
+    osc::blueprints::BlueprintStore nothing(stopped.raw());
+    const auto failed = loader.load_blueprints(stopped, broken, nothing);
+    REQUIRE_FALSE(failed.ok());
+    CHECK(failed.error().message.find("/lua/RuleInit.lua") != std::string::npos);
+    CHECK(nothing.registered_count() == 0);
+
+    // Data without a rules script has no blueprints to load
+    osc::vfs::VirtualFileSystem empty;
+    empty.mount("/", std::make_unique<osc::test::MemoryMount>());
+    LuaState bare;
+    osc::blueprints::BlueprintStore none(bare.raw());
+    const auto missing = loader.load_blueprints(bare, empty, none);
+    REQUIRE_FALSE(missing.ok());
+    CHECK(missing.error().message.find("/lua/RuleInit.lua") != std::string::npos);
 }
 
 TEST_CASE("A UI state remembers that it ran SessionInit.lua", "[lua][mods]") {

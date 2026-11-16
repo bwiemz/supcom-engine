@@ -154,9 +154,9 @@ WorldLoad begin_world_load(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     load.sim_lua->set_vfs(&vfs);
     load.sim_lua->set_blueprint_store(&store);
 
-    // 4. Run init sequence on new sim state (polyfills, config, class,
-    // import). Here, on the window's thread: it mounts the VFS its frames
-    // read.
+    // 4. Run the init file on the new sim state (the VFS's mounts and hook
+    // directories). Here, on the window's thread: it mounts the VFS its
+    // frames read.
     auto reinit_result = loader.execute_init(*load.sim_lua, config, vfs);
     if (!reinit_result) {
         spdlog::error("Reload init failed: {}", reinit_result.error().message);

@@ -308,7 +308,7 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
-    // Run init sequence on UI state (polyfills, config, class system, import)
+    // Run the init file on the UI state (the VFS's mounts and hook directories)
     auto ui_init_result = loader.execute_init(ui_lua_state, config, vfs);
     if (!ui_init_result) {
         spdlog::error("UI Lua init failed: {}", ui_init_result.error().message);
