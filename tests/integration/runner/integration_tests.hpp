@@ -161,6 +161,8 @@ void test_range_render(TestContext& ctx);
 void test_feedback_render(TestContext& ctx);
 /// --hull-facing-test, in hull_facing_test.cpp.
 void test_hull_facing(TestContext& ctx);
+/// --attack-reach-test, in attack_reach_test.cpp.
+void test_attack_reach(TestContext& ctx);
 /// --footfall-test, in footfall_test.cpp.
 void test_footfall(TestContext& ctx);
 /// --trail-render-test (M214b), in trail_render_test.cpp.

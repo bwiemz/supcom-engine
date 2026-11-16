@@ -19,9 +19,11 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "sim/weapon.hpp"
 #include "support/tick_until.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
@@ -132,10 +134,11 @@ struct World {
         lua_settop(L, 0);
     }
 
-    Unit* make(const char* bp, f32 x, f32 z) {
+    Unit* make(const char* bp, f32 x, f32 z, int army = 1) {
         REQUIRE(state
-                    .do_string("made = CreateUnit('" + std::string(bp) + "', 1, " +
-                               std::to_string(x) + ", 10, " + std::to_string(z) + ")")
+                    .do_string("made = CreateUnit('" + std::string(bp) + "', " +
+                               std::to_string(army) + ", " + std::to_string(x) + ", 10, " +
+                               std::to_string(z) + ")")
                     .ok());
         Unit* found = nullptr;
         sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
@@ -409,6 +412,56 @@ TEST_CASE("A landed aircraft given an order takes off, climbs to its height and 
     tick_until([&] { w.sim.tick(); }, "the plane finishes its move", 400,
                [&] { return plane.command_queue().empty(); });
     CHECK(plane.position().x > 80.0f);
+}
+
+TEST_CASE("A landed aircraft holds its fire at an enemy beside it, and fires once it is up again",
+          "[air_landing][weapon]") {
+    // Moho's UnitWeapon::CanFire: an aircraft (Air.CanFly) off the Air layer
+    // can't fire. Retail's gunships keep Land targets on every layer, so one
+    // landed beside an enemy would otherwise shoot from the ground.
+    World w;
+    w.sim.add_army("ARMY_2", "ARMY_2");
+    w.sim.set_fog_of_war("none");
+    w.sim.set_victory_condition("sandbox");
+    Unit& gunship = *w.make("plane", 40.0f, 40.0f);
+    tick_until([&] { w.sim.tick(); }, "the gunship lands", 300,
+               [&] { return !gunship.is_air_unit(); });
+    REQUIRE(gunship.layer() == "Land");
+
+    lua_State* L = w.state.raw();
+    REQUIRE(w.state.do_string("fired = 0 gun = {OnFire = function() fired = fired + 1 end}").ok());
+    auto weapon = std::make_unique<osc::sim::Weapon>();
+    weapon->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
+    weapon->max_range = 30.0f;
+    weapon->damage = 10.0f;
+    weapon->rate_of_fire = 10.0f;
+    weapon->target_check_period = 1;
+    lua_getglobal(L, "gun");
+    weapon->lua_table_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    weapon->script_class = true;
+    gunship.add_weapon(std::move(weapon));
+    const osc::sim::Weapon& gun = *gunship.weapons().back();
+    const auto fired = [&] {
+        lua_getglobal(L, "fired");
+        const auto n = static_cast<int>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        return n;
+    };
+
+    const Unit& tank = *w.make("tank", 50.0f, 40.0f, 2);
+    tick_until([&] { w.sim.tick(); }, "the gun takes the tank", 20,
+               [&] { return gun.target_entity_id == tank.entity_id(); });
+    // Three seconds, at ten shots a second, on the ground.
+    for (int t = 0; t < 30; ++t) w.sim.tick();
+    CHECK_FALSE(gunship.is_air_unit());
+    CHECK(gun.target_entity_id == tank.entity_id());
+    CHECK(fired() == 0);
+
+    World::move(gunship, 40.0f, 50.0f);
+    tick_until([&] { w.sim.tick(); }, "the gunship takes off", 20,
+               [&] { return gunship.is_air_unit(); });
+    tick_until([&] { w.sim.tick(); }, "the gun fires, airborne", 20, [&] { return fired() > 0; });
+    CHECK(gunship.is_air_unit());
 }
 
 TEST_CASE("A game saved while an aircraft comes down loads and goes on as the original, its "

@@ -135,6 +135,18 @@ ReclaimCosts reclaim_costs(lua_State* L, const Unit& reclaimer, const Entity& ta
     return costs;
 }
 
+/// The weapon `unit` attacks `target` with: the first of its weapons, in
+/// blueprint order, that can attack it (Moho's CAiAttackerImpl::
+/// GetTargetWeapon), or null.
+const Weapon* target_weapon(const Unit& unit, const Entity& target, const SimState* sim) {
+    for (const auto& w : unit.weapons()) {
+        if (w->enabled && w->attacks_on_order() && w->can_pick(unit, target, sim)) {
+            return w.get();
+        }
+    }
+    return nullptr;
+}
+
 } // namespace
 
 EntityId Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
@@ -669,7 +681,8 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
         command_queue_.pop_front();
         return OrderStep::Next;
     }
-    // Find max weapon range
+    // Its longest weapon's range: a dying target's reach (Moho's
+    // VectorIsWithinAttackRange, any weapon's), and the guard leash's
     f32 best_range = 0;
     for (auto& w : weapons_) {
         if (w->enabled && !w->fire_on_death && !w->manual_fire)
@@ -722,18 +735,21 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
             }
         }
     }
+    // The attack is made with its target weapon, and the unit is in reach
+    // once the target is within that weapon's range (CUnitAttackTargetTask::
+    // TaskTick, Processing: TargetIsWithinWeaponAttackRange), not its
+    // longest weapon's: a frigate's anti-air reaches 48, its gun 28. With no
+    // weapon that can hit the target, its longest weapon's range stands.
+    const Weapon* const weapon = target_weapon(*this, *target, ctx.sim);
+    const f32 reach = weapon ? weapon->max_range : best_range;
+    const bool in_reach = dist2 <= reach * reach;
     // A FormAttack's unit with no weapon that can hit its target gives the
     // order up, unless it is DIRECTFIRE (CUnitAttackTargetTask::TaskTick's
     // first test, every tick: its attacker's target weapon is gone).
-    if (cmd.form_attack && !has_category("DIRECTFIRE")) {
-        const bool can_hit = std::any_of(weapons_.begin(), weapons_.end(), [&](const auto& w) {
-            return w->enabled && w->attacks_on_order() && w->can_pick(*this, *target, ctx.sim);
-        });
-        if (!can_hit) {
-            release_navigator();
-            command_queue_.pop_front();
-            return OrderStep::Next;
-        }
+    if (cmd.form_attack && !weapon && !has_category("DIRECTFIRE")) {
+        release_navigator();
+        command_queue_.pop_front();
+        return OrderStep::Next;
     }
     // A winged aircraft flies at its target and, once within a weapon's
     // reach or its EngageDistance, makes its runs: Moho's attack task hands
@@ -741,7 +757,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     // from then on. It never parks at range.
     if (air_combat_rules_.winged && layer_ == "Air" && ctx.sim) {
         const f32 engage_distance = air_combat_rules_.engage_distance;
-        if (!cmd.engaged && (dist2 <= range2 || dist2 < engage_distance * engage_distance) &&
+        if (!cmd.engaged && (in_reach || dist2 < engage_distance * engage_distance) &&
             !engage(cmd, ctx.L)) {
             return destroyed() ? OrderStep::Gone : OrderStep::Hold;
         }
@@ -753,11 +769,10 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     }
     // A hovering aircraft is handed its target alike, and from then on
     // circles its target point (Moho's CalcCirclingOrientation, at
-    // GetTargetPosGun) at its target weapon's reach -- the first weapon that
-    // can attack it -- facing it.
+    // GetTargetPosGun) at its target weapon's reach, facing it.
     if (circles(*this) && ctx.sim) {
         const f32 engage_distance = air_combat_rules_.engage_distance;
-        if (!cmd.engaged && (dist2 <= range2 || dist2 < engage_distance * engage_distance) &&
+        if (!cmd.engaged && (in_reach || dist2 < engage_distance * engage_distance) &&
             !engage(cmd, ctx.L)) {
             return destroyed() ? OrderStep::Gone : OrderStep::Hold;
         }
@@ -768,12 +783,9 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
                                 ? static_cast<const Unit*>(target)->target_point(cmd.target_point)
                                 : target->position();
             around.move_goal = target->position();
-            for (const auto& w : weapons_) {
-                if (w->enabled && w->attacks_on_order() && w->can_pick(*this, *target, ctx.sim)) {
-                    around.weapon_radius = w->max_range;
-                    break;
-                }
-            }
+            // (asked again: engage's scripts may have switched a weapon off)
+            const Weapon* const circling = target_weapon(*this, *target, ctx.sim);
+            around.weapon_radius = circling ? circling->max_range : 0.0f;
             around.target_in_air =
                 target->is_unit() && static_cast<const Unit*>(target)->layer() == "Air";
             set_course({.kind = AirCourse::Kind::Circle, .around = around});
@@ -795,7 +807,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
         }
         nav_update();
     };
-    if (dist2 > range2) {
+    if (!in_reach) {
         close_in();
     } else {
         // In reach, the formation is dropped: from now on the unit attacks
@@ -813,12 +825,8 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
         // Moho's AAS_6: while its target weapon passes over the target (ReTargetOnMiss), the
         // attack task sends it at the target
         const auto passed_over = [&] {
-            for (const auto& w : weapons_) {
-                if (w->enabled && w->attacks_on_order() && w->can_pick(*this, *target, ctx.sim)) {
-                    return w->retarget_cooldown != 0;
-                }
-            }
-            return false;
+            const Weapon* const w = target_weapon(*this, *target, ctx.sim);
+            return w && w->retarget_cooldown != 0;
         };
         if (is_mobile() && !can_fly() && passed_over()) {
             close_in();

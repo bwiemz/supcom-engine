@@ -264,8 +264,9 @@ public:
     /// order to the selected units. Build places `mode.name` at the snapped
     /// point (builders only); an order issues that cap, at the unit under the
     /// click when the order targets one, but a move is a patrol_click when it
-    /// can be. Nothing when the mode has no world click (none, ping) or
-    /// nothing takes the order.
+    /// can be, and a ferry goes to the air transports, from where they are
+    /// unless they all run a route already. Nothing when the mode has no world
+    /// click (none, ping) or nothing takes the order.
     std::optional<IssuedCommand> click_in_command_mode(sim::SimState& sim,
                                                        const CommandMode& mode,
                                                        f32 wx, f32 wz, bool shift);

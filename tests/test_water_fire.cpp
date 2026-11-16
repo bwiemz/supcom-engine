@@ -1,7 +1,9 @@
+// Moho's UnitWeapon fire check (UnitWeapon::CanFire, faf-re 0x006D4C80).
 // A weapon that fires only above the water (AboveWaterFireOnly) asks where
-// its muzzle is against the water's surface, not which layer its unit is on
-// (Moho's UnitWeapon fire check, faf-re): a Monkeylord standing on the
-// seabed fires while its guns are above the water.
+// its muzzle is against the water's surface, not which layer its unit is on:
+// a Monkeylord standing on the seabed fires while its guns are above the
+// water. An aircraft fires only on the Air layer, and a unit that unpacks to
+// fire only while it is Immobile.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -92,4 +94,42 @@ TEST_CASE("AboveWaterFireOnly: the muzzle above the water fires, below it doesn'
             CHECK(fires(sim, *walker, *target, true));
         }
     }
+}
+
+TEST_CASE("An aircraft fires only on the Air layer", "[weapon]") {
+    // CanFire's `Air.CanFly && layer != LAYER_Air` (Steam exe 0x006DB742..0x006DB758)
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    ground_under(sim, 5.0f);
+    Unit* gunship = unit_at(sim, 0, 40.0f, 7.8125f, 40.0f);
+    gunship->set_motion_type("RULEUMT_Air");
+    const Unit* target = unit_at(sim, 1, 60.0f, 7.8125f, 40.0f);
+    for (const char* layer : {"Land", "Water"}) {
+        INFO("landed on " << layer);
+        gunship->set_layer(layer);
+        CHECK_FALSE(fires(sim, *gunship, *target, false));
+    }
+    gunship->set_layer("Air");
+    CHECK(fires(sim, *gunship, *target, false));
+    // A unit that can't fly fires from its own layers.
+    Unit* tank = unit_at(sim, 0, 40.0f, 7.8125f, 45.0f);
+    tank->set_layer("Land");
+    CHECK(fires(sim, *tank, *target, false));
+}
+
+TEST_CASE("A unit that unpacks to fire (AI.NeedUnpack) fires only while it is Immobile",
+          "[weapon]") {
+    // CanFire's `AI.NeedUnpack && !IsUnitState(UNITSTATE_Immobile)` (Steam exe
+    // 0x006DB76B..0x006DB785). Retail's WeaponUnpackingState calls
+    // SetImmobile(true) as it unpacks.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    ground_under(sim, 5.0f);
+    Unit* artillery = unit_at(sim, 0, 40.0f, 7.8125f, 40.0f);
+    artillery->set_layer("Land");
+    artillery->set_need_unpack(true);
+    const Unit* target = unit_at(sim, 1, 60.0f, 7.8125f, 40.0f);
+    CHECK_FALSE(fires(sim, *artillery, *target, false));
+    artillery->set_immobile(true);
+    CHECK(fires(sim, *artillery, *target, false));
 }
