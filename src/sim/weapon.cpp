@@ -668,7 +668,6 @@ bool Weapon::can_attack(const Entity& target, const SimState* sim) const {
         // A projectile in flight is on the Air layer, or Water below the
         // surface.
         const auto& proj = static_cast<const Projectile&>(target);
-        if (proj.impacted) return false;
         if (fire_target_layer_caps != 0xFF &&
             !(layer_to_bit(proj.layer()) & fire_target_layer_caps))
             return false;
