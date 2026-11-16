@@ -87,7 +87,9 @@ struct UnitEconomy {
     /// aircraft is damaged.
     f64 dock_repair_mass = 0.0;
     f64 dock_repair_energy = 0.0;
-    /// Moho's CUnitCaptureTask asks through a request of its own, apart from the unit's.
+    /// Moho's CUnitCaptureTask asks through a request of its own, apart from the unit's:
+    /// its capture's costs over its ticks (mCaptureRate), a second here.
+    f64 capture_mass = 0.0;
     f64 capture_energy = 0.0;
     EconRequest silo_request;
     EconRequest dock_repair_request;
@@ -120,7 +122,7 @@ struct UnitEconomy {
 
     /// Moho's mMaintainenceCost: a silo's missile under way asks through it
     /// too (CAiSiloBuildImpl).
-    f64 mass_requested() const { return consumption_mass + silo_mass; }
+    f64 mass_requested() const { return consumption_mass + silo_mass + capture_mass; }
     f64 energy_requested() const { return consumption_energy + silo_energy + capture_energy; }
     f64 mass_produced() const { return produced_mass + reclaimed_mass; }
     f64 energy_produced() const { return produced_energy + reclaimed_energy; }
@@ -480,6 +482,7 @@ public:
 
     // Layer change with Lua OnLayerChange(new, old) callback
     void set_layer_with_callback(const std::string& new_layer, lua_State* L);
+    void call_on_layer_change(lua_State* L, const std::string& old_layer);
 
     /// Moho's horizontal motion states, raised to scripts as
     /// self:OnMotionHorzEventChange(new, old) when they change.
@@ -727,6 +730,16 @@ public:
     /// is its focus each tick it does (OnAssignedFocusEntity, through `L`).
     bool progress_reclaim_assist(f64 dt, EntityRegistry& registry, lua_State* L);
     static bool reclaim_wears_down(const Entity& target);
+    /// Moho's CUnitReclaimTask as it starts reclaiming (its Processing state):
+    /// a unit under construction is made no more complete than its health's
+    /// share (Entity::UpdateFractionComplete). For a prop the task does the
+    /// same; that is not ported yet.
+    static void reclaim_from_health(Entity& target);
+    /// One reclaim step of `amount` (the task's Complete state), returning the
+    /// fraction left: a unit under construction steps back by Unit::Materialize,
+    /// its health with it, and its health is then cut to its fraction's share;
+    /// a prop loses `amount` of its fraction.
+    static f32 reclaim_step(Entity& target, f32 amount);
     bool reclaim_arm_ready(const Entity& target) const;
     bool awaits_arm();
     bool turns_to_face(const Vector3& at);
@@ -744,18 +757,29 @@ public:
     void stop_repairing(lua_State* L, EntityRegistry& registry);
     bool shield_needs_repair(EntityRegistry& registry, lua_State* L);
 
-    /// Capture helpers
+    /// Capture helpers (Moho's CUnitCaptureTask): the target of the capture
+    /// it has started, else 0.
     EntityId capture_target_id() const { return capture_target_id_; }
     void set_capture_target_id(EntityId id) { capture_target_id_ = id; }
     bool is_capturing() const { return static_cast<bool>(capture_target_id_); }
-    bool is_being_captured() const { return being_captured_; }
-    void set_being_captured(bool v) { being_captured_ = v; }
+    /// Moho's UNITSTATE_BeingCaptured: a capture of it has started and not
+    /// ended (its CaptorCount).
+    bool is_being_captured() const { return captor_count_ > 0; }
+    i32 captor_count() const { return captor_count_; }
     bool capturable() const { return capturable_; }
     void set_capturable(bool c) { capturable_ = c; }
+    /// Moho's TASKSTATE_Starting: the capture's costs from the scripts, its
+    /// request to the army, and the target's count of captors
+    /// (DoCallback(true)). False if it could not start, or its scripts ended it.
     bool start_capture(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L);
-    bool progress_capture(f64 dt, EntityRegistry& registry, lua_State* L,
-                           f32 efficiency = 1.0f);
-    void stop_capturing(lua_State* L, EntityRegistry& registry, bool failed);
+    /// Moho's TASKSTATE_Processing, a tick of it: progress by the target's
+    /// count of captors if the tick's share was `paid`, and the capture
+    /// complete once that reaches its ticks. False once it has ended.
+    bool progress_capture(EntityRegistry& registry, lua_State* L, bool paid);
+    /// The capture task's end (Moho's destructor, DoCallback(false)): the
+    /// unit captures no more, and a target alive still loses a captor and
+    /// hears OnFailedBeingCaptured, then this unit OnFailedCapture.
+    void stop_capturing(lua_State* L, EntityRegistry& registry);
 
     /// Enhancement helpers
     bool has_enhancement(const std::string& enh) const;
@@ -877,13 +901,14 @@ public:
     bool has_unit_state(const std::string& state) const { return unit_states_.count(state) > 0; }
     const std::unordered_set<std::string>& unit_states() const { return unit_states_; }
     /// Moho's CheckAutoInitiate: an idle unit -- no orders, or only an
-    /// attack whose target is gone -- may take an attack order of its
-    /// weapons' own choosing.
+    /// attack (a FormAttack too) whose target is dying or gone -- may take an
+    /// attack order of its weapons' own choosing.
     bool auto_initiate_allowed(const EntityRegistry& registry) const;
     /// Whether Moho's FindBestEnemy skips `enemy` whatever the weapon.
     bool passes_over(const Unit& enemy, const SimState* sim, const EntityRegistry& registry) const;
     /// A weapon with AutoInitiateAttackCommand picked `target`: the unit
-    /// attacks it once its weapons are done this tick (the first pick wins).
+    /// attacks it once that weapon's update is done, so the weapons after it
+    /// find the order queued (tick_weapons).
     void request_auto_attack(EntityId target) {
         if (!auto_attack_target_) {
             auto_attack_target_ = target;
@@ -1091,6 +1116,11 @@ public:
     void set_force_alt_footprint(bool on) { force_alt_footprint_ = on; }
     /// Moho's CAiPathNavigator::RequestPath.
     void set_path_goal(const Vector3& goal, const SimContext& ctx);
+    /// A goal Moho's SIM_TryToBuild hands its navigator, sending it off a
+    /// build site (build_site_units.cpp): it walks there on no order, for as
+    /// long as its navigator keeps that goal.
+    void step_aside(const Vector3& goal, const SimContext& ctx);
+    bool stepping_aside() const { return stepping_aside_; }
     f32 naval_draft() const { return naval_draft_; }
     void set_naval_draft(f32 d) { naval_draft_ = d; }
     bool is_amphibious() const {
@@ -1420,8 +1450,20 @@ public:
     i32 pickup_ticks() const { return pickup_ticks_; }
     /// Ticks left of a unit's beam up into its transport (0: not beaming).
     i32 beam_up_ticks() const { return beam_up_ticks_; }
-    /// Whether the unit's head order is a load onto that transport.
+    /// Whether the unit's head order calls that transport (awaited_transport).
     bool calls_transport(EntityId transport_id) const;
+    /// The transport its head order calls (Moho's UNITSTATE_WaitingForTransport,
+    /// and its focus): a load order's target, or the transport that took it
+    /// for its AssistMove; 0 for none.
+    EntityId awaited_transport() const;
+    /// Whether this transport could carry `cargo` at all (Moho's
+    /// TransportCanCarryUnit): a mobile unit, an aircraft only onto a staging
+    /// platform and nothing else onto one, a commander only onto a
+    /// CANTRANSPORTCOMMANDER, and a class its slots can hold.
+    bool transport_can_carry(const Unit& cargo);
+    /// Whether it has a transport's AI (Moho's AiTransport): the Transport
+    /// order's cap, or a pod or air staging platform.
+    bool has_transport_ai() const;
 
     void attach_to_transport(Unit* transport, EntityRegistry& registry, lua_State* L);
     /// Hang from the transport's bone that holds our slot (or sit at its
@@ -1669,6 +1711,18 @@ private:
     /// `speed_cap` if set (a formation keeping its slowest unit's pace). True
     /// while the move goes on, as the last motion step left it.
     bool nav_update(f32 speed_cap = 0);
+    /// A tick of a walk step_aside began, its orders run (build_site_units.cpp).
+    void keep_stepping_aside();
+    /// Moho's mobile build task, its frame not yet made (TASKSTATE_Processing):
+    /// with units on the footprint of `cmd`'s site (Sim::LocationIsFree), its
+    /// army's resting ones are sent off (SIM_TryToBuild) and the build waits
+    /// kSiteRetryTicks to look again. Whether it waits (build_site_units.cpp).
+    bool units_on_site(UnitCommand& cmd, SimContext& ctx);
+    /// Moho's CFactoryBuildTask, its unit not yet made (TASKSTATE_Preparing):
+    /// with idle units on its own footprint, its army's idle ones are sent off
+    /// and it looks again kSiteRetryTicks later, for as long as it takes.
+    /// Whether it waits (build_site_units.cpp).
+    bool units_on_pad(UnitCommand& cmd, SimContext& ctx);
     bool nav_step(f64 dt, const map::Terrain* terrain);
     void set_course(const AirCourse& course);
     /// Moho's one CalcMove* a tick: the course its orders set, else its navigator's step.
@@ -1718,6 +1772,17 @@ private:
     /// SetDesiredTarget's notice: each NeedPrep weapon hears OnGotTarget.
     /// False when a script took the unit.
     bool ready_prep_weapons(lua_State* L);
+    /// Moho's CAiAttackerImpl::Stop, SetDesiredTarget with no target: every
+    /// weapon drops its target, its script told, and looks again two ticks on
+    /// with AutoInitiateAttackCommand, else a TargetCheckInterval on.
+    void stop_attacker(lua_State* L);
+    /// Moho's ~CUnitAttackTargetTask: once the attack order whose task ran
+    /// is gone from the head of the queue (done, cleared or replaced), the
+    /// attacker stops. False when a script took the unit.
+    bool end_gone_attack(lua_State* L);
+    /// The attack order a weapon's search asked for (request_auto_attack),
+    /// issued now to this unit alone, its queue cleared.
+    void issue_auto_attack(Weapon& weapon, EntityId target_id, SimContext& ctx);
     /// Fuel, the layer, the step its orders asked for, coasting.
     bool motion_tick(f64 dt, SimContext& ctx);
     /// Moho's CUnitMotion::UpdateCurrentLayer starting a shore crossing:
@@ -1733,8 +1798,9 @@ private:
     void tend_unfinished(SimContext& ctx);
     void decay(lua_State* L);
     /// Moho's Unit::Materialize: `step` more of it built, its health with it.
-    /// Unfinished, it first comes level with its health (which starts at 1, so
-    /// a step smaller than that hit point's share lifts it to the share).
+    /// Unfinished, a step forward first brings it level with its health (which
+    /// starts at 1, so a step smaller than that hit point's share lifts it to
+    /// the share); a step back (decay, reclaim) takes off just the step.
     void materialize(f32 step);
 
     // The order handlers (unit_orders.cpp), one per kind of order.
@@ -1883,8 +1949,21 @@ private:
     /// The transport's side (CUnitLoadUnits): slots for the units calling
     /// it, a flight to their centre, a low hover while they board.
     OrderStep order_transport_pickup(UnitCommand& cmd, SimContext& ctx);
-    /// A unit's side (CUnitCallTransport): to its place, then a beam up.
+    /// A unit's side (CUnitCallTransport): to its place, then a beam up. A
+    /// load order calls its target; an AssistMove, the transport that took
+    /// the unit.
     OrderStep order_call_transport(UnitCommand& cmd, SimContext& ctx);
+    /// A pickup's start (CUnitLoadUnits::DoTask): slots for `wanted`, the
+    /// largest first, and the flight to their centre (or, on the ground,
+    /// the wait where it is). `announce_full`: the script hears
+    /// OnTransportFull when one has no room. False if a script destroyed
+    /// the unit; pickup_ids_ empty when none got a slot.
+    bool begin_pickup(const std::vector<Unit*>& wanted, bool announce_full, lua_State* L);
+    /// The pickup under way: its flight, its descent to its hover height,
+    /// its wait while the units board. Done: the wait is over, and the
+    /// pickup finished.
+    enum class PickupStep : u8 { Running, Done, Gone };
+    PickupStep pickup_step(SimContext& ctx);
     /// End the pickup: slots of units that never came are given up.
     void finish_pickup(bool completed, lua_State* L);
     /// A transport at its drop (M206n, Moho's CUnitUnloadUnits): it comes
@@ -1912,6 +1991,30 @@ private:
     void set_motion_state(MotionState next, lua_State* L);
     /// A transport flies to the point and drops all its cargo.
     OrderStep order_transport_unload(UnitCommand& cmd, SimContext& ctx);
+    /// Whether any of `ids` (none: any cargo at all) is aboard.
+    bool cargo_aboard(const std::vector<EntityId>& ids) const;
+    /// A transport's drop at `at` (CUnitUnloadUnits): it flies within 5 of
+    /// it, then unload_step sets `ids` (or all of it) down. Done at once
+    /// with none of them aboard.
+    enum class UnloadStep : u8 { Holding, Done, Gone };
+    UnloadStep unload_at(Vector3 at, const std::vector<EntityId>& ids, SimContext& ctx);
+    /// An AssistMove (unit_assist_move.cpp; Moho's IAiCommandDispatchImpl
+    /// arm for it): a transport carries the land units given it, and a land
+    /// unit drives to the goal or boards the transport that takes it.
+    OrderStep order_assist_move(UnitCommand& cmd, SimContext& ctx);
+    /// A transport's (CUnitAssistMoveTask): it picks up the units that need a
+    /// lift, sets them down at the goal, and goes on until none is left; then
+    /// it goes to the goal, and the order ends.
+    OrderStep order_assist_transport(UnitCommand& cmd, SimContext& ctx);
+    /// The units it picks up next (GetEntitiesAlreadyAtLoc); `pathfinding`:
+    /// one of the order's is still waiting for its path.
+    std::vector<Unit*> assist_pickups(const UnitCommand& cmd, SimContext& ctx, bool& pathfinding);
+    /// Whether this land unit gets to its goal sooner if `transport` comes
+    /// for it (Unit::NeedsPickup).
+    bool needs_pickup(const Unit& transport) const;
+    /// A transport's AssistMove is over (~CUnitAssistMoveTask):
+    /// AssistMoving goes, and its cargo loses its orders.
+    void end_assist_move(SimContext& ctx);
     /// A cheat's DestroySelf order: the unit destroyed.
     OrderStep order_destroy_self(SimContext& ctx);
     /// A SpecialAction order: its script hears OnSpecialAction(location), and
@@ -2033,11 +2136,11 @@ private:
     f64 repair_build_time_ = 0;   // target's Economy.BuildTime
     f64 repair_cost_mass_ = 0;    // target's Economy.BuildCostMass
     f64 repair_cost_energy_ = 0;  // target's Economy.BuildCostEnergy
-    EntityId capture_target_id_{}; // entity ID of unit being captured
-    f64 capture_time_ = 0;        // total seconds to capture
-    f64 capture_energy_cost_ = 0; // total energy drain
-    bool capturable_ = true;      // can this unit be captured?
-    bool being_captured_ = false; // is this unit currently being captured?
+    EntityId capture_target_id_{}; // the unit it captures, once begun (Moho's mTargetEntity)
+    i32 capture_ticks_ = 0;        // the capture's ticks, one captor's (Moho's mCaptureTime)
+    i32 capture_progress_ = 0;     // of them, done (Moho's mCaptureProgress)
+    bool capturable_ = true;       // can this unit be captured?
+    i32 captor_count_ = 0;         // the captures of it under way (Moho's CaptorCount)
     bool paused_ = false;
     MotionHorz motion_horz_ = MotionHorz::Stopped;
     void update_motion_horz(lua_State* L, bool crossing, const Vector3& from);
@@ -2277,6 +2380,8 @@ private:
     f32 bank_angle_ = 0;         // roll in radians (visual banking on turns)
     f32 current_airspeed_ = 0;   // current speed (ramps toward max_airspeed_)
     bool nav_requested_ = false;
+    bool stepping_aside_ = false; // on a walk step_aside began, to aside_goal_
+    Vector3 aside_goal_{};
     AirCourse course_;
     f32 nav_speed_ = 0;
     f32 current_altitude_ = 0;   // actual Y offset above terrain
@@ -2315,6 +2420,11 @@ private:
     bool lifts_off_ = false;
     /// The order running as its move was aborted (its command id, 0: none).
     u32 aborted_command_ = 0;
+    /// An attack order's task runs (Moho's CUnitAttackTargetTask on the
+    /// unit's order thread): from the tick the order began, until it is gone
+    /// from the head of the queue (end_gone_attack). Its order's command id.
+    bool attack_task_ = false;
+    u32 attack_task_order_ = 0;
     bool auto_overcharge_ = false;
     bool overcharge_paused_ = false;
     bool cloaked_ = false;

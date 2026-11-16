@@ -11,6 +11,7 @@
 #include "sim/blueprint_categories.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/build_site_props.hpp"
+#include "sim/build_site_units.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/prepare_move.hpp"
@@ -387,6 +388,10 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         if (!running) end_attack_run(*this);
     }
     while (!command_queue_.empty()) {
+        // An attack order that ended (done or taken away) ends its task first; its weapons'
+        // scripts may change the queue.
+        if (!end_gone_attack(ctx.L)) return false;
+        if (command_queue_.empty()) break;
         note_queue_head();
         // Orders run script callbacks, which may destroy this unit (it stays
         // allocated until the beat ends, see EntityRegistry::collect_garbage).
@@ -410,11 +415,17 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         if (step == OrderStep::Hold) return true;
         if (step == OrderStep::Gone) return false;
     }
-    return true;
+    return end_gone_attack(ctx.L);
 }
 
 void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
     cmd.begun = true;
+    // Moho's command dispatch makes an attack order's task as the order comes up
+    // (CUnitAttackTargetTask); its end stops the attacker (end_gone_attack).
+    if (cmd.type == CommandType::Attack) {
+        attack_task_ = true;
+        attack_task_order_ = cmd.command_id;
+    }
     if (cmd.type == CommandType::Patrol || cmd.type == CommandType::AggressiveMove) {
         cmd.patrol_from = position();
     }
@@ -439,6 +450,7 @@ void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
     if (!immobile_ || !need_unpack_) return;
     switch (cmd.type) {
     case CommandType::Move:
+    case CommandType::AssistMove: // a land unit's move task, a transport's at its end
     case CommandType::Patrol:
     case CommandType::AggressiveMove:
     case CommandType::Guard:
@@ -511,6 +523,7 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     case CommandType::DestroySelf: return order_destroy_self(ctx);
     case CommandType::SpecialAction: return order_special_action(cmd, ctx);
     case CommandType::Pause: return order_pause(ctx.L);
+    case CommandType::AssistMove: return order_assist_move(cmd, ctx);
     default: // an order no handler runs: dropped
         command_queue_.pop_front();
         return OrderStep::Next;
@@ -663,6 +676,22 @@ OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
     return OrderStep::Hold; // Still moving
 }
 
+namespace {
+
+/// An attack order its unit keeps with no weapon that can hit its target
+/// (CUnitAttackTargetTask::TaskTick's first test, which ends the task
+/// otherwise): a FormAttack's, whose task the dispatch makes with byte +0x8D
+/// set (0x5F92A0; UNITCOMMAND_Attack's, 0x5F9220, clears it), a DIRECTFIRE
+/// unit's, or a surfacing sub's under water, which surfaces to attack.
+/// Moho's sub test reads AI.AutoSurfaceToAttack too, true unless a blueprint
+/// says otherwise; no retail or FAF blueprint does, so it is not read here.
+bool keeps_attack_without_weapon(const Unit& unit, const UnitCommand& cmd) {
+    return cmd.form_attack || unit.has_category("DIRECTFIRE") ||
+           (unit.motion_type() == "RULEUMT_SurfacingSub" && unit.layer() == "Sub");
+}
+
+} // namespace
+
 OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
     // A structure or a TARGETCHASER keeps no slot in its formation (Moho's
@@ -743,13 +772,23 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     const Weapon* const weapon = target_weapon(*this, *target, ctx.sim);
     const f32 reach = weapon ? weapon->max_range : best_range;
     const bool in_reach = dist2 <= reach * reach;
-    // A FormAttack's unit with no weapon that can hit its target gives the
-    // order up, unless it is DIRECTFIRE (CUnitAttackTargetTask::TaskTick's
-    // first test, every tick: its attacker's target weapon is gone).
-    if (cmd.form_attack && !weapon && !has_category("DIRECTFIRE")) {
-        release_navigator();
-        command_queue_.pop_front();
-        return OrderStep::Next;
+    // A plain attack's unit with no weapon that can hit its target gives the
+    // order up, unless it is DIRECTFIRE or a sub under water
+    // (CUnitAttackTargetTask::TaskTick's first test, every tick: its
+    // attacker's target weapon is gone). A FormAttack's carries on. A weapon
+    // can hit it if its layers and categories take it, switched off or not:
+    // Moho's UnitWeapon::CanAttackTarget asks nothing of alliance, cloak or
+    // DoNotTarget, and passes over a disabled weapon only with
+    // IgnoreIfDisabled, which the engine doesn't read.
+    if (!keeps_attack_without_weapon(*this, cmd)) {
+        const bool can_hit = std::any_of(weapons_.begin(), weapons_.end(), [&](const auto& w) {
+            return w->attacks_on_order() && w->can_attack(*target, ctx.sim);
+        });
+        if (!can_hit) {
+            release_navigator();
+            command_queue_.pop_front();
+            return OrderStep::Next;
+        }
     }
     // A winged aircraft flies at its target and, once within a weapon's
     // reach or its EngageDistance, makes its runs: Moho's attack task hands
@@ -861,10 +900,10 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, SimContext& ctx) {
     // here the first enabled one) brings its unit within its range, and the
     // attacker's desired target is the point from then on (cmd.engaged:
     // Weapon::update_targeting hands it to every weapon that can hit it).
-    // The order never ends by itself. Only when another order follows, and
-    // that weapon has fired AttackGroundTries shots at the point, does it go
-    // to the back of the queue: Moho's command dispatch sends a ground attack
-    // round as it does a patrol.
+    // While a weapon can hit the point, the order never ends by itself. Only
+    // when another order follows, and that weapon has fired AttackGroundTries
+    // shots at the point, does it go to the back of the queue: Moho's command
+    // dispatch sends a ground attack round as it does a patrol.
     const Vector3 at = cmd.target_pos;
     const Weapon* weapon = nullptr;
     for (const auto& w : weapons_) {
@@ -874,22 +913,24 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, SimContext& ctx) {
             break;
         }
     }
-    // A formation's attack (IssueFormAttack; Moho's CreateRespectFormation)
-    // with no weapon that can hit the point ends at once, unless its unit is
-    // DIRECTFIRE (TaskTick's first test), going round like the rest when
-    // another order follows; a plain attack's unit goes to the point and
-    // stays.
+    // A plain attack with no weapon that can hit the point, switched off or
+    // not, ends at once, unless its unit is DIRECTFIRE or a sub under water
+    // (TaskTick's first test), going round like the rest when another order
+    // follows; a FormAttack's unit goes to the point and stays.
     const bool spent = weapon && cmd.engaged && weapon->ground_from_order &&
                        weapon->has_ground_target && weapon->ground_target.x == at.x &&
                        weapon->ground_target.z == at.z &&
                        static_cast<i64>(weapon->shots_at_target) >= weapon->attack_ground_tries;
-    const bool form_attack_unarmed = !weapon && cmd.form_attack && !has_category("DIRECTFIRE");
-    if (form_attack_unarmed && command_queue_.size() < 2) {
+    const bool unarmed = !keeps_attack_without_weapon(*this, cmd) &&
+                         std::none_of(weapons_.begin(), weapons_.end(), [&](const auto& w) {
+                             return w->attacks_on_order() && w->can_attack_ground(at, ctx.terrain);
+                         });
+    if (unarmed && command_queue_.size() < 2) {
         abort_move();
         command_queue_.pop_front();
         return OrderStep::Next;
     }
-    if (command_queue_.size() >= 2 && (spent || form_attack_unarmed)) {
+    if (command_queue_.size() >= 2 && (spent || unarmed)) {
         abort_move();
         auto finished = std::move(cmd); // cmd is the element pop_front destroys
         finished.begun = false;
@@ -1117,6 +1158,13 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         if (waits_out_task(cmd)) {
             return OrderStep::Hold;
         }
+        // Moho's TASKSTATE_Processing gives up once it has found units on
+        // its site more than kSiteTries times.
+        if (cmd.site_tries > kSiteTries) {
+            command_queue_.pop_front();
+            call_lua_method(L, "OnFailedToBuild");
+            return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+        }
         if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
             command_queue_.pop_front();
             return OrderStep::Next;
@@ -1124,11 +1172,15 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         if (turns_to_face(cmd.target_pos)) {
             return OrderStep::Hold;
         }
-        if (!find_build_site_frame(registry, cmd.blueprint_id, cmd.target_pos) &&
-            build_site_taken(L, registry, cmd.blueprint_id, cmd.target_pos)) {
-            command_queue_.pop_front();
-            call_lua_method(L, "OnFailedToBuild");
-            return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+        if (!find_build_site_frame(registry, cmd.blueprint_id, cmd.target_pos)) {
+            if (build_site_taken(L, registry, cmd.blueprint_id, cmd.target_pos)) {
+                command_queue_.pop_front();
+                call_lua_method(L, "OnFailedToBuild");
+                return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+            }
+            if (units_on_site(cmd, ctx)) {
+                return OrderStep::Hold;
+            }
         }
         if (awaits_arm() || waits_paused(cmd)) {
             return OrderStep::Hold;
@@ -1201,6 +1253,9 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
             return OrderStep::Next;
         }
         if (waits_paused(cmd)) {
+            return OrderStep::Hold;
+        }
+        if (cmd.type == CommandType::BuildFactory && units_on_pad(cmd, ctx)) {
             return OrderStep::Hold;
         }
         const u32 building = cmd.command_id; // cmd may go with the scripts' changes
@@ -1508,7 +1563,7 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // section/StopReclaimWhenPaused.cpp, in CUnitReclaimTask::TaskTick).
     reclaim_held_ = reclaim_held_by_pause(*this, registry.find(cmd.target_id), ctx);
     if (reclaim_wait_ > 0) {
-        const auto* reclaimed = registry.find(cmd.target_id);
+        auto* reclaimed = registry.find(cmd.target_id);
         if (reclaim_wait_ == 1 && reclaimed && !reclaim_arm_ready(*reclaimed)) {
             return OrderStep::Hold;
         }
@@ -1518,6 +1573,11 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
                 reclaim_costs(L, *this, *reclaimed, static_cast<f64>(build_rate_));
             economy_.reclaim_mass = costs.mass * static_cast<f64>(reclaim_rate_);
             economy_.reclaim_energy = costs.energy * static_cast<f64>(reclaim_rate_);
+            // (after its script's GetReclaimCosts, as the task's Processing state)
+            reclaimed = registry.find(cmd.target_id);
+            if (reclaimed && !reclaimed->destroyed()) {
+                reclaim_from_health(*reclaimed);
+            }
         }
         return OrderStep::Hold;
     }
@@ -1748,80 +1808,97 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
     return done();
 }
 
-OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_capture(UnitCommand& cmd, f64 /*dt*/, SimContext& ctx) {
+    // Moho's CUnitCaptureTask::TaskTick (faf-re 0x006043E0; the Steam exe's
+    // 0x0060AEB0 is the same code).
     auto& registry = ctx.registry;
     auto* L = ctx.L;
-    if (!cmd.target_id) {
-        if (is_capturing()) stop_capturing(L, registry, true);
-        end_approach(cmd);
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
-    auto* ctarget = registry.find(cmd.target_id);
-    if (!ctarget || ctarget->destroyed() || !ctarget->is_unit()) {
-        if (is_capturing()) stop_capturing(L, registry, true);
-        end_approach(cmd);
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
-    // Already same army (captured by someone else)
-    if (ctarget->is_unit() && static_cast<Unit*>(ctarget)->army() == army()) {
-        if (is_capturing()) stop_capturing(L, registry, false);
-        end_approach(cmd);
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
-
-    // Reach: fixed, not MaxBuildDistance (Moho's CUnitCaptureTask). A
-    // footprint gap over 5 sends the unit just clear of its target's
-    // skirt; there it captures within 10, or gives up. A moving
-    // target is lost beyond 10.
-    {
-        const auto& cunit = static_cast<const Unit&>(*ctarget);
-        const f32 gap = work_gap(*this, ctarget->position(), footprint_extent(*ctarget));
-        if (capture_target_id_ != cmd.target_id) {
-            if (!cmd.approached && gap > kCaptureReach) {
-                if (effective_speed() <= 0) {
-                    command_queue_.pop_front();
-                    return OrderStep::Next;
-                }
-                cmd.approached = true;
-                set_path_goal(approach_point(*this, ctarget->position(),
-                                             cunit.skirt_size_x() * 0.5f,
-                                             cunit.skirt_size_z() * 0.5f),
-                              ctx);
-            }
-            if (cmd.approached && approach_update(ctx)) {
-                return OrderStep::Hold;
-            }
-            if (gap > kCaptureHold) {
-                if (is_capturing()) stop_capturing(L, registry, true);
-                command_queue_.pop_front();
-                return OrderStep::Next;
-            }
-        } else if (gap > kCaptureHold && cunit.effective_speed() > 0) {
-            stop_capturing(L, registry, true);
+    const u32 order_id = cmd.command_id;
+    // Whether `cmd` is still this unit's head order: the scripts the task
+    // runs may change the queue, or end the unit.
+    const auto still_head = [&] {
+        return !destroyed() && in_registry() && !command_queue_.empty() &&
+               &command_queue_.front() == &cmd && command_queue_.front().command_id == order_id;
+    };
+    // The task ends (TaskTick returns -1), and its order with it.
+    const auto end = [&] {
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
+        if (still_head()) {
+            end_approach(cmd);
             command_queue_.pop_front();
-            return OrderStep::Next;
         }
-    }
-    abort_move();
-
-    // Start capture if not already capturing this target
-    if (capture_target_id_ != cmd.target_id) {
-        if (is_capturing()) stop_capturing(L, registry, true);
-        if (!start_capture(cmd, registry, L)) {
-            command_queue_.pop_front();
-            return OrderStep::Next;
-        }
-    }
-
-    // Progress capture
-    if (!progress_capture(dt, registry, L,
-                          take_grant(economy_.capture_request, ctx) ? 1.0f : 0.0f)) {
-        command_queue_.pop_front();
         return OrderStep::Next;
+    };
+    // It fails (dispatch result 2): the capture it began, if any, ends.
+    const auto fail = [&] {
+        stop_capturing(L, registry);
+        return end();
+    };
+    // Its target gone, or not to be captured: its unit hears OnStopCapture,
+    // itself for the target (Moho passes the captor, its weak target being
+    // null by then), and the task ends.
+    const auto give_up = [&] {
+        call_lua_method_with_entity(L, "OnStopCapture", this);
+        return fail();
+    };
+    if (!cmd.target_id) return fail();
+    const bool begun = capture_target_id_ == cmd.target_id;
+    Entity* const target = registry.find(cmd.target_id);
+    if (!target) {
+        // None as the order came up: Moho's CUnitCaptureTask::Create made no
+        // task, and its order fails with nothing heard.
+        return begun || cmd.approached ? give_up() : fail();
     }
+    // Its walk in runs under the task, which waits for it.
+    if (!begun && cmd.approached && approach_update(ctx)) return OrderStep::Hold;
+    if (!target->is_unit()) return fail();
+    auto& tunit = static_cast<Unit&>(*target);
+    // Each tick it runs, before anything else: a target no longer to be
+    // captured ...
+    if (!tunit.capturable()) return give_up();
+    // ... or of no army, in the air, or allied (its own army's too) fails it
+    if (tunit.army() < 0 || tunit.layer() == "Air" || tunit.army() == army() ||
+        (ctx.sim && ctx.sim->is_ally(tunit.army(), army()))) {
+        return fail();
+    }
+    // ... as does one being captured more than 10 off: another's capture
+    // isn't joined from there, nor is one's own held.
+    const f32 gap = work_gap(*this, target->position(), footprint_extent(*target));
+    if (tunit.is_being_captured() && gap > kCaptureHold) return fail();
+    if (!begun) {
+        // TASKSTATE_Preparing: a gap over 5 sends the unit just clear of its
+        // target's skirt, once. TASKSTATE_Waiting: it captures from there
+        // within 10, a target still alive.
+        if (!cmd.approached && gap > kCaptureReach) {
+            if (effective_speed() <= 0) return end();
+            cmd.approached = true;
+            set_path_goal(approach_point(*this, target->position(), tunit.skirt_size_x() * 0.5f,
+                                         tunit.skirt_size_z() * 0.5f),
+                          ctx);
+            if (approach_update(ctx)) return OrderStep::Hold;
+        }
+        if (gap > kCaptureHold) return fail();
+        if (target->destroyed() || tunit.is_dying()) return end();
+        abort_move();
+        if (is_capturing()) {
+            stop_capturing(L, registry);
+            if (!still_head()) {
+                return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+            }
+        }
+        // TASKSTATE_Starting
+        if (!start_capture(cmd, registry, L)) return end();
+        // Its scripts may have taken the order away: the task goes with it
+        if (!still_head()) {
+            if (destroyed() || !in_registry()) return OrderStep::Gone;
+            stop_capturing(L, registry);
+            return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+        }
+    } else {
+        abort_move();
+    }
+    // TASKSTATE_Processing, and _Complete once its progress is done
+    if (!progress_capture(registry, L, take_grant(economy_.capture_request, ctx))) return end();
     return OrderStep::Hold;
 }
 
@@ -2685,8 +2762,14 @@ bool loads_itself(const UnitCommand& cmd, EntityId id) {
 } // namespace
 
 bool Unit::calls_transport(EntityId transport_id) const {
-    return transport_id != entity_id() && !command_queue_.empty() &&
-           loads_itself(command_queue_.front(), transport_id);
+    return transport_id && transport_id != entity_id() && awaited_transport() == transport_id;
+}
+
+EntityId Unit::awaited_transport() const {
+    if (command_queue_.empty()) return {};
+    const UnitCommand& head = command_queue_.front();
+    if (head.type == CommandType::TransportLoad) return head.target_id;
+    return head.type == CommandType::AssistMove ? head.assigned_id : EntityId{};
 }
 
 OrderStep Unit::order_transport_load(UnitCommand& cmd, SimContext& ctx) {
@@ -2745,12 +2828,7 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
     if (pickup_phase_ == PickupPhase::Holding) {
         // The units ordered aboard: the army's with a load order onto us in
         // their queue. Moho holds until each has it at its head.
-        struct Candidate {
-            Unit* unit;
-            f32 metric;
-            f32 d2;
-        };
-        std::vector<Candidate> wanted;
+        std::vector<Unit*> wanted;
         bool holding = false;
         registry.for_each_unit([&](Entity& e) {
             if (e.destroyed() || !e.is_unit() || e.army() != army() || e.entity_id() == me) return;
@@ -2766,66 +2844,95 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
                 holding = true;
                 return;
             }
-            const f32 dx = position().x - u.position().x;
-            const f32 dy = position().y - u.position().y;
-            const f32 dz = position().z - u.position().z;
-            wanted.push_back({&u, u.load_metric(), dx * dx + dy * dy + dz * dz});
+            wanted.push_back(&u);
         });
         if (holding) return OrderStep::Hold;
-        // The largest first, the nearer on ties (then the older, so it is
-        // the same everywhere).
-        std::sort(wanted.begin(), wanted.end(), [](const Candidate& a, const Candidate& b) {
-            if (a.metric != b.metric) return a.metric > b.metric;
-            if (a.d2 != b.d2) return a.d2 < b.d2;
-            return a.unit->entity_id() < b.unit->entity_id();
-        });
-        TransportSlots* slots = transport_slots();
-        const bool slotted = slots && slots->has_points();
-        i32 room = transport_capacity_ > 0
-                       ? transport_capacity_ - static_cast<i32>(cargo_ids_.size())
-                       : std::numeric_limits<i32>::max();
-        Vector3 centre{0.0f, 0.0f, 0.0f};
-        bool full = false;
-        for (const Candidate& c : wanted) {
-            const bool fits = slotted ? slots
-                                            ->assign(c.unit->entity_id(), c.unit->transport_class(),
-                                                     c.unit->transport_attach_bone())
-                                            .has_value()
-                                      : room-- > 0;
-            if (!fits) {
-                full = true;
-                continue;
-            }
-            pickup_ids_.push_back(c.unit->entity_id());
-            centre = {centre.x + c.unit->position().x, centre.y + c.unit->position().y,
-                      centre.z + c.unit->position().z};
-        }
-        if (full) {
-            call_lua_method(L, "OnTransportFull");
-            if (destroyed() || !in_registry()) return OrderStep::Gone;
-        }
+        if (!begin_pickup(wanted, true, L)) return OrderStep::Gone;
         if (pickup_ids_.empty()) {
             finish_pickup(false, L);
             if (destroyed() || !in_registry()) return OrderStep::Gone;
             return finish_order();
         }
-        const f32 inv = 1.0f / static_cast<f32>(pickup_ids_.size());
-        pickup_center_ = {centre.x * inv, centre.y * inv, centre.z * inv};
-        // It faces from where it is toward the centre (TransportAddPickupUnits).
-        const f32 fx = pickup_center_.x - position().x;
-        const f32 fz = pickup_center_.z - position().z;
-        pickup_facing_ =
-            fx * fx + fz * fz > 1e-6f ? euler_to_quat(dmath::atan2(fx, fz), 0, 0) : orientation();
-        if (is_air_unit()) {
-            call_lua_method(L, "OnTransportOrdered");
-            if (destroyed() || !in_registry()) return OrderStep::Gone;
-            pickup_phase_ = PickupPhase::Flying;
-        } else {
-            abort_move();
-            pickup_center_ = position();
-            pickup_phase_ = PickupPhase::Waiting;
-        }
     }
+    switch (pickup_step(ctx)) {
+    case PickupStep::Running: return OrderStep::Hold;
+    case PickupStep::Gone: return OrderStep::Gone;
+    case PickupStep::Done: break;
+    }
+    return finish_order();
+}
+
+bool Unit::begin_pickup(const std::vector<Unit*>& wanted, bool announce_full, lua_State* L) {
+    struct Candidate {
+        Unit* unit;
+        f32 metric;
+        f32 d2;
+    };
+    std::vector<Candidate> candidates;
+    candidates.reserve(wanted.size());
+    for (Unit* u : wanted) {
+        const f32 dx = position().x - u->position().x;
+        const f32 dy = position().y - u->position().y;
+        const f32 dz = position().z - u->position().z;
+        candidates.push_back({u, u->load_metric(), dx * dx + dy * dy + dz * dz});
+    }
+    // The largest first, the nearer on ties (then the older, so it is
+    // the same everywhere).
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+        if (a.metric != b.metric) return a.metric > b.metric;
+        if (a.d2 != b.d2) return a.d2 < b.d2;
+        return a.unit->entity_id() < b.unit->entity_id();
+    });
+    TransportSlots* slots = transport_slots();
+    const bool slotted = slots && slots->has_points();
+    i32 room = transport_capacity_ > 0 ? transport_capacity_ - static_cast<i32>(cargo_ids_.size())
+                                       : std::numeric_limits<i32>::max();
+    Vector3 centre{0.0f, 0.0f, 0.0f};
+    bool full = false;
+    for (const Candidate& c : candidates) {
+        const bool fits = slotted ? slots
+                                        ->assign(c.unit->entity_id(), c.unit->transport_class(),
+                                                 c.unit->transport_attach_bone())
+                                        .has_value()
+                                  : room-- > 0;
+        if (!fits) {
+            full = true;
+            continue;
+        }
+        pickup_ids_.push_back(c.unit->entity_id());
+        centre = {centre.x + c.unit->position().x, centre.y + c.unit->position().y,
+                  centre.z + c.unit->position().z};
+    }
+    if (full && announce_full) {
+        call_lua_method(L, "OnTransportFull");
+        if (destroyed() || !in_registry()) return false;
+    }
+    if (pickup_ids_.empty()) {
+        return true;
+    }
+    const f32 inv = 1.0f / static_cast<f32>(pickup_ids_.size());
+    pickup_center_ = {centre.x * inv, centre.y * inv, centre.z * inv};
+    // It faces from where it is toward the centre (TransportAddPickupUnits).
+    const f32 fx = pickup_center_.x - position().x;
+    const f32 fz = pickup_center_.z - position().z;
+    pickup_facing_ =
+        fx * fx + fz * fz > 1e-6f ? euler_to_quat(dmath::atan2(fx, fz), 0, 0) : orientation();
+    if (is_air_unit()) {
+        call_lua_method(L, "OnTransportOrdered");
+        if (destroyed() || !in_registry()) return false;
+        pickup_phase_ = PickupPhase::Flying;
+    } else {
+        abort_move();
+        pickup_center_ = position();
+        pickup_phase_ = PickupPhase::Waiting;
+    }
+    return true;
+}
+
+Unit::PickupStep Unit::pickup_step(SimContext& ctx) {
+    auto& registry = ctx.registry;
+    auto* L = ctx.L;
+    const EntityId me = entity_id();
     if (pickup_phase_ == PickupPhase::Flying) {
         const Vector3 goal = navigator_.goal();
         if ((!navigator_.is_moving() && !navigator_.ended()) ||
@@ -2834,7 +2941,7 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
             set_path_goal(pickup_center_, ctx);
         }
         if (nav_update()) {
-            return OrderStep::Hold;
+            return PickupStep::Running;
         }
         abort_move();
         pickup_phase_ = PickupPhase::Landing;
@@ -2845,7 +2952,7 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
         if (is_air_unit()) {
             set_course({.kind = AirCourse::Kind::HoverLow});
         }
-        return OrderStep::Hold;
+        return PickupStep::Running;
     };
     if (pickup_phase_ == PickupPhase::Landing) {
         if (is_air_unit() && current_altitude_ != transport_hover_height_) {
@@ -2869,8 +2976,8 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
         return hover();
     }
     finish_pickup(pickup_ticks_ <= kPickupTimeoutTicks, L);
-    if (destroyed() || !in_registry()) return OrderStep::Gone;
-    return finish_order();
+    if (destroyed() || !in_registry()) return PickupStep::Gone;
+    return PickupStep::Done;
 }
 
 void Unit::finish_pickup(bool completed, lua_State* L) {
@@ -2952,23 +3059,29 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, SimContext& ctx) {
         release_navigator(); // its walk to the transport ends with it
         return finish_order();
     };
-    if (!cmd.target_id || transport_id_) {
+    const bool assist = cmd.type == CommandType::AssistMove;
+    const EntityId called = assist ? cmd.assigned_id : cmd.target_id;
+    if (!called || transport_id_) {
         return end();
     }
-    Entity* target = registry.find(cmd.target_id);
+    Entity* target = registry.find(called);
     if (!target || target->destroyed() || !target->is_unit()) return end();
     auto* transport = static_cast<Unit*>(target);
     if (transport->is_dying()) return end();
     const EntityId tid = transport->entity_id();
 
-    // The transport runs the pickup once its head is the load order; one
-    // without it queued is given it (Moho's command is the transport's too).
-    // Once the unit has a slot, a transport no longer loading ends its order.
+    // The transport runs the pickup once its head is the load order, or
+    // under its AssistMove (CUnitCallTransport takes an AssistMoving
+    // transport's whatever its order); one without the load order queued is
+    // given it (Moho's command is the transport's too). Once the unit has a
+    // slot, a transport no longer loading ends its order; an AssistMove's,
+    // whose transport took it, ends with that transport's pickup.
     const bool running = !transport->command_queue_.empty() &&
-                         loads_itself(transport->command_queue_.front(), tid) &&
+                         (loads_itself(transport->command_queue_.front(), tid) ||
+                          transport->command_queue_.front().type == CommandType::AssistMove) &&
                          transport->pickup_phase_ != PickupPhase::None &&
                          transport->pickup_phase_ != PickupPhase::Holding;
-    if (!running && cmd.started) return end();
+    if (!running && (cmd.started || assist)) return end();
     if (!running) {
         if (std::none_of(transport->command_queue_.begin(), transport->command_queue_.end(),
                          [&](const UnitCommand& c) { return loads_itself(c, tid); })) {
@@ -3071,55 +3184,64 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, SimContext& ctx) {
 OrderStep Unit::order_transport_unload(UnitCommand& cmd, SimContext& ctx) {
     // A carrier launches what it keeps in storage instead (M206q).
     if (cmd.launch_wait >= 0 || launches_on_unload()) return order_carrier_launch(cmd, ctx);
+    if (is_staging_platform() && cargo_aboard(cmd.unload_ids)) {
+        return order_staging_release(cmd, ctx);
+    }
     // Transport drops its cargo at target position: the order's
     // (IssueTransportUnloadSpecific) or all of it. With none of it aboard,
-    // the order ends.
-    const bool any_aboard =
-        cmd.unload_ids.empty()
-            ? !cargo_ids_.empty()
-            : std::any_of(cmd.unload_ids.begin(), cmd.unload_ids.end(), [&](EntityId id) {
-                  return std::find(cargo_ids_.begin(), cargo_ids_.end(), id) != cargo_ids_.end();
-              });
-    if (!any_aboard) {
-        set_unit_state("TransportUnloading", false);
-        command_queue_.pop_front();
-        return OrderStep::Next;
+    // the order ends. Scripts ran, which may have cleared the queue (and cmd
+    // with it): the order goes only if it is still the head.
+    const u32 order_id = cmd.command_id;
+    const std::vector<EntityId> ids = cmd.unload_ids;
+    switch (unload_at(cmd.target_pos, ids, ctx)) {
+    case UnloadStep::Holding: return OrderStep::Hold;
+    case UnloadStep::Gone: return OrderStep::Gone;
+    case UnloadStep::Done: break;
     }
-    if (is_staging_platform()) return order_staging_release(cmd, ctx);
+    if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+        command_queue_.front().command_id == order_id)
+        command_queue_.pop_front();
+    return OrderStep::Next;
+}
 
+bool Unit::cargo_aboard(const std::vector<EntityId>& ids) const {
+    if (ids.empty()) return !cargo_ids_.empty();
+    return std::any_of(ids.begin(), ids.end(), [&](EntityId id) {
+        return std::find(cargo_ids_.begin(), cargo_ids_.end(), id) != cargo_ids_.end();
+    });
+}
+
+Unit::UnloadStep Unit::unload_at(Vector3 at, const std::vector<EntityId>& ids, SimContext& ctx) {
+    if (!cargo_aboard(ids)) {
+        set_unit_state("TransportUnloading", false);
+        return UnloadStep::Done;
+    }
     // Move to drop position
     constexpr f32 unload_range = 5.0f;
-    f32 udx = cmd.target_pos.x - position().x;
-    f32 udz = cmd.target_pos.z - position().z;
+    f32 udx = at.x - position().x;
+    f32 udz = at.z - position().z;
     f32 udist2 = udx * udx + udz * udz;
     if (udist2 > unload_range * unload_range) {
         set_unit_state("TransportUnloading", true);
-        if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
-            navigator_.goal().z != cmd.target_pos.z) {
-            set_path_goal(cmd.target_pos, ctx);
+        if (!navigator_.is_moving() || navigator_.goal().x != at.x || navigator_.goal().z != at.z) {
+            set_path_goal(at, ctx);
         }
         // Flown, for an aircraft (the ground navigator had dragged transports
         // along the ground).
         nav_update();
-        return OrderStep::Hold;
+        return UnloadStep::Holding;
     }
     abort_move();
     set_unit_state("TransportUnloading", true);
 
     // Over the drop: down to its hover height, then its cargo is set down
-    // where it fits. Scripts ran, which may have cleared the queue (and cmd
-    // with it): the order goes only if it is still the head.
-    const u32 order_id = cmd.command_id;
-    const std::vector<EntityId> ids = cmd.unload_ids;
+    // where it fits.
     if (!unload_step(ctx, ids)) {
-        return OrderStep::Hold;
+        return UnloadStep::Holding;
     }
-    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    if (destroyed() || !in_registry()) return UnloadStep::Gone;
     set_unit_state("TransportUnloading", false);
-    if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
-        command_queue_.front().command_id == order_id)
-        command_queue_.pop_front();
-    return OrderStep::Next;
+    return UnloadStep::Done;
 }
 
 OrderStep Unit::order_staging_release(UnitCommand& cmd, SimContext& ctx) {

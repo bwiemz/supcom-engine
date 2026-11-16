@@ -13,6 +13,7 @@
 #include "lua/category_utils.hpp"
 #include "lua/game_mods.hpp"
 #include "sim/lua_bytes.hpp"
+#include "sim/lua_keys.hpp"
 #include "sim/lua_sim.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/sim_sync.hpp"
@@ -153,8 +154,7 @@ static sim::Entity* extract_entity(lua_State* L, int idx);
 static sim::Entity* entity_by_handle_id(lua_State* L, int idx) {
     auto* sim = get_sim(L);
     if (!sim) return nullptr;
-    lua_pushstring(L, "_c_entity_id");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::CEntityId);
     const sim::EntityId id = sim::to_entity_key(L, -1);
     lua_pop(L, 1);
     return id ? sim->entity_registry().find(id) : nullptr;
@@ -181,7 +181,7 @@ static int l_c_CreateEntity(lua_State* L) {
                 entity->set_army(index);
             }
         } else if (!lua_isnil(L, owner)) {
-            if (const auto* o = extract_entity(L, owner); o && !o->destroyed()) {
+            if (const auto* o = extract_entity(L, owner)) {
                 entity->set_army(o->army());
             }
         } else if (!lua_isnil(L, army)) {
@@ -321,6 +321,15 @@ static void tell_start_being_built(lua_State* L, sim::SimState& sim, sim::Entity
     if (lua_pcall(L, 3, 0, 0) != 0) {
         spdlog::warn("Building OnStartBeingBuilt error: {}", lua_tostring(L, -1));
         lua_pop(L, 1);
+    }
+}
+
+/// Moho's Unit, as it is made: SetCurrentLayer(its starting layer) after OnPreCreate tells the
+/// script OnLayerChange(layer, 'None').
+static void tell_starting_layer(lua_State* L, sim::SimState& sim, sim::EntityId id) {
+    auto* made = sim.entity_registry().find(id);
+    if (made && made->is_unit() && static_cast<sim::Unit*>(made)->layer() != "None") {
+        static_cast<sim::Unit*>(made)->call_on_layer_change(L, "None");
     }
 }
 
@@ -720,6 +729,7 @@ static sim::EntityId spawn_complete_unit(lua_State* L, sim::SimState& sim, const
     } else {
         lua_pop(L, 1);
     }
+    tell_starting_layer(L, sim, id);
     tell_terrain_type(L, sim, id);
 
     create_unit_weapons(L, tbl, "Unit");
@@ -867,6 +877,7 @@ static int l_create_building_unit(lua_State* L) {
         lua_pop(L, 1);
     }
     if (auto* sim = get_sim(L)) {
+        tell_starting_layer(L, *sim, id);
         tell_terrain_type(L, *sim, id);
     }
 
@@ -1575,8 +1586,7 @@ static int l_Damage(lua_State* L) {
 // Helper: get the C++ Entity* from a Lua entity table
 static sim::Entity* extract_entity(lua_State* L, int idx) {
     if (!lua_istable(L, idx)) return nullptr;
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::CObject);
     void* object = lua_isuserdata(L, -1) ? lua_touserdata(L, -1) : nullptr;
     lua_pop(L, 1);
     if (!object) return entity_by_handle_id(L, idx);
@@ -2214,13 +2224,11 @@ void register_category_bindings(LuaState& state) {
 /// Extract Entity* from a Lua arg (table with _c_object lightuserdata).
 static sim::Entity* effect_check_entity(lua_State* L, int idx) {
     if (!lua_istable(L, idx)) return nullptr;
-    lua_pushstring(L, "_c_unit"); // a weapon table: its _c_object is a Weapon*
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::CUnit); // a weapon table: its _c_object is a Weapon*
     const bool weapon = lua_isuserdata(L, -1);
     lua_pop(L, 1);
     if (weapon) return nullptr;
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::CObject);
     auto* e = lua_isuserdata(L, -1)
                   ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
                   : nullptr;

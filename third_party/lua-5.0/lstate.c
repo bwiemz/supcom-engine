@@ -115,6 +115,8 @@ static void f_luaopen (lua_State *L, void *ud) {
   g->nfrozenroots = 0;
   g->sizefrozenroots = 0;
   memset(g->mt, 0, sizeof(g->mt));  /* LuaPlus: init per-type metatables */
+  g->hostdata = NULL;
+  memset(g->hostkey, 0, sizeof(g->hostkey));
   setnilvalue(gkey(g->dummynode));
   setnilvalue(gval(g->dummynode));
   g->dummynode->next = NULL;

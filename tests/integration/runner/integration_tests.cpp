@@ -772,6 +772,64 @@ void test_reclaim(TestContext& ctx) {
         spdlog::info("[PASS] Reclaim test: a stopped reclaim ends, with OnStopReclaim");
     else osc::test_status::fail("[FAIL] Reclaim test: {}", r.error().message);
 
+    // A power generator built to 60%, reclaimed to 20%, then built again: its
+    // health goes with its fraction (Moho's CUnitReclaimTask steps it by
+    // Unit::Materialize), so the build goes on from 20%.
+    if (auto r = ctx.lua_state.do_string(R"(
+            local acu = GetEntityById(__osc_test_acu_id(1))
+            local site = __osc_test_find_place(acu:GetAIBrain(), 'ueb1101', acu)
+            if not site then error('no site for a power generator') end
+            IssueClearCommands({acu})
+            IssueBuildMobile({acu}, {site[1], GetTerrainHeight(site[1], site[2]), site[2]},
+                             'ueb1101', {})
+        )");
+        !r) {
+        osc::test_status::fail("[FAIL] Reclaim test: setup: {}", r.error().message);
+        return;
+    }
+    if (!tick_until(ctx, "the commander builds a power generator to 60%", 400, R"((function()
+            __osc_frame = GetEntityById(__osc_test_acu_id(1)):GetFocusUnit()
+            return __osc_frame ~= nil and __osc_frame:GetFractionComplete() >= 0.6
+        end)())")) {
+        return;
+    }
+    (void)ctx.lua_state.do_string(R"(
+        local acu = GetEntityById(__osc_test_acu_id(1))
+        IssueClearCommands({acu})
+        IssueReclaim({acu}, __osc_frame)
+    )");
+    if (!tick_until(ctx, "the commander reclaims it to 20%", 200,
+                    "__osc_frame:GetFractionComplete() <= 0.2")) {
+        return;
+    }
+    if (auto r = ctx.lua_state.do_string(R"(
+            local f = __osc_frame
+            local share = f:GetMaxHealth() * f:GetFractionComplete()
+            if math.abs(f:GetHealth() - share) > 1 then
+                error('its health is ' .. f:GetHealth() .. ' at ' .. f:GetFractionComplete())
+            end
+        )"))
+        spdlog::info("[PASS] Reclaim test: a unit under construction loses health as reclaimed");
+    else osc::test_status::fail("[FAIL] Reclaim test: {}", r.error().message);
+    (void)ctx.lua_state.do_string(R"(
+        __osc_frame_left = __osc_frame:GetFractionComplete()
+        local acu = GetEntityById(__osc_test_acu_id(1))
+        IssueClearCommands({acu})
+        IssueRepair({acu}, __osc_frame)
+    )");
+    if (!tick_until(ctx, "the commander builds it again", 100,
+                    "__osc_frame:GetFractionComplete() > __osc_frame_left")) {
+        return;
+    }
+    if (auto r = ctx.lua_state.do_string(R"(
+            local now = __osc_frame:GetFractionComplete()
+            if now > __osc_frame_left + 0.02 then
+                error('built on from ' .. now .. ', reclaimed to ' .. __osc_frame_left)
+            end
+        )"))
+        spdlog::info("[PASS] Reclaim test: its build goes on from where the reclaim left it");
+    else osc::test_status::fail("[FAIL] Reclaim test: {}", r.error().message);
+
 
     // Verify: prop should be gone (destroyed or fraction=0)
     auto post_count = ctx.sim.entity_registry().count();
@@ -8987,9 +9045,10 @@ void test_collide(TestContext& ctx) {
         if d > 1.5 then error(r.type .. ' ' .. d .. ' from the spot') end
     )");
 
-    // A rock stands in the way; a tree group breaks up into trees as a shot
-    // comes, and lets it through (retail's TreeGroup.OnCollisionCheck). A
-    // shield stops what comes in, not what goes out.
+    // A shot passes the props in its way, onto what stands behind them: Moho's
+    // line gather walks no prop, so none is asked OnCollisionCheck, and a tree
+    // group stands (the original game on this ground, tools/moho_probes/
+    // shotprops). A shield stops what comes in, not what goes out.
     lua_check("setup: a rock, a tree group and a shield", R"(
         for _, r in {Rect(640, 80, 680, 130), Rect(318, 788, 372, 812), Rect(205, 850, 240, 870)} do
             for _, p in GetReclaimablesInRect(r) or {} do
@@ -9000,30 +9059,35 @@ void test_collide(TestContext& ctx) {
         end
         __osc_rock = CreatePropHPR('/env/evergreen/props/rocks/fieldstone03_prop.bp',
                                    660, __osc_ground(660, 90), 90, 0, 0, 0)
+        __osc_past_rock = __osc_spawn('ueb1101', 'ARMY_2', 673, 90)
         __osc_on_rock = {}
         local s = __osc_spawn('uel0201', 'ARMY_1', 645, 90)
-        __osc_shoot(s, 675, __osc_ground(675, 90) + 0.5, 90, 0.5, __osc_on_rock)
+        __osc_shoot(s, 675, __osc_ground(675, 90) + 0.3, 90, 0.3, __osc_on_rock)
         __osc_trees = CreatePropHPR('/env/evergreen/props/trees/groups/pine06_big_groupa_prop.bp',
                                     660, __osc_ground(660, 120), 120, 0, 0, 0)
+        __osc_past_trees = __osc_spawn('ueb1101', 'ARMY_2', 673, 120)
         __osc_through = {}
         local t = __osc_spawn('uel0201', 'ARMY_1', 645, 120)
-        __osc_shoot(t, 675, __osc_ground(675, 120) + 0.5, 120, 0.5, __osc_through)
+        __osc_shoot(t, 675, __osc_ground(675, 120) + 0.3, 120, 0.3, __osc_through)
         __osc_gen = __osc_spawn('ueb4202', 'ARMY_2', 330, 800)
     )");
-    if (!tick_until(ctx, "the shot meets the rock, the tree group breaks up, the shield is up", 40,
-                    "__osc_on_rock.type ~= nil and __osc_trees:BeenDestroyed() and "
+    if (!tick_until(ctx, "the shots past the rock and the tree group end, the shield is up", 40,
+                    "__osc_on_rock.type ~= nil and __osc_through.type ~= nil and "
                     "__osc_gen.MyShield ~= nil and __osc_gen.MyShield:IsOn()")) {
         fail++;
     }
-    lua_check("Test 10: a rock stops a low shot", R"(
+    lua_check("Test 10: a low shot passes a rock, onto the target behind it", R"(
         local r = __osc_on_rock
-        if r.type ~= 'Prop' or r.target ~= __osc_rock then
+        if r.type ~= 'Unit' or r.target ~= __osc_past_rock then
             error(tostring(r.type) .. ' on ' .. tostring(r.target))
         end
     )");
-    lua_check("Test 11: a tree group breaks up and lets it through", R"(
-        if not __osc_trees:BeenDestroyed() then error('the group stands') end
-        if __osc_through.target == __osc_trees then error('it stopped the shot') end
+    lua_check("Test 11: a tree group stands and lets it through, onto the target", R"(
+        if __osc_trees:BeenDestroyed() then error('the group broke up') end
+        local r = __osc_through
+        if r.type ~= 'Unit' or r.target ~= __osc_past_trees then
+            error(tostring(r.type) .. ' on ' .. tostring(r.target))
+        end
     )");
     lua_check("setup: shots at the shield, from outside and from inside", R"(
         local shield = __osc_gen.MyShield
@@ -9036,9 +9100,15 @@ void test_collide(TestContext& ctx) {
         __osc_out = {}
         local inside = __osc_spawn('uel0201', 'ARMY_1', 334, 800)
         __osc_shoot(inside, 380, __osc_ground(380, 800) + 1.0, 800, 1.0, __osc_out)
+        -- The shield's own side, inside it, firing out.
+        __osc_own_out = {}
+        local own = __osc_spawn('uel0201', 'ARMY_2', 326, 800)
+        own:SetFireState(1)
+        __osc_shoot(own, 280, __osc_ground(280, 800) + 1.0, 800, 1.0, __osc_own_out)
     )");
     if (!tick_until(ctx, "the shots at the shield, from outside and from inside, end", 80,
-                    "__osc_in.type ~= nil and __osc_out.type ~= nil")) {
+                    "__osc_in.type ~= nil and __osc_out.type ~= nil and "
+                    "__osc_own_out.type ~= nil")) {
         fail++;
     }
     lua_check("Test 12: an enemy shield takes a shot from outside", R"(
@@ -9047,8 +9117,78 @@ void test_collide(TestContext& ctx) {
             error(tostring(r.type) .. ' on ' .. tostring(r.target))
         end
     )");
-    lua_check("Test 13: a shot from inside goes out through it", R"(
-        if __osc_out.type == 'Shield' then error('the shield stopped it') end
+    // Moho's line test (CColPrimitive_Sphere::CollideLine, Wild Magic's FindSegment3Sphere3)
+    // meets a segment leaving the bubble where it leaves, and retail's Shield.OnCollisionCheck
+    // takes any enemy's shot: it is stopped there, at the surface, not where it was fired.
+    lua_check("Test 13: an enemy's shot from inside strikes it on the way out", R"(
+        local r, shield = __osc_out, __osc_gen.MyShield
+        if r.type ~= 'Shield' or r.target ~= shield then
+            error(tostring(r.type) .. ' on ' .. tostring(r.target))
+        end
+        local d = VDist3(r.at, shield:GetPosition())
+        if math.abs(d - shield.Size / 2) > 0.5 then
+            error(string.format('it stopped %.2f from the centre of a bubble of radius %.2f', d,
+                                shield.Size / 2))
+        end
+    )");
+    lua_check("Test 14: its own side's shot from inside goes out through it", R"(
+        local r, shield = __osc_own_out, __osc_gen.MyShield
+        if r.type == 'Shield' then error('the shield stopped it') end
+        local d = VDist3(r.at, shield:GetPosition())
+        if d < shield.Size / 2 + 1 then
+            error(string.format('it ended (%s) %.2f from the centre, inside the bubble', tostring(r.type), d))
+        end
+    )");
+
+    // A beam meets the bubble by the same line test (CreateCollisionBeamHelper gathers with
+    // COGrid::GetEntityCollisionsInLine), and Shield.OnCollisionCheckWeapon takes an enemy's.
+    const auto beam_spot = quiet_spot(ctx.sim);
+    lua_check("setup: a shield of its own, and a target outside it",
+              fmt::format(R"(
+        local x, z = {}, {}
+        __osc_beam_gen = __osc_spawn('ueb4202', 'ARMY_2', x, z)
+        __osc_beam_gen:SetDoNotTarget(true)
+        __osc_beam_target = __osc_spawn('ueb1101', 'ARMY_2', x + 25, z)
+        __osc_beam_target:SetCanTakeDamage(false)
+    )",
+                          beam_spot ? beam_spot->x : 600.0f, beam_spot ? beam_spot->z : 600.0f)
+                  .c_str());
+    if (!tick_until(ctx, "the second shield is up", 40,
+                    "__osc_beam_gen.MyShield ~= nil and __osc_beam_gen.MyShield:IsOn()")) {
+        fail++;
+    }
+    lua_check("setup: an enemy Cerberus inside it", R"(
+        local gp = __osc_beam_gen:GetPosition()
+        __osc_cerberus = __osc_spawn('urb2301', 'ARMY_1', gp[1] + 4, gp[3])
+        __osc_beam_hits = {}
+        for _, b in (__osc_cerberus:GetWeapon(1).Beams or {}) do
+            local on_impact = b.Beam.OnImpact
+            b.Beam.OnImpact = function(self, kind, target)
+                table.insert(__osc_beam_hits, {kind = kind, target = target, ['end'] = self:GetPosition(1)})
+                return on_impact(self, kind, target)
+            end
+        end
+    )");
+    if (!tick_until(ctx, "the Cerberus's beams strike 12 times", 200,
+                    "table.getn(__osc_beam_hits) >= 12")) {
+        fail++;
+    }
+    lua_check("Test 15: an enemy's beam from inside strikes it on the way out", R"(
+        local shield = __osc_beam_gen.MyShield
+        local seen = {}
+        local on_shield = 0
+        for _, h in __osc_beam_hits do
+            local d = VDist3(h['end'], shield:GetPosition())
+            table.insert(seen, string.format('%s %.2f', tostring(h.kind), d))
+            if h.target == __osc_beam_target then error('a beam reached the target: ' .. table.concat(seen, ', ')) end
+            if h.kind == 'Shield' and h.target == shield then
+                on_shield = on_shield + 1
+                if math.abs(d - shield.Size / 2) > 0.5 then
+                    error('a beam met it off its surface: ' .. table.concat(seen, ', '))
+                end
+            end
+        end
+        if on_shield == 0 then error('no beam met it: ' .. table.concat(seen, ', ')) end
     )");
 
     // Only what is struck is asked whether it is hit (faf-re
@@ -9070,7 +9210,7 @@ void test_collide(TestContext& ctx) {
     if (!tick_until(ctx, "the refusing shot ends", 40, "__osc_refused.type ~= nil")) {
         fail++;
     }
-    lua_check("Test 14: it hits the tank, and was never asked itself", R"(
+    lua_check("Test 16: it hits the tank, and was never asked itself", R"(
         local r = __osc_refused
         if r.type ~= 'Unit' or r.target ~= __osc_refuser_target then
             error(tostring(r.type) .. ' on ' .. tostring(r.target))
@@ -9078,7 +9218,92 @@ void test_collide(TestContext& ctx) {
         if __osc_hitter_asked then error('the shot was asked') end
     )");
 
-    check(osc::test_status::failure_count() - fail == failures_before, "Test 15: no script errors");
+    // IgnoresAlly (Moho's CheckCollision): a shot goes through what is in the air and isn't its
+    // army's enemy, before any script is asked. A projectile above the water is in the air.
+    // Retail's Projectile.lua lets an artillery shell strike another army's shell or missile, so
+    // an ally's in the way took it. An enemy's still does. (The one in the way is a shell held
+    // still: a missile that tracks, made by a script with no target, Moho destroys at once.)
+    lua_check("setup: an ally's shell and an enemy's, each held in an artillery shell's way", R"(
+        SetAlliance('ARMY_1', 'ARMY_3', 'Ally')
+        SetAlliance('ARMY_3', 'ARMY_1', 'Ally')
+        -- Tests 4 and 5 are done with their lines, whose point defences shoot at each other
+        for _, l in {__osc_enemy, __osc_friend} do
+            for _, u in {l.shooter, l.between, l.target} do
+                u:Destroy()
+            end
+        end
+        for _, p in GetReclaimablesInRect(Rect(560, 118, 640, 152)) or {} do
+            if IsProp(p) then
+                p:Destroy()
+            end
+        end
+        local line = function(z, other_army)
+            local t = {rec = {}}
+            local shooter = __osc_spawn('uel0201', 'ARMY_1', 600, z)
+            t.target = __osc_spawn('ueb1101', 'ARMY_2', 628, z)
+            t.target:SetCanTakeDamage(false)
+            -- The shell's line: from a unit over the shooter to half a unit over the target
+            local from = shooter:GetPosition()
+            local to = t.target:GetPosition()
+            -- other_army's shell, held still on that line halfway; its launcher goes
+            local owner = __osc_spawn('uel0201', other_army, 570, z)
+            local m = owner:CreateProjectile('/projectiles/TIFArtillery01/TIFArtillery01_proj.bp',
+                                             0, 1, 0, 0, 0, 1)
+            m:SetCollisionShape('Sphere', 0, 0, 0, 1)
+            m:SetVelocity(0, 0, 0)
+            m:SetBallisticAcceleration(0)
+            m:SetLifetime(10)
+            Warp(m, {(from[1] + to[1]) / 2, (from[2] + to[2]) / 2 + 0.75, z})
+            owner:Destroy()
+            t.held = m
+            local check = m.OnCollisionCheck
+            m.OnCollisionCheck = function(self, other)
+                t.asked = check(self, other)
+                return t.asked
+            end
+            -- An artillery shell along it, flying straight
+            local d = {to[1] - from[1], to[2] - from[2] - 0.5, to[3] - from[3]}
+            local k = 30 / math.sqrt(d[1] * d[1] + d[2] * d[2] + d[3] * d[3])
+            local s = shooter:CreateProjectile('/projectiles/TIFArtillery01/TIFArtillery01_proj.bp',
+                                               0, 1, 0, d[1], d[2], d[3])
+            s:SetBallisticAcceleration(0)
+            s:SetLifetime(5)
+            s:SetVelocity(d[1] * k, d[2] * k, d[3] * k)
+            local impact = s.OnImpact
+            s.OnImpact = function(self, type, target)
+                if not t.rec.type then t.rec.type, t.rec.target = type, target end
+                return impact(self, type, target)
+            end
+            return t
+        end
+        __osc_past_ally = line(125, 'ARMY_3')
+        __osc_past_enemy = line(145, 'ARMY_2')
+        -- What a shell struck, for a failure's message
+        function __osc_struck(l)
+            local r = l.rec
+            local what = r.target == l.held and 'the shell held in its way'
+                         or r.target == l.target and 'its target' or tostring(r.target)
+            local held = l.held:BeenDestroyed() and 'gone' or table.concat(l.held:GetPosition(), ' ')
+            return tostring(r.type) .. ' on ' .. what .. '; the held shell, asked: ' ..
+                   tostring(l.asked) .. ', at ' .. held
+        end
+    )");
+    if (!tick_until(ctx, "the shells past the held ones end", 60,
+                    "__osc_past_ally.rec.type ~= nil and __osc_past_enemy.rec.type ~= nil")) {
+        fail++;
+    }
+    lua_check("Test 17: a shell goes through an ally's shell in the air, onto its target", R"(
+        local l = __osc_past_ally
+        if l.rec.type ~= 'Unit' or l.rec.target ~= l.target or l.asked ~= nil then
+            error(__osc_struck(l))
+        end
+    )");
+    lua_check("Test 18: an enemy's shell in the way takes it", R"(
+        local l = __osc_past_enemy
+        if l.rec.type ~= 'Projectile' or l.rec.target ~= l.held then error(__osc_struck(l)) end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 19: no script errors");
     spdlog::info("Collide test: {}/{} passed", pass, pass + fail);
 }
 
@@ -11471,6 +11696,66 @@ void test_defence(TestContext& ctx) {
         if fired ~= 1 then error(fired .. ' interceptors were fired') end
     )");
 
+    // A nuke takes one anti-nuke shooting at it (DesiredShooterCap 1). Moho's TrackToTarget
+    // gives it only to an anti-nuke with a missile in its silo and the nuke within its MaxRadius
+    // of 90, though it looks out to 180 (TrackingRadius 2). The one made first, empty, or one
+    // the nuke passes too far from to hit, mustn't keep it from the one by the target.
+    const auto nuke_gone = [&](int n) {
+        return lua_true(ctx.lua_state, "(function() local nuke = __osc_shot_of(__osc_s, " +
+                                           std::to_string(n) +
+                                           ") return nuke ~= nil and nuke.gone ~= nil end)()");
+    };
+    lua_check("setup: by the target, an empty anti-nuke, then a loaded one", R"(
+        __osc_d1:Destroy()
+        __osc_d2:Destroy()
+        __osc_empty = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 980, 320))
+        __osc_loaded = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 940, 320))
+        __osc_loaded:GiveTacticalSiloAmmo(1)
+        __osc_s:GiveNukeSiloAmmo(1)
+        IssueNuke({__osc_s}, __osc_zero)
+    )");
+    tick_until([&] { run(1); }, "the second nuke is launched and is gone", 1000,
+               [&] { return nuke_gone(2); });
+    lua_check("Test 2d: an empty anti-nuke leaves the nuke to a loaded one, which shoots it down",
+              R"(
+        if __osc_empty:GetTacticalSiloAmmoCount() ~= 0 then error('the empty one built a missile') end
+        local nuke = __osc_shot_of(__osc_s, 2)
+        if nuke.impact then error('the nuke impacted: ' .. nuke.impact) end
+        if __osc_loaded.__osc_fired ~= 1 then
+            error('the loaded anti-nuke fired ' .. __osc_loaded.__osc_fired .. ' interceptors')
+        end
+    )");
+    lua_check("setup: an anti-nuke 100 to the side of the nuke's flight, then one by the target",
+              R"(
+        __osc_empty:Destroy()
+        __osc_loaded:Destroy()
+        if GetTerrainHeight(860, 200) < GetSurfaceHeight(860, 200) then error('860, 200 is under water') end
+        __osc_aside = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 860, 200))
+        __osc_by = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 940, 320))
+        __osc_aside:GiveTacticalSiloAmmo(1)
+        __osc_by:GiveTacticalSiloAmmo(1)
+        __osc_s:GiveNukeSiloAmmo(1)
+        IssueNuke({__osc_s}, __osc_zero)
+    )");
+    tick_until([&] { run(1); }, "the third nuke is launched and is gone", 1000,
+               [&] { return nuke_gone(3); });
+    lua_check("Test 2e: an anti-nuke the nuke never comes within reach of leaves it to one by the "
+              "target",
+              R"(
+        local nuke = __osc_shot_of(__osc_s, 3)
+        local closest = 1e9
+        for _, p in nuke.path do
+            closest = math.min(closest, __osc_dist2d(p, __osc_aside:GetPosition()))
+        end
+        if closest <= 90 then error('the nuke came within ' .. closest .. ' of the one aside') end
+        if closest > 180 then error('the nuke was never within 180 of the one aside: nothing was tested') end
+        if nuke.impact then error('the nuke impacted: ' .. nuke.impact) end
+        if __osc_aside.__osc_fired ~= 0 then error('the anti-nuke aside fired') end
+        if __osc_by.__osc_fired ~= 1 then
+            error('the anti-nuke by the target fired ' .. __osc_by.__osc_fired .. ' interceptors')
+        end
+    )");
+
     // Tactical missiles at power generators: one undefended, one by a UEF
     // Phalanx, one by a Seraphim TMD, one by an Aeon TMD's flare.
     lua_check("setup: tactical missiles at defended and undefended targets", R"(
@@ -11919,7 +12204,8 @@ void test_beam_weapon(TestContext& ctx) {
             if ticks[k] - ticks[k - 1] ~= 2 then error('checks at ' .. ticks[k - 1] .. ' and ' .. ticks[k]) end
         end
     )");
-    lua_check("Test 4: the beam runs from the muzzle, past a friend, to a face of what it holds",
+    lua_check("Test 4: the beam runs from the muzzle, past a friend, as far as the centre of what "
+              "it holds",
               R"(
         local i = __osc_ml.__osc_impacts[table.getn(__osc_ml.__osc_impacts)]
         if i.target == __osc_friend then error('it stopped at the friendly structure') end
@@ -11927,13 +12213,14 @@ void test_beam_weapon(TestContext& ctx) {
         local start = i.beam:GetPosition(0)
         local muzzle = __osc_ml:GetPosition('Center_Turret_Muzzle')
         if VDist3(start, muzzle) > 0.01 then error('it starts ' .. VDist3(start, muzzle) .. ' from the muzzle') end
+        -- Moho's CreateCollisionBeamHelper: a beam that strikes a unit is as long as the way to
+        -- the unit's centre (its bone -1, half its height above it), not to its box's face
         local wall, bp, e = __osc_wall:GetPosition(), __osc_wall:GetBlueprint(), i['end']
-        local gap = math.max(math.abs(e[1] - wall[1]) - bp.SizeX / 2,
-                             math.abs(e[2] - wall[2] - bp.SizeY / 2) - bp.SizeY / 2,
-                             math.abs(e[3] - wall[3]) - bp.SizeZ / 2)
-        if math.abs(gap) > 0.05 then
-            error(string.format('it ends at (%.2f, %.2f, %.2f), %.2f off the face of the box at (%.2f, %.2f, %.2f)',
-                                e[1], e[2], e[3], gap, wall[1], wall[2], wall[3]))
+        local centre = Vector(wall[1], wall[2] + bp.SizeY / 2, wall[3])
+        local reach, want = VDist3(start, e), VDist3(start, centre)
+        if math.abs(reach - want) > 0.05 then
+            error(string.format('it reaches %.2f to (%.2f, %.2f, %.2f); the centre of what it holds is %.2f away',
+                                reach, e[1], e[2], e[3], want))
         end
     )");
     lua_check("setup: the structure can be hurt now", R"(
@@ -11942,8 +12229,8 @@ void test_beam_weapon(TestContext& ctx) {
     )");
     tick_for(ctx, 10);
     lua_check("Test 5: its small blast on the hull hurts a big target", R"(
-        -- The Monkeylord's beam deals DamageArea (radius 0.5) at its end, on
-        -- the structure's face, far from its position at its feet.
+        -- The Monkeylord's beam deals DamageArea (radius 0.5) at its end, as far
+        -- as the structure's centre, far from its position at its feet.
         local lost = __osc_wall_hp - __osc_wall:GetHealth()
         if lost < 800 then error('the structure lost ' .. lost .. ' in 10 ticks') end
     )");

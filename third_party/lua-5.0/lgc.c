@@ -481,6 +481,10 @@ static void markroot (GCState *st, lua_State *L) {
   for (i = 0; i <= NUM_TAGS; i++) {
     if (g->mt[i]) markvalue(st, g->mt[i]);
   }
+  /* OpenSupCom: the host's keys (lua_pushhostkey) */
+  for (i = 0; i < LUA_HOSTKEYS; i++) {
+    if (g->hostkey[i]) stringmark(g->hostkey[i]);
+  }
   traversestack(st, g->mainthread);
   if (L != g->mainthread)  /* another thread is running? */
     markvalue(st, L);  /* cannot collect it */

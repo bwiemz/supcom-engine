@@ -194,6 +194,12 @@ public:
     /// shape that could meet the segment from (x0, z0) to (x1, z1).
     void collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1, std::vector<EntityId>& out) const;
 
+    /// collect_colliders without the props: what a shot's or a beam's line
+    /// meets. Moho keeps props in collision buckets of their own (AddColShapeAt,
+    /// Steam's exe 0x503A20), and its line gather (GetEntityCollisionsInLine,
+    /// marching at 0x503DB9) walks only the units' and the entities'.
+    void collect_line_colliders(f32 x0, f32 z0, f32 x1, f32 z1, std::vector<EntityId>& out) const;
+
     /// Whether `visit` says yes to a live unit with a collision shape that
     /// could reach the rectangle [x0, x1] x [z0, z1] (its position within
     /// the shape's reach of it, as collision_reach bounds the shape's box
@@ -269,13 +275,18 @@ private:
     struct Slot {
         EntityId id{};
         Entity* entity;
+        /// Its entity's place in the making order (Entity::registry_seq),
+        /// kept by the null slot it leaves: it rises along the list.
+        u64 seq = 0;
     };
     std::vector<Slot> order_;
     std::vector<Slot> unit_order_; ///< the units of order_, for for_each_unit
     size_t removed_slots_ = 0;     ///< null slots in order_ (and so in unit_order_)
-    /// Each live entity's slot in order_ and in unit_order_ (npos for a non-unit).
-    std::unordered_map<EntityId, std::pair<size_t, size_t>> slot_of_;
-    static constexpr size_t kNoSlot = static_cast<size_t>(-1);
+    /// The next entity's Slot::seq.
+    u64 next_seq_ = 1;
+    /// The slot of `slots` (order_ or unit_order_) whose seq is `seq`, by a
+    /// binary search; null if none is. A compaction renumbers nothing.
+    static Slot* find_slot(std::vector<Slot>& slots, u64 seq);
     /// Moho's id pools (sim/IdPool.cpp), by family and source bits.
     struct IdPool {
         u32 next = 0;
@@ -287,7 +298,6 @@ private:
     };
     std::map<u32, IdPool> id_pools_;
     EntityId reserve_id(const Entity& e);
-    void index_slots();
     /// Walks in progress (a walk's callback may start another).
     mutable u32 walking_ = 0;
     struct Walking {
@@ -334,6 +344,8 @@ private:
 
     bool any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1, bool (*visit)(const Entity&, void*),
                                 void* ctx) const;
+    void gather_colliders(f32 x0, f32 z0, f32 x1, f32 z1, bool props,
+                          std::vector<EntityId>& out) const;
     void world_to_cell(f32 wx, f32 wz, i32& cx, i32& cz) const;
     size_t cell_index(i32 cx, i32 cz) const;
     void grid_insert(Entity& entity, i32 cx, i32 cz);

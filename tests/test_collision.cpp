@@ -14,6 +14,7 @@
 #include "sim/collision_beam.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/flight_math.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
 #include "sim/projectile_script.hpp"
@@ -167,9 +168,11 @@ TEST_CASE("a segment enters a box where it crosses its face", "[collision]") {
     CHECK(*t == Approx(0.5f)); // x = -1 of -3..1
     CHECK_FALSE(osc::sim::segment_enters(s, {0, 0, 0}, level, {-3, 2, 0}, {3, 2, 0}));
     CHECK_FALSE(osc::sim::segment_enters(s, {0, 0, 0}, level, {-3, 0, 0}, {-2, 0, 0}));
-    // Starting inside: a hit at once, unless only coming in counts.
+    // Starting inside, it is met where it starts if it leaves before its end, and not at all if
+    // it stays in (Moho's CColPrimitive_Box::CollideLine: Wild Magic's segment-box test, not
+    // solid).
     CHECK(osc::sim::segment_enters(s, {0, 0, 0}, level, {0, 0, 0}, {3, 0, 0}) == 0.0f);
-    CHECK_FALSE(osc::sim::segment_enters(s, {0, 0, 0}, level, {0, 0, 0}, {3, 0, 0}, false));
+    CHECK_FALSE(osc::sim::segment_enters(s, {0, 0, 0}, level, {-0.5f, 0, 0}, {0.5f, 0, 0}));
 }
 
 TEST_CASE("a box turns with its entity", "[collision]") {
@@ -191,8 +194,16 @@ TEST_CASE("a segment enters a sphere at its surface", "[collision]") {
     REQUIRE(t);
     CHECK(*t == Approx(0.8f));
     CHECK_FALSE(osc::sim::segment_enters(s, {10, 0, 0}, level, {0, 3, 0}, {20, 3, 0}));
-    // Leaving from inside is no hit on a shield.
-    CHECK_FALSE(osc::sim::segment_enters(s, {10, 0, 0}, level, {10, 0, 0}, {20, 0, 0}, false));
+    // Through it, both ends outside: where it comes in (x = 8 of 0..20).
+    const auto through = osc::sim::segment_enters(s, {10, 0, 0}, level, {0, 0, 0}, {20, 0, 0});
+    REQUIRE(through);
+    CHECK(*through == Approx(0.4f));
+    // Starting inside, it is met where it leaves (x = 12 of 10..20), and not at all if it stays
+    // in (Moho's CColPrimitive_Sphere::CollideLine: Wild Magic's FindSegment3Sphere3).
+    const auto out = osc::sim::segment_enters(s, {10, 0, 0}, level, {10, 0, 0}, {20, 0, 0});
+    REQUIRE(out);
+    CHECK(*out == Approx(0.2f));
+    CHECK_FALSE(osc::sim::segment_enters(s, {10, 0, 0}, level, {9, 0, 0}, {11, 0, 0}));
     // Heading away, outside it.
     CHECK_FALSE(osc::sim::segment_enters(s, {10, 0, 0}, level, {13, 0, 0}, {20, 0, 0}));
 }
@@ -254,6 +265,17 @@ TEST_CASE("the collider query finds shapes near a path, large ones from afar", "
     reg.find(big)->revert_collision_shape();
     reg.collect_colliders(95, 100, 105, 100, out);
     CHECK(out == std::vector<EntityId>{near, big});
+
+    // A shot's or a beam's line gathers no prop (Moho's GetEntityCollisionsInLine); the
+    // area query (a blast's shields) still finds it.
+    auto rock = std::make_unique<osc::sim::Prop>();
+    rock->set_position({101, 0, 101});
+    rock->set_default_collision_shape(box(1, 1, 1));
+    const EntityId prop = reg.register_entity(std::move(rock));
+    reg.collect_colliders(95, 100, 105, 100, out);
+    CHECK(out == std::vector<EntityId>{near, big, prop});
+    reg.collect_line_colliders(95, 100, 105, 100, out);
+    CHECK(out == std::vector<EntityId>{near, big});
 }
 
 TEST_CASE("a shot stops at the first thing in its way", "[collision]") {
@@ -299,7 +321,9 @@ TEST_CASE("a beam stops at a dying unit as at a living one", "[collision]") {
         EntityRegistry& reg = sim.entity_registry();
         reg.init_spatial_grid(512, 512);
         const EntityId shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
+        static_cast<Unit*>(reg.find(shooter))->set_size_y(0); // its muzzle (bone -1) at 1 up
         const EntityId in_way = add_unit(reg, {100, 0, 105}, box(1, 1, 1, 1));
+        static_cast<Unit*>(reg.find(in_way))->set_size_y(2);
         if (dying) {
             static_cast<Unit*>(reg.find(in_way))->begin_dying();
         }
@@ -309,8 +333,34 @@ TEST_CASE("a beam stops at a dying unit as at a living one", "[collision]") {
         beam->beam_setup().length = 20;
         const EntityId beam_id = reg.register_entity(std::move(beam));
         osc::sim::check_collision_beam(sim, nullptr, beam_id, false);
-        CHECK(reg.find(beam_id)->beam_endpoint().z == Approx(104.0f));
+        // As far as its centre (its face is at 104)
+        CHECK(reg.find(beam_id)->beam_endpoint().z == Approx(105.0f));
     }
+}
+
+TEST_CASE("a beam from inside a shield meets it where it leaves, as Moho's", "[collision]") {
+    osc::lua::LuaState state;
+    osc::sim::SimState sim{state.raw(), nullptr};
+    EntityRegistry& reg = sim.entity_registry();
+    reg.init_spatial_grid(512, 512);
+    const EntityId shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
+    auto shield = std::make_unique<osc::sim::Shield>();
+    shield->set_position({100, 0, 100});
+    shield->set_collision_shape(sphere(10));
+    reg.register_entity(std::move(shield));
+    auto beam = std::make_unique<osc::sim::Entity>();
+    beam->set_collision_beam(true);
+    beam->set_beam_launcher_id(shooter);
+    beam->beam_setup().length = 20;
+    const EntityId beam_id = reg.register_entity(std::move(beam));
+    osc::sim::check_collision_beam(sim, nullptr, beam_id, false);
+    // On the bubble, ahead: not at the muzzle, and not at its full length.
+    const Vector3 end = reg.find(beam_id)->beam_endpoint();
+    const f32 dy = end.y;
+    const f32 dz = end.z - 100.0f;
+    CHECK(end.x == Approx(100.0f));
+    CHECK(dz > 9.0f);
+    CHECK(std::sqrt(dy * dy + dz * dz) == Approx(10.0f).margin(1e-3));
 }
 
 TEST_CASE("a beam passes what has no OnCollisionCheckWeapon or fails it", "[collision]") {
@@ -325,20 +375,19 @@ TEST_CASE("a beam passes what has no OnCollisionCheckWeapon or fails it", "[coll
         return luaL_ref(L, LUA_REGISTRYINDEX);
     };
     const EntityId shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
+    static_cast<Unit*>(reg.find(shooter))->set_size_y(0); // its muzzle (bone -1) at 1 up
     auto gun = std::make_unique<osc::sim::Weapon>();
     gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
+    gun->max_range = 20;
     gun->lua_table_ref = script("return {}");
     static_cast<Unit*>(reg.find(shooter))->add_weapon(std::move(gun));
-    // A tree: retail's props have no OnCollisionCheckWeapon
-    auto tree = std::make_unique<osc::sim::Prop>();
-    tree->set_position({100, 0, 104});
-    tree->set_default_collision_shape(box(1, 2, 1));
-    tree->set_lua_table_ref(script("return {}"));
-    reg.register_entity(std::move(tree));
+    const EntityId bare = add_unit(reg, {100, 0, 104}, box(1, 2, 1));
+    reg.find(bare)->set_lua_table_ref(script("return {}"));
     const EntityId broken = add_unit(reg, {100, 0, 107}, box(0.5f, 2, 0.5f));
     reg.find(broken)->set_lua_table_ref(
         script("return {OnCollisionCheckWeapon = function() error('broken') end}"));
     const EntityId tank = add_unit(reg, {100, 0, 110}, box(1, 2, 1));
+    static_cast<Unit*>(reg.find(tank))->set_size_y(2);
     reg.find(tank)->set_lua_table_ref(
         script("return {OnCollisionCheckWeapon = function() return true end}"));
     auto beam = std::make_unique<osc::sim::Entity>();
@@ -348,7 +397,8 @@ TEST_CASE("a beam passes what has no OnCollisionCheckWeapon or fails it", "[coll
     beam->beam_setup().length = 20;
     const EntityId beam_id = reg.register_entity(std::move(beam));
     osc::sim::check_collision_beam(sim, L, beam_id, false);
-    CHECK(reg.find(beam_id)->beam_endpoint().z == Approx(109.0f));
+    // The tank's: as far as its centre
+    CHECK(reg.find(beam_id)->beam_endpoint().z == Approx(110.0f));
 }
 
 TEST_CASE("a beam sits on its muzzle as Moho attaches it, bit for bit", "[collision]") {
@@ -412,7 +462,8 @@ TEST_CASE("a shot with entity collision off flies through", "[collision]") {
     CHECK(shot->position().z == Approx(104.0f));
 }
 
-TEST_CASE("a shield stops shots coming in, not going out", "[collision]") {
+TEST_CASE("a shield stops shots where they cross it, going out as coming in, as Moho's",
+          "[collision]") {
     EntityRegistry reg;
     reg.init_spatial_grid(512, 512);
     auto shield = std::make_unique<osc::sim::Shield>();
@@ -420,9 +471,18 @@ TEST_CASE("a shield stops shots coming in, not going out", "[collision]") {
     shield->set_collision_shape(sphere(10));
     reg.register_entity(std::move(shield));
 
+    // One that stays inside meets nothing.
+    Projectile* within = add_shot(reg, {100, 1, 100}, {0, 0, 20});
+    fly(reg, *within);
+    CHECK_FALSE(within->destroyed());
+    CHECK(within->position().z == Approx(102.0f));
+
+    // One going out is stopped where it leaves (CColPrimitive_Sphere::CollideLine's exit point).
     Projectile* out = add_shot(reg, {100, 1, 105}, {0, 0, 80});
     fly(reg, *out);
-    CHECK_FALSE(out->destroyed());
+    CHECK(out->position().z == Approx(100.0f + std::sqrt(100.0f - 1.0f)).margin(1e-3));
+    fly(reg, *out);
+    CHECK(out->destroyed());
 
     Projectile* in = add_shot(reg, {100, 1, 115}, {0, 0, -80});
     fly(reg, *in);
@@ -1180,6 +1240,76 @@ TEST_CASE("a shot passes an entity whose script has no OnCollisionCheck, as Moho
     CHECK(shot->position().z == Approx(104.0f));
 }
 
+TEST_CASE("a shot passes a prop in its way, unasked, and hits what is behind it, as Moho's",
+          "[collision]") {
+    // Moho's line gather (COGrid::GetEntityCollisionsInLine) walks the unit and entity buckets,
+    // not the props': a rock, a tree or a wreck in the way is never asked OnCollisionCheck,
+    // though retail's Prop.lua would say yes and its TreeGroup break up. The original game, on
+    // SCMP_009 (tools/moho_probes/shotprops): a level shell from a Striker passes each one onto
+    // the power generator behind it.
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    EntityRegistry reg;
+    reg.init_spatial_grid(512, 512);
+    run_lua(L, "asked = 0");
+    auto rock = std::make_unique<osc::sim::Prop>();
+    rock->set_position({100, 0, 103});
+    rock->set_default_collision_shape(box(1, 1, 1, 1)); // z 102..104
+    rock->set_lua_table_ref(
+        script_of(L, "{ OnCollisionCheck = function() asked = asked + 1 return true end }"));
+    reg.register_entity(std::move(rock));
+    const EntityId wall = add_unit(reg, {100, 0, 106}, box(1, 1, 1, 1)); // z 105..107
+    reg.find(wall)->set_lua_table_ref(
+        script_of(L, "{ OnCollisionCheck = function() return true end }"));
+    Projectile* shot = add_shot(reg, {100, 1, 100}, {0, 0, 60});
+    shot->set_lua_table_ref(script_of(L, "{}"));
+    shot->update(0.1, reg, L);
+    reg.advance_coords();
+    CHECK(global_number(L, "asked") == 0);
+    REQUIRE(shot->impact_waiting());
+    CHECK(shot->impact_entity_id == wall);
+    CHECK(shot->position().z == Approx(105.0f));
+}
+
+TEST_CASE("a beam passes a prop, unasked, even one whose script would let it hit, as Moho's",
+          "[collision]") {
+    // Moho's beam (UnitWeapon::CreateCollisionBeamHelper) gathers with the shots' line gather,
+    // COGrid::GetEntityCollisionsInLine, which walks no prop. It reaches its weapon's range, as
+    // far as the centre of what it strikes.
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    osc::sim::SimState sim{L, nullptr};
+    EntityRegistry& reg = sim.entity_registry();
+    reg.init_spatial_grid(512, 512);
+    run_lua(L, "asked = 0");
+    const EntityId shooter = add_unit(reg, {100, 1, 100}, CollisionShape{});
+    static_cast<Unit*>(reg.find(shooter))->set_size_y(0); // its muzzle (bone -1) at 1 up
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 20;
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
+    gun->lua_table_ref = script_of(L, "{}");
+    static_cast<Unit*>(reg.find(shooter))->add_weapon(std::move(gun));
+    auto rock = std::make_unique<osc::sim::Prop>();
+    rock->set_position({100, 0, 104});
+    rock->set_default_collision_shape(box(1, 2, 1));
+    rock->set_lua_table_ref(
+        script_of(L, "{ OnCollisionCheckWeapon = function() asked = asked + 1 return true end }"));
+    reg.register_entity(std::move(rock));
+    const EntityId tank = add_unit(reg, {100, 0, 110}, box(1, 2, 1));
+    static_cast<Unit*>(reg.find(tank))->set_size_y(2); // its centre at 1 up
+    reg.find(tank)->set_lua_table_ref(
+        script_of(L, "{ OnCollisionCheckWeapon = function() return true end }"));
+    auto beam = std::make_unique<osc::sim::Entity>();
+    beam->set_collision_beam(true);
+    beam->set_beam_launcher_id(shooter);
+    beam->beam_setup().weapon = 0;
+    beam->beam_setup().length = 20;
+    const EntityId beam_id = reg.register_entity(std::move(beam));
+    osc::sim::check_collision_beam(sim, L, beam_id, false);
+    CHECK(global_number(L, "asked") == 0);
+    CHECK(reg.find(beam_id)->beam_endpoint().z == Approx(110.0f)); // the tank's centre
+}
+
 TEST_CASE("a shot crossing into the water hears OnEnterWater first on retail's rule, and not "
           "under FAF's if the ground came first",
           "[collision]") {
@@ -1328,5 +1458,356 @@ TEST_CASE("a shot its OnImpact leaves alive meets what it struck again while tha
             "the shot strikes the interceptor twice", 10,
             [&] { return global_number(L, "hits") == 2; });
         CHECK(shot->position().z == Approx(103.0f));
+    }
+}
+
+namespace {
+
+/// A beam weapon of MaxRadius `range` on a unit whose muzzle (its bone -1, its position: it has
+/// no height) is at `muzzle`, pitched `pitch_up` radians up from +z, and its beam, made as
+/// CollisionBeamEntity.__init makes it. Its OnImpact writes the kind to the global `kind`.
+struct BeamScene {
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    osc::sim::SimState sim{L, nullptr};
+    EntityRegistry& reg = sim.entity_registry();
+    EntityId shooter{};
+    EntityId beam_id{};
+
+    BeamScene(const Vector3& muzzle, f32 pitch_up, f32 range, bool ground) {
+        if (ground) {
+            osc::map::Heightmap flat(256, 256, 1.0f / 128.0f, std::vector<osc::u16>(257 * 257, 0));
+            sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(flat), 0.0f, false));
+        }
+        reg.init_spatial_grid(256, 256);
+        shooter = add_unit(reg, muzzle, CollisionShape{});
+        Unit& unit = *static_cast<Unit*>(reg.find(shooter));
+        unit.set_size_y(0);
+        unit.set_orientation({-std::sin(pitch_up / 2), 0, 0, std::cos(pitch_up / 2)});
+        auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->max_range = range;
+        gun->lua_table_ref = script_of(L, "{}");
+        unit.add_weapon(std::move(gun));
+        auto beam = std::make_unique<osc::sim::Entity>();
+        beam->set_collision_beam(true);
+        beam->set_beam_launcher_id(shooter);
+        beam->beam_setup().weapon = 0;
+        beam->beam_setup().length = range;
+        beam->set_lua_table_ref(script_of(L, "{ OnImpact = function(self, k) kind = k end }"));
+        beam_id = reg.register_entity(std::move(beam));
+    }
+
+    osc::sim::Weapon& gun() { return *static_cast<Unit*>(reg.find(shooter))->weapons()[0]; }
+    const osc::sim::Entity& beam() { return *reg.find(beam_id); }
+
+    /// A unit whose box, `half` wide each way and `height` tall, stands on `at`.
+    EntityId target(const Vector3& at, f32 half, f32 height) {
+        const EntityId id = add_unit(reg, at, box(half, height / 2, half, height / 2));
+        static_cast<Unit*>(reg.find(id))->set_size_y(height);
+        return id;
+    }
+
+    /// One check: the kind its OnImpact heard.
+    std::string check() {
+        run_lua(L, "kind = nil");
+        osc::sim::check_collision_beam(sim, L, beam_id, false);
+        lua_getglobal(L, "kind");
+        const char* k = lua_tostring(L, -1);
+        std::string kind = k ? k : "(none)";
+        lua_pop(L, 1);
+        return kind;
+    }
+};
+
+} // namespace
+
+TEST_CASE("a beam aimed down reaches a target near the edge of its range, as Moho's "
+          "CreateCollisionBeamHelper sweeps it",
+          "[collision][beam]") {
+    // Its muzzle 15 above a small target 0.95 of its MaxRadius (30) away across the ground: the
+    // target lies 31.6 along the beam, past its reach. Moho sweeps reach / its reach across the
+    // ground farther (at most 5 times), so a beam covers its range across the ground at any
+    // pitch. With no target, the ground (33.3 along it) lies past its reach; Moho takes the
+    // surface only nearer than the beam's length, so it ends in the air.
+    const f32 drop = 15.0f;
+    const f32 across = 0.95f * 30.0f;
+    const f32 along = std::sqrt(drop * drop + across * across);
+    for (const bool target : {true, false}) {
+        CAPTURE(target);
+        BeamScene s({100, 15.5f, 100}, -std::atan2(drop, across), 30.0f, true);
+        if (target) {
+            s.target({100, 0, 100 + across}, 0.5f, 1.0f); // its centre 0.5 up, on the beam
+        }
+        CHECK(s.check() == (target ? "Unit" : "Air"));
+        // To the target's centre; else its reach.
+        CHECK(s.beam().beam_setup().reached == Approx(target ? along : 30.0f));
+        if (target) {
+            CHECK(s.beam().beam_endpoint().y == Approx(0.5f).margin(0.001f));
+            CHECK(s.beam().beam_endpoint().z == Approx(100 + across));
+        }
+    }
+}
+
+TEST_CASE("a steep beam sweeps at most five times its reach, and one straight up its reach, as "
+          "Moho's CreateCollisionBeamHelper",
+          "[collision][beam]") {
+    // Reach 10. Pitched up until its reach across the ground is 1, it would sweep ten times as
+    // far: Moho stops at five. Straight up (0.001 across or less), it sweeps only its reach.
+    struct Case {
+        f32 pitch_up;
+        f32 along; // where the target's centre is along the beam
+        bool hit;
+    };
+    const f32 steep = std::acos(0.1f);
+    const f32 up = std::acos(0.0f);
+    const Case cases[] = {
+        {steep, 48.0f, true}, {steep, 52.0f, false}, {up, 9.6f, true}, {up, 11.0f, false}};
+    for (const Case& c : cases) {
+        CAPTURE(c.pitch_up, c.along);
+        BeamScene s({100, 10, 100}, c.pitch_up, 10.0f, false);
+        const Vector3 f{0, std::sin(c.pitch_up), std::cos(c.pitch_up)};
+        const EntityId id =
+            add_unit(s.reg, {100, 10 + f.y * c.along, 100 + f.z * c.along}, box(0.5f, 0.5f, 0.5f));
+        static_cast<Unit*>(s.reg.find(id))->set_size_y(0); // its centre is its position
+        CHECK(s.check() == (c.hit ? "Unit" : "Air"));
+        CHECK(s.beam().beam_setup().reached == Approx(c.hit ? c.along : 10.0f));
+    }
+}
+
+TEST_CASE("a beam that strikes a unit reaches its centre, a shield where it meets it, and stops "
+          "at the ground nearer than that, as Moho's CreateCollisionBeamHelper measures",
+          "[collision][beam]") {
+    SECTION("a unit: to its centre, half its height above it (its bone -1)") {
+        BeamScene s({100, 1, 100}, 0, 30.0f, true);
+        s.target({100, 0, 105}, 1, 2); // its face at 104
+        CHECK(s.check() == "Unit");
+        CHECK(s.beam().beam_setup().reached == Approx(5.0f));
+        CHECK(s.beam().beam_endpoint().z == Approx(105.0f));
+    }
+    SECTION("anything but a unit or a shield, a projectile: to its position") {
+        // (Not a prop: Moho's beams, as its shots, never meet one.)
+        BeamScene s({100, 1, 100}, 0, 30.0f, true);
+        Projectile* shot = add_shot(s.reg, {100, 0, 104}, {0, 0, 0});
+        shot->set_collision_shape(box(1, 2, 1));
+        CHECK(s.check() == "Projectile");
+        CHECK(s.beam().beam_setup().reached == Approx(std::sqrt(17.0f)));
+    }
+    SECTION("a shield: to where it met it") {
+        BeamScene s({100, 1, 100}, 0, 30.0f, true);
+        auto shield = std::make_unique<osc::sim::Shield>();
+        shield->set_position({100, 1, 110});
+        shield->set_collision_shape(sphere(2));
+        s.reg.register_entity(std::move(shield));
+        CHECK(s.check() == "Shield");
+        CHECK(s.beam().beam_setup().reached == Approx(8.0f));
+    }
+    SECTION("the ground, where it lies nearer than the centre of the unit the beam entered") {
+        // Aimed down at the ground 10 ahead, it enters a long unit's box at 8.4 along, but the
+        // unit's centre is 11.2 away: the ground, 10.4 along, is nearer.
+        BeamScene s({100, 3, 100}, -std::atan2(3.0f, 10.0f), 30.0f, true);
+        const EntityId id = add_unit(s.reg, {100, 0, 111}, box(1, 1, 3, 1));
+        static_cast<Unit*>(s.reg.find(id))->set_size_y(2);
+        CHECK(s.check() == "Terrain");
+        CHECK(s.beam().beam_setup().reached == Approx(std::sqrt(109.0f)).epsilon(0.01));
+    }
+}
+
+TEST_CASE("a beam reaches its weapon's MaximumBeamLength, else its MaxRadius as it is at each "
+          "check, as Moho's CreateCollisionBeamHelper",
+          "[collision][beam]") {
+    // A Cybran commander's beams are made with its weapons; its range upgrade then calls
+    // ChangeMaxRadius on them (URL0001_script.lua), and retail's beams reach the new radius.
+    BeamScene s({100, 1, 100}, 0, 22.0f, false);
+    s.target({100, 0, 126}, 0.5f, 2); // its centre 26 away
+    CHECK(s.check() == "Air");
+    CHECK(s.beam().beam_setup().reached == Approx(22.0f));
+    s.gun().max_range = 30.0f; // ChangeMaxRadius(30)
+    CHECK(s.check() == "Unit");
+    CHECK(s.beam().beam_setup().reached == Approx(26.0f));
+    s.gun().max_beam_length = 24.0f; // MaximumBeamLength wins
+    CHECK(s.check() == "Air");
+    CHECK(s.beam().beam_setup().reached == Approx(24.0f));
+}
+
+namespace {
+
+/// Armies for IgnoresAlly: 0 and 1 allies, 2 their enemy (armies are enemies unless set), 3
+/// neutral to 0. The sim is its Lua state's, as in a game.
+struct AlliedArmies {
+    osc::lua::LuaState lua;
+    lua_State* L = lua.raw();
+    osc::sim::SimState sim{L, nullptr};
+    EntityRegistry& reg = sim.entity_registry();
+
+    AlliedArmies() {
+        for (const char* name : {"ARMY_1", "ARMY_2", "ARMY_3", "NEUTRAL_CIVILIAN"}) {
+            sim.add_army(name, name);
+        }
+        sim.set_alliance(0, 1, osc::sim::Alliance::Ally);
+        sim.set_alliance(0, 3, osc::sim::Alliance::Neutral);
+        osc::sim::set_sim(L, &sim);
+        reg.init_spatial_grid(512, 512);
+    }
+
+    /// A 2-unit box of `army`'s on `layer`, standing on y = 0. It has no script, so nothing
+    /// refuses a shot (retail's Unit.lua refuses only its own army's).
+    EntityId unit(const Vector3& at, int army, const char* layer) {
+        const EntityId id = add_unit(reg, at, box(1, 1, 1, 1), army);
+        static_cast<Unit*>(reg.find(id))->set_layer(layer);
+        return id;
+    }
+
+    Projectile* shot(const Vector3& at, const Vector3& velocity, int army,
+                     const CollisionShape& shape = {}) {
+        auto p = std::make_unique<Projectile>();
+        p->set_position(at);
+        p->velocity = velocity;
+        p->set_army(army);
+        p->set_default_collision_shape(shape);
+        return static_cast<Projectile*>(reg.find(reg.register_entity(std::move(p))));
+    }
+
+    void step(Projectile& p) {
+        p.update(0.1, reg, L);
+        reg.advance_coords();
+    }
+};
+
+/// What a shot or a beam meets first: a unit of `army` on `layer`; and whether it stops there or
+/// goes on to the enemy's aircraft behind it.
+struct InTheWay {
+    const char* what;
+    int army;
+    const char* layer;
+    bool ignores_ally;
+    bool stops_there;
+};
+
+} // namespace
+
+TEST_CASE("a shot goes through an aircraft that isn't its army's enemy, as Moho's CheckCollision",
+          "[collision]") {
+    // Steam's exe at 0x006A468D: a shot that IgnoresAlly passes what is on the Air layer, unless
+    // that is its army's enemy, before any script is asked. Retail's Unit.lua refuses only its
+    // own army's shots, so an ally's gunship in the way took the AA meant for the enemy's.
+    for (const InTheWay& c : {InTheWay{"an ally's gunship", 1, "Air", true, false},
+                              InTheWay{"a neutral's aircraft", 3, "Air", true, false},
+                              InTheWay{"its own army's aircraft", 0, "Air", true, false},
+                              InTheWay{"an ally's landed aircraft", 1, "Land", true, true},
+                              InTheWay{"the enemy's aircraft", 2, "Air", true, true},
+                              InTheWay{"an ally's gunship, the weapon saying IgnoresAlly = false",
+                                       1, "Air", false, true}}) {
+        CAPTURE(c.what);
+        AlliedArmies w;
+        const EntityId in_way = w.unit({100, 0, 104}, c.army, c.layer); // z 103..105
+        const EntityId enemy = w.unit({100, 0, 108}, 2, "Air");         // z 107..109
+        Projectile* shot = w.shot({100, 1, 100}, {0, 0, 100}, 0);
+        shot->ignores_ally = c.ignores_ally;
+        w.step(*shot);
+        REQUIRE(shot->impact_waiting());
+        CHECK(shot->impact_entity_id == (c.stops_there ? in_way : enemy));
+    }
+}
+
+TEST_CASE("a shot still hits the aircraft it was fired at, as Moho's CheckCollision",
+          "[collision]") {
+    // 0x006A463D: its target skips the tests of the launcher, of itself and of allies
+    AlliedArmies w;
+    const EntityId ally = w.unit({100, 0, 104}, 1, "Air");
+    w.unit({100, 0, 108}, 2, "Air");
+    Projectile* shot = w.shot({100, 1, 100}, {0, 0, 100}, 0);
+    shot->target_entity_id = ally;
+    w.step(*shot);
+    REQUIRE(shot->impact_waiting());
+    CHECK(shot->impact_entity_id == ally);
+}
+
+TEST_CASE("a shot that barely moves meets an ally's aircraft, as Moho's CheckCollision",
+          "[collision]") {
+    // A step under 0.01 is Moho's short move (Steam's exe 0x006A42C9), whose sphere gather has no
+    // IgnoresAlly test (0x006A4391 to 0x006A43E4). The shot starts just short of the aircraft's
+    // box (z 99 to 101), so its step comes in through the face, which the line test meets.
+    AlliedArmies w;
+    const EntityId ally = w.unit({100, 0, 100}, 1, "Air");
+    Projectile* shot = w.shot({100, 1, 98.998f}, {0, 0, 0.05f}, 0); // 0.005 a tick
+    w.step(*shot);
+    REQUIRE(shot->impact_waiting());
+    CHECK(shot->impact_entity_id == ally);
+}
+
+TEST_CASE("a shell goes through an ally's missile in the air, not under the water, as Moho's "
+          "CheckCollision",
+          "[collision]") {
+    // A projectile is on the Air layer above the water. Retail's artillery and anti-missile shots
+    // took an ally's tactical missile in their way (its Projectile.lua refuses only its own
+    // army's).
+    for (const bool under : {false, true}) {
+        CAPTURE(under);
+        AlliedArmies w;
+        Projectile* missile = w.shot({100, 1, 104}, {}, 1, box(0.5f, 0.5f, 0.5f));
+        missile->in_water = under;
+        const EntityId enemy = w.unit({100, 0, 108}, 2, "Air");
+        Projectile* shell = w.shot({100, 1, 100}, {0, 0, 100}, 0);
+        w.step(*shell);
+        REQUIRE(shell->impact_waiting());
+        CHECK(shell->impact_entity_id == (under ? missile->entity_id() : enemy));
+    }
+}
+
+TEST_CASE("a beam goes through an aircraft that isn't its unit's enemy, as Moho's "
+          "GetClosestCollision",
+          "[collision]") {
+    // Steam's exe at 0x006DD4C4: once the struck unit's OnCollisionCheckWeapon agrees, a unit on
+    // the Air layer that isn't the enemy of the beam's unit is passed when the weapon
+    // IgnoresAlly. Only units: a projectile in its way still stops it. The beam reaches its
+    // weapon's range, as far as the centre of what it strikes (CreateCollisionBeamHelper).
+    const auto beam_reach = [](AlliedArmies& w, bool ignores_ally) {
+        const EntityId shooter = add_unit(w.reg, {100, 1, 100}, CollisionShape{});
+        static_cast<Unit*>(w.reg.find(shooter))->set_size_y(0); // its muzzle (bone -1) at 1 up
+        auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->max_range = 20;
+        gun->ignores_ally = ignores_ally;
+        static_cast<Unit*>(w.reg.find(shooter))->add_weapon(std::move(gun));
+        auto beam = std::make_unique<osc::sim::Entity>();
+        beam->set_collision_beam(true);
+        beam->set_beam_launcher_id(shooter);
+        beam->beam_setup().weapon = 0;
+        beam->beam_setup().length = 20;
+        const EntityId beam_id = w.reg.register_entity(std::move(beam));
+        osc::sim::check_collision_beam(w.sim, w.L, beam_id, false);
+        return w.reg.find(beam_id)->beam_endpoint().z;
+    };
+    for (const InTheWay& c : {InTheWay{"an ally's gunship", 1, "Air", true, false},
+                              InTheWay{"a neutral's aircraft", 3, "Air", true, false},
+                              InTheWay{"an ally's landed aircraft", 1, "Land", true, true},
+                              InTheWay{"the enemy's aircraft", 2, "Air", true, true},
+                              InTheWay{"an ally's gunship, the weapon saying IgnoresAlly = false",
+                                       1, "Air", false, true}}) {
+        CAPTURE(c.what);
+        AlliedArmies w;
+        const EntityId first = w.unit({100, 0, 104}, c.army, c.layer); // z 103..105
+        const EntityId behind = w.unit({100, 0, 108}, 2, "Air");       // z 107..109
+        for (const EntityId id : {first, behind}) {
+            static_cast<Unit*>(w.reg.find(id))->set_size_y(2); // its centre at 1 up
+        }
+        CHECK(beam_reach(w, c.ignores_ally) == Approx(c.stops_there ? 104.0f : 108.0f));
+    }
+    AlliedArmies w;
+    w.shot({100, 1, 104}, {}, 1, box(0.5f, 0.5f, 0.5f)); // an ally's missile: z 103.5..104.5
+    static_cast<Unit*>(w.reg.find(w.unit({100, 0, 108}, 2, "Air")))->set_size_y(2);
+    CHECK(beam_reach(w, true) == Approx(104.0f)); // as far as the missile's position
+}
+
+TEST_CASE("a weapon's shots carry its IgnoresAlly, as Moho's PROJ_Create", "[collision]") {
+    DrawScene scene;
+    for (const bool ignores_ally : {true, false}) {
+        CAPTURE(ignores_ally);
+        osc::sim::Weapon gun;
+        gun.muzzle_velocity = 25;
+        gun.projectile_bp_id = "/shell";
+        gun.ignores_ally = ignores_ally;
+        for (const Projectile* shot : scene.fire(gun, {0, 0, 1})) {
+            CHECK(shot->ignores_ally == ignores_ally);
+        }
     }
 }

@@ -891,6 +891,10 @@ TEST_CASE("A Lua state's sim reads back as stored, and as none once cleared", "[
     osc::sim::SimState sim{L, nullptr};
     osc::sim::set_sim(L, &sim);
     CHECK(osc::sim::get_sim(L) == &sim);
+    // Its threads read the same sim
+    lua_State* co = lua_newthread(L);
+    CHECK(osc::sim::get_sim(co) == &sim);
+    lua_pop(L, 1);
     // The bindings store it the same way
     register_moho_bindings(state, sim);
     CHECK(osc::sim::get_sim(L) == &sim);

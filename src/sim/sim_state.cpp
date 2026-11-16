@@ -34,6 +34,7 @@
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
+#include <lhost.h>
 }
 
 #include <spdlog/spdlog.h>
@@ -63,7 +64,12 @@ constexpr const char* kSimKey = "osc_sim_state";
 
 } // namespace
 
+// The state keeps the sim twice: as its host data, which get_sim reads on
+// every binding call without a lookup, and in its registry, where a
+// snapshot finds the host's singletons by name (sim_snapshot.cpp) and a
+// load puts back the loading host's own -- the same pointer.
 void set_sim(lua_State* L, SimState* sim) {
+    lua_sethostdata(L, sim);
     lua_pushstring(L, kSimKey);
     if (sim) lua_pushlightuserdata(L, sim);
     else lua_pushnil(L);
@@ -71,11 +77,7 @@ void set_sim(lua_State* L, SimState* sim) {
 }
 
 SimState* get_sim(lua_State* L) {
-    lua_pushstring(L, kSimKey);
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    return sim;
+    return static_cast<SimState*>(lua_gethostdata(L));
 }
 
 u32 SimState::s_sim_generation_ = 0;
@@ -233,7 +235,7 @@ void SimState::on_destroy(Entity& entity) {
             add_death_event(pos.x, pos.y, pos.z, scale, unit.army());
         }
         if (unit.is_capturing()) {
-            unit.stop_capturing(L_, entity_registry_, true);
+            unit.stop_capturing(L_, entity_registry_);
         }
     }
     notify_script_destroy(entity);
@@ -481,7 +483,14 @@ void SimState::kill_cleanup() {
                      [](const auto& a, const auto& b) { return a.first < b.first; });
     for (const auto& [army, id] : due) {
         if (Entity* e = entity_registry_.find(id); e && e->is_unit()) {
-            static_cast<Unit*>(e)->kill_cleanup(L_);
+            auto* unit = static_cast<Unit*>(e);
+            // Its orders go, and a capture task's end takes it off its
+            // target's count of captors (Moho's DoCallback(false)) now, not
+            // when its death ends
+            if (unit->is_capturing()) {
+                unit->stop_capturing(L_, entity_registry_);
+            }
+            unit->kill_cleanup(L_);
         }
     }
 }
@@ -1275,18 +1284,12 @@ Boarding boarding(const EntityRegistry& registry, const Unit& unit, EntityId tar
     if (&target == &unit) {
         return Boarding::Takes;
     }
-    if (!unit.is_mobile() || unit.has_category("AIR") != target.is_staging_platform() ||
-        (unit.has_category("COMMAND") && !target.has_category("CANTRANSPORTCOMMANDER"))) {
-        return Boarding::Rejects;
-    }
-    const TransportSlots* slots = const_cast<Unit&>(target).transport_slots();
-    return !slots || slots->can_carry_class(unit.transport_class()) ? Boarding::Takes
-                                                                    : Boarding::Rejects;
+    return const_cast<Unit&>(target).transport_can_carry(unit) ? Boarding::Takes
+                                                               : Boarding::Rejects;
 }
 
 bool has_transport_ai(const Unit& unit) {
-    return unit.has_command_cap("RULEUCC_Transport") || unit.has_category("PODSTAGINGPLATFORM") ||
-           unit.is_staging_platform();
+    return unit.has_transport_ai();
 }
 
 } // namespace
@@ -1498,9 +1501,11 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     if (clear_existing && command.type != CommandType::Stop && unit.has_unit_state("Enhancing")) {
         return false;
     }
+    static const CategoryName kPod{"POD"};
+    static const CategoryName kCarrier{"CARRIER"};
     const Unit* carrier = carrier_of(entity_registry_, unit);
-    const bool pod = unit.has_category("POD");
-    const bool may_leave = !carrier || pod || carrier->has_category("CARRIER");
+    const bool pod = unit.has_category(kPod);
+    const bool may_leave = !carrier || pod || carrier->has_category(kCarrier);
     if (command.type == CommandType::Move || command.type == CommandType::Patrol ||
         command.type == CommandType::AggressiveMove) {
         return may_leave && unit.motion_type() != "RULEUMT_None" && has_target(command) &&
@@ -1518,6 +1523,15 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     }
     if (command.type == CommandType::SpecialAction) {
         return unit.has_command_cap("RULEUCC_SpecialAction");
+    }
+    // func_ProcessUnitCommand has no arm for an AssistMove: past the checks
+    // every order has, each unit given it takes it, and its dispatch decides
+    // what each does with it. The engine also asks for a goal it can fly and
+    // drive to: an order from the network with none, or one not finite, is
+    // refused (a click always gives a point on the map).
+    if (command.type == CommandType::AssistMove) {
+        return has_target(command) && std::isfinite(command.target_pos.x) &&
+               std::isfinite(command.target_pos.y) && std::isfinite(command.target_pos.z);
     }
     if (command.type == CommandType::Ferry) {
         return !carrier && unit.has_category("TRANSPORTATION") && has_transport_ai(unit);

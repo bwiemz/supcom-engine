@@ -589,6 +589,161 @@ TEST_CASE("An idle aircraft whose weapon picks a target flies its attack run tha
     CHECK(a.air_combat().flying);
 }
 
+namespace {
+
+/// A gun with AutoInitiateAttackCommand, looking out to 25 x 1.25 as retail UEA0102's does,
+/// every `period` ticks.
+std::unique_ptr<osc::sim::Weapon> auto_gun(osc::u32 period) {
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
+    gun->max_range = 25.0f;
+    gun->tracking_radius = 1.25f;
+    gun->damage = 10.0f;
+    gun->target_check_period = period;
+    gun->auto_initiate_attack_command = true;
+    return gun;
+}
+
+bool attacks(const Unit& u, osc::sim::EntityId target) {
+    const auto& q = u.command_queue();
+    return !q.empty() && q.front().type == osc::sim::CommandType::Attack &&
+           q.front().target_id == target;
+}
+
+} // namespace
+
+// Moho's CAcquireTargetTask::Execute (Steam 0x5DF7E0) orders the attack after every search that
+// finds an enemy while CheckAutoInitiate passes, whether or not the weapon had it already.
+TEST_CASE("An aircraft whose weapon kept its pick through a move attacks it at the weapon's next "
+          "look once the move ends",
+          "[air_motion][auto_initiate]") {
+    World w(true);
+    Unit& a = w.make("uea0102", 30.0f, 128.0f);
+    constexpr osc::u32 kPeriod = 3;
+    a.add_weapon(auto_gun(kPeriod));
+    const osc::sim::EntityId enemy = w.make("gunship", 45.0f, 128.0f, 2).entity_id();
+    World::move(a, 50.0f, 128.0f);
+    const osc::sim::Weapon& weapon = *a.weapons().front();
+    const auto tick = [&] {
+        a.weapons().front()->fire_clock = 1000000;
+        w.sim.tick();
+    };
+    bool picked_on_move = false;
+    tick_until(tick, "the move ends", 300, [&] {
+        const auto& q = a.command_queue();
+        picked_on_move =
+            picked_on_move || (!q.empty() && q.front().type == osc::sim::CommandType::Move &&
+                               weapon.target_entity_id == enemy);
+        return q.empty();
+    });
+    REQUIRE(picked_on_move);
+    REQUIRE(weapon.target_entity_id == enemy);
+    tick_until(tick, "an attack on the enemy its weapon held", kPeriod + 2,
+               [&] { return attacks(a, enemy); });
+}
+
+// The attack task's end (~CUnitAttackTargetTask, Steam 0x5FAC30) stops the attacker
+// (CAiAttackerImpl::Stop, 0x5DC1C0): every weapon drops its target, and an
+// AutoInitiateAttackCommand one looks again two ticks on (RefreshAcquireTargetTaskScheduling,
+// 0x5DFFF0).
+TEST_CASE("An aircraft whose attack's target is destroyed attacks its weapon's pick two ticks on",
+          "[air_motion][auto_initiate]") {
+    World w(true);
+    Unit& a = w.make("uea0102", 30.0f, 128.0f);
+    a.add_weapon(auto_gun(30));
+    const osc::sim::EntityId passer = w.make("gunship", 45.0f, 128.0f, 2).entity_id();
+    Unit& goal = w.make("tank", 220.0f, 128.0f, 2);
+    osc::sim::UnitCommand attack;
+    attack.type = osc::sim::CommandType::Attack;
+    attack.target_id = goal.entity_id();
+    a.push_command(attack, true);
+    const osc::sim::Weapon& weapon = *a.weapons().front();
+    const auto tick = [&] {
+        a.weapons().front()->fire_clock = 1000000;
+        w.sim.tick();
+    };
+    tick_until(tick, "the weapon picks the gunship on the way", 40,
+               [&] { return weapon.target_entity_id == passer; });
+    REQUIRE(attacks(a, goal.entity_id()));
+    REQUIRE_FALSE(a.command_queue().front().engaged);
+    goal.mark_destroyed();
+    const int ticks =
+        tick_until(tick, "an attack on the gunship", 3, [&] { return attacks(a, passer); });
+    CHECK(ticks == 3);
+}
+
+// CheckAutoInitiate (Steam 0x5DF710) counts the attack's target gone once it is dead (the entity's
+// byte at +0x99, set as the unit is killed), not only once it is destroyed.
+TEST_CASE("An aircraft whose attack's target is dying attacks its weapon's next pick",
+          "[air_motion][auto_initiate]") {
+    World w(true);
+    Unit& a = w.make("uea0102", 30.0f, 128.0f);
+    constexpr osc::u32 kPeriod = 3;
+    a.add_weapon(auto_gun(kPeriod));
+    const osc::sim::EntityId passer = w.make("gunship", 45.0f, 128.0f, 2).entity_id();
+    Unit& goal = w.make("tank", 220.0f, 128.0f, 2);
+    osc::sim::UnitCommand attack;
+    attack.type = osc::sim::CommandType::Attack;
+    attack.target_id = goal.entity_id();
+    a.push_command(attack, true);
+    const osc::sim::Weapon& weapon = *a.weapons().front();
+    const auto tick = [&] {
+        a.weapons().front()->fire_clock = 1000000;
+        w.sim.tick();
+    };
+    tick_until(tick, "the weapon picks the gunship on the way", 10,
+               [&] { return weapon.target_entity_id == passer; });
+    goal.begin_dying();
+    tick_until(tick, "an attack on the gunship", kPeriod + 1, [&] { return attacks(a, passer); });
+}
+
+TEST_CASE("An attack's end makes its unit's weapons drop their targets, their scripts told, and "
+          "look again a TargetCheckInterval on",
+          "[air_motion][auto_initiate]") {
+    World w(true);
+    lua_State* L = w.state.raw();
+    Unit& a = w.make("uea0102", 30.0f, 128.0f);
+    constexpr osc::u32 kPeriod = 5;
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
+    gun->max_range = 25.0f;
+    gun->tracking_radius = 1.25f;
+    gun->damage = 10.0f;
+    gun->target_check_period = kPeriod;
+    REQUIRE(w.state
+                .do_string("heard = {} gun = {"
+                           " OnGotTarget = function(self) table.insert(heard, 'got') end,"
+                           " OnLostTarget = function(self) table.insert(heard, 'lost') end}")
+                .ok());
+    lua_getglobal(L, "gun");
+    gun->lua_table_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    gun->script_class = true;
+    a.add_weapon(std::move(gun));
+    const osc::sim::EntityId passer = w.make("gunship", 45.0f, 128.0f, 2).entity_id();
+    Unit& goal = w.make("tank", 220.0f, 128.0f, 2);
+    osc::sim::UnitCommand attack;
+    attack.type = osc::sim::CommandType::Attack;
+    attack.target_id = goal.entity_id();
+    a.push_command(attack, true);
+    const osc::sim::Weapon& weapon = *a.weapons().front();
+    const auto tick = [&] {
+        a.weapons().front()->fire_clock = 1000000;
+        w.sim.tick();
+    };
+    tick_until(tick, "the weapon picks the gunship on the way", 10,
+               [&] { return weapon.target_entity_id == passer; });
+    REQUIRE(w.state.do_string("assert(table.concat(heard, ' ') == 'got') heard = {}").ok());
+    goal.mark_destroyed();
+    tick();
+    REQUIRE(a.command_queue().empty());
+    CHECK_FALSE(weapon.has_target());
+    CHECK(w.state.do_string("assert(table.concat(heard, ' ') == 'lost')").ok());
+    const int ticks = tick_until(tick, "the weapon picks the gunship again", 2 * kPeriod,
+                                 [&] { return weapon.target_entity_id == passer; });
+    CHECK(ticks == static_cast<int>(kPeriod));
+    CHECK(w.state.do_string("assert(table.concat(heard, ' ') == 'lost got')").ok());
+}
+
 TEST_CASE("An attack that engages makes the weapons drop their target, then take the order's",
           "[air_motion]") {
     World w(true);

@@ -111,12 +111,10 @@ std::array<u32, 16> EntityRegistry::family_counts() const {
     return counts;
 }
 
-void EntityRegistry::index_slots() {
-    slot_of_.clear();
-    for (size_t i = 0; i < order_.size(); ++i)
-        if (order_[i].entity) slot_of_[order_[i].id] = {i, kNoSlot};
-    for (size_t i = 0; i < unit_order_.size(); ++i)
-        if (unit_order_[i].entity) slot_of_[unit_order_[i].id].second = i;
+EntityRegistry::Slot* EntityRegistry::find_slot(std::vector<Slot>& slots, u64 seq) {
+    const auto it = std::lower_bound(slots.begin(), slots.end(), seq,
+                                     [](const Slot& s, u64 v) { return s.seq < v; });
+    return it != slots.end() && it->seq == seq ? &*it : nullptr;
 }
 
 EntityId EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
@@ -124,13 +122,10 @@ EntityId EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
     entity->set_entity_id(id);
     entity->place_now();
     entity->set_registry(this);
-    order_.push_back({id, entity.get()});
-    size_t unit_slot = kNoSlot;
-    if (entity->is_unit()) {
-        unit_slot = unit_order_.size();
-        unit_order_.push_back({id, entity.get()});
-    }
-    slot_of_[id] = {order_.size() - 1, unit_slot};
+    const u64 seq = next_seq_++;
+    entity->set_registry_seq(seq);
+    order_.push_back({id, entity.get(), seq});
+    if (entity->is_unit()) unit_order_.push_back({id, entity.get(), seq});
     live_.insert(entity.get());
     walk_.push_back(id);
     Entity* const made = entity.get();
@@ -164,13 +159,14 @@ void EntityRegistry::unregister_entity(EntityId id) {
     const u32 moho = id.moho();
     live_by_moho_.erase(moho);
     id_pools_[moho & 0xFFF00000u].held.back().push_back(moho & 0xFFFFFu);
-    if (const auto slot = slot_of_.find(id); slot != slot_of_.end()) {
-        if (order_[slot->second.first].entity) {
-            order_[slot->second.first].entity = nullptr;
-            ++removed_slots_;
-        }
-        if (slot->second.second != kNoSlot) unit_order_[slot->second.second].entity = nullptr;
-        slot_of_.erase(slot);
+    const u64 seq = entity->registry_seq();
+    if (Slot* slot = find_slot(order_, seq); slot && slot->entity == entity.get()) {
+        slot->entity = nullptr;
+        ++removed_slots_;
+    }
+    if (entity->is_unit()) {
+        if (Slot* slot = find_slot(unit_order_, seq); slot && slot->entity == entity.get())
+            slot->entity = nullptr;
     }
     large_colliders_.erase(id);
     if (grid_initialized_) {
@@ -237,11 +233,12 @@ void EntityRegistry::collect_garbage(const std::function<void(Entity&)>& release
 void EntityRegistry::compact() {
     // Not under a walk: it holds its place by index.
     if (walking_ > 0 || removed_slots_ == 0) return;
+    // The slots left keep their seqs, still rising, by which find_slot
+    // finds them where they move to.
     const auto empty = [](const Slot& s) { return s.entity == nullptr; };
     std::erase_if(order_, empty);
     std::erase_if(unit_order_, empty);
     removed_slots_ = 0;
-    index_slots();
 }
 
 // --- Spatial hash grid ---
@@ -630,11 +627,22 @@ bool EntityRegistry::any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1,
 
 void EntityRegistry::collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1,
                                        std::vector<EntityId>& out) const {
+    gather_colliders(x0, z0, x1, z1, true, out);
+}
+
+void EntityRegistry::collect_line_colliders(f32 x0, f32 z0, f32 x1, f32 z1,
+                                            std::vector<EntityId>& out) const {
+    gather_colliders(x0, z0, x1, z1, false, out);
+}
+
+void EntityRegistry::gather_colliders(f32 x0, f32 z0, f32 x1, f32 z1, bool props,
+                                      std::vector<EntityId>& out) const {
     out.clear();
     if (x0 > x1) std::swap(x0, x1);
     if (z0 > z1) std::swap(z0, z1);
     const auto consider = [&](const Entity& e, f32 reach) {
         if (e.destroyed() || e.collision_shape().type == CollisionShapeType::NONE) return;
+        if (!props && e.is_prop()) return;
         const Vector3& p = e.position();
         if (p.x >= x0 - reach && p.x <= x1 + reach && p.z >= z0 - reach && p.z <= z1 + reach)
             out.push_back(e.entity_id());

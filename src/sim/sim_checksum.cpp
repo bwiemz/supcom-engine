@@ -222,6 +222,10 @@ void mix_unit_flight(Fnv& units, const Unit& u) {
         units.mix(path::pack_cell({ga.reserved.x0, ga.reserved.z0}));
         units.mix(path::pack_cell({ga.reserved.x1, ga.reserved.z1}));
     }
+    // A walk off a build site (step_aside), only on one.
+    if (u.stepping_aside()) {
+        units.mix(0x4153494400000000ull); // "ASID"
+    }
     // Its last vertical motion event (OnMotionVertEventChange tells the
     // next against it), only off Top.
     if (u.vert_event() != "Top") {
@@ -332,6 +336,12 @@ void mix_unit_work(Fnv& units, const Unit& u) {
     }
     units.mix(u.repair_target_id());
     units.mix(u.capture_target_id());
+    // A unit being captured: how many capture it, its captors' pace (only
+    // then, so other units hash as before)
+    if (u.captor_count() != 0) {
+        units.mix(0x43415054u); // "CAPT"
+        units.mix(static_cast<u64>(static_cast<u32>(u.captor_count())));
+    }
     units.mix_f32(u.work_progress());
     units.mix(static_cast<u64>(static_cast<u32>(u.nuke_silo_ammo())));
     units.mix(static_cast<u64>(static_cast<u32>(u.tactical_silo_ammo())));
@@ -404,9 +414,19 @@ void mix_command(Fnv& orders, const UnitCommand& cmd, bool need_unpack) {
         orders.mix(0x43415057u); // "CAPW"
         orders.mix(static_cast<u64>(static_cast<u32>(cmd.task_wait)));
     }
+    // A mobile build that found units on its site, only then.
+    if (cmd.site_tries != 0) {
+        orders.mix(0x53495445u); // "SITE"
+        orders.mix(static_cast<u64>(static_cast<u32>(cmd.site_tries)));
+    }
     if (cmd.sacrifice_wait != 0) {
         orders.mix(0x53414357u); // "SACW"
         orders.mix(static_cast<u64>(static_cast<u32>(cmd.sacrifice_wait)));
+    }
+    // An AssistMove under way, only then.
+    if (cmd.assist_phase != AssistPhase::Start) {
+        orders.mix(0x41534d56u); // "ASMV"
+        orders.mix(static_cast<u64>(cmd.assist_phase));
     }
     // A refuel under way (M206r), only once it has a slot or waits.
     if (cmd.dock_phase != DockPhase::Reserve || cmd.dock_wait != 0) {

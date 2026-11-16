@@ -1,5 +1,7 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
 #include "sim/sim_state.hpp"
@@ -13,6 +15,8 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <algorithm>
+#include <cmath>
 #include <memory>
 #include <string>
 
@@ -38,9 +42,15 @@ struct ReclaimSim {
         lua_settop(L, 0);
         const char* code = R"(
             log = {}
+            -- ueb1101, the T1 power generator
+            __blueprints = {pgen = {Economy = {BuildTime = 125, BuildCostMass = 75,
+                                               BuildCostEnergy = 750}}}
             Reclaimer = {
                 GetReclaimCosts = function(self, target)
                     if target == wreck then return 1, 0, 30 end
+                    -- retail's Unit.GetReclaimCosts for a T1 engineer (build
+                    -- rate 5): max(750, 75) / 5 / 10 seconds, all the costs
+                    if target.frame then return 15, 750, 75 end
                     return 0.5, 100, 50
                 end,
             }
@@ -55,6 +65,13 @@ struct ReclaimSim {
                 end,
             }
             Target.__index = Target
+            Frame = {
+                frame = true,
+                OnReclaimed = function(self, by)
+                    table.insert(log, 'frame reclaimed')
+                end,
+            }
+            Frame.__index = Frame
         )";
         REQUIRE(luaL_loadbuffer(L, code, std::string(code).size(), "stub") == 0);
         REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
@@ -105,6 +122,26 @@ struct ReclaimSim {
         Unit* raw = u.get();
         sim.entity_registry().register_entity(std::move(u));
         bind(*raw, "Reclaimer", nullptr);
+        return raw;
+    }
+
+    /// A T1 power generator under construction (ueb1101: 600 health), built
+    /// to `fraction` with `health` left. Without its blueprint it never decays.
+    Unit* frame(osc::f32 fraction, osc::f32 health, bool decays = true) {
+        auto u = std::make_unique<Unit>();
+        u->set_position({12.0f, 0.0f, 12.0f});
+        if (decays) {
+            u->set_unit_id("pgen");
+        }
+        u->set_max_health(600.0f);
+        u->set_health(health);
+        u->set_fraction_complete(fraction);
+        u->set_is_being_built(true);
+        u->set_creation_tick(sim.tick_count());
+        u->add_category("RECLAIMABLE");
+        Unit* raw = u.get();
+        sim.entity_registry().register_entity(std::move(u));
+        bind(*raw, "Frame", nullptr);
         return raw;
     }
 
@@ -308,4 +345,90 @@ TEST_CASE("A reclaimer hears OnAssignedFocusEntity each tick it wears a unit dow
         w.sim.tick();
         CHECK(heard().empty());
     }
+}
+
+TEST_CASE("A unit under construction loses health with its fraction as it is reclaimed, and is "
+          "built on from where the reclaim left it",
+          "[reclaim][build]") {
+    // CUnitReclaimTask steps a unit under construction by Unit::Materialize
+    // with its rate negated, which takes the health down with the fraction.
+    // A build step brings the fraction level with the health first, so a T1
+    // power generator built to 60% and reclaimed to 20% goes on from 20%.
+    ReclaimSim w;
+    Unit* frame = w.frame(0.6f, 360.0f);
+    Unit* eng = w.engineer(10.0f);
+    eng->set_build_rate(5.0f);
+    eng->push_command(order(CommandType::Reclaim, frame->entity_id()), true);
+    osc::f32 apart = 0.0f; // the furthest its health strays from its fraction's share
+    tick_until(
+        [&] {
+            w.sim.tick();
+            apart =
+                std::max(apart, std::fabs(frame->health() - 600.0f * frame->fraction_complete()));
+        },
+        "the frame is reclaimed to 20%", 200, [&] { return frame->fraction_complete() <= 0.2f; });
+    CHECK(apart < 0.01f);
+    const osc::f32 left = frame->fraction_complete();
+
+    eng->push_command(order(CommandType::Repair, frame->entity_id()), true);
+    tick_until([&] { w.sim.tick(); }, "the build goes on", 20,
+               [&] { return frame->fraction_complete() > left; });
+    // One step of 5 / 125 a second on from what the reclaim (and the decay
+    // since) left, not back at 60%
+    CHECK(frame->fraction_complete() < left + 0.005f);
+    CHECK(frame->health() == Catch::Approx(600.0f * frame->fraction_complete()).margin(0.01f));
+}
+
+TEST_CASE("A damaged unit under construction is reclaimed from its health's share, for that "
+          "share's mass",
+          "[reclaim][economy]") {
+    // As CUnitReclaimTask starts on a unit under construction it makes it no
+    // more complete than its health's share; its steps then credit the mass of
+    // what they take off. A frame built to 60% with half that health left
+    // pays 30% of its 75 mass, not 60%.
+    ReclaimSim w;
+    w.sim.add_army("ARMY_1", "ARMY_1"); // an army to bank in
+    Unit* frame = w.frame(0.6f, 180.0f, false);
+    const EntityId frame_id = frame->entity_id();
+    Unit* eng = w.engineer(10.0f);
+    eng->set_army(0);
+    eng->set_build_rate(5.0f);
+    eng->push_command(order(CommandType::Reclaim, frame_id), true);
+    tick_until([&] { w.sim.tick(); }, "the reclaim takes the frame's costs", 10,
+               [&] { return eng->economy().reclaim_mass > 0.0; });
+    CHECK(frame->fraction_complete() == 0.3f);
+    CHECK(frame->health() == 180.0f);
+    tick_until([&] { w.sim.tick(); }, "the frame is reclaimed", 200,
+               [&] { return w.sim.entity_registry().find(frame_id) == nullptr; });
+    CHECK(w.log() == "frame reclaimed");
+    w.sim.tick(); // the army takes in the last of it
+    // 0.3 of 75 is Moho's 22.5. The engine banks one tick's 0.5 more: it banks
+    // from the tick the reclaim takes its costs, a tick before its first step,
+    // for a prop as for a unit (not changed here).
+    CHECK(w.sim.get_army(0)->economy().mass.reclaimed == Catch::Approx(23.0));
+}
+
+TEST_CASE("A guard helping reclaim a unit under construction takes its health down with it",
+          "[reclaim][guard]") {
+    // The guard's own CUnitReclaimTask steps the unit by Unit::Materialize too
+    ReclaimSim w;
+    Unit* frame = w.frame(0.6f, 360.0f, false);
+    Unit* eng = w.engineer(10.0f);
+    Unit* helper = w.engineer(14.0f);
+    for (Unit* u : {eng, helper}) {
+        u->add_category("ENGINEER");
+        u->set_build_rate(5.0f);
+    }
+    eng->push_command(order(CommandType::Reclaim, frame->entity_id()), true);
+    helper->push_command(order(CommandType::Guard, eng->entity_id()), true);
+    osc::f32 apart = 0.0f;
+    const int ticks = tick_until(
+        [&] {
+            w.sim.tick();
+            apart =
+                std::max(apart, std::fabs(frame->health() - 600.0f * frame->fraction_complete()));
+        },
+        "the frame is reclaimed to 20%", 200, [&] { return frame->fraction_complete() <= 0.2f; });
+    CHECK(ticks < 55); // alone, 0.4 at 1/150 a tick is 60 steps
+    CHECK(apart < 0.01f);
 }

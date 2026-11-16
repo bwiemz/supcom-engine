@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 113; // 2: entities' wanted loops (M216b);
+constexpr u32 kVersion = 119; // 2: entities' wanted loops (M216b);
                               // 3: emitter overrides (M214d);
                               // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                               // 6: weapons' lead physics;
@@ -154,6 +154,16 @@ constexpr u32 kVersion = 113; // 2: entities' wanted loops (M216b);
                               //      guards reserved
                               // 113: projectiles lose their impacted flag (a shot its
                               //      OnImpact spares flies on)
+                              // 114: captures counted in ticks, their mass rate, and a
+                              //      unit's count of captors (Moho's CaptorCount)
+                              // 115: projectiles' shooters as units, and the target each
+                              //      weapon's unit was last listed a shooter of
+                              // 116: weapons' and projectiles' IgnoresAlly
+                              // 117: an AssistMove's phase (Moho's CUnitAssistMoveTask)
+                              // 118: the attack order whose task runs (a unit's attacker
+                              //      stops as it ends)
+                              // 119: a mobile build's tries at a site units stand on, and
+                              //      units' walks off one (step_aside)
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -199,8 +209,10 @@ template <typename Map, typename Save> void save_by_id(StateWriter& w, const Map
 void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
     w.tag("REGY");
     // entities_ in order_'s order, each with its class; live_, order_,
-    // unit_order_, slot_of_, the grids and large_colliders_ follow from them.
+    // unit_order_, the grids and large_colliders_ follow from them.
     // graveyard_ is empty between ticks, removed_slots_ is order_'s own.
+    // next_seq_ and the slots' seqs only find a slot, so a load numbers the
+    // entities afresh in order_'s order.
     std::vector<std::reference_wrapper<const Entity>> live;
     live.reserve(reg.live_count_);
     for (const auto& slot : reg.order_)
@@ -265,7 +277,7 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     reg.live_count_ = 0;
     reg.order_.clear();
     reg.unit_order_.clear();
-    reg.slot_of_.clear();
+    reg.next_seq_ = 1;
     reg.id_pools_.clear();
     reg.removed_slots_ = 0;
     reg.graveyard_.clear();
@@ -327,8 +339,10 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
         e->set_registry(&reg);
         e->set_grid_cell(-1, -1);
         e->set_prop_cell(-1);
-        reg.order_.push_back({id, e.get()});
-        if (e->is_unit()) reg.unit_order_.push_back({id, e.get()});
+        const u64 seq = reg.next_seq_++;
+        e->set_registry_seq(seq);
+        reg.order_.push_back({id, e.get(), seq});
+        if (e->is_unit()) reg.unit_order_.push_back({id, e.get(), seq});
         reg.live_.insert(e.get());
         Entity& placed = *e;
         reg.entities_[id] = std::move(e);
@@ -347,7 +361,6 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
             }
         }
     }
-    reg.index_slots();
     const size_t pools = r.size(8);
     for (size_t i = 0; i < pools && r.ok(); ++i) {
         EntityRegistry::IdPool& pool = reg.id_pools_[r.u32v()];

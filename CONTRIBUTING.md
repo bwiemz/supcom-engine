@@ -87,6 +87,7 @@ There are several layers. Use the lowest one that can show the behaviour.
 **Bindings.**
 - A script object reaches its C++ object through `_c_object` (a light userdata). Handles are checked against the sim generation (`_c_sim_gen`), so a stale handle from an earlier session resolves to nothing.
 - A Lua state reaches its sim through `sim::get_sim(L)`, which `sim::set_sim` stores (`sim/lua_sim.hpp`). Don't read its registry key yourself.
+- A key read on nearly every call (`_c_object`, a category's `__name`) goes through `sim::rawget_key` (`sim/lua_keys.hpp`): the state keeps the string, so the read hashes nothing. `lua_pushstring` hashes its string every time.
 - Never keep a registry ref or an id as a long-lived identity without a serial or generation, because refs and ids are recycled.
 - Armies are 0-based in C++ and 1-based in Lua.
 

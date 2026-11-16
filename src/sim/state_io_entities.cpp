@@ -217,7 +217,8 @@ void StateIO::save(StateWriter& w, const Entity& e) {
         w.id(c.entity_id);
         w.i32v(c.bone);
     }
-    // grid_cell_x_, grid_cell_z_, prop_cell_, registry_: the registry's, set as it takes the entity
+    // grid_cell_x_, grid_cell_z_, prop_cell_, registry_, registry_seq_: the registry's, set as it
+    // takes the entity
     w.b(e.script_destroy_notified_);
     w.b(e.script_owns_death_);
     w.b(e.is_collision_beam_);
@@ -396,6 +397,8 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.id(c.assigned_id);
     w.i32v(c.rolloff_wait);
     w.i32v(c.task_wait);
+    enum8(w, c.assist_phase);
+    w.i32v(c.site_tries);
     w.i32v(c.sacrifice_wait);
     w.i32v(c.count);
     w.i32v(c.max_count);
@@ -457,6 +460,8 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.assigned_id = r.id();
     c.rolloff_wait = r.i32v();
     c.task_wait = r.i32v();
+    c.assist_phase = enum8<AssistPhase>(r);
+    c.site_tries = r.i32v();
     c.sacrifice_wait = r.i32v();
     c.count = r.i32v();
     c.max_count = r.i32v();
@@ -643,6 +648,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.i32v(wp.max_projectile_storage);
     w.b(wp.targets_projectiles);
     w.b(wp.overcharge);
+    w.b(wp.ignores_ally);
     w.b(wp.beam);
     w.f32v(wp.max_beam_length);
     w.str(wp.muzzle_bone_name);
@@ -706,6 +712,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
         w.i32v(changes);
     }
     w.b(wp.target_held);
+    w.id(wp.shooter_of);
 }
 
 void StateIO::load(StateReader& r, Weapon& wp) {
@@ -742,6 +749,7 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.max_projectile_storage = r.i32v();
     wp.targets_projectiles = r.b();
     wp.overcharge = r.b();
+    wp.ignores_ally = r.b();
     wp.beam = r.b();
     wp.max_beam_length = r.f32v();
     wp.muzzle_bone_name = r.str();
@@ -806,6 +814,7 @@ void StateIO::load(StateReader& r, Weapon& wp) {
         changes = r.i32v();
     }
     wp.target_held = r.b();
+    wp.shooter_of = r.id();
 }
 
 // ----------------------------------------------------------- Manipulators
@@ -1228,6 +1237,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(ec.silo_energy);
     w.f64v(ec.dock_repair_mass);
     w.f64v(ec.dock_repair_energy);
+    w.f64v(ec.capture_mass);
     w.f64v(ec.capture_energy);
     for (const EconRequest* q : {&ec.silo_request, &ec.dock_repair_request, &ec.capture_request}) {
         save(w, *q);
@@ -1261,10 +1271,10 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(u.repair_cost_mass_);
     w.f64v(u.repair_cost_energy_);
     w.id(u.capture_target_id_);
-    w.f64v(u.capture_time_);
-    w.f64v(u.capture_energy_cost_);
+    w.i32v(u.capture_ticks_);
+    w.i32v(u.capture_progress_);
     w.b(u.capturable_);
-    w.b(u.being_captured_);
+    w.i32v(u.captor_count_);
     w.b(u.paused_);
     enum8(w, u.motion_horz_);
     enum8(w, u.motion_turn_);
@@ -1451,6 +1461,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.i32v(u.guard_anchor_.reserved.z0);
     w.i32v(u.guard_anchor_.reserved.x1);
     w.i32v(u.guard_anchor_.reserved.z1);
+    w.b(u.stepping_aside_);
+    w.vec3(u.aside_goal_);
     w.i32v(u.beam_up_ticks_);
     w.vec3(u.beam_from_);
     w.quat(u.beam_from_orientation_);
@@ -1548,6 +1560,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.id(u.creator_id_);
     w.b(u.lifts_off_);
     w.u32v(u.aborted_command_);
+    w.b(u.attack_task_);
+    w.u32v(u.attack_task_order_);
     w.b(u.auto_overcharge_);
     w.b(u.overcharge_paused_);
     w.b(u.cloaked_);
@@ -1663,6 +1677,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     ec.silo_energy = r.f64v();
     ec.dock_repair_mass = r.f64v();
     ec.dock_repair_energy = r.f64v();
+    ec.capture_mass = r.f64v();
     ec.capture_energy = r.f64v();
     for (EconRequest* q : {&ec.silo_request, &ec.dock_repair_request, &ec.capture_request}) {
         load(r, *q);
@@ -1699,10 +1714,10 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.repair_cost_mass_ = r.f64v();
     u.repair_cost_energy_ = r.f64v();
     u.capture_target_id_ = r.id();
-    u.capture_time_ = r.f64v();
-    u.capture_energy_cost_ = r.f64v();
+    u.capture_ticks_ = r.i32v();
+    u.capture_progress_ = r.i32v();
     u.capturable_ = r.b();
-    u.being_captured_ = r.b();
+    u.captor_count_ = r.i32v();
     u.paused_ = r.b();
     u.motion_horz_ = enum8<Unit::MotionHorz>(r);
     u.motion_turn_ = enum8<Unit::MotionTurn>(r);
@@ -1893,6 +1908,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.guard_anchor_.reserved.z0 = r.i32v();
     u.guard_anchor_.reserved.x1 = r.i32v();
     u.guard_anchor_.reserved.z1 = r.i32v();
+    u.stepping_aside_ = r.b();
+    u.aside_goal_ = r.vec3();
     u.beam_up_ticks_ = r.i32v();
     u.beam_from_ = r.vec3();
     u.beam_from_orientation_ = r.quat();
@@ -1990,6 +2007,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.creator_id_ = r.id();
     u.lifts_off_ = r.b();
     u.aborted_command_ = r.u32v();
+    u.attack_task_ = r.b();
+    u.attack_task_order_ = r.u32v();
     u.auto_overcharge_ = r.b();
     u.overcharge_paused_ = r.b();
     u.cloaked_ = r.b();
@@ -2026,9 +2045,8 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     save(w, static_cast<const Entity&>(p));
     w.tag("PROJ");
     w.size(p.shooters.size());
-    for (const auto& [unit, weapon] : p.shooters) {
+    for (const EntityId unit : p.shooters) {
         w.id(unit);
-        w.i32v(weapon);
     }
     w.vec3(p.velocity);
     w.id(p.target_entity_id);
@@ -2070,6 +2088,7 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.vec3(p.scale_velocity);
     w.b(p.collide_surface);
     w.b(p.collide_entity);
+    w.b(p.ignores_ally);
     w.b(p.stay_underwater);
     w.f32v(p.impact_interpolation);
     w.id(p.impact_entity_id);
@@ -2082,10 +2101,9 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
 void StateIO::load(StateReader& r, Projectile& p) {
     load(r, static_cast<Entity&>(p));
     r.tag("PROJ");
-    p.shooters.resize(r.size(12));
-    for (auto& [unit, weapon] : p.shooters) {
+    p.shooters.resize(r.size(8));
+    for (EntityId& unit : p.shooters) {
         unit = r.id();
-        weapon = r.i32v();
     }
     p.velocity = r.vec3();
     p.target_entity_id = r.id();
@@ -2127,6 +2145,7 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.scale_velocity = r.vec3();
     p.collide_surface = r.b();
     p.collide_entity = r.b();
+    p.ignores_ally = r.b();
     p.stay_underwater = r.b();
     p.impact_interpolation = r.f32v();
     p.impact_entity_id = r.id();

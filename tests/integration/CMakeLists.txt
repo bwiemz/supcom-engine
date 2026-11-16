@@ -80,7 +80,9 @@ add_executable(osc_integration
     runner/mobile_build_start_test.cpp
     runner/assist_beam_test.cpp
     runner/build_site_join_test.cpp
+    runner/build_site_blocked_test.cpp
     runner/drown_test.cpp
+    runner/assist_move_test.cpp
     runner/layer_transition_test.cpp
     runner/spawn_layer_test.cpp
     runner/warp_test.cpp
@@ -105,8 +107,10 @@ add_executable(osc_integration
     runner/issue_checks_test.cpp
     runner/no_rush_test.cpp
     runner/need_unpack_test.cpp
+    runner/weapon_retarget_test.cpp
     runner/guard_engage_test.cpp
     runner/rebuilder_guard_test.cpp
+    runner/capture_team_test.cpp
     runner/attack_move_test.cpp
     runner/placement_layers_test.cpp
     runner/yaw_only_test.cpp

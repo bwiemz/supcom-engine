@@ -35,10 +35,12 @@ add_executable(osc_tests
     test_attack_reach.cpp
     test_primary_weapon_target.cpp
     test_retarget_on_miss.cpp
+    test_weapon_target_events.cpp
     test_projectile_bounce.cpp
     test_projectile_detonate.cpp
     test_weapon_candidates.cpp
     test_weapon_intel.cpp
+    test_projectile_targeting.cpp
     test_command_feedback.cpp
     test_map_border.cpp
     test_minimap_meshes.cpp
@@ -71,6 +73,7 @@ add_executable(osc_tests
     test_build_assist.cpp
     test_bounded_props.cpp
     test_build_on_wreck.cpp
+    test_build_site_units.cpp
     test_entity_health.cpp
     test_entity_position.cpp
     test_entity_lifetime.cpp

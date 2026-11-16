@@ -76,7 +76,7 @@ f32 collision_reach(const CollisionShape& shape) {
 
 std::optional<f32> segment_enters(const CollisionShape& shape, const Vector3& position,
                                   const Quaternion& orientation, const Vector3& from,
-                                  const Vector3& to, bool inside_counts) {
+                                  const Vector3& to) {
     if (shape.type == CollisionShapeType::NONE) return std::nullopt;
     // In the shape's own frame, centred on it.
     Vector3 a = to_local(from, position, orientation);
@@ -86,20 +86,32 @@ std::optional<f32> segment_enters(const CollisionShape& shape, const Vector3& po
     const Vector3 d{b.x - a.x, b.y - a.y, b.z - a.z};
 
     if (shape.type == CollisionShapeType::SPHERE) {
+        // Wild Magic's FindSegment3Sphere3 (Steam's exe 0x00A77360), which
+        // CColPrimitive_Sphere::CollideLine runs. Along the segment, |p|^2 - r^2
+        // is dd t^2 + 2 half_b t + c: `c` at its start, `end` at its end.
         const f32 r2 = shape.sx * shape.sx;
         const f32 c = a.x * a.x + a.y * a.y + a.z * a.z - r2;
-        if (c <= 0) return inside_counts ? std::optional<f32>(0.0f) : std::nullopt;
         const f32 dd = d.x * d.x + d.y * d.y + d.z * d.z;
         if (dd <= 0) return std::nullopt;
         const f32 half_b = a.x * d.x + a.y * d.y + a.z * d.z;
         const f32 disc = half_b * half_b - dd * c;
-        if (half_b >= 0 || disc < 0) return std::nullopt; // heading away, or passing by
-        const f32 t = (-half_b - std::sqrt(disc)) / dd;
-        if (t > 1.0f) return std::nullopt;
-        return t;
+        if (disc < 0) return std::nullopt; // passing by
+        const f32 end = dd + 2.0f * half_b + c;
+        if (c * end <= 0) {
+            // One end in, the other out: where it comes in, or where it goes out.
+            const f32 root = std::sqrt(disc);
+            return (c > 0 ? -half_b - root : -half_b + root) / dd;
+        }
+        // Both ends out: where it comes in, if it passes through between them
+        // (where it grazes, within Wild Magic's 1e-6 of a tangent, per unit
+        // length squared). Both in: nothing.
+        if (!(c > 0 && half_b < 0 && -half_b < dd)) return std::nullopt;
+        if (disc < 1e-6f * dd) return -half_b / dd;
+        return (-half_b - std::sqrt(disc)) / dd;
     }
 
-    // Box: the slabs' overlap along the segment.
+    // Box (Wild Magic's segment-box query, not solid, which
+    // CColPrimitive_Box::CollideLine runs): the slabs' overlap along the segment.
     f32 enter = 0.0f;
     f32 leave = 1.0f;
     bool inside = true;
@@ -121,7 +133,8 @@ std::optional<f32> segment_enters(const CollisionShape& shape, const Vector3& po
         leave = std::min(leave, t1);
         if (enter > leave) return std::nullopt;
     }
-    if (inside) return inside_counts ? std::optional<f32>(0.0f) : std::nullopt;
+    // Starting inside: met where it starts if it leaves before its end, else not at all.
+    if (inside) return leave < 1.0f ? std::optional<f32>(0.0f) : std::nullopt;
     return enter;
 }
 

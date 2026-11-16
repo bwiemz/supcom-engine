@@ -27,6 +27,7 @@ add_library(osc_sim STATIC
     unit_orders.cpp
     unit_facing.cpp
     unit_patrol.cpp
+    unit_assist_move.cpp
     unit_staging.cpp
     unit_storage.cpp
     unit_fall.cpp
@@ -69,6 +70,7 @@ add_library(osc_sim STATIC
     state_io_paths.cpp
     work_range.cpp
     build_site_props.cpp
+    build_site_units.cpp
     decal.cpp
     world_snapshot.cpp
     command_codec.cpp

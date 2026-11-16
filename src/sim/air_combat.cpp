@@ -306,7 +306,8 @@ void fly_run(Unit& unit, const Entity* target, const Vector3& at, SimState& sim,
     } else if (mode == M::CombatTurn) {
         turn_add = r.tight_turn_multiplier * axes.wing_blend;
     }
-    const f32 damping = unit.has_category("TARGETCHASER")
+    static const CategoryName kTargetChaser{"TARGETCHASER"};
+    const f32 damping = unit.has_category(kTargetChaser)
                             ? 1.0f
                             : air_move_damping(want_len, top, r.k_move, r.k_move_damping);
     air_control(unit, force, want.y, damping, axes, true, 1.0f, turn_add, &sim, terrain, dt);
@@ -391,8 +392,9 @@ void fly_air_move(Unit& unit, const AirMove& move, SimState* sim, const map::Ter
     const f32 height = pos.y - unit.air_floor(terrain, pos.x, pos.z);
     want.y = unit.lift_ground() + move.elevation - pos.y;
     if (move.landing && want.y < 0.0f) {
-        want.y = unit.has_category("TRANSPORTATION") ? std::min(want.y, -3.0f)
-                                                     : std::min(want.y * 0.5f, -0.25f);
+        static const CategoryName kTransportation{"TRANSPORTATION"};
+        want.y = unit.has_category(kTransportation) ? std::min(want.y, -3.0f)
+                                                    : std::min(want.y * 0.5f, -0.25f);
     }
     if (!(move.landing && move.elevation == 0.0f) && move.elevation > 0.0f &&
         height < move.elevation * 0.5f) {
@@ -447,7 +449,8 @@ void fly_air_move(Unit& unit, const AirMove& move, SimState* sim, const map::Ter
                           elevation > 0.0f ? height / elevation : 1.0f, facing);
     }
 
-    const f32 damping = unit.has_category("TARGETCHASER")
+    static const CategoryName kTargetChaser{"TARGETCHASER"};
+    const f32 damping = unit.has_category(kTargetChaser)
                             ? 1.0f
                             : air_move_damping(want_len, top, r.k_move, r.k_move_damping);
     air_control(unit, force, want.y, damping, axes, winged, 1.0f, 0.0f, sim, terrain, dt);
@@ -560,7 +563,8 @@ void fly_circling(Unit& unit, const CircleAround& around, SimState& sim,
     // its top speed long, and to its flying height.
     const f32 top = unit.max_airspeed() * unit.speed_mult();
     f32 damping = 1.0f;
-    if (!unit.has_category("TARGETCHASER")) {
+    static const CategoryName kTargetChaser{"TARGETCHASER"};
+    if (!unit.has_category(kTargetChaser)) {
         const f32 mx = around.move_goal.x - pos.x;
         const f32 mz = around.move_goal.z - pos.z;
         const f32 flat = std::min(std::sqrt(mx * mx + mz * mz), top);

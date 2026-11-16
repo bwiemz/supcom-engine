@@ -89,6 +89,10 @@ public:
     /// (missiles, torpedoes), never units (M206b).
     bool targets_projectiles = false;
     bool overcharge = false;         // OverChargeWeapon
+    /// IgnoresAlly (RUnitBlueprintWeapon's default true, which no retail or FAF weapon changes):
+    /// its shots and its beams go through what flies and isn't its army's enemy (Moho's
+    /// Projectile::CheckCollision, UnitWeapon::GetClosestCollision).
+    bool ignores_ally = true;
     /// It fires collision beams (a DefaultBeamWeapon made them for it, M206c).
     bool beam = false;
     /// MaximumBeamLength: how far its beams reach (0: its MaxRadius).
@@ -182,6 +186,9 @@ public:
     bool enabled = true;
     u32 fire_clock = 0; // ticks until the fire clock is ready again
     u32 target_check_clock = 0; // ticks until the next target scan
+    /// Look for targets again `ticks` ticks on (at least one): Moho's acquire task given that many
+    /// pending frames.
+    void look_again_in(u32 ticks) { target_check_clock = ticks > 1 ? ticks - 1 : 0; }
     /// ReTargetOnMiss's state (Moho's UnitWeapon mUnknown170 and mBlacklist,
     /// its CAcquireTargetTask's mTargetCooldown): misses in a row of a
     /// target standing still, since a hit or a change of target; ticks its
@@ -191,10 +198,13 @@ public:
     i32 retarget_misses = 0;
     i32 retarget_cooldown = 0;
     std::vector<std::pair<EntityId, i32>> blacklist;
-    /// Moho's target of the ReTargetOnMiss probe: an entity target with no
-    /// entity. It has nothing to aim or fire at, but its script wasn't told
-    /// it lost its target (see report_target_change).
+    /// Moho's entity target with no entity: the target of the ReTargetOnMiss
+    /// probe, or a target that is gone, held until the weapon next looks. It
+    /// has nothing to aim or fire at, but its script wasn't told it lost its
+    /// target (see report_target_change).
     bool target_held = false;
+    /// The target its unit was last listed a shooter of for it (see sync_shooter).
+    EntityId shooter_of{};
 
     /// Ticks between shots: 1/RateOfFire, rounded to whole ticks as Moho
     /// does (at least one).
@@ -290,8 +300,13 @@ public:
     /// dummy or launch-order (ManualFire) weapon.
     bool attacks_on_order() const { return !fire_on_death && !dummy && !manual_fire; }
     /// Aim at nothing now, its script told OnLostTarget at once if it had a
-    /// target (Moho's UnitWeapon::SetTarget with a cleared target).
+    /// target, a held one too (Moho's UnitWeapon::SetTarget with a cleared
+    /// target).
     void drop_target(lua_State* L);
+    /// Moho's UnitWeapon::SetTarget keeps its targets' shooter lists: a change of target takes
+    /// its unit off the old target's list and puts it on the new one's (Projectile::shooters),
+    /// neither of them when it is gone. Called when its target may have changed.
+    void sync_shooter(const Unit& owner, EntityRegistry& registry);
     /// Where it is aiming: its target unit's position or its ground target.
     /// Nothing without a target, or when its target is gone.
     std::optional<Vector3> target_point(const EntityRegistry& registry) const;
@@ -332,10 +347,6 @@ public:
     /// Moho's UnitWeapon::CanAttackTarget(holder's target, this).
     bool can_attack_target_of(const Unit& owner, const Weapon& holder,
                               const EntityRegistry& registry, const SimState* sim) const;
-
-    /// Index of the first priority `target` matches (0 when the weapon has
-    /// none), or -1 when it matches none.
-    int priority_of(const Entity& target) const;
 
     /// The aim controller whose OnTarget gates this weapon's fire: the one
     /// SetFireControl named, else the first created for it; null when the
@@ -381,8 +392,24 @@ public:
 
 private:
     void update_targeting(Unit& owner, EntityRegistry& registry, const SimState* sim);
+    /// Moho's CAcquireTargetTask for a weapon that shoots projectiles (TargetType
+    /// RULEWTT_Projectile), on its TargetCheckInterval: without AlwaysRecheckTarget it keeps a
+    /// target it can hit now; otherwise it takes track_to_target's pick, or with none drops its
+    /// target unless its unit was ordered to attack something.
+    void acquire_projectile(const Unit& owner, EntityRegistry& registry, const SimState* sim);
+    /// Moho's CAiAttackerImpl::TrackToTarget: nothing while its silo is empty or its unit is
+    /// stunned or Busy; else the nearest enemy projectile, horizontally, that it can hit now (an
+    /// Available solution: within MaxRadius, outside MinRadius, in its heading arc and height)
+    /// and that has fewer units shooting at it than its DesiredShooterCap. TrackingRadius only
+    /// widens the search, so it takes nothing more.
+    Projectile* track_to_target(const Unit& owner, EntityRegistry& registry,
+                                const SimState* sim) const;
     void fire_step(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
     void acquire_step(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
+    /// Tell the script of a change from `previous` as Moho's UnitWeapon::SetTarget does:
+    /// OnGotTarget for a target after none, OnLostTarget (a manual weapon's OnHaltFire first) for
+    /// none after a target, nothing for one target after another. False if the script killed
+    /// its unit or took the weapon's script away.
     bool report_target_change(const Unit& owner, lua_State* L, const TargetMark& previous);
     void fire_scripted(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
     void fire_direct(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);

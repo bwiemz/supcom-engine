@@ -1,5 +1,7 @@
 #include "lua/category_utils.hpp"
 
+#include "sim/lua_keys.hpp"
+
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
@@ -33,8 +35,7 @@ int CategoryMatcher::compile(lua_State* L, int idx, int depth) {
     if (!lua_istable(L, idx)) return add(Kind::Never);
 
     // 1. Simple category: { __name = "COMMAND" }
-    lua_pushstring(L, "__name");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::Name);
     if (lua_isstring(L, -1)) {
         std::string name = lua_tostring(L, -1);
         lua_pop(L, 1);
@@ -46,8 +47,7 @@ int CategoryMatcher::compile(lua_State* L, int idx, int depth) {
     lua_pop(L, 1);
 
     // 2. Compound category: { __op, __left, __right }
-    lua_pushstring(L, "__op");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::Op);
     if (!lua_isstring(L, -1)) {
         lua_pop(L, 1);
         return add(Kind::Never);
@@ -60,11 +60,9 @@ int CategoryMatcher::compile(lua_State* L, int idx, int depth) {
                                              : Kind::Never;
     if (kind == Kind::Never) return add(Kind::Never);
 
-    lua_pushstring(L, "__left");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::Left);
     const int left_idx = lua_gettop(L);
-    lua_pushstring(L, "__right");
-    lua_rawget(L, idx);
+    sim::rawget_key(L, idx, sim::LuaKey::Right);
     const int right_idx = lua_gettop(L);
 
     const int self = add(kind);

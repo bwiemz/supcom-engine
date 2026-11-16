@@ -1742,11 +1742,15 @@ TEST_CASE("Cargo and a carrier's stored unit take their own step as they ride: t
     CHECK(rider.stun_ticks() == 4);
 }
 
-TEST_CASE("A tree a projectile hits leans in the tick of the hit", "[tick-phases][walk]") {
+TEST_CASE("A tree a shot's impact knocks over leans in the tick of the hit",
+          "[tick-phases][walk]") {
     Phases w;
+    // Made before the shot, so it has taken its step when the impact comes. A shot passes a
+    // prop (Moho's line gather walks none): this one stands beside what the shot hits, as a
+    // blast's Force damage fells a tree (retail's Tree.OnDamage).
     auto owned = std::make_unique<osc::sim::Prop>();
     osc::sim::Prop& tree = *owned;
-    tree.set_position({110.0f, 10.0f, 100.0f});
+    tree.set_position({115.0f, 10.0f, 103.0f});
     osc::sim::CollisionShape box;
     box.type = osc::sim::CollisionShapeType::BOX;
     box.cy = 1.0f;
@@ -1756,20 +1760,21 @@ TEST_CASE("A tree a projectile hits leans in the tick of the hit", "[tick-phases
     tree.set_collision_shape(box);
     w.sim.entity_registry().register_entity(std::move(owned));
     lua_handle(w, "tree", tree);
-    // As retail's Prop.lua answers (none is no collision, as Moho's)
-    REQUIRE(w.run("function tree:OnCollisionCheck(other) return true end"));
     w.make("shooter", "tank", 1, 100.0f, 100.0f);
+    give_box(w.make("target", "tank", 1, 115.0f, 100.0f));
+    // As retail's Unit.lua answers (none is no collision, as Moho's)
+    REQUIRE(w.run("function target:OnCollisionCheck(other) return true end"));
     w.projectile_class("/shell", "OnImpact = function(self, kind, other)"
                                  "   hit = GetGameTick() hit_kind = kind"
-                                 "   moho.prop_methods.FallDown(other):Whack(1, 0, 0, 0.25, true)"
+                                 "   moho.prop_methods.FallDown(tree):Whack(1, 0, 0, 0.25, true)"
                                  "   EM.Destroy(self)"
                                  " end");
     REQUIRE(w.run("hit = 0 hit_kind = ''"
                   " shot = EM.CreateProjectile(shooter, '/shell', 0, 1, 0)"
                   " PM.SetBallisticAcceleration(shot, 0) PM.SetVelocity(shot, 35, 0, 0)"));
-    tick_until([&] { w.sim.tick(); }, "the shell hits the tree", 40,
+    tick_until([&] { w.sim.tick(); }, "the shell hits the target", 40,
                [&] { return w.number("hit") != 0; });
-    REQUIRE(w.text("hit_kind") == "Prop");
+    REQUIRE(w.text("hit_kind") == "Unit");
     const osc::sim::Vector3 up = osc::sim::quat_rotate(tree.orientation(), {0.0f, 1.0f, 0.0f});
     CHECK(up.x == Catch::Approx(std::sin(0.25f)));
 }
@@ -2566,5 +2571,104 @@ TEST_CASE("A capture, a wait for a ferry and a carrier landing make their target
         w.sim.tick();
         CHECK(w.text("heard") == "focus 0 ");
         CHECK(eng.command_queue().empty());
+    }
+}
+
+TEST_CASE("Units capturing one unit share the work: each tick paid adds its count of captors",
+          "[tick-phases][capture]") {
+    // Moho's CUnitCaptureTask (faf-re 0x006043E0): each captor's script gives
+    // the costs (here 2 s and 10 energy: 20 ticks alone, half an energy a
+    // tick); each tick a captor is paid its share, its progress goes up by the
+    // target's count of captors (CaptorCount), and the task's end takes the
+    // captor off that count (DoCallback(false))
+    Phases w;
+    osc::sim::ArmyBrain& army = *w.sim.get_army(0);
+    army.set_extra_storage(0.0, 1000.0);
+    army.set_stored_resources(0.0, 500.0);
+    REQUIRE(
+        w.run("heard = '' started = nil handover = true"
+              " function hear(u, what, other)"
+              "   heard = heard .. u.tag .. ' ' .. what .. ' ' .. (other and other.tag or 'nil')"
+              "     .. ' ' .. (GetGameTick() - started) .. '; '"
+              " end"
+              " function Plain:GetCaptureCosts(target) return 2, 10, 0 end"
+              " function Plain:OnStartCapture(t) started = started or GetGameTick() end"
+              " function Plain:OnStopCapture(t) hear(self, 'stop', t) end"
+              " function Plain:OnFailedCapture(t) hear(self, 'failed', t) end"
+              " function Plain:OnFailedBeingCaptured(c) hear(self, 'lost', c) end"
+              " function Plain:OnCaptured(c)"
+              "   hear(self, 'captured', c) if handover then EM.Destroy(self) end"
+              " end"));
+    const osc::sim::EntityId target = w.make("target", "t1", 2, 100.0f, 100.0f).entity_id();
+    Unit& a = w.make("a", "tank", 1, 102.0f, 100.0f);
+    Unit& b = w.make("b", "tank", 1, 98.0f, 100.0f);
+    REQUIRE(w.run("target.tag = 'T' a.tag = 'A' b.tag = 'B'"));
+    const auto being_captured = [&] {
+        const osc::sim::Entity* e = w.sim.entity_registry().find(target);
+        return e && !e->destroyed() && static_cast<const Unit*>(e)->is_being_captured();
+    };
+    const auto capture = [&](std::initializer_list<Unit*> units) {
+        for (Unit* u : units) u->push_command(order(CommandType::Capture, target), false);
+        tick_until([&] { w.sim.tick(); }, "the capture starts", 5, being_captured);
+    };
+    const auto captured = [&] { return w.text("heard").find("T captured") != std::string::npos; };
+
+    SECTION("alone, it takes 20 ticks") {
+        capture({&a});
+        tick_until([&] { w.sim.tick(); }, "the capture completes", 30, captured);
+        CHECK(w.text("heard") == "A stop T 20; T captured A 20; ");
+        CHECK(army.economy().energy.stored == Catch::Approx(490.0));
+    }
+    SECTION("two together take 10, paying the same between them") {
+        capture({&a, &b});
+        tick_until([&] { w.sim.tick(); }, "the capture completes", 30, captured);
+        w.sim.tick();
+        // Both complete in that tick: the second's target is gone (queued
+        // for deletion) and hands over nothing
+        const std::string heard = w.text("heard");
+        CHECK(heard.find("A stop T 10; ") != std::string::npos);
+        CHECK(heard.find("B stop T 10; ") != std::string::npos);
+        CHECK(heard.find("T captured A 10; ") != std::string::npos);
+        CHECK(heard.find("T captured B 10; ") != std::string::npos);
+        CHECK(heard.find("failed") == std::string::npos);
+        CHECK(army.economy().energy.stored == Catch::Approx(490.0));
+    }
+    SECTION("one of two stopping leaves the other capturing alone") {
+        capture({&a, &b});
+        for (int t = 0; t < 4; ++t) w.sim.tick();
+        REQUIRE(w.run("IssueClearCommands({b})"));
+        CHECK(being_captured());
+        CHECK(w.text("heard") == "T lost B 4; B failed T 4; ");
+        tick_until([&] { w.sim.tick(); }, "the capture completes", 30, captured);
+        // 8 of 20 done together, the other 12 alone
+        CHECK(w.text("heard") == "T lost B 4; B failed T 4; A stop T 16; T captured A 16; ");
+    }
+    SECTION("one of two killed stops capturing at once, though its death keeps it in the world") {
+        // Moho's Kill clears the dying captor's orders, and its task's end
+        // takes it off the target's count (DoCallback(false)): the other
+        // carries on alone, and the dying one asks for nothing more
+        REQUIRE(w.run("Plain.OnKilled = function(self) end"));
+        capture({&a, &b});
+        for (int t = 0; t < 4; ++t) w.sim.tick();
+        REQUIRE(w.run("b:Kill()"));
+        w.sim.tick();
+        REQUIRE(b.is_dying());
+        CHECK_FALSE(b.is_capturing());
+        CHECK(being_captured());
+        tick_until([&] { w.sim.tick(); }, "the capture completes", 30, captured);
+        // Killed between ticks 4 and 5, it leaves the count in tick 5's kill
+        // cleanup, which comes after A's step: 10 of 20 done by two, the rest
+        // by A alone. B pays for its 4 ticks only (A for 15), and nothing is
+        // heard when its death ends.
+        CHECK(w.text("heard") == "T lost B 5; B failed T 5; A stop T 15; T captured A 15; ");
+        CHECK(army.economy().energy.stored == Catch::Approx(490.5));
+    }
+    SECTION("a target its script keeps loses its captor as the task ends") {
+        REQUIRE(w.run("handover = false"));
+        capture({&a});
+        tick_until([&] { w.sim.tick(); }, "the capture completes", 30, captured);
+        CHECK(w.text("heard") == "A stop T 20; T captured A 20; T lost A 20; A failed T 20; ");
+        CHECK_FALSE(being_captured());
+        CHECK_FALSE(a.is_capturing());
     }
 }

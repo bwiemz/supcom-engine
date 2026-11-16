@@ -32,14 +32,14 @@ set(OSC_DATA_TESTS_GATE
     army-colors-test audio-test
     beam-render-test beam-test beam-weapon-test binding-tail-test bitmap-test blend-test bone-test border-render-test bp-reflect-test build-test
     camera-test
-    camera-moves-test window-test options-test canpath-test capture-test colors-test carrier-land-test carrier-test chain-test change-army-test charge-test cmd-test collide-test crowd-test choke-test crowdgap-test collision-test combat-test
+    camera-moves-test window-test options-test canpath-test capture-test capture-team-test colors-test carrier-land-test carrier-test chain-test change-army-test charge-test cmd-test collide-test crowd-test choke-test crowdgap-test collision-test combat-test
     construction-test controls-test counter-intel-test decal-render-test cursor-render-test damage-test decal-test
     death-test decalsplat-test defence-test destroyed-handle-test drive-test deposit-test drag-render-test draw-test
     dualstate-test
     economy-test edit-render-test edit-test effect-intel-test emitter-test enhance-test
     script-order-test
     gameui-test impact-test influence-test issue-handles-test
-    enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test guard-engage-test rebuilder-guard-test mobile-build-start-test build-site-join-test assist-beam-test drown-test layer-transition-test spawn-layer-test warp-test
+    enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test guard-engage-test rebuilder-guard-test mobile-build-start-test build-site-join-test build-site-blocked-test assist-beam-test drown-test layer-transition-test spawn-layer-test warp-test
     feedback-render-test focus-army-test command-sources-test footfall-test full-smoke-test ghost-render-test mesh-texture-test mesh-load-test hull-facing-test
     input-test intel-field-test intel-overlay-test intel-test interp-test issue-checks-test itemlist-render-test
     economy-overlay-test jammer-blip-test jammer-test keyboard-test keymap-test
@@ -53,9 +53,9 @@ set(OSC_DATA_TESTS_GATE
     specular-test stall-test stats-test shore-test steer-test strategic-icon-test stress-test stub-test stun-test targeting-test
     teamcolor-test
     terrain-normal-test terrain-tex-test text-test threat-test trail-render-test
-    tiled-render-test toggle-test transport-drop-test transport-pickup-test transport-silo-test transport-slots-test transport-test ui-test
+    tiled-render-test toggle-test transport-drop-test transport-assist-move-test transport-pickup-test transport-silo-test transport-slots-test transport-test ui-test
     uiboot-test uirender-test unit-cap-test unit-hooks-test unit-intel-test unitsound-test upgrade-orders-test upgrade-test vet-adj-render-test
-    vet-test vfx-render-test victory-test viz-render-test water-reflection-test water-render-test weapon-test world-views-test wreck-test
+    vet-test vfx-render-test victory-test viz-render-test water-reflection-test water-render-test weapon-retarget-test weapon-test world-views-test wreck-test
 
     yaw-only-test
 )

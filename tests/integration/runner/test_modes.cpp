@@ -117,6 +117,7 @@ constexpr Mode kModesBefore[] = {
     {"--repair-test", test_repair, false},
     {"--upgrade-test", test_upgrade, false},
     {"--capture-test", test_capture, false},
+    {"--capture-team-test", test_capture_team, false},
     {"--path-test", test_path, false},
     {"--toggle-test", test_toggle, false},
     {"--enhance-test", test_enhance, false},
@@ -235,6 +236,7 @@ constexpr Mode kModesBefore[] = {
     {"--transport-slots-test", test_transport_slots, false},
     {"--transport-pickup-test", test_transport_pickup, false},
     {"--transport-drop-test", test_transport_drop, false},
+    {"--transport-assist-move-test", test_assist_move, false},
     {"--carrier-test", test_carrier, false},
     {"--right-click-test", test_right_click, false},
     {"--carrier-land-test", test_carrier_land, false},
@@ -246,11 +248,13 @@ constexpr Mode kModesBefore[] = {
     {"--issue-checks-test", test_issue_checks, false},
     {"--no-rush-test", test_no_rush, false},
     {"--need-unpack-test", test_need_unpack, false},
+    {"--weapon-retarget-test", test_weapon_retarget, false},
     {"--guard-engage-test", test_guard_engage, false},
     {"--rebuilder-guard-test", test_rebuilder_guard, false},
     {"--mobile-build-start-test", test_mobile_build_start, false},
     {"--assist-beam-test", test_assist_beam, false},
     {"--build-site-join-test", test_build_site_join, false},
+    {"--build-site-blocked-test", test_build_site_blocked, false},
     {"--drown-test", test_drown, false},
     {"--layer-transition-test", test_layer_transition, false},
     {"--spawn-layer-test", test_spawn_layer, false},
@@ -361,6 +365,7 @@ void IntegrationModes::print_usage() const {
               << "  --mobile-build-start-test An engineer's build start, tick by tick, as the original\n"
               << "  --assist-beam-test A commander's build effects end with its assist\n"
               << "  --build-site-join-test Builders sent to one site build one structure there\n"
+              << "  --build-site-blocked-test Units on a build site hold the build up\n"
               << "  --drown-test       Units made in water: a land tank drowns, as the original\n"
               << "  --layer-transition-test The Salem crossing the shore over its 4 s\n"
               << "  --spawn-layer-test Where a unit made by script stands: subs, ships, aircraft\n"
@@ -374,6 +379,7 @@ void IntegrationModes::print_usage() const {
               << "  --repair-test      Build pgen, damage it, repair it, verify health\n"
               << "  --upgrade-test     Build T1 mex, upgrade to T2, verify completion\n"
               << "  --capture-test     Build enemy pgen, capture it, verify ownership\n"
+              << "  --capture-team-test Engineers capture a tank together, as Moho's task\n"
               << "  --path-test        A* pathfinding around obstacles + terrain height\n"
               << "  --toggle-test      Script bits, toggle caps, and dive command\n"
               << "  --enhance-test     ACU enhancement (AdvancedEngineering)\n"
@@ -486,6 +492,8 @@ void IntegrationModes::print_usage() const {
               << "  --charge-test      Economy events, OverCharge and teleports cost and take time\n"
               << "  --range-test       Build, repair, reclaim and capture reach, guards, the queue\n"
               << "  --ferry-test       A ferry carries units from its beacon to its drop-off\n"
+              << "  --transport-assist-move-test The Transport order: transports carry the land\n"
+              << "                     units ordered with them (AssistMove)\n"
               << "  --factory-assist-test A factory guarding a factory builds from its queue\n"
               << "  --factory-rally-test What a factory builds takes its rally orders\n"
               << "  --influence-test   The AI's threat is what its intel has seen (influence map)\n"

@@ -565,6 +565,11 @@ private:
     /// What an order of `type` clicked at (wx, wz) targets: the unit under the
     /// cursor if the order takes it, else for Reclaim a prop there. 0 for none.
     sim::EntityId target_under(sim::SimState& sim, f32 wx, f32 wz, sim::CommandType type) const;
+    /// The Transport order on the ground (`hovered`: the unit under it, if
+    /// any) as an AssistMove: true, with `ids` its units, when the selection
+    /// holds both air transports and land units for it.
+    bool assist_move_selection(sim::SimState& sim, sim::EntityId hovered,
+                               std::vector<sim::EntityId>& ids) const;
     /// The reclaimable prop (tree, rock, wreck) whose footprint holds (wx, wz), or 0;
     /// none past zoom 150, where Moho's UpdateSelection collects only units.
     sim::EntityId prop_under(sim::SimState& sim, f32 wx, f32 wz) const;

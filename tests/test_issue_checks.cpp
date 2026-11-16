@@ -14,6 +14,7 @@ extern "C" {
 
 #include <array>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -234,6 +235,24 @@ TEST_CASE("Only a surfacing sub takes a Dive", "[routing]") {
         u.add_command_cap("RULEUCC_Dive");
         INFO(motion);
         CHECK(w.takes(u, CommandType::Dive) == taken);
+    }
+}
+
+TEST_CASE("An AssistMove is taken only with a finite goal", "[routing]") {
+    const float inf = std::numeric_limits<float>::infinity();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    for (const auto& [goal, taken] : {std::pair{osc::sim::Vector3{100.0f, 0.0f, 100.0f}, true},
+                                      std::pair{osc::sim::Vector3{0.0f, 0.0f, 0.0f}, false},
+                                      std::pair{osc::sim::Vector3{nan, 0.0f, 100.0f}, false},
+                                      std::pair{osc::sim::Vector3{100.0f, inf, 100.0f}, false},
+                                      std::pair{osc::sim::Vector3{100.0f, 0.0f, -inf}, false}}) {
+        IssueWorld w;
+        Unit& u = w.make(0, {"MOBILE", "LAND"}, "RULEUMT_Land");
+        UnitCommand c;
+        c.type = CommandType::AssistMove;
+        c.target_pos = goal;
+        INFO(goal.x << ", " << goal.y << ", " << goal.z);
+        CHECK((w.sim.route_command({u.entity_id()}, c, false) != 0) == taken);
     }
 }
 

@@ -135,6 +135,33 @@ TEST_CASE("A weapon's aim holds a lost target's pose for its TargetCheckInterval
     CHECK(odd[0]->aim_reset_ticks == 7);
 }
 
+TEST_CASE("A weapon blueprint's IgnoresAlly left out is Moho's true", "[weapons]") {
+    // RUnitBlueprintWeapon's constructor: IgnoresAlly = 1. No retail or FAF weapon sets it.
+    WeaponWorld w;
+    lua_State* L = w.state.raw();
+    REQUIRE(w.state
+                .do_string("return {BlueprintId = 'friendly', Defense = {MaxHealth = 100},"
+                           " Weapon = {{Label = 'Gun', IgnoresAlly = false}}}")
+                .ok());
+    w.store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+    lua_pop(L, 1);
+    w.store.expose_to_lua(L);
+    lua_pushstring(L, "__osc_unit_script_classes");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "friendly");
+    lua_getglobal(L, "Plain");
+    lua_rawset(L, -3);
+    lua_pop(L, 1);
+    REQUIRE(w.check("real = CreateUnit('real', 1, 0, 0, 0)"
+                    " friendly = CreateUnit('friendly', 1, 5, 0, 0)"));
+    const auto& real = w.unit("real")->weapons();
+    REQUIRE(real.size() == 3);
+    CHECK(real[0]->ignores_ally);
+    const auto& friendly = w.unit("friendly")->weapons();
+    REQUIRE(friendly.size() == 1);
+    CHECK_FALSE(friendly[0]->ignores_ally);
+}
+
 TEST_CASE("A unit's GetWeaponClass that raises is reported as a script warning", "[weapons]") {
     WeaponWorld w;
     lua_State* L = w.state.raw();

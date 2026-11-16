@@ -35,9 +35,7 @@ void project(const OrientedBox& b, const Vector3& axis, f32& lo, f32& hi) {
 /// The transport its head order waits for, or 0 (Moho's
 /// UNITSTATE_WaitingForTransport, and its focus).
 EntityId awaited_transport(const Unit& u) {
-    const auto& q = u.command_queue();
-    return !q.empty() && q.front().type == CommandType::TransportLoad ? q.front().target_id
-                                                                      : EntityId();
+    return u.awaited_transport();
 }
 
 bool ignores_structures(const Unit& u) {
@@ -107,13 +105,15 @@ bool shape_overlaps_box(const Entity& e, const OrientedBox& box) {
 }
 
 bool is_source_unit(i32 mode, const Unit& owner, const Unit& c) {
+    static const CategoryName kNaval{"NAVAL"};
+    static const CategoryName kAir{"AIR"};
     if (&c == &owner || c.destroyed() || c.is_dying() || !c.is_mobile()) return true;
     // Planning, a unit on the move will be gone by the time it gets there.
     if (mode == 1 && c.moved_last_tick()) return true;
     if (c.has_unit_state("Attached")) return true;
     if (owner.layer() != c.layer()) return true;
-    if (owner.has_category("NAVAL") && !c.has_category("NAVAL")) return true;
-    if (c.has_category("AIR") && (c.layer() == "Air" || c.transport_capacity() > 0)) return true;
+    if (owner.has_category(kNaval) && !c.has_category(kNaval)) return true;
+    if (c.has_category(kAir) && (c.layer() == "Air" || c.transport_capacity() > 0)) return true;
     if (ignores_structures(owner) && c.footprint().flags == 0) return true;
     const EntityId awaited = awaited_transport(owner);
     if (awaited && awaited == awaited_transport(c)) {
@@ -121,7 +121,7 @@ bool is_source_unit(i32 mode, const Unit& owner, const Unit& c) {
     }
     if (owner.has_unit_state("Upgrading") && c.creator_id() == owner.entity_id()) return true;
     if (mode == 2) return false;
-    if (c.has_category("AIR") && c.army() == owner.army()) return true;
+    if (c.has_category(kAir) && c.army() == owner.army()) return true;
     if (!awaited && awaited_transport(c)) {
         return false;
     }
