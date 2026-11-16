@@ -11469,6 +11469,66 @@ void test_defence(TestContext& ctx) {
         if fired ~= 1 then error(fired .. ' interceptors were fired') end
     )");
 
+    // A nuke takes one anti-nuke shooting at it (DesiredShooterCap 1). Moho's TrackToTarget
+    // gives it only to an anti-nuke with a missile in its silo and the nuke within its MaxRadius
+    // of 90, though it looks out to 180 (TrackingRadius 2). The one made first, empty, or one
+    // the nuke passes too far from to hit, mustn't keep it from the one by the target.
+    const auto nuke_gone = [&](int n) {
+        return lua_true(ctx.lua_state, "(function() local nuke = __osc_shot_of(__osc_s, " +
+                                           std::to_string(n) +
+                                           ") return nuke ~= nil and nuke.gone ~= nil end)()");
+    };
+    lua_check("setup: by the target, an empty anti-nuke, then a loaded one", R"(
+        __osc_d1:Destroy()
+        __osc_d2:Destroy()
+        __osc_empty = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 980, 320))
+        __osc_loaded = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 940, 320))
+        __osc_loaded:GiveTacticalSiloAmmo(1)
+        __osc_s:GiveNukeSiloAmmo(1)
+        IssueNuke({__osc_s}, __osc_zero)
+    )");
+    tick_until([&] { run(1); }, "the second nuke is launched and is gone", 1000,
+               [&] { return nuke_gone(2); });
+    lua_check("Test 2d: an empty anti-nuke leaves the nuke to a loaded one, which shoots it down",
+              R"(
+        if __osc_empty:GetTacticalSiloAmmoCount() ~= 0 then error('the empty one built a missile') end
+        local nuke = __osc_shot_of(__osc_s, 2)
+        if nuke.impact then error('the nuke impacted: ' .. nuke.impact) end
+        if __osc_loaded.__osc_fired ~= 1 then
+            error('the loaded anti-nuke fired ' .. __osc_loaded.__osc_fired .. ' interceptors')
+        end
+    )");
+    lua_check("setup: an anti-nuke 100 to the side of the nuke's flight, then one by the target",
+              R"(
+        __osc_empty:Destroy()
+        __osc_loaded:Destroy()
+        if GetTerrainHeight(860, 200) < GetSurfaceHeight(860, 200) then error('860, 200 is under water') end
+        __osc_aside = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 860, 200))
+        __osc_by = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 940, 320))
+        __osc_aside:GiveTacticalSiloAmmo(1)
+        __osc_by:GiveTacticalSiloAmmo(1)
+        __osc_s:GiveNukeSiloAmmo(1)
+        IssueNuke({__osc_s}, __osc_zero)
+    )");
+    tick_until([&] { run(1); }, "the third nuke is launched and is gone", 1000,
+               [&] { return nuke_gone(3); });
+    lua_check("Test 2e: an anti-nuke the nuke never comes within reach of leaves it to one by the "
+              "target",
+              R"(
+        local nuke = __osc_shot_of(__osc_s, 3)
+        local closest = 1e9
+        for _, p in nuke.path do
+            closest = math.min(closest, __osc_dist2d(p, __osc_aside:GetPosition()))
+        end
+        if closest <= 90 then error('the nuke came within ' .. closest .. ' of the one aside') end
+        if closest > 180 then error('the nuke was never within 180 of the one aside: nothing was tested') end
+        if nuke.impact then error('the nuke impacted: ' .. nuke.impact) end
+        if __osc_aside.__osc_fired ~= 0 then error('the anti-nuke aside fired') end
+        if __osc_by.__osc_fired ~= 1 then
+            error('the anti-nuke by the target fired ' .. __osc_by.__osc_fired .. ' interceptors')
+        end
+    )");
+
     // Tactical missiles at power generators: one undefended, one by a UEF
     // Phalanx, one by a Seraphim TMD, one by an Aeon TMD's flare.
     lua_check("setup: tactical missiles at defended and undefended targets", R"(

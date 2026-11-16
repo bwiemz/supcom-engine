@@ -706,6 +706,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
         w.i32v(changes);
     }
     w.b(wp.target_held);
+    w.id(wp.shooter_of);
 }
 
 void StateIO::load(StateReader& r, Weapon& wp) {
@@ -806,6 +807,7 @@ void StateIO::load(StateReader& r, Weapon& wp) {
         changes = r.i32v();
     }
     wp.target_held = r.b();
+    wp.shooter_of = r.id();
 }
 
 // ----------------------------------------------------------- Manipulators
@@ -2026,9 +2028,8 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     save(w, static_cast<const Entity&>(p));
     w.tag("PROJ");
     w.size(p.shooters.size());
-    for (const auto& [unit, weapon] : p.shooters) {
+    for (const EntityId unit : p.shooters) {
         w.id(unit);
-        w.i32v(weapon);
     }
     w.vec3(p.velocity);
     w.id(p.target_entity_id);
@@ -2083,10 +2084,9 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
 void StateIO::load(StateReader& r, Projectile& p) {
     load(r, static_cast<Entity&>(p));
     r.tag("PROJ");
-    p.shooters.resize(r.size(12));
-    for (auto& [unit, weapon] : p.shooters) {
+    p.shooters.resize(r.size(8));
+    for (EntityId& unit : p.shooters) {
         unit = r.id();
-        weapon = r.i32v();
     }
     p.velocity = r.vec3();
     p.target_entity_id = r.id();

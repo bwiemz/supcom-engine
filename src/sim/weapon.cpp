@@ -176,24 +176,26 @@ bool ground_hides(const Unit& owner, const Vector3& target, Weapon::Arc arc,
     return false;
 }
 
-/// Whether `proj` has room for another shooter under its DesiredShooterCap.
-/// Its list of shooters is pruned first of weapons that have let it go.
-bool shooter_room(Projectile& proj, const EntityRegistry& registry) {
-    const u32 cap = proj.desired_shooter_cap();
-    if (cap == 0) return true;
+/// The units shooting at `proj` (Moho's GetNumShooters), its list first pruned of those dead or
+/// gone (Moho's ProcessEntitiesShootingAtMe, on its tick).
+size_t shooter_count(Projectile& proj, const EntityRegistry& registry) {
     auto& shooters = proj.shooters;
-    shooters.erase(
-        std::remove_if(shooters.begin(), shooters.end(),
-                       [&](const std::pair<EntityId, i32>& s) {
-                           const Entity* e = registry.find(s.first);
-                           if (!e || e->destroyed() || !e->is_unit()) return true;
-                           const auto& weapons = static_cast<const Unit*>(e)->weapons();
-                           return s.second < 0 || static_cast<size_t>(s.second) >= weapons.size() ||
-                                  weapons[static_cast<size_t>(s.second)]->target_entity_id !=
-                                      proj.entity_id();
-                       }),
-        shooters.end());
-    return shooters.size() < cap;
+    shooters.erase(std::remove_if(shooters.begin(), shooters.end(),
+                                  [&](EntityId id) {
+                                      const Entity* e = registry.find(id);
+                                      return !e || e->destroyed() ||
+                                             (e->is_unit() &&
+                                              static_cast<const Unit*>(e)->is_dying());
+                                  }),
+                   shooters.end());
+    return shooters.size();
+}
+
+/// Its unit's head order is an attack under way, which gave its attacker a target (Moho's
+/// desired target).
+bool attack_ordered(const Unit& owner) {
+    const auto& queue = owner.command_queue();
+    return !queue.empty() && queue.front().type == CommandType::Attack && queue.front().engaged;
 }
 
 const Weapon* primary_weapon(const Unit& owner) {
@@ -414,6 +416,8 @@ void Weapon::fire_step(Unit& owner, EntityRegistry& registry, lua_State* L, cons
 
 void Weapon::acquire_step(Unit& owner, EntityRegistry& registry, lua_State* L,
                           const SimState* sim) {
+    // What changed its target since its last step (its fire step, an order) changes the lists.
+    sync_shooter(owner, registry);
     // Moho's CAcquireTargetTask forgets the targets ReTargetOnMiss gave up on a tick its unit
     // moved, ahead of its weapon's own checks
     if (!blacklist.empty() && owner.moved_last_tick() && !unpack_search_paused(owner)) {
@@ -427,6 +431,7 @@ void Weapon::acquire_step(Unit& owner, EntityRegistry& registry, lua_State* L,
     }
     const TargetMark previous = target_mark();
     update_targeting(owner, registry, sim);
+    sync_shooter(owner, registry);
     // A change to a new target ages them (Moho's UnitWeapon::SetTarget)
     if (!blacklist.empty() && !(target_mark() == previous) && (has_target() || target_held)) {
         age_blacklist(registry);
@@ -521,6 +526,19 @@ void Weapon::drop_target(lua_State* L) {
     const bool had = has_target();
     set_target_entity(EntityId());
     if (had && fires_through_script()) call_script(L, "OnLostTarget");
+}
+
+void Weapon::sync_shooter(const Unit& owner, EntityRegistry& registry) {
+    if (shooter_of == target_entity_id) return;
+    // Only projectiles' lists are read (TrackToTarget's DesiredShooterCap), and a dead one's is
+    // left alone.
+    const auto listed = [&](EntityId id) -> Projectile* {
+        Entity* e = id ? registry.find(id) : nullptr;
+        return e && e->is_projectile() && !e->destroyed() ? static_cast<Projectile*>(e) : nullptr;
+    };
+    if (Projectile* was = listed(shooter_of)) was->remove_shooter(owner.entity_id());
+    shooter_of = target_entity_id;
+    if (Projectile* now = listed(shooter_of)) now->add_shooter(owner.entity_id());
 }
 
 void Weapon::note_impact(Unit& owner, bool missed, EntityRegistry& registry, const SimState* sim) {
@@ -705,15 +723,6 @@ bool Weapon::can_attack_target_of(const Unit& owner, const Weapon& holder,
     }
     return holder.has_ground_target &&
            can_attack_ground(holder.ground_target, sim ? sim->terrain() : nullptr);
-}
-
-int Weapon::priority_of(const Entity& target) const {
-    if (target_priorities.empty()) return 0;
-    const auto& categories = target_categories(target);
-    for (size_t i = 0; i < target_priorities.size(); ++i) {
-        if (target_priorities[i].matches(categories)) return static_cast<int>(i);
-    }
-    return -1;
 }
 
 Weapon::Solution Weapon::solution_status(const Unit& owner, const Vector3& at, f32 dist2) const {
@@ -925,6 +934,10 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         return;
     }
     target_check_clock = target_check_period > 0 ? target_check_period - 1 : 0;
+    if (targets_projectiles) {
+        acquire_projectile(owner, registry, sim);
+        return;
+    }
     if (target_entity_id) {
         const Entity& target = *registry.find(target_entity_id);
         if (!can_target(owner, target, sim) ||
@@ -937,50 +950,9 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
 
     const f32 reach = max_range * std::max(1.0f, tracking_radius);
     EntityId best_id{};
-    if (targets_projectiles) {
-        const Entity* current = target_entity_id ? registry.find(target_entity_id) : nullptr;
-        const int current_priority = current ? priority_of(*current) : -1;
-        // Best: the earliest priority, then the nearest, then the lowest id
-        // (candidates come in id order, so ties keep the first).
-        int best_priority = 0;
-        bool best_in_arc = false;
-        f32 best_dist2 = 0;
-        for (const EntityId id :
-             registry.collect_in_radius(owner.position().x, owner.position().z, reach)) {
-            Entity* e = registry.find(id);
-            if (!e || !can_target(owner, *e, sim) || blacklisted(id)) {
-                continue;
-            }
-            // A missile already held by as many weapons as it wants shooting at
-            // it (a nuke's DesiredShooterCap is 1) is left to them.
-            if (!shooter_room(static_cast<Projectile&>(*e), registry)) {
-                continue;
-            }
-            const int priority = priority_of(*e);
-            if (priority < 0) {
-                continue;
-            }
-            const f32 dx = e->position().x - owner.position().x;
-            const f32 dz = e->position().z - owner.position().z;
-            const f32 dist2 = dx * dx + dz * dz;
-            const bool in_arc = in_heading_arc(owner, e->position());
-            const bool better_arc = in_arc && !best_in_arc;
-            if (!best_id || priority < best_priority ||
-                (priority == best_priority &&
-                 (better_arc || (in_arc == best_in_arc && dist2 < best_dist2)))) {
-                best_id = id;
-                best_priority = priority;
-                best_in_arc = in_arc;
-                best_dist2 = dist2;
-            }
-        }
-        // A recheck changes target only for a better priority.
-        if (current_priority >= 0 && (!best_id || best_priority >= current_priority)) {
-            return;
-        }
-    } else if (const Entity* best = find_best_enemy(
-                   owner, registry.units_in_radius(owner.position().x, owner.position().z, reach),
-                   reach, turreted || slaved_to_body, sim, registry)) {
+    if (const Entity* best = find_best_enemy(
+            owner, registry.units_in_radius(owner.position().x, owner.position().z, reach), reach,
+            turreted || slaved_to_body, sim, registry)) {
         best_id = best->entity_id();
     }
     if (!best_id) {
@@ -999,8 +971,67 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     // its unit's attack order (Moho's CAcquireTargetTask, CheckAutoInitiate).
     if (auto_initiate_attack_command && owner.is_mobile() && owner.auto_initiate_allowed(registry))
         owner.request_auto_attack(best_id);
-    if (Entity* target = registry.find(best_id); target && target->is_projectile())
-        static_cast<Projectile&>(*target).shooters.emplace_back(owner.entity_id(), weapon_index);
+}
+
+void Weapon::acquire_projectile(const Unit& owner, EntityRegistry& registry, const SimState* sim) {
+    // Without AlwaysRecheckTarget it keeps a target it can hit now (TargetIsTooClose Available,
+    // CanAttackTarget), ahead of TrackToTarget's checks: an anti-nuke keeps its nuke, empty.
+    if (target_entity_id && !always_recheck_target) {
+        if (const Entity* target = registry.find(target_entity_id);
+            target && !target->destroyed() && can_attack(*target, sim)) {
+            const Vector3& at = target->position();
+            const f32 dx = at.x - owner.position().x;
+            const f32 dz = at.z - owner.position().z;
+            if (solution_status(owner, at, dx * dx + dz * dz) == Solution::Available) return;
+        }
+    }
+    if (const Projectile* best = track_to_target(owner, registry, sim)) {
+        set_target_entity(best->entity_id());
+        return;
+    }
+    if (!attack_ordered(owner)) set_target_entity(EntityId());
+}
+
+Projectile* Weapon::track_to_target(const Unit& owner, EntityRegistry& registry,
+                                    const SimState* sim) const {
+    // CheckSilo: a silo weapon looks for nothing with no missile ready.
+    if (counted_projectile && owner.silo_ammo(nuke_weapon) <= 0) return nullptr;
+    if (owner.is_stunned() || owner.busy()) return nullptr;
+    const Vector3 at = owner.position();
+    const f32 search = std::max(max_range, tracking_radius * max_range);
+    // One at or under the water's surface wants a weapon that hits the Water layer, one above
+    // it the Air layer.
+    const f32 water = water_surface(sim);
+    const bool hits_under = (fire_target_layer_caps & layer_to_bit("Water")) != 0;
+    const bool hits_over = (fire_target_layer_caps & layer_to_bit("Air")) != 0;
+    Projectile* best = nullptr;
+    f32 best_dist2 = std::numeric_limits<f32>::infinity();
+    // In id order: of two as near, the first is kept.
+    for (const EntityId id : registry.collect_in_radius(at.x, at.z, search)) {
+        Entity* e = registry.find(id);
+        if (!e || !e->is_projectile() || e->destroyed() || e->army() < 0 ||
+            (sim ? !sim->is_enemy(owner.army(), e->army()) : e->army() == owner.army())) {
+            continue;
+        }
+        auto& proj = static_cast<Projectile&>(*e);
+        const Vector3& pos = proj.position();
+        if ((!hits_under && water >= pos.y) || (!hits_over && pos.y > water) ||
+            !can_attack(proj, sim)) {
+            continue;
+        }
+        const f32 dx = at.x - pos.x;
+        const f32 dz = at.z - pos.z;
+        const f32 dist2 = dx * dx + dz * dz;
+        if (solution_status(owner, pos, dist2) != Solution::Available ||
+            shooter_count(proj, registry) >= proj.desired_shooter_cap()) {
+            continue;
+        }
+        if (best_dist2 > dist2) {
+            best = &proj;
+            best_dist2 = dist2;
+        }
+    }
+    return best;
 }
 
 bool Weapon::in_firing_range(const Unit& owner, const Entity& target) const {

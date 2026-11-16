@@ -91,6 +91,13 @@ static sim::Unit* check_weapon_unit(lua_State* L, int idx = 1) {
     return u;
 }
 
+/// Moho's UnitWeapon::SetTarget lists the weapon's unit among its new target's shooters at once.
+static void sync_shooter(lua_State* L, sim::Weapon& w, int idx = 1) {
+    auto* sim = get_sim(L);
+    const sim::Unit* u = check_weapon_unit(L, idx);
+    if (sim && u) w.sync_shooter(*u, sim->entity_registry());
+}
+
 /// weapon:PlaySound(sound) -- a one-shot at the weapon's unit
 static int weapon_PlaySound(lua_State* L) {
     auto* unit = check_weapon_unit(L);
@@ -195,6 +202,7 @@ static int weapon_SetTargetEntity(lua_State* L) {
         return 0;
     }
     w->set_target_entity((target && !target->destroyed()) ? target->entity_id() : sim::EntityId());
+    sync_shooter(L, *w);
     if (sim && w->aim_spot_target != w->target_entity_id) {
         w->pick_aim_spot(sim->entity_registry(), sim);
     }
@@ -207,6 +215,7 @@ static int weapon_ResetTarget(lua_State* L) {
     auto* w = check_weapon(L);
     if (w) {
         w->set_target_entity(sim::EntityId());
+        sync_shooter(L, *w);
         w->target_check_clock = 0;
     }
     return 0;
@@ -364,6 +373,7 @@ static int weapon_SetTargetGround(lua_State* L) {
                           static_cast<f32>(lua_tonumber(L, -2)),
                           static_cast<f32>(lua_tonumber(L, -1))});
     lua_pop(L, 3);
+    sync_shooter(L, *w);
     return 0;
 }
 
@@ -404,6 +414,7 @@ static int weapon_TransferTarget(lua_State* L) {
     } else {
         dst->set_target_entity(src->target_entity_id);
     }
+    sync_shooter(L, *dst, 2);
     dst->shots_at_target = 0;
     if (sim) dst->pick_aim_spot(sim->entity_registry(), sim);
     return 0;

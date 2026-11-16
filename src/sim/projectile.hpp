@@ -22,8 +22,9 @@ class SimRandom;
 struct ProjectileBlueprintInfo {
     /// Its Categories, and ALLPROJECTILES.
     std::unordered_set<std::string> categories;
-    /// DesiredShooterCap: at most this many weapons shoot at it at once (0:
-    /// no cap). REntityBlueprint's default is 3 (retail's /synclog beat 0).
+    /// DesiredShooterCap: a weapon picking a projectile to shoot down passes
+    /// over one with this many units shooting at it (Moho's TrackToTarget).
+    /// REntityBlueprint's default is 3 (retail's /synclog beat 0).
     u32 desired_shooter_cap = 3;
     bool camera_follows = false;
     f32 camera_follow_timeout = 1.0f;
@@ -36,16 +37,28 @@ public:
     /// What category tests see (EntityCategoryContains, weapons'
     /// restrictions): its blueprint's categories and ALLPROJECTILES.
     const std::unordered_set<std::string>& categories() const;
-    u32 desired_shooter_cap() const { return info_ ? info_->desired_shooter_cap : 0; }
+    /// Its blueprint's DesiredShooterCap (REntityBlueprint's default, with none read).
+    u32 desired_shooter_cap() const {
+        return info_ ? info_->desired_shooter_cap : ProjectileBlueprintInfo{}.desired_shooter_cap;
+    }
     void set_blueprint_info(std::shared_ptr<const ProjectileBlueprintInfo> info) {
         info_ = std::move(info);
     }
     /// Its layer, for weapons' layer caps: Water below the surface, Air above.
     const char* layer() const { return in_water ? "Water" : "Air"; }
-    /// Weapons (unit id, weapon index) that have taken it as their target,
-    /// for its DesiredShooterCap. A weapon that has since let go, or whose
-    /// unit is gone, still appears until a count prunes it.
-    std::vector<std::pair<EntityId, i32>> shooters;
+    /// The units shooting at it, in id order (Moho's Entity::mShooters): a unit is listed when
+    /// one of its weapons takes it as its target, and comes off when one of its weapons that
+    /// had it changes target, though another may still hold it (UnitWeapon::SetTarget's
+    /// AddShooter and RemoveShooter). A unit dead or gone still appears until a count prunes it.
+    std::vector<EntityId> shooters;
+    void add_shooter(EntityId unit) {
+        const auto at = std::lower_bound(shooters.begin(), shooters.end(), unit);
+        if (at == shooters.end() || *at != unit) shooters.insert(at, unit);
+    }
+    void remove_shooter(EntityId unit) {
+        const auto at = std::lower_bound(shooters.begin(), shooters.end(), unit);
+        if (at != shooters.end() && *at == unit) shooters.erase(at);
+    }
 
     /// Moho's gravity, in world units per second squared.
     static constexpr f32 GRAVITY = 4.9f;
