@@ -1500,7 +1500,7 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // section/StopReclaimWhenPaused.cpp, in CUnitReclaimTask::TaskTick).
     reclaim_held_ = reclaim_held_by_pause(*this, registry.find(cmd.target_id), ctx);
     if (reclaim_wait_ > 0) {
-        const auto* reclaimed = registry.find(cmd.target_id);
+        auto* reclaimed = registry.find(cmd.target_id);
         if (reclaim_wait_ == 1 && reclaimed && !reclaim_arm_ready(*reclaimed)) {
             return OrderStep::Hold;
         }
@@ -1510,6 +1510,11 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
                 reclaim_costs(L, *this, *reclaimed, static_cast<f64>(build_rate_));
             economy_.reclaim_mass = costs.mass * static_cast<f64>(reclaim_rate_);
             economy_.reclaim_energy = costs.energy * static_cast<f64>(reclaim_rate_);
+            // (after its script's GetReclaimCosts, as the task's Processing state)
+            reclaimed = registry.find(cmd.target_id);
+            if (reclaimed && !reclaimed->destroyed()) {
+                reclaim_from_health(*reclaimed);
+            }
         }
         return OrderStep::Hold;
     }

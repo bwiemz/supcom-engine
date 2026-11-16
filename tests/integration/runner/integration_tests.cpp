@@ -772,6 +772,64 @@ void test_reclaim(TestContext& ctx) {
         spdlog::info("[PASS] Reclaim test: a stopped reclaim ends, with OnStopReclaim");
     else osc::test_status::fail("[FAIL] Reclaim test: {}", r.error().message);
 
+    // A power generator built to 60%, reclaimed to 20%, then built again: its
+    // health goes with its fraction (Moho's CUnitReclaimTask steps it by
+    // Unit::Materialize), so the build goes on from 20%.
+    if (auto r = ctx.lua_state.do_string(R"(
+            local acu = GetEntityById(__osc_test_acu_id(1))
+            local site = __osc_test_find_place(acu:GetAIBrain(), 'ueb1101', acu)
+            if not site then error('no site for a power generator') end
+            IssueClearCommands({acu})
+            IssueBuildMobile({acu}, {site[1], GetTerrainHeight(site[1], site[2]), site[2]},
+                             'ueb1101', {})
+        )");
+        !r) {
+        osc::test_status::fail("[FAIL] Reclaim test: setup: {}", r.error().message);
+        return;
+    }
+    if (!tick_until(ctx, "the commander builds a power generator to 60%", 400, R"((function()
+            __osc_frame = GetEntityById(__osc_test_acu_id(1)):GetFocusUnit()
+            return __osc_frame ~= nil and __osc_frame:GetFractionComplete() >= 0.6
+        end)())")) {
+        return;
+    }
+    (void)ctx.lua_state.do_string(R"(
+        local acu = GetEntityById(__osc_test_acu_id(1))
+        IssueClearCommands({acu})
+        IssueReclaim({acu}, __osc_frame)
+    )");
+    if (!tick_until(ctx, "the commander reclaims it to 20%", 200,
+                    "__osc_frame:GetFractionComplete() <= 0.2")) {
+        return;
+    }
+    if (auto r = ctx.lua_state.do_string(R"(
+            local f = __osc_frame
+            local share = f:GetMaxHealth() * f:GetFractionComplete()
+            if math.abs(f:GetHealth() - share) > 1 then
+                error('its health is ' .. f:GetHealth() .. ' at ' .. f:GetFractionComplete())
+            end
+        )"))
+        spdlog::info("[PASS] Reclaim test: a unit under construction loses health as reclaimed");
+    else osc::test_status::fail("[FAIL] Reclaim test: {}", r.error().message);
+    (void)ctx.lua_state.do_string(R"(
+        __osc_frame_left = __osc_frame:GetFractionComplete()
+        local acu = GetEntityById(__osc_test_acu_id(1))
+        IssueClearCommands({acu})
+        IssueRepair({acu}, __osc_frame)
+    )");
+    if (!tick_until(ctx, "the commander builds it again", 100,
+                    "__osc_frame:GetFractionComplete() > __osc_frame_left")) {
+        return;
+    }
+    if (auto r = ctx.lua_state.do_string(R"(
+            local now = __osc_frame:GetFractionComplete()
+            if now > __osc_frame_left + 0.02 then
+                error('built on from ' .. now .. ', reclaimed to ' .. __osc_frame_left)
+            end
+        )"))
+        spdlog::info("[PASS] Reclaim test: its build goes on from where the reclaim left it");
+    else osc::test_status::fail("[FAIL] Reclaim test: {}", r.error().message);
+
 
     // Verify: prop should be gone (destroyed or fraction=0)
     auto post_count = ctx.sim.entity_registry().count();
