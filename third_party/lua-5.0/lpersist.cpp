@@ -274,13 +274,26 @@ class Persister {
     if (iscollectable(o)) add(gcvalue(o));
   }
 
-  // A removed key (its value nil): its object is written only when it is
-  // certainly alive -- met otherwise, or an interned string.
-  bool dead_key_alive(const TObject *k) const {
+  // A removed key is written only when alive: met otherwise, or an interned
+  // string whose lookup still comes to this node (its own may have been freed).
+  bool dead_key_alive(const Table *h, const Node *n) const {
+    const TObject *k = gkey(n);
     if (!iscollectable(k)) return true;
     GCObject *o = gcvalue(k);
-    if (ttisstring(k)) return strings_.count(o) != 0;
+    if (ttisstring(k)) return strings_.count(o) != 0 && looked_up(h, n);
     return index_.count(o) != 0;
+  }
+
+  // Whether ltable.c's luaH_getstr, looking up the string the key names,
+  // walks its chain to this node.
+  static bool looked_up(const Table *h, const Node *n) {
+    for (const Node *m = gnode(h, lmod(tsvalue(gkey(n))->tsv.hash, sizenode(h))); m != nullptr;
+         m = m->next) {
+      if (m == n) {
+        return true;
+      }
+    }
+    return false;
   }
 
   void children(GCObject *o) {
@@ -295,9 +308,8 @@ class Persister {
           for (int i = 0; i < sizenode(h); ++i) {
             Node *n = gnode(h, i);
             if (ttisnil(gval(n))) {
-              // Removed: an interned string key is kept (a script making
-              // that string again finds this node, as in the saved game).
-              if (ttisstring(gkey(n)) && strings_.count(gcvalue(gkey(n)))) visit(gkey(n));
+              // Removed: kept while a lookup of its string still comes here.
+              if (ttisstring(gkey(n)) && dead_key_alive(h, n)) visit(gkey(n));
               continue;
             }
             visit(gkey(n));
@@ -463,9 +475,9 @@ class Persister {
   }
 
   // A key: a removed one whose object is gone becomes a dead key.
-  void key(const TObject *k, bool removed) {
-    if (removed && !dead_key_alive(k)) { w_.u8(T_DEADKEY); return; }
-    value(k);
+  void key(const Table *h, const Node *n) {
+    if (ttisnil(gval(n)) && !dead_key_alive(h, n)) { w_.u8(T_DEADKEY); return; }
+    value(gkey(n));
   }
 
   void contents(GCObject *o) {
@@ -551,7 +563,7 @@ class Persister {
       Node *n = gnode(h, i);
       const bool removed = ttisnil(gval(n));
       if (ttisnil(gkey(n)) || ttype(gkey(n)) == LUA_TNONE) continue;
-      if (removed && !dead_key_alive(gkey(n))) continue;  // written as a dead key
+      if (removed && !dead_key_alive(h, n)) continue;  // written as a dead key
       if (hashes_by_address(gkey(n))) exact = false;
     }
     w_.u8(exact ? L_EXACT : L_INSERT);
@@ -559,7 +571,7 @@ class Persister {
       for (int i = 0; i < size; ++i) {
         Node *n = gnode(h, i);
         if (ttype(gkey(n)) == LUA_TNONE) w_.u8(T_DEADKEY);
-        else key(gkey(n), ttisnil(gval(n)));
+        else key(h, n);
         value(gval(n));
         w_.i32(n->next ? static_cast<std::int32_t>(n->next - h->node) : -1);
       }

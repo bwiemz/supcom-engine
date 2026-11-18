@@ -15,6 +15,8 @@ extern "C" {
 // Internals: the collector's state, and what it marks.
 #include <lgc.h>
 #include <lstate.h>
+#include <lstring.h>
+#include <ltable.h>
 
 #include <string>
 
@@ -158,6 +160,46 @@ TEST_CASE("A table iterates as it did, and goes on to", "[lua_persist]") {
     a.run(more);
     b.run(more);
     CHECK(b.str("order(t)") == a.str("order(t)"));
+}
+
+TEST_CASE("A removed key is saved without a string made where its own was freed", "[lua_persist]") {
+    State a;
+    lua_setmanualgc(a.L, 1);
+    a.run("t = {} for i = 1, 6 do t['key' .. i] = i end");
+    a.run("t['key' .. 3] = nil");
+    a.run("collectgarbage()");
+    lua_pushstring(a.L, "t");
+    lua_rawget(a.L, LUA_GLOBALSINDEX);
+    auto* t = static_cast<Table*>(const_cast<void*>(lua_topointer(a.L, -1)));
+    lua_settop(a.L, 0);
+    Node* removed = nullptr;
+    for (int i = 0; i < sizenode(t); ++i) {
+        if (ttisnil(gval(gnode(t, i))) && ttisstring(gkey(gnode(t, i)))) {
+            removed = gnode(t, i);
+        }
+    }
+    REQUIRE(removed != nullptr);
+    TString* other = nullptr;
+    for (int i = 0; other == nullptr; ++i) {
+        const std::string text = "other" + std::to_string(i);
+        TString* made = luaS_newlstr(a.L, text.data(), text.size());
+        bool found = false;
+        for (const Node* n = gnode(t, lmod(made->tsv.hash, sizenode(t))); n != nullptr;
+             n = n->next) {
+            found = found || n == removed;
+        }
+        if (!found) {
+            other = made;
+        }
+    }
+    setsvalue(gkey(removed), other);
+    const std::string first = persist(a);
+    State b;
+    unpersist(b, first);
+    lua_setgcthreshold(b.L, 0);
+    const std::string second = persist(b);
+    CHECK(second.size() == first.size());
+    CHECK((second == first));
 }
 
 TEST_CASE("Closures keep their upvalues, shared as they were", "[lua_persist]") {
