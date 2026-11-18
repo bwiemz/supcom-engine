@@ -250,15 +250,20 @@ void SimState::on_destroy(Entity& entity) {
 }
 
 void SimState::drop_adjacency(Unit& unit) {
-    const std::vector<EntityId> neighbours(unit.adjacent_unit_ids().begin(),
-                                           unit.adjacent_unit_ids().end());
+    for (const EntityId id : unit.adjacent_unit_ids()) {
+        if (Entity* e = entity_registry_.find(id); e && e->is_unit()) {
+            static_cast<Unit*>(e)->remove_adjacent(unit.entity_id());
+        }
+    }
     unit.clear_adjacents();
-    for (const EntityId id : neighbours) {
+    if (unit.is_mobile() || unit.is_being_built()) {
+        return;
+    }
+    for (const EntityId id : unit.overlapping_structures(*this)) {
         Entity* e = entity_registry_.find(id);
-        if (!e || !e->is_unit()) {
+        if (!e || e->destroyed()) {
             continue;
         }
-        static_cast<Unit*>(e)->remove_adjacent(unit.entity_id());
         call_with(L_, unit, "OnNotAdjacentTo", *e);
         call_with(L_, *e, "OnNotAdjacentTo", unit);
     }

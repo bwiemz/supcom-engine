@@ -4900,7 +4900,7 @@ void test_adjacency(TestContext& ctx) {
     // Test 1: Skirt data loaded from blueprint
     {
         auto r = ctx.lua_state.do_string(
-            "local fac = CreateUnitHPR('ueb0101', 1, 200, 25, 200, 0, 0, 0)\n"
+            "local fac = CreateUnitHPR('ueb0101', 1, 200.5, 25, 200.5, 0, 0, 0)\n"
             "if not fac then error('factory creation failed') end\n"
             "rawset(_G, '__adj_fac', fac)\n"
             "rawset(_G, '__adj_fac_id', fac:GetEntityId())\n"
@@ -4942,10 +4942,10 @@ void test_adjacency(TestContext& ctx) {
             "    end\n"
             "    LOG('Test OnNotAdjacentTo fired on #' .. self:GetEntityId())\n"
             "end\n"
-            "-- Place pgen adjacent (factory center=200, footprint=5, skirt to 204)\n"
-            "-- Pgen footprint 1x1 (from SizeX 0.6), skirt 2 at -0.5: at x=205 it\n"
-            "-- spans 204..206, touching the factory skirt\n"
-            "local pg1 = CreateUnitHPR('ueb1101', 1, 205, 25, 200, 0, 0, 0)\n"
+            "-- Place pgen adjacent (factory center=200.5, footprint=5, skirt to 204.5)\n"
+            "-- Pgen footprint 1x1 (from SizeX 0.6), skirt 2 at -0.5: at x=205.5 it\n"
+            "-- spans 204.5..206.5, touching the factory skirt\n"
+            "local pg1 = CreateUnitHPR('ueb1101', 1, 205.5, 25, 200.5, 0, 0, 0)\n"
             "if not pg1 then error('pgen1 creation failed') end\n"
             "rawset(_G, '__adj_pg1', pg1)\n"
             "-- Install callback on pgen too\n"

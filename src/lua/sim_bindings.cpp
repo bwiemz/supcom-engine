@@ -748,12 +748,16 @@ static sim::EntityId spawn_complete_unit(lua_State* L, sim::SimState& sim, const
         lua_pop(L, 1);
     }
 
-    // OnStopBeingBuilt (only for pre-placed units)
     auto* unit_ptr = static_cast<sim::Unit*>(sim.entity_registry().find(id));
     if (unit_ptr && !unit_ptr->is_being_built()) {
         // A structure created complete (map-placed, scripted) blocks paths
         // like a freshly built one; released when it leaves the registry.
         sim.occupy_footprint(*unit_ptr);
+        unit_ptr->fire_adjacency_callbacks(sim, L);
+        unit_ptr = static_cast<sim::Unit*>(sim.entity_registry().find(id));
+    }
+    // OnStopBeingBuilt (only for pre-placed units), after its adjacency, as Moho's Unit ctor.
+    if (unit_ptr && !unit_ptr->destroyed() && !unit_ptr->is_being_built()) {
         lua_pushstring(L, "OnStopBeingBuilt");
         lua_gettable(L, tbl);
         if (lua_isfunction(L, -1)) {
@@ -766,12 +770,6 @@ static sim::EntityId spawn_complete_unit(lua_State* L, sim::SimState& sim, const
             }
         } else {
             lua_pop(L, 1);
-        }
-
-        // Fire adjacency callbacks for pre-placed structures
-        unit_ptr = static_cast<sim::Unit*>(sim.entity_registry().find(id));
-        if (unit_ptr && !unit_ptr->destroyed()) {
-            unit_ptr->fire_adjacency_callbacks(sim.entity_registry(), L);
         }
     }
     count_made(sim, id);

@@ -14,6 +14,7 @@
 #include "lua/lua_state.hpp"
 #include "sim/sim_state.hpp"
 
+#include <cmath>
 #include <fmt/format.h>
 #include <lua.h>
 #include <spdlog/spdlog.h>
@@ -118,7 +119,9 @@ void test_destroyed_handle(TestContext& ctx) {
     // fails the run); the thread ran if its beams bag holds the generator
     // when a thread forked after it looks. The generator's OnDestroy, at the
     // end of that tick, takes the beams away (OnNotAdjacentTo).
-    const f32 fx = sx + 30;
+    // On the cell centres, where the skirts meet.
+    const f32 fx = std::floor(sx) + 30.5f;
+    const f32 fz = std::floor(sz) + 0.5f;
     lua(fmt::format("function __osc_dh_count()\n"
                     "    local n = 0\n"
                     "    for _, v in __osc_dh_fac.AdjacencyBeamsBag or {{}} do\n"
@@ -131,7 +134,7 @@ void test_destroyed_handle(TestContext& ctx) {
                     "__osc_dh_pgen_id = pgen:GetEntityId()\n"
                     "pgen:Destroy()\n"
                     "ForkThread(function() __osc_dh_beams = __osc_dh_count() end)\n",
-                    fx, y(fx, sz), sz, fx + 5, y(fx + 5, sz)));
+                    fx, y(fx, fz), fz, fx + 5, y(fx + 5, fz)));
     for (int i = 0; i < 3; ++i) ctx.sim.tick();
     lua("__osc_dh_beams_after = __osc_dh_count()\n");
     const std::string beams = global_string(ctx, "__osc_dh_beams");

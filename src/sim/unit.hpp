@@ -1685,7 +1685,9 @@ public:
         skirt_offset_x_ = ox; skirt_offset_z_ = oz;
     }
 
-    void fire_adjacency_callbacks(EntityRegistry& registry, lua_State* L);
+    /// Moho's Unit::CollectAllOverlapping.
+    std::vector<EntityId> overlapping_structures(SimState& sim) const;
+    void fire_adjacency_callbacks(SimState& sim, lua_State* L);
 
     /// Whether this unit's place has been taken by a replacement of another
     /// army (ChangeUnitArmy, M206v): its Destroy is a hand-over, not a loss.

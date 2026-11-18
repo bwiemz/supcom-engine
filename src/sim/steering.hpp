@@ -7,8 +7,10 @@
 
 namespace osc::sim {
 
+class Entity;
 class SimState;
 class Unit;
+struct Vector3;
 
 /// The steering pass (M203c; Moho's CAiSteeringImpl). Each tick, before the
 /// units move, every ground unit on a path looks about two seconds ahead for
@@ -46,6 +48,9 @@ void steer_no_waypoints(SimState& sim, Unit& u);
 /// Moho's Unit::IsSameFormationLayerWith: in one formation, and neither
 /// attacking.
 bool same_formation_layer(const Unit& a, const Unit& b);
+
+/// COGrid::ForAllEntitiesIterator's units for a sphere (past a radius of 3, also its 0.707 box's).
+std::vector<Entity*> units_meeting_sphere(SimState& sim, const Vector3& c, f32 r);
 
 /// Moho's Unit::IsHigherPriorityThan: whether `a` keeps its way when it
 /// meets `b` (the other yields). The formation lead and priority order are
