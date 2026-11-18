@@ -392,6 +392,23 @@ Vector3 Unit::build_place(const Vector3& site, f32 skirt_x, f32 skirt_z, SimCont
     return goal;
 }
 
+Vector3 Unit::reclaim_place(const Entity& target, SimContext& ctx) const {
+    if (!ctx.sim || !ctx.terrain) {
+        return approach_point(*this, target.position(), target.footprint_size_x() * 0.5f,
+                              target.footprint_size_z() * 0.5f);
+    }
+    // Its footprint's cells (COORDS_ToGridRect)
+    const f32 size_x = std::floor(target.footprint_size_x());
+    const f32 size_z = std::floor(target.footprint_size_z());
+    Vector3 place = target.position();
+    const auto x0 = static_cast<f32>(std::lrint(place.x - size_x * 0.5f));
+    const auto z0 = static_cast<f32>(std::lrint(place.z - size_z * 0.5f));
+    const MoveExclusion cells{x0, z0, x0 + size_x, z0 + size_z};
+    prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()), place, 1,
+                 &cells);
+    return place;
+}
+
 Vector3 Unit::guard_anchor_place(const Unit& guarded, SimContext& ctx) const {
     Vector3 place = guarded.position();
     if (ctx.sim && ctx.terrain) {
@@ -1559,10 +1576,7 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
                     return OrderStep::Next;
                 }
                 cmd.approached = true;
-                set_path_goal(approach_point(*this, target->position(),
-                                             target->footprint_size_x() * 0.5f,
-                                             target->footprint_size_z() * 0.5f),
-                              ctx);
+                set_path_goal(reclaim_place(*target, ctx), ctx);
             }
             if (cmd.approached && approach_update(ctx)) {
                 return OrderStep::Hold;
