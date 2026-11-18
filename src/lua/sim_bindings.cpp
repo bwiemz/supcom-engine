@@ -2334,6 +2334,30 @@ static void time_emitter(lua_State* L, sim::SimState& sim, sim::IEffect& fx) {
     fx.end_after(lifetime.value_or(-1.0), sim::SimState::SECONDS_PER_TICK);
 }
 
+static bool effect_blueprint_registered(const sim::SimState& sim, const char* name,
+                                        blueprints::BlueprintType type) {
+    const auto* store = sim.blueprint_store();
+    return store && store->find_effect(name, type);
+}
+
+/// Moho: CEffectManagerImpl::CreateEmitter and CreateTrail warn; cfunc_CreateBeamEmitterL errors.
+static bool unknown_effect(lua_State* L, const sim::SimState& sim, int idx,
+                           blueprints::BlueprintType type, const char* kind) {
+    const char* name = lua_tostring(L, idx);
+    if (!name || effect_blueprint_registered(sim, name, type)) {
+        return false;
+    }
+    spdlog::warn("Failed to create {} as you passed in an invalid blueprint name {}.", kind, name);
+    return true;
+}
+
+static void check_beam_name(lua_State* L, const sim::SimState& sim, int idx) {
+    const char* name = luaL_checkstring(L, idx);
+    if (!effect_blueprint_registered(sim, name, blueprints::BlueprintType::Beam)) {
+        luaL_error(L, "Unknown beam kind: %s", name);
+    }
+}
+
 // CreateEmitterAtEntity(entity, army, blueprintPath): an emitter where the
 // entity is, not attached to it.
 // Where an At-emitter is made: its entity's bone as it is now (M214c; the
@@ -2354,6 +2378,9 @@ static int l_CreateEmitterAtEntity(lua_State* L) {
     if (!sim) { lua_pushnil(L); return 1; }
     auto* entity = effect_check_entity(L, 1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 2, 0));
+    if (unknown_effect(L, *sim, 3, blueprints::BlueprintType::Emitter, "emitter")) {
+        return 0;
+    }
     const char* bp = luaL_optstring(L, 3, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::EMITTER_AT_ENTITY);
@@ -2378,6 +2405,9 @@ static int l_CreateEmitterOnEntity(lua_State* L) {
     }
     auto* entity = effect_check_entity(L, 1);
     const i32 army = static_cast<i32>(luaL_optnumber(L, 2, 0));
+    if (unknown_effect(L, *sim, 3, blueprints::BlueprintType::Emitter, "emitter")) {
+        return 0;
+    }
     const char* bp = luaL_optstring(L, 3, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::ATTACHED_EMITTER);
@@ -2396,6 +2426,9 @@ static int l_CreateEmitterAtBone(lua_State* L) {
     auto* entity = effect_check_entity(L, 1);
     i32 bone = effect_bone_arg(L, 2, entity, -1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    if (unknown_effect(L, *sim, 4, blueprints::BlueprintType::Emitter, "emitter")) {
+        return 0;
+    }
     const char* bp = luaL_optstring(L, 4, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::EMITTER_AT_BONE);
@@ -2409,13 +2442,18 @@ static int l_CreateEmitterAtBone(lua_State* L) {
     return 1;
 }
 
-// CreateAttachedEmitter(entity, boneIndex, army, blueprintPath)
-static int l_CreateAttachedEmitter(lua_State* L) {
+// CreateAttachedEmitter / CreateBeamEmitterOnEntity(entity, boneIndex, army, blueprintPath)
+static int create_attached_emitter(lua_State* L, bool beam) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
     auto* entity = effect_check_entity(L, 1);
     i32 bone = effect_bone_arg(L, 2, entity, -1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    if (beam) {
+        check_beam_name(L, *sim, 4);
+    } else if (unknown_effect(L, *sim, 4, blueprints::BlueprintType::Emitter, "emitter")) {
+        return 0;
+    }
     const char* bp = luaL_optstring(L, 4, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::ATTACHED_EMITTER);
@@ -2426,6 +2464,14 @@ static int l_CreateAttachedEmitter(lua_State* L) {
     time_emitter(L, *sim, *fx);
     push_ieffect_table(L, fx);
     return 1;
+}
+
+static int l_CreateAttachedEmitter(lua_State* L) {
+    return create_attached_emitter(L, false);
+}
+
+static int l_CreateBeamEmitterOnEntity(lua_State* L) {
+    return create_attached_emitter(L, true);
 }
 
 // CreateTrail(entity, bone, army, blueprintPath) -> IEffect: a polytrail
@@ -2440,6 +2486,9 @@ static int l_CreateTrail(lua_State* L) {
     auto* entity = effect_check_entity(L, 1);
     i32 bone = effect_bone_arg(L, 2, entity, -1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    if (unknown_effect(L, *sim, 4, blueprints::BlueprintType::TrailEmitter, "trail")) {
+        return 0;
+    }
     const char* bp = luaL_optstring(L, 4, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::TRAIL_EMITTER);
@@ -2455,7 +2504,8 @@ static int l_CreateTrail(lua_State* L) {
 static int l_CreateBeamEmitter(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
-    const char* bp = luaL_optstring(L, 1, "");
+    check_beam_name(L, *sim, 1);
+    const char* bp = lua_tostring(L, 1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 2, 0));
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::BEAM_EMITTER);
@@ -2518,7 +2568,8 @@ static int l_AttachBeamEntityToEntity(lua_State* L) {
     auto* end_ent = effect_check_entity(L, 3);
     i32 end_bone = effect_bone_arg(L, 4, end_ent, -1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 5, 0));
-    const char* bp = luaL_optstring(L, 6, "");
+    check_beam_name(L, *sim, 6);
+    const char* bp = lua_tostring(L, 6);
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::BEAM_ENTITY_TO_ENTITY);
     fx->set_entity_id(start_ent ? start_ent->entity_id() : sim::EntityId());
@@ -6251,7 +6302,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("AttachBeamEntityToEntity", l_AttachBeamEntityToEntity);
     state.register_function("CreateBeamEntityToEntity", l_AttachBeamEntityToEntity); // same
     state.register_function("CreateBeamEmitter", l_CreateBeamEmitter);
-    state.register_function("CreateBeamEmitterOnEntity", l_CreateAttachedEmitter); // same sig as attached
+    state.register_function("CreateBeamEmitterOnEntity", l_CreateBeamEmitterOnEntity);
     state.register_function("CreateLightParticle", l_CreateLightParticle);
     state.register_function("CreateLightParticleIntel", l_CreateLightParticleIntel);
     state.register_function("CreateDecal", l_CreateDecal);
