@@ -25409,7 +25409,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest2', 'no_entity'); return end
-            local fx = CreateEmitterAtEntity(acu, 1, '/effects/emitters/test.bp')
+            local fx = CreateEmitterAtEntity(acu, 1, '/effects/emitters/destruction_explosion_fire_01_emit.bp')
             local chained = fx:ScaleEmitter(2.0)
             rawset(_G, '_emtest2', (chained == fx) and 'ok' or 'chain_broken')
         )");
@@ -25423,7 +25423,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest3', 'no_entity'); return end
-            local fx = CreateEmitterOnEntity(acu, 1, '/effects/emitters/test.bp')
+            local fx = CreateEmitterOnEntity(acu, 1, '/effects/emitters/destruction_explosion_fire_01_emit.bp')
                 :ScaleEmitter(1.5)
                 :OffsetEmitter(0, 0.5, 0)
                 :SetEmitterParam('LIFETIME', 9999)
@@ -25446,7 +25446,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest4', 'no_entity'); return end
-            local fx = CreateEmitterAtBone(acu, 0, 1, '/effects/emitters/test.bp')
+            local fx = CreateEmitterAtBone(acu, 0, 1, '/effects/emitters/destruction_explosion_fire_01_emit.bp')
             rawset(_G, '_emtest4', (fx and type(fx) == 'table') and 'ok' or 'nil')
         )");
         auto v = check_result("_emtest4");
@@ -25459,7 +25459,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest5', 'no_entity'); return end
-            local fx = CreateAttachedEmitter(acu, -1, 1, '/effects/emitters/test.bp')
+            local fx = CreateAttachedEmitter(acu, -1, 1, '/effects/emitters/destruction_explosion_fire_01_emit.bp')
             rawset(_G, '_emtest5', (fx and type(fx) == 'table') and 'ok' or 'nil')
         )");
         auto v = check_result("_emtest5");
@@ -25470,7 +25470,7 @@ void test_emitter(TestContext& ctx) {
     // Test 6: CreateBeamEmitter returns table (no entity needed)
     {
         run_lua(R"(
-            local fx = CreateBeamEmitter('/effects/emitters/beam_test.bp', 1)
+            local fx = CreateBeamEmitter('/effects/emitters/transport_thruster_beam_01_emit.bp', 1)
             rawset(_G, '_emtest6', (fx and type(fx) == 'table') and 'ok' or 'nil')
         )");
         auto v = check_result("_emtest6");
@@ -25483,7 +25483,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest7', 'no_entity'); return end
-            local fx = AttachBeamEntityToEntity(acu, 0, acu, 1, 1, '/effects/emitters/beam.bp')
+            local fx = AttachBeamEntityToEntity(acu, 0, acu, 1, 1, '/effects/emitters/transport_thruster_beam_01_emit.bp')
             rawset(_G, '_emtest7', (fx and type(fx) == 'table') and 'ok' or 'nil')
         )");
         auto v = check_result("_emtest7");
@@ -25496,7 +25496,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest8', 'no_entity'); return end
-            local fx = CreateEmitterAtEntity(acu, 1, '/effects/emitters/test.bp')
+            local fx = CreateEmitterAtEntity(acu, 1, '/effects/emitters/destruction_explosion_fire_01_emit.bp')
             local before = fx:BeenDestroyed()
             fx:Destroy()
             local after = fx:BeenDestroyed()
@@ -25555,7 +25555,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest12', 'no_entity'); return end
-            local fx = CreateBeamEmitterOnEntity(acu, -1, 1, '/effects/emitters/beam.bp')
+            local fx = CreateBeamEmitterOnEntity(acu, -1, 1, '/effects/emitters/transport_thruster_beam_01_emit.bp')
             rawset(_G, '_emtest12', (fx and type(fx) == 'table') and 'ok' or 'nil')
         )");
         auto v = check_result("_emtest12");
@@ -25582,7 +25582,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest14', 'no_entity'); return end
-            local beam = CreateBeamEmitter('/effects/emitters/beam.bp', 1)
+            local beam = CreateBeamEmitter('/effects/emitters/transport_thruster_beam_01_emit.bp', 1)
             local result = AttachBeamToEntity(beam, acu, 0, 1)
             rawset(_G, '_emtest14', (result == beam) and 'ok' or 'not_same')
         )");
@@ -25610,12 +25610,11 @@ void test_emitter(TestContext& ctx) {
     // Test 15: an emitter ends when its blueprint's Lifetime (ticks, rounded
     // up) runs out, however long its Repeattime: Lifetime 20 after 20 ticks,
     // a muzzle flash's 0.1 after one, and Lifetime 2 with Repeattime 6 after
-    // two. A negative Lifetime (a trail) or a blueprint the store doesn't
-    // know emits on. A LIFETIME param (ticks from when the emitter was made)
-    // retimes it: 0 ends it now, negative lets it emit on. A beam made by
-    // CreateBeamEmitterOnEntity has no emitter blueprint, so neither its
-    // Lifetime nor a LIFETIME param ends it: it goes with its entity. (A tick
-    // first, so the emitters aren't made on tick 0.)
+    // two. A negative Lifetime (a trail) emits on. A LIFETIME param (ticks
+    // from when the emitter was made) retimes it: 0 ends it now, negative lets
+    // it emit on. A beam made by CreateBeamEmitterOnEntity has no emitter
+    // blueprint, so neither its Lifetime nor a LIFETIME param ends it: it goes
+    // with its entity. (A tick first, so the emitters aren't made on tick 0.)
     {
         ctx.sim.tick();
         run_lua(R"(
@@ -25627,7 +25626,6 @@ void test_emitter(TestContext& ctx) {
             rawset(_G, '_emtest15_plume', at('water_splash_plume_02_emit.bp'))
             rawset(_G, '_emtest15_trail', CreateAttachedEmitter(acu, -1, 1,
                 '/effects/emitters/plasma_cannon_trail_01_emit.bp'))
-            rawset(_G, '_emtest15_unknown', at('test.bp'))
             rawset(_G, '_emtest15_retimed',
                 at('plasma_cannon_trail_01_emit.bp'):SetEmitterParam('LIFETIME', 30))
             rawset(_G, '_emtest15_now', at('weapon_mist_01_emit.bp'):SetEmitterParam('LIFETIME', 0))
@@ -25647,7 +25645,6 @@ void test_emitter(TestContext& ctx) {
         ok = ends("_emtest15_flash", 1) && ok;
         ok = ends("_emtest15_plume", 2) && ok;
         ok = ends("_emtest15_trail", -1) && ok;
-        ok = ends("_emtest15_unknown", -1) && ok;
         ok = ends("_emtest15_retimed", 30) && ok;
         ok = ends("_emtest15_now", 0) && ok;
         ok = ends("_emtest15_on", -1) && ok;
@@ -25724,6 +25721,49 @@ void test_emitter(TestContext& ctx) {
         } else {
             fail++;
             osc::test_status::fail("[FAIL] Test 17: kept={} after={}", kept, after);
+        }
+    }
+
+    // Test 18: teleport_sparks_01 is in retail's EffectTemplates, and no file has it.
+    {
+        run_lua(R"(
+            local acu = rawget(_G, '_emtest_entity')
+            local bad = '/effects/emitters/teleport_sparks_01_emit.bp'
+            local fire = '/effects/emitters/destruction_explosion_fire_01_emit.bp'
+            local beam = '/effects/emitters/transport_thruster_beam_01_emit.bp'
+            local wrong = {}
+            local function none(what, fx) if fx ~= nil then table.insert(wrong, what) end end
+            none('at', CreateEmitterAtEntity(acu, 1, bad))
+            none('on', CreateEmitterOnEntity(acu, 1, bad))
+            none('bone', CreateEmitterAtBone(acu, -1, 1, bad))
+            none('attached', CreateAttachedEmitter(acu, -1, 1, bad))
+            none('trail', CreateTrail(acu, -1, 1, bad))
+            none('trail of an emitter', CreateTrail(acu, -1, 1, fire))
+            none('emitter of a beam', CreateEmitterAtEntity(acu, 1, beam))
+            if CreateEmitterAtEntity(acu, 1, nil) == nil then table.insert(wrong, 'no name') end
+            if CreateEmitterAtEntity(acu, 1, '\\EFFECTS\\Emitters\\Destruction_Explosion_Fire_01_emit.bp') == nil then
+                table.insert(wrong, 'case')
+            end
+            local function raises(what, f, ...)
+                local ok, err = pcall(f, unpack(arg))
+                if ok or not string.find(tostring(err), 'Unknown beam kind: ' .. bad, 1, true) then
+                    table.insert(wrong, what .. '=' .. tostring(err))
+                end
+            end
+            raises('beam', CreateBeamEmitter, bad, 1)
+            raises('beam on', CreateBeamEmitterOnEntity, acu, -1, 1, bad)
+            raises('attach', AttachBeamEntityToEntity, acu, -1, acu, -1, 1, bad)
+            raises('entity to entity', CreateBeamEntityToEntity, acu, -1, acu, -1, 1, bad)
+            if pcall(CreateBeamEmitter, fire, 1) then table.insert(wrong, 'beam of an emitter') end
+            rawset(_G, '_emtest18', table.getn(wrong) == 0 and 'ok' or table.concat(wrong, ', '))
+        )");
+        const std::string v = check_result("_emtest18");
+        if (v == "ok") {
+            pass++;
+            spdlog::info("[PASS] Test 18: an unregistered effect name makes nothing or raises");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 18: {}", v);
         }
     }
 
@@ -25877,7 +25917,7 @@ void test_collision_beam(TestContext& ctx) {
             local beam = rawget(_G, '_cbtest_beam')
             local unit = rawget(_G, '_cbtest_unit')
             if not beam or not unit then rawset(_G, '_cbtest7', 'no_beam'); return end
-            local fx = CreateBeamEmitter('/effects/emitters/beam.bp', 1)
+            local fx = CreateBeamEmitter('/effects/emitters/transport_thruster_beam_01_emit.bp', 1)
             moho.CollisionBeamEntity.SetBeamFx(beam, fx, false)
             rawset(_G, '_cbtest7', 'ok')
         )");
@@ -25897,7 +25937,7 @@ void test_collision_beam(TestContext& ctx) {
             beam.OnImpact = function(self, impactType, target)
                 rawset(_G, '_cbtest8_impact', impactType)
             end
-            local fx = CreateBeamEmitter('/effects/emitters/beam.bp', 1)
+            local fx = CreateBeamEmitter('/effects/emitters/transport_thruster_beam_01_emit.bp', 1)
             moho.CollisionBeamEntity.SetBeamFx(beam, fx, true)
             local hit = rawget(_G, '_cbtest8_impact')
             local enabled = moho.CollisionBeamEntity.IsEnabled(beam)
