@@ -242,6 +242,41 @@ TEST_CASE("A missile defence out of reach doesn't take a missile's last shooter 
     CHECK(aims_at(b, m));
 }
 
+TEST_CASE("A missile defence holding its fire takes no missile, and leaves a missile's last "
+          "shooter place to one that fires",
+          "[weapon][projectile-targets]") {
+    Scene s;
+    Unit* holding = s.defence(50.0f, 64.0f);
+    s.defence(80.0f, 64.0f);
+    Weapon* a = s.guns[0];
+    Weapon* b = s.guns[1];
+    a->always_recheck_target = false;
+    b->always_recheck_target = false;
+    holding->set_fire_state(1);
+    Projectile* m = s.missile(65.0f, 64.0f, 1);
+    tick_until([&] { s.ticks(1); }, "B takes the missile", 5, [&] { return aims_at(b, m); });
+    s.ticks(5);
+    CHECK_FALSE(has_target(a));
+    CHECK(aims_at(b, m));
+}
+
+TEST_CASE("A missile defence set to hold its fire keeps the missile it can hit only without "
+          "AlwaysRecheckTarget",
+          "[weapon][projectile-targets]") {
+    for (const bool recheck : {false, true}) {
+        CAPTURE(recheck);
+        Scene s;
+        Unit* d = s.defence(40.0f, 64.0f);
+        Weapon* w = s.guns[0];
+        w->always_recheck_target = recheck;
+        Projectile* m = s.missile(65.0f, 64.0f);
+        tick_until([&] { s.ticks(1); }, "it takes the missile", 5, [&] { return aims_at(w, m); });
+        d->set_fire_state(1);
+        s.ticks(5);
+        CHECK(aims_at(w, m) == !recheck);
+    }
+}
+
 TEST_CASE("A unit counts once among a missile's shooters, however many of its weapons hold it",
           "[weapon][projectile-targets]") {
     Scene s;

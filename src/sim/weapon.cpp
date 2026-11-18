@@ -1004,6 +1004,11 @@ void Weapon::acquire_projectile(const Unit& owner, EntityRegistry& registry, con
             if (solution_status(owner, at, dx * dx + dz * dz) == Solution::Available) return;
         }
     }
+    // CAcquireTargetTask's hold fire: after its keep check, before TrackToTarget.
+    if (owner.fire_state() == 1) {
+        set_target_entity(EntityId());
+        return;
+    }
     if (const Projectile* best = track_to_target(owner, registry, sim)) {
         set_target_entity(best->entity_id());
         return;
