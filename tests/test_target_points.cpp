@@ -16,6 +16,7 @@
 #include "sim/bone_data.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
+#include "sim/sim_callback_queue.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -353,4 +354,124 @@ TEST_CASE("SetTargetEntity takes only a target on the weapon's layers", "[target
     gun.fire_target_layer_caps = osc::sim::parse_layer_caps("Land");
     REQUIRE(lua.do_string("moho.weapon_methods.SetTargetEntity(gun, target)").ok());
     CHECK(gun.target_entity_id == target);
+}
+
+TEST_CASE("An order with a unit target picks its target point as it is made, whatever the order",
+          "[targetpoints]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_sim_bindings(lua, sim);
+    osc::lua::register_moho_bindings(lua, sim);
+    two_armies(sim);
+    sim.random().set_mt19937(true);
+    sim.random().seed(1);
+    const BoneData bones = walker_bones(3.0f, 8.0f);
+    const EntityId worker = add_unit(sim, 1, {0, 0, 0}, nullptr);
+    for (const bool boned : {true, false}) {
+        CAPTURE(boned);
+        const EntityId target = add_unit(sim, 1, {0, 0, 20}, boned ? &bones : nullptr);
+        for (const auto type : {osc::sim::CommandType::Guard, osc::sim::CommandType::Repair,
+                                osc::sim::CommandType::Capture, osc::sim::CommandType::Attack}) {
+            CAPTURE(static_cast<int>(type));
+            osc::sim::UnitCommand cmd;
+            cmd.type = type;
+            cmd.target_id = target;
+            cmd.target_pos = {0, 0, 20};
+            const auto before = sim.random().words_drawn();
+            sim.route_command({worker}, cmd, true);
+            CHECK(sim.random().words_drawn() - before == (boned ? 1u : 0u));
+            const auto& queue = unit(sim, worker).command_queue();
+            if (!queue.empty()) {
+                const i32 point = queue.front().target_point;
+                CHECK((boned ? (point == 0 || point == 1) : point == -1));
+            }
+        }
+    }
+}
+
+TEST_CASE("A script's order picks its target's target point as it reads it, and again as its "
+          "command is made",
+          "[targetpoints][lua]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_sim_bindings(lua, sim);
+    osc::lua::register_moho_bindings(lua, sim);
+    two_armies(sim);
+    sim.random().set_mt19937(true);
+    sim.random().seed(1);
+    const BoneData bones = walker_bones(3.0f, 8.0f);
+    const EntityId target = add_unit(sim, 1, {0, 0, 20}, &bones);
+    const EntityId plain = add_unit(sim, 1, {0, 0, 30}, nullptr);
+    const EntityId worker = add_unit(sim, 1, {0, 0, 0}, nullptr);
+    const EntityId idle = add_unit(sim, 1, {5, 0, 0}, nullptr);
+    for (const char* cap : {"RULEUCC_Guard", "RULEUCC_Repair", "RULEUCC_Attack"}) {
+        unit(sim, worker).add_command_cap(cap);
+    }
+    lua_State* L = lua.raw();
+    const auto handle = [&](const char* name, EntityId id) {
+        lua_newtable(L);
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, sim.entity_registry().find(id));
+        lua_rawset(L, -3);
+        lua_setglobal(L, name);
+    };
+    handle("target", target);
+    handle("plain", plain);
+    handle("worker", worker);
+    handle("idle", idle);
+    const auto drawn = [&](const char* order) {
+        const auto before = sim.random().words_drawn();
+        REQUIRE(lua.do_string(order).ok());
+        return sim.random().words_drawn() - before;
+    };
+    CHECK(drawn("IssueGuard({worker}, target)") == 2);
+    CHECK(drawn("IssueRepair({worker}, target)") == 2);
+    CHECK(drawn("IssueAttack({worker}, target)") == 2);
+    CHECK(drawn("IssueGuard({worker}, plain)") == 0);
+    // Moho's IssueGuard reads its target before it looks for units that can take the order,
+    // IssueRepair only once it has them.
+    CHECK(drawn("IssueGuard({idle}, target)") == 1);
+    CHECK(drawn("IssueRepair({idle}, target)") == 0);
+}
+
+TEST_CASE("An order moved onto another unit picks that unit's target point; a preview draws none",
+          "[targetpoints][order_edit]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    std::vector<osc::u16> heights(129 * 129, 0);
+    osc::map::Heightmap hm(128, 128, 1.0f / 128.0f, std::move(heights));
+    sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
+    two_armies(sim);
+    sim.random().set_mt19937(true);
+    sim.random().seed(1);
+    const BoneData bones = walker_bones(3.0f, 8.0f);
+    const EntityId plain = add_unit(sim, 1, {10, 0, 30}, nullptr);
+    const EntityId target = add_unit(sim, 1, {10, 0, 40}, &bones);
+    const EntityId worker = add_unit(sim, 1, {10, 0, 10}, nullptr);
+    osc::sim::UnitCommand guard;
+    guard.type = osc::sim::CommandType::Guard;
+    guard.target_id = plain;
+    guard.command_id = 7;
+    unit(sim, worker).push_command(guard, true);
+    auto before = sim.random().words_drawn();
+    sim.tick();
+    const auto idle_tick = sim.random().words_drawn() - before;
+
+    osc::sim::SimCallbackEntry cb;
+    cb.func_name = osc::sim::kSetCommandTargetCallback;
+    cb.args["Command"] = 7.0;
+    cb.args["Target"] = static_cast<double>(target.key());
+    cb.unit_ids = {worker};
+    sim.submit_callback(cb);
+    before = sim.random().words_drawn();
+    const auto pending = sim.queues_with_pending();
+    REQUIRE(pending.count(worker) == 1);
+    CHECK(pending.at(worker).orders.front().target_id == target);
+    CHECK(sim.random().words_drawn() == before);
+    sim.tick();
+    CHECK(sim.random().words_drawn() - before == idle_tick + 1);
+    REQUIRE_FALSE(unit(sim, worker).command_queue().empty());
+    const osc::sim::UnitCommand& moved = unit(sim, worker).command_queue().front();
+    CHECK(moved.target_id == target);
+    CHECK((moved.target_point == 0 || moved.target_point == 1));
 }

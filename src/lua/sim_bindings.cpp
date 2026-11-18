@@ -4815,22 +4815,49 @@ static std::vector<sim::EntityId> units_with_command_cap(lua_State* L, const std
     return ids;
 }
 
-static u32 route_capable_command(lua_State* L, const std::string& cap, const sim::UnitCommand& cmd,
-                                 bool factories_only = false) {
+// The target point an Issue* picks as it reads its target into a CAiTarget (Moho's SetTarget or
+// UpdateTarget), before its command picks its own.
+static void read_target(lua_State* L, const sim::Entity& target) {
     auto* sim = get_sim(L);
-    const auto ids = units_with_command_cap(L, cap, factories_only);
-    return !sim || ids.empty() ? 0 : sim->route_command(ids, cmd, false);
+    if (sim && target.is_unit() && !target.destroyed()) {
+        (void)static_cast<const sim::Unit&>(target).pick_target_point(sim->random());
+    }
 }
 
-// faf-re cfunc_IssueRepairL and its siblings: the target never takes its own order.
+static u32 route_capable_command(lua_State* L, const std::string& cap, const sim::UnitCommand& cmd,
+                                 bool factories_only = false, const sim::Entity* read = nullptr) {
+    auto* sim = get_sim(L);
+    const auto ids = units_with_command_cap(L, cap, factories_only);
+    if (!sim || ids.empty()) {
+        return 0;
+    }
+    if (read) {
+        read_target(L, *read);
+    }
+    return sim->route_command(ids, cmd, false);
+}
+
+// faf-re cfunc_IssueRepairL and its siblings: the target never takes its own order. Reclaim and
+// Capture read their target before they drop it from the units, Repair and Sacrifice after.
 static void route_capable_command_but_target(lua_State* L, const std::string& cap,
-                                             const sim::UnitCommand& cmd) {
+                                             const sim::UnitCommand& cmd, const sim::Entity& target,
+                                             bool read_first) {
     auto* sim = get_sim(L);
     auto ids = units_with_command_cap(L, cap);
-    std::erase(ids, cmd.target_id);
-    if (sim && !ids.empty()) {
-        sim->route_command(ids, cmd, false);
+    if (!sim || ids.empty()) {
+        return;
     }
+    if (read_first) {
+        read_target(L, target);
+    }
+    std::erase(ids, cmd.target_id);
+    if (ids.empty()) {
+        return;
+    }
+    if (!read_first) {
+        read_target(L, target);
+    }
+    sim->route_command(ids, cmd, false);
 }
 
 /// What IssueMove and the other Issue* that return their command return: the
@@ -5033,6 +5060,7 @@ static int l_IssueAttack(lua_State* L) {
     } else {
         auto* target = extract_entity(L, 2);
         if (!target || target->destroyed()) return 0;
+        read_target(L, *target);
         cmd.target_id = target->entity_id();
         cmd.target_pos = target->position();
     }
@@ -5051,6 +5079,7 @@ static int l_IssueFormAttack(lua_State* L) {
     } else {
         auto* target = extract_entity(L, 2);
         if (!target || target->destroyed()) return 0;
+        read_target(L, *target);
         cmd.target_id = target->entity_id();
         cmd.target_pos = target->position();
     }
@@ -5078,6 +5107,7 @@ static int l_IssueGuard(lua_State* L) {
     } else {
         auto* target = extract_entity(L, 2);
         if (!target || target->destroyed() || !target->is_unit()) return 0;
+        read_target(L, *target);
         cmd.target_id = target->entity_id();
         cmd.target_pos = target->position();
     }
@@ -5094,7 +5124,7 @@ static int l_IssueFactoryAssist(lua_State* L) {
     cmd.type = sim::CommandType::Guard;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_capable_command(L, "RULEUCC_Guard", cmd, true);
+    route_capable_command(L, "RULEUCC_Guard", cmd, true, target);
     return 0;
 }
 
@@ -5110,7 +5140,7 @@ static int l_IssueRepair(lua_State* L) {
     cmd.type = sim::CommandType::Repair;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_capable_command_but_target(L, "RULEUCC_Repair", cmd);
+    route_capable_command_but_target(L, "RULEUCC_Repair", cmd, *target, false);
     return 0;
 }
 
@@ -5126,7 +5156,7 @@ static int l_IssueCapture(lua_State* L) {
     cmd.type = sim::CommandType::Capture;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_capable_command_but_target(L, "RULEUCC_Capture", cmd);
+    route_capable_command_but_target(L, "RULEUCC_Capture", cmd, *target, true);
     return 0;
 }
 
@@ -5552,7 +5582,7 @@ static int l_IssueReclaim(lua_State* L) {
     cmd.type = sim::CommandType::Reclaim;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_capable_command_but_target(L, "RULEUCC_Reclaim", cmd);
+    route_capable_command_but_target(L, "RULEUCC_Reclaim", cmd, *target, true);
     return 0;
 }
 
@@ -5822,7 +5852,12 @@ static int l_IssueTransportLoad(lua_State* L) {
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
 
-    route_units_command(L, 1, cmd, false);
+    auto* sim = get_sim(L);
+    const auto ids = collect_unit_ids(L, 1);
+    if (sim && !ids.empty()) {
+        read_target(L, *target);
+        sim->route_command(ids, cmd, false);
+    }
     return 0;
 }
 
@@ -5885,6 +5920,7 @@ static int l_IssueTactical(lua_State* L) {
     // Target can be entity or position
     auto* target = extract_entity(L, 2);
     if (target && !target->destroyed()) {
+        read_target(L, *target);
         cmd.target_id = target->entity_id();
         cmd.target_pos = target->position();
     } else {
@@ -5919,7 +5955,7 @@ static int l_IssueOvercharge(lua_State* L) {
     cmd.type = sim::CommandType::Overcharge;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_capable_command(L, "RULEUCC_Overcharge", cmd);
+    route_capable_command(L, "RULEUCC_Overcharge", cmd, false, target);
     return 0;
 }
 
@@ -5932,7 +5968,7 @@ static int l_IssueSacrifice(lua_State* L) {
     cmd.type = sim::CommandType::Sacrifice;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_capable_command_but_target(L, "RULEUCC_Sacrifice", cmd);
+    route_capable_command_but_target(L, "RULEUCC_Sacrifice", cmd, *target, false);
     return 0;
 }
 
