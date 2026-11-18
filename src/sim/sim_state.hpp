@@ -609,8 +609,9 @@ public:
     /// the transport can't carry the unit.
     bool takes_command(const Unit& unit, const UnitCommand& command, bool clear_existing,
                        const UnitCommand* last, bool* rejected = nullptr) const;
-    /// An Attack's target point, drawn as the order is made: one for all its
-    /// units (Moho's CAiTarget::UpdateTarget, Unit::PickTargetPoint).
+    /// The target point of an order's target unit, drawn as the order is made: one for all its
+    /// units, whatever the order (Moho's CUnitCommand decodes its target with
+    /// CAiTarget::UpdateTarget, which calls Unit::PickTargetPoint).
     void pick_target_point(UnitCommand& command);
     /// Whether a live unit still has the command in its queue (IsCommandDone
     /// is its negation: a command is done once no unit holds it).
@@ -628,8 +629,9 @@ public:
     };
     /// Sim::SetCommandTarget / CUnitCommand::SetTarget: the order moves for
     /// all its units, a formation keeping its shape.
+    /// `picks`: the stream a new target unit's target point is drawn from (null for a preview).
     void retarget_command(const SimCallbackEntry& cb, const std::vector<CommandToRetarget>& orders,
-                          std::optional<std::pair<f32, f32>> footprint) const;
+                          std::optional<std::pair<f32, f32>> footprint, SimRandom* picks) const;
     /// A player's order for the units they selected, as Moho's UI issues it
     /// (M206k): a move, patrol or transport call goes to the RALLYPOINT
     /// units among them (factories) as a factory command -- their rally

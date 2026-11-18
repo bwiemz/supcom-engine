@@ -1303,7 +1303,7 @@ bool has_transport_ai(const Unit& unit) {
 } // namespace
 
 void SimState::pick_target_point(UnitCommand& command) {
-    if (command.type != CommandType::Attack || !command.target_id) {
+    if (!command.target_id) {
         return;
     }
     const Entity* target = entity_registry_.find(command.target_id);
@@ -1734,7 +1734,7 @@ std::map<EntityId, SimState::QueueWithPending> SimState::queues_with_pending() c
                 }
             }
             if (!remove) {
-                retarget_command(cb, orders, std::nullopt);
+                retarget_command(cb, orders, std::nullopt, nullptr);
             }
             continue;
         }
