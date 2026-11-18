@@ -146,8 +146,9 @@ def write_ui_mod(packed: Path) -> None:
         ui.writestr("hook/lua/userInit.lua", probe("ui:user"))
         ui.writestr("hook/lua/UserSync.lua", probe("ui:sync"))
 
-    # A mod with a defect of each kind --check-mods reports
-    broken = mods / "OscModsFlowBroken"
+
+def write_broken_mod(broken: Path) -> None:
+    """A mod with a defect of each kind --check-mods reports."""
     (broken / "hook/lua").mkdir(parents=True)
     (broken / "units/xyz0001").mkdir(parents=True)
     _ = (broken / "mod_info.lua").write_text(
@@ -231,6 +232,7 @@ def write_mods(documents: Path) -> None:
     mods = documents / MODS_DIR
     write_game_mod(mods / "OscModsFlowGame")
     write_ui_mod(mods / "OscModsFlowUi.zip")
+    write_broken_mod(mods / "OscModsFlowBroken")
 
 
 def write_other_ui_mod(documents: Path) -> None:
@@ -345,6 +347,7 @@ COMMAND_LINE = Expected(
     mods={"sim": [GAME_MOD], "ui": [GAME_MOD, UI_MOD]},
     name="ModsFlow",
     wanted={"sim": ["game:sim"], "ui": ["game:user", "ui:sync"]},
+    effect=(EFFECT_LIFETIME, EFFECT_TEXTURE),
     unwanted={
         "sim": ["game:user", "ui:", "other:"],
         "ui": ["game:sim", "ui:user", "other:sync"],
