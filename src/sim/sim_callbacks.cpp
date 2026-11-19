@@ -236,6 +236,8 @@ void forget_target(UnitCommand& c) {
     c.approached = false;
     c.site_cleared = false;
     c.prepared = false; // Moho's build task rewinds to TASKSTATE_Preparing
+    c.reached = false;
+    c.faced = false;
     c.clearing_prop_id = EntityId();
     c.clearing_approached = false;
     c.engaged = false;
