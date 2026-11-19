@@ -11755,6 +11755,27 @@ void test_defence(TestContext& ctx) {
             error('the anti-nuke by the target fired ' .. __osc_by.__osc_fired .. ' interceptors')
         end
     )");
+    lua_check("setup: by the target, an anti-nuke holding its fire, then one firing", R"(
+        __osc_aside:Destroy()
+        __osc_by:Destroy()
+        __osc_holding = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 940, 320))
+        __osc_firing = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 980, 320))
+        __osc_holding:GiveTacticalSiloAmmo(1)
+        __osc_firing:GiveTacticalSiloAmmo(1)
+        __osc_holding:SetFireState(1)
+        __osc_s:GiveNukeSiloAmmo(1)
+        IssueNuke({__osc_s}, __osc_zero)
+    )");
+    tick_until([&] { run(1); }, "the fourth nuke is launched and is gone", 1000,
+               [&] { return nuke_gone(4); });
+    lua_check("Test 2f: an anti-nuke holding its fire leaves the nuke to one firing", R"(
+        local nuke = __osc_shot_of(__osc_s, 4)
+        if nuke.impact then error('the nuke impacted: ' .. nuke.impact) end
+        if __osc_holding.__osc_fired ~= 0 then error('the anti-nuke holding its fire fired') end
+        if __osc_firing.__osc_fired ~= 1 then
+            error('the firing anti-nuke fired ' .. __osc_firing.__osc_fired .. ' interceptors')
+        end
+    )");
 
     // Tactical missiles at power generators: one undefended, one by a UEF
     // Phalanx, one by a Seraphim TMD, one by an Aeon TMD's flare.
