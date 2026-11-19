@@ -502,8 +502,7 @@ void test_trail_render(TestContext& ctx) {
 
         // Test 10a: a trail it draws needs no overlay dot; one with no
         // blueprint keeps its dot.
-        run_lua(ctx, fmt::format("__osc_tt_ufx = CreateTrail(__osc_tt_u, -1, 1, '{}')\n",
-                                 bp("no_such.bp")));
+        run_lua(ctx, "__osc_tt_ufx = CreateTrail(__osc_tt_u, -1, 1, nil)\n");
         look_at((u0.x + ex) / 2, (u0.z + e0.z) / 2, 60.0f);
         step();
         const Frame frame = drawn(r);
@@ -513,7 +512,7 @@ void test_trail_render(TestContext& ctx) {
         };
         const sim::Vector3 e_at = anchor_of(efx).value_or(sim::Vector3{});
         t.check(dot_at(pos(u)) && !dot_at(e_at) && r.trail_renderer().draws_effect(efx),
-                fmt::format("Test 10a: an unreadable trail's dot {}; a drawn trail's {}",
+                fmt::format("Test 10a: a trail with no blueprint's dot {}; a drawn trail's {}",
                             dot_at(pos(u)), dot_at(e_at)));
     }
 

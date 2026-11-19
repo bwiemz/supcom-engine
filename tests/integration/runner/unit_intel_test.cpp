@@ -398,7 +398,8 @@ void test_effect_intel(TestContext& ctx) {
     spdlog::info("Effect intel test: the spot ({:.0f}, {:.0f})", sx, sz);
 
     // Two copies of a steady emitter (aeon_build_01: a ring a tick, for
-    // ever, EmitIfVisible), the second CreateIfVisible too.
+    // ever, EmitIfVisible), the second CreateIfVisible too; a beam whose
+    // texture isn't there.
     constexpr const char* kRoot = "/osc_effect_intel";
     const TempDir scratch("osc_effect_intel");
     const auto& dir = scratch.path();
@@ -418,12 +419,17 @@ void test_effect_intel(TestContext& ctx) {
         }
         text.replace(at, off.size(), "CreateIfVisible = true");
         std::ofstream(dir / "steady_create_emit.bp") << text;
+        std::ofstream(dir / "untextured_beam.bp")
+            << fmt::format("BeamBlueprint {{ TextureName = '{}/no_such.dds', Thickness = 1, "
+                           "Length = 12 }}\n",
+                           kRoot);
     }
     ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
     // Registered, as Moho draws only a registered effect blueprint
     (void)register_effect_blueprints(ctx, kRoot);
     const std::string steady = std::string(kRoot) + "/steady_emit.bp";
     const std::string create = std::string(kRoot) + "/steady_create_emit.bp";
+    const std::string untextured = std::string(kRoot) + "/untextured_beam.bp";
 
     const Spot seen_at{sx, sz};
     const Spot fog_at{sx + 40, sz};
@@ -513,13 +519,13 @@ void test_effect_intel(TestContext& ctx) {
 
     // Test 1: the steady emitter emits where the player's army sees it,
     // not in the fog; the CreateIfVisible one is made only in sight.
-    // (And one of a blueprint it can't read, which the overlay marks.)
+    // (And one with no blueprint, which the overlay marks.)
     run_lua(ctx, fmt::format("for _, u in {{__osc_fx_seen, __osc_fx_fog}} do\n"
                              "  CreateEmitterOnEntity(u, 2, '{}')\n"
                              "  CreateEmitterOnEntity(u, 2, '{}')\n"
-                             "  CreateEmitterOnEntity(u, 2, '{}/no_such_emit.bp')\n"
+                             "  CreateEmitterOnEntity(u, 2, nil)\n"
                              "end\n",
-                             steady, create, kRoot));
+                             steady, create));
     (void)shots.shoot(*ctx.sim.terrain(), sx, sz + 20, 150.0f);
     // The emitters emit only within their LODCutoff (100) of the camera
     // (M214c): look from 80, between the two units.
@@ -560,7 +566,7 @@ void test_effect_intel(TestContext& ctx) {
 
     // Test 5: a beam between two of ARMY_2's in the fog doesn't draw; one
     // with an end in sight does: as FA draws it (a BeamBlueprint's, M214a)
-    // and as the overlay's placeholder (a blueprint it can't read).
+    // and as the overlay's placeholder (one whose texture isn't there).
     const auto placeholders = [&](const Frame& fr) {
         return std::count_if(fr.overlay.begin(), fr.overlay.end(),
                              [](const Quad& q) { return same_colour(q, 0.8f, 0.9f, 1.0f); });
@@ -571,17 +577,19 @@ void test_effect_intel(TestContext& ctx) {
                                  return b.blueprint == "/effects/emitters/build_beam_01_emit.bp";
                              });
     };
-    run_lua(ctx, "CreateBeamEntityToEntity(__osc_fx_fog, -1, __osc_fx_fog2, -1, 2, "
-                 "'/effects/emitters/build_beam_01_emit.bp')\n"
-                 "CreateBeamEntityToEntity(__osc_fx_fog, -1, __osc_fx_fog2, -1, 2, "
-                 "'/effects/emitters/no_such_beam.bp')\n");
+    run_lua(ctx, fmt::format("CreateBeamEntityToEntity(__osc_fx_fog, -1, __osc_fx_fog2, -1, 2, "
+                             "'/effects/emitters/build_beam_01_emit.bp')\n"
+                             "CreateBeamEntityToEntity(__osc_fx_fog, -1, __osc_fx_fog2, -1, 2, "
+                             "'{}')\n",
+                             untextured));
     f = next();
     const auto fog_beams = fa_beams();
     const auto fog_placeholders = placeholders(f);
-    run_lua(ctx, "CreateBeamEntityToEntity(__osc_fx_seen, -1, __osc_fx_fog, -1, 2, "
-                 "'/effects/emitters/build_beam_01_emit.bp')\n"
-                 "CreateBeamEntityToEntity(__osc_fx_seen, -1, __osc_fx_fog, -1, 2, "
-                 "'/effects/emitters/no_such_beam.bp')\n");
+    run_lua(ctx, fmt::format("CreateBeamEntityToEntity(__osc_fx_seen, -1, __osc_fx_fog, -1, 2, "
+                             "'/effects/emitters/build_beam_01_emit.bp')\n"
+                             "CreateBeamEntityToEntity(__osc_fx_seen, -1, __osc_fx_fog, -1, 2, "
+                             "'{}')\n",
+                             untextured));
     next();
     shots.redraw_until_loaded();
     f = drawn(r);
