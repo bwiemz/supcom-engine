@@ -478,6 +478,7 @@ static int platoon_GuardTarget(lua_State* L) {
     cmd.type = sim::CommandType::Guard;
     cmd.target_id = target->entity_id();
     cmd.command_id = cmd_id;
+    sim->pick_target_point(cmd);
 
     bool queued = false;
     for (sim::EntityId id : order_units(L, *sim, *platoon, 3, 1, 2, true)) {
