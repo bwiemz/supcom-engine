@@ -53,6 +53,10 @@ struct Site {
         lua_settop(L, 0);
         const std::string code = R"(
             __blueprints = {
+                uel0105 = {
+                    BlueprintId = 'uel0105',
+                    Economy = { BuildableCategory = { 'ueb0101' } },
+                },
                 ueb0101 = {
                     BlueprintId = 'ueb0101',
                     Footprint = { SizeX = 5, SizeZ = 5 },
@@ -62,7 +66,10 @@ struct Site {
                 },
             }
             __failed = 0
-            Engineer = { OnFailedToBuild = function(self) __failed = __failed + 1 end }
+            Engineer = {
+                OnFailedToBuild = function(self) __failed = __failed + 1 end,
+                CheckBuildRestriction = function(self, bp) return true end,
+            }
             Engineer.__index = Engineer
         )";
         REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "stub") == 0);
@@ -83,6 +90,7 @@ struct Site {
         sim.set_victory_condition("sandbox");
 
         engineer = walker(0, 50.5f, 62.5f, 1.9f);
+        engineer->set_blueprint_id("uel0105");
         engineer->set_build_rate(5.0f);
         engineer->set_max_build_distance(5.0f);
         bind(*engineer, "Engineer");

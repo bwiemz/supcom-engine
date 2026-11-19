@@ -1744,9 +1744,14 @@ void test_upgrade(TestContext& ctx) {
                 return
             end
 
-            -- Build a T1 mass extractor near ACU
             local pos = acu:GetPosition()
-            local build_pos = {pos[1] + 10, pos[2], pos[3]}
+            local build_pos, best
+            for _, m in import('/lua/sim/ScenarioUtilities.lua').GetMarkers() do
+                if m.type == 'Mass' then
+                    local d = VDist2(m.position[1], m.position[3], pos[1], pos[3])
+                    if not best or d < best then build_pos, best = m.position, d end
+                end
+            end
             LOG('Upgrade test: building ueb1103 (T1 mex)')
             IssueBuildMobile({acu}, build_pos, 'ueb1103', {})
 

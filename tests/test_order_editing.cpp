@@ -15,6 +15,7 @@
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
 #include "sim/world_snapshot.hpp"
+#include "support/builder.hpp"
 #include "support/tick_until.hpp"
 
 extern "C" {
@@ -527,6 +528,7 @@ TEST_CASE("A build dropped where it can't stand is not sent; elsewhere it snaps"
     World w;
     Unit& a = w.walker(10, 10);
     a.add_category("ENGINEER");
+    osc::test::make_builder(w.L, a, "uel0105", {"pgen"});
     UnitCommand build;
     build.type = CommandType::BuildMobile;
     build.blueprint_id = "pgen";

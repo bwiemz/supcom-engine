@@ -76,6 +76,7 @@ add_executable(osc_tests
     test_bounded_props.cpp
     test_build_on_wreck.cpp
     test_build_site_units.cpp
+    test_build_restriction.cpp
     test_entity_health.cpp
     test_entity_position.cpp
     test_entity_lifetime.cpp
