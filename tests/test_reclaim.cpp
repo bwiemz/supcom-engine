@@ -24,6 +24,7 @@ extern "C" {
 #include <cmath>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using osc::sim::CommandType;
@@ -536,10 +537,9 @@ TEST_CASE("A guard helping reclaim a unit under construction takes its health do
     CHECK(apart < 0.01f);
 }
 
-TEST_CASE("A reclaimer out of reach walks to the cell nearest it a cell clear of the prop's, and "
-          "reclaims from there",
-          "[reclaim][approach]") {
-    ReclaimSim w;
+namespace {
+
+std::pair<Prop*, Unit*> walk_to_tree(ReclaimSim& w) {
     std::vector<osc::u16> heights(65 * 65, 0);
     osc::map::Heightmap hm(64, 64, 1.0f / 128.0f, std::move(heights));
     w.sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
@@ -569,7 +569,16 @@ TEST_CASE("A reclaimer out of reach walks to the cell nearest it a cell clear of
     footprints.main.caps = osc::blueprints::occupancy::kLand;
     eng->set_footprints(footprints);
     eng->push_command(order(CommandType::Reclaim, tree->entity_id()), true);
+    return {tree, eng};
+}
 
+} // namespace
+
+TEST_CASE("A reclaimer out of reach walks to the cell nearest it a cell clear of the prop's, and "
+          "reclaims from there",
+          "[reclaim][approach]") {
+    ReclaimSim w;
+    auto [tree, eng] = walk_to_tree(w);
     w.sim.tick();
     REQUIRE(eng->navigator().busy());
     CHECK(eng->navigator().goal().x == 18.5f);
@@ -579,4 +588,35 @@ TEST_CASE("A reclaimer out of reach walks to the cell nearest it a cell clear of
     const osc::f32 dx = eng->position().x - tree->position().x;
     const osc::f32 dz = eng->position().z - tree->position().z;
     CHECK(dx * dx + dz * dz > 2.0f * 2.0f);
+}
+
+TEST_CASE("A reclaimer walks on to its place when its target goes on the way, and the order ends "
+          "there",
+          "[reclaim][approach]") {
+    for (const bool gone : {false, true}) {
+        DYNAMIC_SECTION((gone ? "the tree gone on the way" : "the tree standing")) {
+            ReclaimSim w;
+            auto [tree, eng] = walk_to_tree(w);
+            const osc::sim::EntityId tree_id = tree->entity_id();
+            w.sim.tick();
+            w.sim.tick();
+            REQUIRE(eng->navigator().busy());
+            if (gone) {
+                w.sim.entity_registry().destroy(*tree);
+            }
+            w.sim.tick();
+            CHECK(eng->navigator().busy());
+            CHECK(eng->navigator().goal().x == 18.5f);
+            CHECK(eng->navigator().goal().z == 18.5f);
+            CHECK(eng->command_queue().size() == 1);
+            tick_until([&] { w.sim.tick(); }, "the walk ends", 200,
+                       [&] { return !eng->navigator().busy(); });
+            const osc::f32 dx = eng->position().x - 18.5f;
+            const osc::f32 dz = eng->position().z - 18.5f;
+            CHECK(dx * dx + dz * dz < 1.0f);
+            w.sim.tick();
+            CHECK(eng->command_queue().empty() == gone);
+            CHECK((eng->reclaim_target_id() == tree_id) == !gone);
+        }
+    }
 }

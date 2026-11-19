@@ -1548,6 +1548,11 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
 OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
+    // Moho's CUnitReclaimTask waits out the move task it sent before it
+    // looks at its target again.
+    if (cmd.approached && reclaim_target_id_ != cmd.target_id && approach_update(ctx)) {
+        return OrderStep::Hold;
+    }
     if (!cmd.target_id) {
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         end_approach(cmd);
