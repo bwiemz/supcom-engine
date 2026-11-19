@@ -15,6 +15,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "support/builder.hpp"
 #include "support/tick_until.hpp"
 
 extern "C" {
@@ -161,6 +162,7 @@ TEST_CASE("Builders sent to a site beyond the per-tick path budget still go", "[
     std::vector<Unit*> units;
     for (int i = 0; i < builders; ++i) {
         auto* u = spawn_land_unit(sim, 10.0f, 10.0f + 4.0f * static_cast<osc::f32>(i));
+        osc::test::make_builder(g.L, *u, "uel0105", {"ueb2101"});
         UnitCommand build = order(CommandType::BuildMobile, 110.0f, 10.0f + 4.0f * i);
         build.blueprint_id = "ueb2101";
         u->push_command(build, true);

@@ -51,7 +51,12 @@ struct WreckSite {
                 }
             end
             __blueprints = { ueb1103 = extractor('ueb1103'), uab1103 = extractor('uab1103') }
+            __blueprints.uel0105 = {
+                BlueprintId = 'uel0105',
+                Economy = { BuildableCategory = { 'ueb1103', 'uab1103', 'site' } },
+            }
             Engineer = {
+                CheckBuildRestriction = function(self, bp) return true end,
                 GetRebuildBonus = function(self, bp) return 0.5 end,
                 GetReclaimCosts = function(self, target) return 1, 0, 30 end,
             }
@@ -66,6 +71,7 @@ struct WreckSite {
         lua_rawset(L, LUA_REGISTRYINDEX);
 
         auto u = std::make_unique<Unit>();
+        u->set_blueprint_id("uel0105");
         u->set_position({11.0f, 0.0f, 5.0f});
         u->set_build_rate(10.0f);
         u->set_max_build_distance(10.0f);
