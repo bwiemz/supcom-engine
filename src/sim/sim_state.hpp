@@ -262,7 +262,7 @@ public:
     void notify_script_destroy(Entity& entity);
     /// Moho's Unit::OnDestroy and Entity::OnDestroy, as the deletion queue reaches the entity.
     void on_destroy(Entity& entity);
-    /// OnNotAdjacentTo both ways with each neighbour, which forgets the unit.
+    /// Moho's Kill and OnDestroy: OnNotAdjacentTo with the structures it overlaps now.
     void drop_adjacency(Unit& unit);
     /// Moho's CAiTransportImpl::TransportDetachAllUnits (ai/CAiTransportImpl.cpp:1533).
     void detach_all_units(Unit& transport, bool destroy_some);

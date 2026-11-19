@@ -42,6 +42,7 @@ add_executable(osc_tests
     test_weapon_candidates.cpp
     test_weapon_intel.cpp
     test_projectile_targeting.cpp
+    test_adjacency.cpp
     test_command_feedback.cpp
     test_map_border.cpp
     test_minimap_meshes.cpp

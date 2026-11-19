@@ -417,21 +417,40 @@ namespace {
 
 struct SkirtRect { f32 x0, z0, x1, z1; };
 
+// RUnitBlueprint::GetSkirtRect: its footprint's corner rounded to a cell, halves to even.
 SkirtRect get_skirt_rect(const Unit& u) {
-    f32 sx0 = u.position().x - u.footprint_size_x() * 0.5f + u.skirt_offset_x();
-    f32 sz0 = u.position().z - u.footprint_size_z() * 0.5f + u.skirt_offset_z();
-    return { sx0, sz0, sx0 + u.skirt_size_x(), sz0 + u.skirt_size_z() };
+    const f32 fx = u.footprint_size_x();
+    const f32 fz = u.footprint_size_z();
+    const f32 cx = static_cast<f32>(static_cast<i16>(std::lrint(u.position().x - fx * 0.5f)));
+    const f32 cz = static_cast<f32>(static_cast<i16>(std::lrint(u.position().z - fz * 0.5f)));
+    SkirtRect r{};
+    if (u.skirt_size_x() == 0) {
+        r.x0 = cx;
+        r.x1 = cx + fx;
+    } else {
+        r.x0 = u.skirt_offset_x() + cx;
+        r.x1 = r.x0 + u.skirt_size_x();
+    }
+    if (u.skirt_size_z() == 0) {
+        r.z0 = cz;
+        r.z1 = cz + fz;
+    } else {
+        r.z0 = u.skirt_offset_z() + cz;
+        r.z1 = r.z0 + u.skirt_size_z();
+    }
+    return r;
 }
 
+// Unit::OverlapsWith.
 bool skirts_adjacent(const SkirtRect& a, const SkirtRect& b) {
-    // FA structures are grid-aligned but skirt edges can be at .0 or .5
-    // offsets, so use a tolerance slightly larger than half a grid cell.
-    constexpr f32 eps = 0.6f;
-    bool x_overlap = (a.x0 < b.x1 - eps) && (b.x0 < a.x1 - eps);
-    bool z_overlap = (a.z0 < b.z1 - eps) && (b.z0 < a.z1 - eps);
-    bool x_touching = std::abs(a.x1 - b.x0) < eps || std::abs(b.x1 - a.x0) < eps;
-    bool z_touching = std::abs(a.z1 - b.z0) < eps || std::abs(b.z1 - a.z0) < eps;
-    return (x_overlap && z_touching) || (z_overlap && x_touching);
+    const auto near = [](f32 d) { return d >= 0.0f && d < 1.0f; };
+    if (near(std::fabs(a.x0 - b.x1)) || near(std::fabs(a.x1 - b.x0))) {
+        return (a.z0 >= b.z0 && b.z1 >= a.z1) || (b.z0 >= a.z0 && a.z1 >= b.z1);
+    }
+    if (!near(std::fabs(a.z0 - b.z1)) && !near(std::fabs(a.z1 - b.z0))) {
+        return false;
+    }
+    return (a.x0 >= b.x0 && b.x1 >= a.x1) || (b.x0 >= a.x0 && a.x1 >= b.x1);
 }
 
 /// Call OnAdjacentTo(self_tbl, other_tbl, trigger_tbl) on self_tbl.
@@ -460,65 +479,51 @@ bool call_on_adjacent_to(lua_State* L, int self_ref, int other_ref, int trigger_
 
 } // anonymous namespace
 
-void Unit::fire_adjacency_callbacks(EntityRegistry& registry, lua_State* L) {
-    if (!has_category("STRUCTURE")) return;
-    if (skirt_size_x_ <= 0 || skirt_size_z_ <= 0) return;
-    if (lua_table_ref() < 0) return;
+std::vector<EntityId> Unit::overlapping_structures(SimState& sim) const {
+    const SkirtRect my_skirt = get_skirt_rect(*this);
+    std::vector<EntityId> out;
+    for (Entity* e : units_meeting_sphere(sim, position(), 20.0f)) {
+        const auto* cu = static_cast<const Unit*>(e);
+        if (cu->destroyed() || cu->is_dying() || cu->is_mobile() || cu->army() != army() ||
+            cu == this || cu->layer() != layer() ||
+            !skirts_adjacent(my_skirt, get_skirt_rect(*cu))) {
+            continue;
+        }
+        out.push_back(e->entity_id());
+    }
+    // An EntitySet, by id.
+    std::sort(out.begin(), out.end());
+    return out;
+}
 
-    auto my_skirt = get_skirt_rect(*this);
-    // Expand generously: a neighbor's center can be far from its skirt edge
-    // (e.g., factory center at 200 has skirt edge at 204, 4 units away).
-    // Use 12.0 to cover largest FA structures (experimental: ~8 footprint + ~8 skirt offset).
-    constexpr f32 expand = 12.0f;
-    auto candidates = registry.collect_in_rect(
-        my_skirt.x0 - expand, my_skirt.z0 - expand,
-        my_skirt.x1 + expand, my_skirt.z1 + expand);
-
-    EntityId my_id = entity_id();
-
-    for (EntityId cid : candidates) {
-        if (cid == my_id) continue;
+void Unit::fire_adjacency_callbacks(SimState& sim, lua_State* L) {
+    if (is_mobile() || lua_table_ref() < 0) {
+        return;
+    }
+    EntityRegistry& registry = sim.entity_registry();
+    const EntityId my_id = entity_id();
+    for (const EntityId cid : overlapping_structures(sim)) {
         auto* ce = registry.find(cid);
-        if (!ce || ce->destroyed() || !ce->is_unit()) continue;
+        if (!ce || ce->destroyed() || ce->lua_table_ref() < 0) {
+            continue;
+        }
         auto* cu = static_cast<Unit*>(ce);
-        if (cu->army() != army()) continue;
-        if (!cu->has_category("STRUCTURE")) continue;
-        if (cu->is_being_built()) continue;
-        if (cu->skirt_size_x() <= 0 || cu->skirt_size_z() <= 0) continue;
-        if (cu->lua_table_ref() < 0) continue;
-
-        auto cand_skirt = get_skirt_rect(*cu);
-        if (!skirts_adjacent(my_skirt, cand_skirt)) continue;
-        if (adjacent_unit_ids_.count(cid)) continue; // already adjacent
-
-        // Track adjacency on both sides
         add_adjacent(cid);
         cu->add_adjacent(my_id);
-
-        // Fire OnAdjacentTo(self, neighbor, self) on self
-        if (!call_on_adjacent_to(L, lua_table_ref(), cu->lua_table_ref(),
-                                  lua_table_ref(), my_id, registry)) {
-            return; // self destroyed
+        if (!call_on_adjacent_to(L, lua_table_ref(), cu->lua_table_ref(), lua_table_ref(), my_id,
+                                 registry)) {
+            return;
         }
-
-        // Re-validate neighbor
         ce = registry.find(cid);
-        if (!ce || ce->destroyed()) continue;
-        cu = static_cast<Unit*>(ce);
-
-        // Fire OnAdjacentTo(neighbor, self, self) on neighbor
-        // Re-validate self first
-        auto* me = registry.find(my_id);
-        if (!me || me->destroyed()) return;
-
-        call_on_adjacent_to(L, cu->lua_table_ref(), lua_table_ref(),
-                            lua_table_ref(), cid, registry);
-
-        // Re-validate self after neighbor callback
-        me = registry.find(my_id);
-        if (!me || me->destroyed()) return;
-
-        spdlog::debug("Adjacency: #{} and #{} are now adjacent", my_id, cid);
+        if (!ce || ce->destroyed()) {
+            continue;
+        }
+        call_on_adjacent_to(L, ce->lua_table_ref(), lua_table_ref(), lua_table_ref(), cid,
+                            registry);
+        const Entity* me = registry.find(my_id);
+        if (!me || me->destroyed()) {
+            return;
+        }
     }
 }
 
@@ -1732,7 +1737,9 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
         // Fire adjacency callbacks for newly completed structure
         target = registry.find(target_id);
         if (target && !target->destroyed() && target->is_unit()) {
-            static_cast<Unit*>(target)->fire_adjacency_callbacks(registry, L);
+            if (auto* sim = get_sim(L)) {
+                static_cast<Unit*>(target)->fire_adjacency_callbacks(*sim, L);
+            }
         }
 
         // Auto-add completed unit to its army's ArmyPool platoon.
