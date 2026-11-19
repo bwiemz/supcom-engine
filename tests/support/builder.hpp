@@ -11,7 +11,7 @@ extern "C" {
 
 namespace osc::test {
 
-/// What a mobile build's order is asked as it comes up: a blueprint whose
+/// What a build order is asked as it comes up: a blueprint whose
 /// BuildableCategory names each of `targets`, and a CheckBuildRestriction that allows.
 inline void make_builder(lua_State* L, sim::Unit& builder, const char* builder_bp,
                          std::initializer_list<const char*> targets) {

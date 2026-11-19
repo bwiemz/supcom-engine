@@ -18,6 +18,7 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -36,6 +37,7 @@ struct Builds {
     SimState sim{L, nullptr};
     Unit* engineer = nullptr;
     osc::sim::EntityId built_id{};
+    std::vector<osc::sim::Vector3> frames;
 
     Builds() {
         luaopen_base(L);
@@ -43,14 +45,19 @@ struct Builds {
         lua_settop(L, 0);
         const std::string code = R"(
             __blueprints = {
+                uel0001 = {
+                    BlueprintId = 'uel0001',
+                    Economy = { BuildableCategory = { 'ueb1101', 'ueb1103' } },
+                },
                 uel0105 = {
                     BlueprintId = 'uel0105',
-                    Economy = { BuildableCategory = { 'ueb1101', 'ueb1103' } },
+                    Economy = { BuildTime = 100, BuildCostMass = 1, BuildCostEnergy = 1 },
                 },
                 ueb0101 = {
                     BlueprintId = 'ueb0101',
                     Footprint = { SizeX = 2, SizeZ = 2 },
-                    Economy = { BuildTime = 100, BuildCostMass = 1, BuildCostEnergy = 1 },
+                    Economy = { BuildTime = 100, BuildCostMass = 1, BuildCostEnergy = 1,
+                                BuildableCategory = { 'uel0105' } },
                 },
                 ueb1103 = {
                     BlueprintId = 'ueb1103',
@@ -73,6 +80,8 @@ struct Builds {
                 CheckBuildRestriction = function(self, bp) return not __refuse end,
             }
             Engineer.__index = Engineer
+            Factory = { CheckBuildRestriction = function(self, bp) return true end }
+            Factory.__index = Factory
         )";
         REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "stub") == 0);
         REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
@@ -92,7 +101,7 @@ struct Builds {
         sim.add_resource_deposit({50.5f, 0.0f, 50.5f, 1.0f, osc::sim::ResourceDeposit::Mass});
 
         auto u = std::make_unique<Unit>();
-        u->set_blueprint_id("uel0105");
+        u->set_blueprint_id("uel0001");
         u->set_army(0);
         u->set_position({50.5f, 0.0f, 54.5f});
         u->set_max_health(100.0f);
@@ -122,6 +131,7 @@ struct Builds {
         self->sim.entity_registry().register_entity(std::move(u));
         self->bind(*raw, nullptr);
         self->built_id = raw->entity_id();
+        self->frames.push_back(raw->position());
         osc::sim::push_entity_key(L, raw->entity_id());
         lua_rawgeti(L, LUA_REGISTRYINDEX, raw->lua_table_ref());
         return 2;
@@ -137,6 +147,26 @@ struct Builds {
             lua_setmetatable(L, -2);
         }
         e.set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+    }
+
+    Unit* factory(f32 x, f32 z) {
+        auto u = std::make_unique<Unit>();
+        u->set_blueprint_id("ueb0101");
+        u->set_army(0);
+        u->set_position({x, 0.0f, z});
+        u->set_max_health(100.0f);
+        u->set_health(100.0f);
+        u->set_build_rate(10.0f);
+        u->add_category("FACTORY");
+        Unit* raw = u.get();
+        sim.entity_registry().register_entity(std::move(u));
+        bind(*raw, "Factory");
+        return raw;
+    }
+
+    bool frame_at(const osc::sim::Vector3& at) const {
+        return std::any_of(frames.begin(), frames.end(),
+                           [&](const osc::sim::Vector3& f) { return f.x == at.x && f.z == at.z; });
     }
 
     void build(const char* blueprint, f32 x, f32 z) {
@@ -217,5 +247,36 @@ TEST_CASE("A build its army may not make once its order is under way goes on",
     REQUIRE(b.ordered());
     b.sim.get_army(0)->add_build_restriction({"ueb1101"});
     tick_until([&] { b.sim.tick(); }, "the frame stands", 40, [&] { return b.built(); });
+    CHECK(b.failed() == 0);
+}
+
+TEST_CASE("A factory build is dropped as it comes up where its unit's script refuses it, and the "
+          "factory ordered with that unit builds",
+          "[build][build_restriction]") {
+    const bool refuses = GENERATE(true, false);
+    CAPTURE(refuses);
+    Builds b;
+    Unit* factory = b.factory(40.0f, 40.0f);
+    b.engineer->add_category("ENGINEER");
+    lua_pushboolean(b.L, refuses ? 1 : 0);
+    lua_setglobal(b.L, "__refuse");
+    const osc::sim::Vector3 at = b.engineer->position();
+    UnitCommand build;
+    build.type = CommandType::BuildFactory;
+    build.blueprint_id = "uel0105";
+    b.sim.route_command({b.engineer->entity_id(), factory->entity_id()}, build, false);
+    CHECK(b.ordered());
+    b.sim.tick();
+    CHECK(b.ordered() != refuses);
+    for (int i = 0; i < 9; ++i) {
+        b.sim.tick();
+    }
+    CHECK(b.frame_at(factory->position()));
+    CHECK(b.frame_at(at) != refuses);
+    if (refuses) {
+        CHECK_FALSE(b.ordered());
+        CHECK(b.engineer->position().x == at.x);
+        CHECK(b.engineer->position().z == at.z);
+    }
     CHECK(b.failed() == 0);
 }

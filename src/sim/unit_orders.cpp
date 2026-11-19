@@ -172,7 +172,7 @@ bool unit_can_build(lua_State* L, const Unit& builder, const UnitCommand& cmd,
     return !builder.build_restriction().matches(categories);
 }
 
-/// Moho's IAiCommandDispatchImpl::DispatchTask for a mobile build.
+/// Moho's IAiCommandDispatchImpl::DispatchTask for a build.
 bool dispatch_makes_build_task(lua_State* L, const Unit& builder, const UnitCommand& cmd,
                                const SimContext& ctx) {
     if (!L) {
@@ -183,7 +183,8 @@ bool dispatch_makes_build_task(lua_State* L, const Unit& builder, const UnitComm
         return false;
     }
     lua_settop(L, top);
-    if (!unit_can_build(L, builder, cmd, ctx) || builder.lua_table_ref() < 0) {
+    if ((cmd.type == CommandType::BuildMobile && !unit_can_build(L, builder, cmd, ctx)) ||
+        builder.lua_table_ref() < 0) {
         return false;
     }
     lua_rawgeti(L, LUA_REGISTRYINDEX, builder.lua_table_ref());
@@ -533,7 +534,8 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
                 return true;
             }
             // Moho's dispatch makes no task for a build the unit may not make: the order goes.
-            if (command_queue_.front().type == CommandType::BuildMobile) {
+            if (command_queue_.front().type == CommandType::BuildMobile ||
+                command_queue_.front().type == CommandType::BuildFactory) {
                 const u32 order = command_queue_.front().command_id;
                 const bool makes =
                     dispatch_makes_build_task(ctx.L, *this, command_queue_.front(), ctx);
