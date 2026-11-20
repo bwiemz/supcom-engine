@@ -62,7 +62,8 @@ struct Site {
                     Footprint = { SizeX = 5, SizeZ = 5 },
                     Physics = { SkirtSizeX = 8, SkirtSizeZ = 8, SkirtOffsetX = -1.5,
                                 SkirtOffsetZ = -1.5 },
-                    Economy = { BuildTime = 100, BuildCostMass = 1, BuildCostEnergy = 1 },
+                    Economy = { BuildTime = 100, BuildCostMass = 1, BuildCostEnergy = 1,
+                                BuildableCategory = { 'ueb0101' } },
                 },
             }
             __failed = 0
@@ -161,6 +162,7 @@ struct Site {
     /// cells round (x, z) 5 by 5, its box 4.2 by 0.6 by 4.4.
     Unit* factory(f32 x, f32 z) {
         auto u = std::make_unique<Unit>();
+        u->set_blueprint_id("ueb0101");
         u->set_army(0);
         u->set_position({x, 0.0f, z});
         u->set_max_health(100.0f);

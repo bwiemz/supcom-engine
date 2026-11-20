@@ -290,7 +290,8 @@ struct BuildRuleHarness {
             {"MOBILE", "LAND", "EXPERIMENTAL"}, 1);
         store.expose_to_lua(state.raw());
         REQUIRE(state.do_string(
-            "__blueprints.test_factory.General = {CommandCaps = {RULEUCC_Pause = true}}\n"));
+            "__blueprints.test_factory.General = {CommandCaps = {RULEUCC_Pause = true}}\n"
+            "__blueprints.test_factory.Economy.BuildableCategory = {'MOBILE'}\n"));
         REQUIRE(state.do_string(kAllowBuilds));
         // What the factory makes has no shape: the harness has no scripts to roll
         // a finished unit off the factory, and a unit left on its footprint would
@@ -1650,7 +1651,7 @@ TEST_CASE("Every way of clearing the queue cancels the build or upgrade under wa
                            "            tostring(u == __frame)\n"
                            "end")
                 .ok());
-    h.queue(type, type == osc::sim::CommandType::Upgrade ? "f2" : "t2");
+    h.queue(type, type == osc::sim::CommandType::Upgrade ? "f2" : "t1");
     h.sim.tick();
     h.sim.tick();
     REQUIRE(h.factory->is_building());
@@ -1920,7 +1921,7 @@ TEST_CASE("IssueStop queues a Stop behind the build under way, which finishes",
     lua_pushstring(L, "__f");
     lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
     lua_settable(L, LUA_GLOBALSINDEX);
-    h.queue(osc::sim::CommandType::BuildFactory, "t2");
+    h.queue(osc::sim::CommandType::BuildFactory, "t1");
     h.sim.tick();
     h.sim.tick();
     REQUIRE(h.factory->is_building());
