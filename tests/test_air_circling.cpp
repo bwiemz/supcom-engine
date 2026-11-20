@@ -146,6 +146,17 @@ struct World {
                     " CirclingRadiusVsAirMult = 0.66, KLift = 3, KLiftDamping = 1, KMove = 4,"
                     " KMoveDamping = 1, KTurn = 4, KTurnDamping = 2, LiftFactor = 7,"
                     " MaxAirspeed = 8, MinAirspeed = 8, StartTurnDistance = 5, BankFactor = 0.1}}"),
+                std::string(
+                    "return {BlueprintId = 'offbot', Categories = {'AIR', 'MOBILE', 'REPAIR'},"
+                    " Defense = {MaxHealth = 30}, SizeX = 0.25, SizeY = 0.25, SizeZ = 0.25,"
+                    " CollisionOffsetX = 0.2, CollisionOffsetZ = -0.3,"
+                    " Economy = {BuildRate = 0, MaxBuildDistance = 100},"
+                    " General = {CommandCaps = {RULEUCC_Guard = true, RULEUCC_Repair = true}},"
+                    " Physics = {MotionType = 'RULEUMT_Air', Elevation = 3, MaxSpeed = 20.5},"
+                    " Air = {CanFly = true, CirclingElevationChangeRatio = 0.5,"
+                    " CirclingRadiusVsAirMult = 0.66, KLift = 3, KLiftDamping = 1, KMove = 4,"
+                    " KMoveDamping = 1, KTurn = 4, KTurnDamping = 2, LiftFactor = 7,"
+                    " MaxAirspeed = 8, MinAirspeed = 8, StartTurnDistance = 5, BankFactor = 0.1}}"),
                 std::string("return {BlueprintId = 'wall', Categories = {'STRUCTURE'},"
                             " Defense = {MaxHealth = 600}, SizeX = 0.6, SizeZ = 0.4,"
                             " Economy = {BuildTime = 125, BuildCostMass = 75,"
@@ -170,7 +181,7 @@ struct World {
         lua_newtable(L);
         for (const char* id :
              {"gunship", "steady", "hoverer", "plane", "banker", "flatwing", "gunfwd", "nomin",
-              "drone", "repairdrone", "buildbot", "wall", "tank"}) {
+              "drone", "repairdrone", "buildbot", "offbot", "wall", "tank"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -825,11 +836,13 @@ TEST_CASE("A drone guarding a hurt unit out of its reach flies winged to it, onc
     w.tick(d);
     CHECK(osc::sim::flies_winged_on_guard(d));
     // On its way, one flight a tick: each tick it moves by its airframe's own
-    // velocity, nothing more (a navigator's move as well would add to it)
+    // velocity and its body's turn, nothing more (a navigator's move as well would add to it)
     f32 fastest = 0.0f;
     f32 worst_extra = 0.0f;
     Vector3 last = d.position();
     Vector3 last_v = d.air_velocity();
+    osc::sim::Quaternion last_q = d.orientation();
+    const Vector3 centre = d.bone_local_transform(-1).position;
     const int t = tick_until(
         [&] {
             w.tick(d);
@@ -838,11 +851,15 @@ TEST_CASE("A drone guarding a hurt unit out of its reach flies winged to it, onc
             fastest = std::max(fastest, moved * 10.0f);
             const Vector3& v = d.air_velocity();
             if (d.air_combat().flying && !d.is_repairing()) {
-                const f32 step = std::hypot(v.x + last_v.x, v.z + last_v.z) * 0.05f;
-                worst_extra = std::max(worst_extra, std::abs(moved - step));
+                const Vector3 lever = osc::sim::mult_quad_vec(last_q, centre);
+                const Vector3 turned = osc::sim::mult_quad_vec(d.orientation(), centre);
+                const f32 x = last.x + (v.x + last_v.x) * 0.05f + lever.x - turned.x;
+                const f32 z = last.z + (v.z + last_v.z) * 0.05f + lever.z - turned.z;
+                worst_extra = std::max(worst_extra, std::hypot(p.x - x, p.z - z));
             }
             last = p;
             last_v = v;
+            last_q = d.orientation();
         },
         "the drone starts repairing", 600, [&] { return d.is_repairing(); });
     INFO("ticks " << t << " fastest " << fastest << " worst extra " << worst_extra);
@@ -1047,4 +1064,43 @@ TEST_CASE("A hovering guard waiting for its work turns its nose toward heading 0
         CHECK(d.position().y == 13.0f);
     }
     CHECK_FALSE(d.is_repairing());
+}
+
+TEST_CASE("A flier moves its collision box's centre by its velocity and stands that far from it "
+          "as it is turned after, as Moho's SPhysBody",
+          "[air_circling]") {
+    const char* bp = nullptr;
+    SECTION("its centre over it") {
+        bp = "buildbot";
+    }
+    SECTION("its centre to one side and behind too") {
+        bp = "offbot";
+    }
+    World w;
+    Unit& patient = *w.make("tank", 64.0f, 64.0f);
+    Unit& d = *w.make(bp, 66.0f, 64.0f);
+    osc::sim::UnitCommand repair;
+    repair.type = osc::sim::CommandType::Repair;
+    repair.target_id = patient.entity_id();
+    repair.target_pos = patient.position();
+    d.push_command(repair, true);
+    const Vector3 centre = d.bone_local_transform(-1).position;
+    f32 turned_most = 0.0f;
+    for (int t = 0; t < 80; ++t) {
+        patient.set_health(1.0f);
+        const Vector3 was = d.position();
+        const osc::sim::Quaternion q = d.orientation();
+        const Vector3 v = d.air_velocity();
+        w.tick(d);
+        const Vector3 lever = osc::sim::mult_quad_vec(q, centre);
+        const Vector3 turned = osc::sim::mult_quad_vec(d.orientation(), centre);
+        const Vector3 now = d.position();
+        const Vector3 v1 = d.air_velocity();
+        INFO("tick " << t);
+        CHECK(std::abs(was.x + (v1.x + v.x) * 0.05f + lever.x - turned.x - now.x) < 1e-4f);
+        CHECK(std::abs(was.z + (v1.z + v.z) * 0.05f + lever.z - turned.z - now.z) < 1e-4f);
+        turned_most = std::max(turned_most, std::hypot(lever.x - turned.x, lever.z - turned.z));
+    }
+    CHECK(d.is_repairing());
+    CHECK(turned_most > 0.002f);
 }
