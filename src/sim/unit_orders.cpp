@@ -409,15 +409,52 @@ Vector3 Unit::reclaim_place(const Entity& target, SimContext& ctx) const {
     return place;
 }
 
+namespace {
+// RUnitBlueprint::GetSkirtRect
+MoveExclusion skirt_rect(const Unit& u) {
+    const auto x0 = static_cast<f32>(std::lrint(u.position().x - u.footprint_size_x() * 0.5f)) +
+                    u.skirt_offset_x();
+    const auto z0 = static_cast<f32>(std::lrint(u.position().z - u.footprint_size_z() * 0.5f)) +
+                    u.skirt_offset_z();
+    return {x0, z0, x0 + u.skirt_size_x(), z0 + u.skirt_size_z()};
+}
+} // namespace
+
+Vector3 Unit::repair_place(const Unit& target, SimContext& ctx) const {
+    if (!ctx.sim || !ctx.terrain) {
+        return approach_point(*this, target.position(), target.skirt_size_x() * 0.5f + 1,
+                              target.skirt_size_z() * 0.5f + 1);
+    }
+    MoveExclusion skirt = skirt_rect(target);
+    skirt.x0 -= 1;
+    skirt.z0 -= 1;
+    skirt.x1 += 1;
+    skirt.z1 += 1;
+    Vector3 place = target.position();
+    prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()), place, 1,
+                 &skirt);
+    return place;
+}
+
+Vector3 Unit::capture_place(const Unit& target, SimContext& ctx) const {
+    if (has_category("AIR")) {
+        return target.position();
+    }
+    if (!ctx.sim || !ctx.terrain) {
+        return approach_point(*this, target.position(), target.skirt_size_x() * 0.5f,
+                              target.skirt_size_z() * 0.5f);
+    }
+    const MoveExclusion skirt = skirt_rect(target);
+    Vector3 place = target.position();
+    prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()), place, 1,
+                 &skirt);
+    return place;
+}
+
 Vector3 Unit::guard_anchor_place(const Unit& guarded, SimContext& ctx) const {
     Vector3 place = guarded.position();
     if (ctx.sim && ctx.terrain) {
-        // RUnitBlueprint::GetSkirtRect
-        const auto x0 = static_cast<f32>(std::lrint(place.x - guarded.footprint_size_x() * 0.5f)) +
-                        guarded.skirt_offset_x();
-        const auto z0 = static_cast<f32>(std::lrint(place.z - guarded.footprint_size_z() * 0.5f)) +
-                        guarded.skirt_offset_z();
-        const MoveExclusion skirt{x0, z0, x0 + guarded.skirt_size_x(), z0 + guarded.skirt_size_z()};
+        const MoveExclusion skirt = skirt_rect(guarded);
         prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()), place,
                      0, &skirt);
     }
@@ -425,9 +462,9 @@ Vector3 Unit::guard_anchor_place(const Unit& guarded, SimContext& ctx) const {
 }
 
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
-    if (guard_anchor_.held &&
-        (command_queue_.empty() || command_queue_.front().command_id != guard_anchor_.order)) {
-        free_guard_anchor(ctx.sim);
+    if (order_reservation_.held &&
+        (command_queue_.empty() || command_queue_.front().command_id != order_reservation_.order)) {
+        free_order_reservation(ctx.sim);
     }
     const bool awaited = std::exchange(arm_awaited_, false);
     if (!awaited && !is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
@@ -1722,11 +1759,16 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
             stop_assisting(L, &registry);
         }
         end_approach(cmd);
+        free_order_reservation(ctx.sim);
     };
     if (!cmd.target_id) {
         let_go();
         command_queue_.pop_front();
         return OrderStep::Next;
+    }
+    const bool working = repair_target_id_ == cmd.target_id || build_target_id_ == cmd.target_id;
+    if (cmd.approached && !working && approach_update(ctx)) {
+        return OrderStep::Hold;
     }
     auto* rtarget = registry.find(cmd.target_id);
     if (!rtarget || rtarget->destroyed() || !rtarget->is_unit()) {
@@ -1745,29 +1787,30 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
     }
 
     // Reach: the gap to its skirt within MaxBuildDistance to begin,
-    // twice that to go on (Moho's CUnitRepairTask). Out of reach, the
-    // unit walks just clear of its skirt, and repairs from there or
+    // twice that to go on (Moho's CUnitRepairTask). Out of reach, or where
+    // it doesn't fit, the unit walks to its place, and repairs from there or
     // gives up.
     {
         const auto& runit = static_cast<const Unit&>(*rtarget);
         const f32 gap = work_gap(*this, rtarget->position(), skirt_extent(runit));
-        const bool working =
-            repair_target_id_ == cmd.target_id || build_target_id_ == cmd.target_id;
         if (!working) {
-            if (!cmd.approached && gap > max_build_distance_) {
+            if (!cmd.approached &&
+                (gap > max_build_distance_ ||
+                 (ctx.sim && ctx.terrain &&
+                  ctx.sim->footprint_fits_at(footprint(), position().x, position().z) == 0))) {
                 if (effective_speed() <= 0) {
                     command_queue_.pop_front();
                     return OrderStep::Next;
                 }
                 cmd.approached = true;
-                set_path_goal(approach_point(*this, rtarget->position(),
-                                             runit.skirt_size_x() * 0.5f + 1,
-                                             runit.skirt_size_z() * 0.5f + 1),
-                              ctx);
+                const Vector3 place = repair_place(runit, ctx);
+                reserve_for_order(cmd.command_id, place, ctx.sim);
+                set_path_goal(place, ctx);
+                if (approach_update(ctx)) {
+                    return OrderStep::Hold;
+                }
             }
-            if (cmd.approached && approach_update(ctx)) {
-                return OrderStep::Hold;
-            }
+            free_order_reservation(ctx.sim);
             if (gap > max_build_distance_) {
                 let_go();
                 command_queue_.pop_front();
@@ -1890,6 +1933,7 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 /*dt*/, SimContext& ctx) {
         if (destroyed() || !in_registry()) return OrderStep::Gone;
         if (still_head()) {
             end_approach(cmd);
+            free_order_reservation(ctx.sim);
             command_queue_.pop_front();
         }
         return OrderStep::Next;
@@ -1908,14 +1952,14 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 /*dt*/, SimContext& ctx) {
     };
     if (!cmd.target_id) return fail();
     const bool begun = capture_target_id_ == cmd.target_id;
+    // Its walk in runs under the task, which waits for it.
+    if (!begun && cmd.approached && approach_update(ctx)) return OrderStep::Hold;
     Entity* const target = registry.find(cmd.target_id);
     if (!target) {
         // None as the order came up: Moho's CUnitCaptureTask::Create made no
         // task, and its order fails with nothing heard.
         return begun || cmd.approached ? give_up() : fail();
     }
-    // Its walk in runs under the task, which waits for it.
-    if (!begun && cmd.approached && approach_update(ctx)) return OrderStep::Hold;
     if (!target->is_unit()) return fail();
     auto& tunit = static_cast<Unit&>(*target);
     // Each tick it runs, before anything else: a target no longer to be
@@ -1931,15 +1975,17 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 /*dt*/, SimContext& ctx) {
     const f32 gap = work_gap(*this, target->position(), footprint_extent(*target));
     if (tunit.is_being_captured() && gap > kCaptureHold) return fail();
     if (!begun) {
-        // TASKSTATE_Preparing: a gap over 5 sends the unit just clear of its
-        // target's skirt, once. TASKSTATE_Waiting: it captures from there
-        // within 10, a target still alive.
+        // TASKSTATE_Preparing: a gap over 5 sends the unit to its place,
+        // once. TASKSTATE_Waiting: it captures from there within 10, a target
+        // still alive.
         if (!cmd.approached && gap > kCaptureReach) {
             if (effective_speed() <= 0) return end();
             cmd.approached = true;
-            set_path_goal(approach_point(*this, target->position(), tunit.skirt_size_x() * 0.5f,
-                                         tunit.skirt_size_z() * 0.5f),
-                          ctx);
+            const Vector3 place = capture_place(tunit, ctx);
+            if (!has_category("AIR")) {
+                reserve_for_order(cmd.command_id, place, ctx.sim);
+            }
+            set_path_goal(place, ctx);
             if (approach_update(ctx)) return OrderStep::Hold;
         }
         if (gap > kCaptureHold) return fail();
@@ -2201,20 +2247,15 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (effective_speed() <= 0 || (flies_winged_on_guard(*this) && ctx.sim)) {
             cmd.guard_prepared = true;
         } else {
-            if (!guard_anchor_.held || guard_anchor_.order != cmd.command_id) {
+            if (!order_reservation_.held || order_reservation_.order != cmd.command_id) {
                 const Vector3 place = guard_anchor_place(*target_unit, ctx);
-                free_guard_anchor(ctx.sim);
-                guard_anchor_ = {true, cmd.command_id,
-                                 footprint_rect(footprint(), place.x, place.z)};
-                if (ctx.sim) {
-                    ctx.sim->reserve_ground(guard_anchor_.reserved, true);
-                }
+                reserve_for_order(cmd.command_id, place, ctx.sim);
                 set_path_goal(place, ctx);
             }
             if (approach_update(ctx)) {
                 return OrderStep::Hold;
             }
-            free_guard_anchor(ctx.sim);
+            free_order_reservation(ctx.sim);
             cmd.guard_prepared = true;
             cmd.handout_wait = 2;
             return OrderStep::Hold;

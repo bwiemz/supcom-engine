@@ -12945,7 +12945,7 @@ void test_range(TestContext& ctx) {
 
     // A worker walking to its target whose target goes first: its order
     // ends, and with it its move, so it isn't left Moving with nothing to
-    // do. Repair and capture; an attack's chase and a guard's walk the same.
+    // do. An attack's chase and a guard's walk.
     lua_check("setup: three workers walk to targets 30 off", R"(
         __osc_far = {}
         __osc_far.mender = __osc_spawn('uel0105', 'ARMY_1', 595.5, 140.5)
@@ -12984,19 +12984,22 @@ void test_range(TestContext& ctx) {
     tick_for(ctx, 2);
     lua_check("Test 12j: a worker whose target goes on its way is left neither ordered nor Moving",
               R"(
-        for _, name in {'mender', 'taker', 'attacker', 'guard'} do
+        for _, name in {'attacker', 'guard'} do
             local u = __osc_far[name]
             local n = table.getn(u:GetCommandQueue())
             if n ~= 0 then error('the ' .. name .. ' has ' .. n .. ' orders') end
             if u:IsUnitState('Moving') then error('the ' .. name .. ' is still Moving') end
         end
     )");
-    lua_check("Test 12j: a reclaimer whose target goes on its way walks on with its order",
+    lua_check("Test 12j: a reclaimer, mender or taker whose target goes on its way walks on with "
+              "its order",
               R"(
-        local u = __osc_far.reclaimer
-        local n = table.getn(u:GetCommandQueue())
-        if n ~= 1 then error('the reclaimer has ' .. n .. ' orders') end
-        if not u:IsUnitState('Moving') then error('the reclaimer stopped') end
+        for _, name in {'reclaimer', 'mender', 'taker'} do
+            local u = __osc_far[name]
+            local n = table.getn(u:GetCommandQueue())
+            if n ~= 1 then error('the ' .. name .. ' has ' .. n .. ' orders') end
+            if not u:IsUnitState('Moving') then error('the ' .. name .. ' stopped') end
+        end
     )");
     // A launcher backing off from a target too close (MinRadius 5) whose
     // target goes: its launch order ends, and its back-off with it.
