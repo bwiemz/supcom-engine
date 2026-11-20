@@ -239,3 +239,19 @@ TEST_CASE("Under hold fire an AlwaysRecheckTarget gun drops its target at its ne
                [&] { return !s.gun->has_target(); });
     CHECK(s.heard() == "got lost ");
 }
+
+TEST_CASE("A gun holds its fire at a target that is dying", "[weapon][target-events]") {
+    for (const bool dying : {false, true}) {
+        CAPTURE(dying);
+        Scene s;
+        s.engage();
+        REQUIRE(lua_dostring(s.g.L, "gun.OnFire = function() heard = heard .. 'fire ' end") == 0);
+        if (dying) {
+            s.near->begin_dying();
+        }
+        s.gun->fire_clock = 0;
+        s.sim.tick();
+        CHECK(s.gun->target_entity_id == s.near->entity_id());
+        CHECK(s.heard() == (dying ? "got " : "got fire "));
+    }
+}
