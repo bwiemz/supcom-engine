@@ -862,7 +862,7 @@ static int l_create_building_unit(lua_State* L) {
     const bool in_place = !lua_isnil(L, 4);
     if (!in_place) {
         auto* sim = get_sim(L);
-        y = sim ? sim::structure_elevation(*sim, structure_rules(L, *sim, bp_id), x, z) : 0.0f;
+        y = sim ? sim::structure_elevation(*sim, sim::structure_rules(L, *sim, bp_id), x, z) : 0.0f;
     }
 
     const bool capped = lua_gettop(L) < 6 || lua_isnil(L, 6) || lua_toboolean(L, 6) != 0;
@@ -970,7 +970,7 @@ static int l_CreateUnit2(lua_State* L) {
 
     // Rewrite stack for l_CreateUnit: bp, army, x, y, z -- y where the unit
     // stands at (x, z), as for a structure built there
-    const f32 y = sim::structure_elevation(*sim, structure_rules(L, *sim, bp_id_str), x, z);
+    const f32 y = sim::structure_elevation(*sim, sim::structure_rules(L, *sim, bp_id_str), x, z);
     lua_settop(L, 0);
     lua_pushstring(L, bp_id_str.c_str());
     lua_pushnumber(L, army + 1);

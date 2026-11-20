@@ -233,39 +233,14 @@ const Unit* find_build_site_frame(const EntityRegistry& registry, const std::str
     return nullptr;
 }
 
-bool build_site_taken(lua_State* L, const EntityRegistry& registry, const std::string& bp_id,
+bool build_site_taken(lua_State* L, const SimState& sim, i32 army, const std::string& bp_id,
                       const Vector3& site) {
     if (!L) {
         return false;
     }
-    const int top = lua_gettop(L);
-    if (!blueprints::push_blueprint(L, bp_id)) {
-        return false;
-    }
-    const int bp = lua_gettop(L);
-    const auto [size_x, size_z] = blueprint_footprint(L, bp);
-    lua_pushstring(L, "Physics");
-    lua_rawget(L, bp);
-    const int physics = lua_gettop(L);
-    const auto number = [&](const char* key) {
-        if (!lua_istable(L, physics)) {
-            return 0.0f;
-        }
-        lua_pushstring(L, key);
-        lua_rawget(L, physics);
-        const f32 v = lua_type(L, -1) == LUA_TNUMBER ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
-        lua_pop(L, 1);
-        return v;
-    };
-    PlacementRules rules;
-    rules.size_x = std::max(size_x, 1.0f);
-    rules.size_z = std::max(size_z, 1.0f);
-    rules.skirt_x = number("SkirtSizeX");
-    rules.skirt_z = number("SkirtSizeZ");
-    rules.skirt_off_x = number("SkirtOffsetX");
-    rules.skirt_off_z = number("SkirtOffsetZ");
-    lua_settop(L, top);
-    return structure_overlaps(registry, StructureSite::of(rules, site.x, site.z));
+    const StructurePlacement placement(
+        sim, army, [L, &sim](const std::string& id) { return structure_rules(L, sim, id); });
+    return !placement.location_free(bp_id, site.x, site.z);
 }
 
 } // namespace osc::sim

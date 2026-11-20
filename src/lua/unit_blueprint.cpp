@@ -986,7 +986,7 @@ static void resolve_footprints(lua_State* L, const sim::SimState& sim, const Blu
         lua_pop(L, 1);
     }
     lua_settop(L, bp - 1);
-    const sim::PlacementRules& rules = structure_rules(L, sim, unit.unit_id());
+    const sim::PlacementRules& rules = sim::structure_rules(L, sim, unit.unit_id());
     namespace oc = blueprints::occupancy;
     const u8 build_caps = (rules.on_land ? oc::kLand : 0) | (rules.on_seabed ? oc::kSeabed : 0) |
                           (rules.on_sub ? oc::kSub : 0) | (rules.on_water ? oc::kWater : 0);

@@ -721,7 +721,7 @@ TEST_CASE("The engine reads a registered blueprint's flag enums as Moho writes t
     )")
                 .ok());
 
-    const osc::sim::PlacementRules barge = osc::lua::structure_rules(L, sim, "barge");
+    const osc::sim::PlacementRules barge = osc::sim::structure_rules(L, sim, "barge");
     CHECK_FALSE(barge.on_land);
     CHECK(barge.on_water);
     CHECK(barge.on_sub);

@@ -12553,9 +12553,9 @@ void test_range(TestContext& ctx) {
         __osc_prize:SetFireState(1)
         IssueCapture({__osc_taker}, __osc_prize)
 
-        __osc_shop = __osc_spawn('ueb0101', 'ARMY_1', 610.5, 160.5)
-        __osc_onsite = __osc_spawn('uel0001', 'ARMY_1', 610.5, 165.5)
-        IssueBuildMobile({__osc_onsite}, __osc_at(610.5, 165.5), 'ueb1101', {})
+        __osc_shop = __osc_spawn('ueb0101', 'ARMY_1', 646.5, 179.5)
+        __osc_onsite = __osc_spawn('uel0001', 'ARMY_1', 646.5, 184.5)
+        IssueBuildMobile({__osc_onsite}, __osc_at(646.5, 184.5), 'ueb1101', {})
         __osc_armed = __osc_spawn('uel0001', 'ARMY_1', 650.5, 130.5)
         __osc_arm_prep = 0
         __osc_arm_prep_tick = false
@@ -12707,7 +12707,7 @@ void test_range(TestContext& ctx) {
             end
             if not fired then return false end
             for _, u in GetArmyBrain('ARMY_1'):GetListOfUnits(categories.ueb1101, false) do
-                if __osc_from(u, 610.5, 165.5) < 1 then return true end
+                if __osc_from(u, 646.5, 184.5) < 1 then return true end
             end
             return false
         end)()
@@ -12729,7 +12729,7 @@ void test_range(TestContext& ctx) {
     lua_check("Test 12b: a builder on its site builds there once clear of it", R"(
         local built = false
         for _, u in GetArmyBrain('ARMY_1'):GetListOfUnits(categories.ueb1101, false) do
-            if __osc_from(u, 610.5, 165.5) < 1 then built = true end
+            if __osc_from(u, 646.5, 184.5) < 1 then built = true end
         end
         if not built then
             error('no power generator on the site; the ACU has ' ..
@@ -12760,9 +12760,9 @@ void test_range(TestContext& ctx) {
         local brain = GetArmyBrain('ARMY_1')
         brain:GiveResource('MASS', 10000)
         brain:GiveResource('ENERGY', 100000)
-        __osc_queued_acu = __osc_spawn('uel0001', 'ARMY_1', 600.5, 190.5)
-        IssueBuildMobile({__osc_queued_acu}, __osc_at(600.5, 182.5), 'ueb2101', {})
-        IssueBuildMobile({__osc_queued_acu}, __osc_at(608.5, 190.5), 'ueb2101', {})
+        __osc_queued_acu = __osc_spawn('uel0001', 'ARMY_1', 700.5, 188.5)
+        IssueBuildMobile({__osc_queued_acu}, __osc_at(700.5, 180.5), 'ueb2101', {})
+        IssueBuildMobile({__osc_queued_acu}, __osc_at(708.5, 188.5), 'ueb2101', {})
     )");
     tick_until(ctx, "the queued ACU builds its second, its torso turned to the site", 600, R"(
         (function()

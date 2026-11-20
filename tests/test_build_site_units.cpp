@@ -6,10 +6,12 @@
 // failing once it has found the site taken 11 times.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "blueprints/footprint.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
+#include "sim/build_placement.hpp"
 #include "sim/build_site_units.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/occupancy.hpp"
@@ -328,6 +330,44 @@ TEST_CASE("A builder out of reach that cannot move fails its build the tick afte
     CHECK_FALSE(s.ordered());
     CHECK_FALSE(s.built());
     CHECK(s.failed() == 1);
+}
+
+TEST_CASE("A mobile build fails on cells the occupancy grid holds for the ground, as Moho's task",
+          "[build][build_site]") {
+    namespace occupancy = osc::blueprints::occupancy;
+    const bool ground = GENERATE(true, false);
+    Site s;
+    s.sim.occupy_cells(ground ? occupancy::kLand : occupancy::kWater, {52, 52, 53, 53}, true);
+    s.sim.tick();
+    s.build();
+    tick_until([&] { s.sim.tick(); }, "the build fails or its frame stands", 100,
+               [&] { return s.built() || !s.ordered(); });
+    CHECK(s.built() == !ground);
+    CHECK(s.failed() == (ground ? 1 : 0));
+}
+
+TEST_CASE("The sim's placement queries take a site across or beyond the playable area's edge, the "
+          "UI's not, and a build across it goes up",
+          "[build][build_site]") {
+    Site s;
+    s.sim.set_playable_rect(0.0f, 0.0f, 52.0f, 128.0f);
+    const auto rules = [&s](const std::string& bp) {
+        return osc::sim::structure_rules(s.L, s.sim, bp);
+    };
+    const osc::sim::StructurePlacement sim_queries(s.sim, 0, rules);
+    const osc::sim::StructurePlacement ui(s.sim, 0, rules, true);
+    for (const f32 x : {50.5f, 57.5f}) {
+        CAPTURE(x);
+        CHECK(sim_queries.location_free("ueb0101", x, 50.5f));
+        CHECK(sim_queries.can_build("ueb0101", x, 50.5f));
+        CHECK_FALSE(ui.can_build("ueb0101", x, 50.5f));
+    }
+    s.sim.tick();
+    s.build();
+    tick_until([&] { s.sim.tick(); }, "the build fails or its frame stands", 100,
+               [&] { return s.built() || !s.ordered(); });
+    CHECK(s.built());
+    CHECK(s.failed() == 0);
 }
 
 TEST_CASE("Sim::LocationIsFree counts a unit whose shape meets the cells, not the builder, a "

@@ -9,7 +9,6 @@ struct lua_State;
 
 namespace osc::sim {
 class SimState;
-struct PlacementRules;
 }
 
 namespace osc::lua {
@@ -53,10 +52,5 @@ void set_manip_metatable(lua_State* L, int table_idx, const char* cache_key,
 /// StructurePlacement with the orders not yet run
 bool can_build_structure(lua_State* L, const sim::SimState& sim, int army, const std::string& bp_id,
                          f32 x, f32 z, u32 moving = 0);
-
-/// A structure blueprint's placement rules, as its Physics give them (the
-/// sim keeps them once read)
-const sim::PlacementRules& structure_rules(lua_State* L, const sim::SimState& sim,
-                                           const std::string& bp_id);
 
 } // namespace osc::lua

@@ -9,6 +9,7 @@
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/build_placement.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
@@ -406,6 +407,43 @@ TEST_CASE("CreateResourceBuildingNearest takes tied deposits in the order Moho's
         "rawset(_G, 'CreateUnitHPR', function(bp, army, x, y, z) return {x, z} end)"));
     CHECK(w.site("moho.aibrain_methods.CreateResourceBuildingNearest(brain, 'ueb1103', 32, 32)") ==
           "36.5 36.5");
+}
+
+TEST_CASE("The sim's placement check refuses ground cells the occupancy grid holds, the UI's not",
+          "[brain][build]") {
+    namespace occupancy = osc::blueprints::occupancy;
+    World w;
+    const auto sim_answer = [&] {
+        return w.answer(
+            "moho.aibrain_methods.CanBuildStructureAt(brain, 'ueb1103', {30.5, 0, 30.5})");
+    };
+    CHECK(sim_answer() == "true");
+    w.sim.occupy_cells(occupancy::kWater, {30, 30, 31, 31}, true);
+    CHECK(sim_answer() == "true");
+    w.sim.occupy_cells(occupancy::kLand | occupancy::kSeabed, {30, 30, 31, 31}, true);
+    CHECK(sim_answer() == "false");
+    CHECK(osc::lua::can_build_structure(w.lua.raw(), w.sim, 0, "ueb1103", 30.5f, 30.5f));
+}
+
+TEST_CASE("CreateResourceBuildingNearest passes over a deposit whose cell the occupancy grid holds",
+          "[brain][build]") {
+    namespace occupancy = osc::blueprints::occupancy;
+    World w;
+    w.sim.add_resource_deposit({36.5f, 0, 30.5f, 1.0f, osc::sim::ResourceDeposit::Mass});
+    REQUIRE(w.lua.do_string(
+        "rawset(_G, 'CreateUnitHPR', function(bp, army, x, y, z) return {x, z} end)"));
+    w.sim.occupy_cells(occupancy::kLand | occupancy::kSeabed, {30, 30, 31, 31}, true);
+    CHECK(w.site("moho.aibrain_methods.CreateResourceBuildingNearest(brain, 'ueb1103', 30, 30)") ==
+          "36.5 30.5");
+}
+
+TEST_CASE("Moho's func_LocationIsFree keeps a land structure out of the water", "[brain][build]") {
+    const bool water = GENERATE(true, false);
+    World w(std::vector<osc::u16>(65 * 65, 1000), water ? 10.0f : 0.0f);
+    const osc::sim::StructurePlacement placement(w.sim, 0, [&w](const std::string& bp) {
+        return osc::sim::structure_rules(w.lua.raw(), w.sim, bp);
+    });
+    CHECK(placement.location_free("ueb1101", 30.0f, 40.0f) == !water);
 }
 
 TEST_CASE("CreateUnitNearSpot puts a unit on a site BuildStructure has ordered", "[brain][build]") {

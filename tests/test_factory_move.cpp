@@ -261,7 +261,7 @@ TEST_CASE("A structure next to a factory is placed and built as before, from off
     w.make("yard", 35.5f, 71.5f, "f");
     Unit& b = *w.make("builder", 36.5f, 62.5f, "b");
     const osc::sim::StructurePlacement placement(w.sim, 0, [&](const std::string& bp) {
-        return osc::lua::structure_rules(w.state.raw(), w.sim, bp);
+        return osc::sim::structure_rules(w.state.raw(), w.sim, bp);
     });
     CHECK(placement.can_build("pgen", 41.0f, 71.0f));
     CHECK_FALSE(placement.can_build("pgen", 40.0f, 71.0f));
