@@ -265,6 +265,66 @@ void test_weapon_retarget(TestContext& ctx) {
             fmt::format("Test 3: its script hears OnLostTarget ('{}') and goes to IdleState ({})",
                         hold_heard, hold_states));
 
+    // 4. A tank with nothing in range, and an enemy 60 off.
+    const sim::EntityId scripted_id =
+        spawn_unit(ctx, "__osc_rt_set", "uel0201", "ARMY_1", {sx - 40, sz + 40});
+    spawn_unit(ctx, "__osc_rt_far", "ueb1101", "ARMY_2", {sx + 20, sz + 40});
+    run_lua(ctx, "__osc_rt_far:SetCanTakeDamage(false)\n"
+                 "__osc_rt_set_log = __osc_rt_watch(__osc_rt_set)\n"
+                 "__osc_rt_set_gun = __osc_rt_set:GetWeaponByLabel('MainGun')");
+    for (int i = 0; i < 5; ++i) ctx.sim.tick();
+    const auto heard_since = [&](const char* mark) {
+        return lua_text(ctx,
+                        std::string("__osc_rt_since(__osc_rt_set_log, ") + mark + ", 'heard')");
+    };
+    run_lua(ctx, "__osc_rt_m1 = __osc_rt_mark(__osc_rt_set_log)\n"
+                 "__osc_rt_set_gun:SetTargetEntity(__osc_rt_far)");
+    const std::string set_heard = heard_since("__osc_rt_m1");
+    tick_until(ctx, "Test 4: its next look drops the enemy out of range", 20,
+               [&] { return target_of(scripted_id) == sim::EntityId(); });
+    t.check(set_heard == "OnGotTarget" && heard_since("__osc_rt_m1") == "OnGotTarget OnLostTarget",
+            fmt::format("Test 4: SetTargetEntity is heard at once ('{}'), the drop at its next "
+                        "look ('{}')",
+                        set_heard, heard_since("__osc_rt_m1")));
+    run_lua(ctx, "__osc_rt_m2 = __osc_rt_mark(__osc_rt_set_log)\n"
+                 "local p = __osc_rt_set:GetPosition()\n"
+                 "__osc_rt_set_gun:SetTargetGround({p[1] + 10, GetSurfaceHeight(p[1] + 10, p[3]), "
+                 "p[3]})");
+    const std::string ground_heard = heard_since("__osc_rt_m2");
+    for (int i = 0; i < 30; ++i) ctx.sim.tick();
+    const sim::Weapon* set_gun = gun(scripted_id);
+    t.check(ground_heard == "OnGotTarget" &&
+                heard_since("__osc_rt_m2") == "OnGotTarget OnLostTarget" && set_gun &&
+                !set_gun->has_ground_target &&
+                lua_true(ctx.lua_state, "__osc_rt_set_log.shots == __osc_rt_m2.shots"),
+            fmt::format("Test 4: SetTargetGround is heard at once ('{}'), its next look drops it "
+                        "('{}'), and nothing is fired at the point",
+                        ground_heard, heard_since("__osc_rt_m2")));
+    run_lua(ctx, "__osc_rt_m3 = __osc_rt_mark(__osc_rt_set_log)\n"
+                 "__osc_rt_set_gun:SetTargetEntity(__osc_rt_far)\n"
+                 "__osc_rt_set_gun:ResetTarget()");
+    t.check(heard_since("__osc_rt_m3") == "OnGotTarget OnLostTarget",
+            fmt::format("Test 4: ResetTarget is heard at once ('{}')", heard_since("__osc_rt_m3")));
+
+    // 5. The first tank, holding a generator.
+    run_lua(ctx, "__osc_rt_tank:SetFireState(0)");
+    const auto tank_aims = [&] { return target_of(tank_id) != sim::EntityId(); };
+    tick_until(ctx, "the tank takes a generator again", 40, tank_aims);
+    for (const char* order :
+         {"IssueStop({__osc_rt_tank})", "IssueClearCommands({__osc_rt_tank})"}) {
+        run_lua(ctx, std::string("__osc_rt_m4 = __osc_rt_mark(__osc_rt_tank_log)\n") + order);
+        ctx.sim.tick();
+        const std::string stop_heard =
+            lua_text(ctx, "__osc_rt_since(__osc_rt_tank_log, __osc_rt_m4, 'heard')");
+        tick_until(ctx, "Test 5: the tank takes a generator again", 40, tank_aims);
+        t.check(stop_heard == "OnLostTarget" &&
+                    lua_text(ctx, "__osc_rt_since(__osc_rt_tank_log, __osc_rt_m4, 'heard')") ==
+                        "OnLostTarget OnGotTarget",
+                fmt::format("Test 5: after {} the tank's script hears OnLostTarget ('{}'), then "
+                            "OnGotTarget as it takes a generator again",
+                            order, stop_heard));
+    }
+
     spdlog::info("=== WEAPON RETARGET TEST: {} passed, {} failed ===", t.pass, t.fail);
 }
 
