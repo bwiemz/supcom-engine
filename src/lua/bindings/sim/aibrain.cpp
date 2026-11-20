@@ -8,6 +8,7 @@
 #include "lua/arg_count.hpp"
 #include "lua/lua_stubs.hpp"
 #include "core/dmath.hpp"
+#include "core/moho_sort.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
 #include "lua/enum_args.hpp"
@@ -2047,13 +2048,18 @@ static int brain_CreateResourceBuildingNearest(lua_State* L) {
     };
     std::vector<Candidate> candidates;
     for (const auto& d : sim->resource_deposits()) {
-        if (d.type != wanted) continue;
-        const f32 dx = x - d.x, dz = z - d.z;
-        candidates.push_back({d.x, d.z, dx * dx + dz * dz});
+        if (d.type != wanted) {
+            continue;
+        }
+        const sim::DepositRect r = sim::deposit_rect(d);
+        const f32 cx = static_cast<f32>(r.x0 + r.x1) * 0.5f;
+        const f32 cz = static_cast<f32>(r.z0 + r.z1) * 0.5f;
+        const f32 dx = x - cx;
+        const f32 dz = z - cz;
+        candidates.push_back({cx, cz, dx * dx + dz * dz});
     }
-    // Nearest first; ties in deposit order (stable, as lockstep needs).
-    std::stable_sort(
-        candidates.begin(), candidates.end(),
+    moho_sort::sort(
+        candidates.data(), candidates.data() + candidates.size(),
         [](const Candidate& a, const Candidate& b) { return a.distance_sq < b.distance_sq; });
     for (const auto& c : candidates) {
         if (!placement.can_build(bp, c.x, c.z)) continue;

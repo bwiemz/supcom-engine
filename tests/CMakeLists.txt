@@ -29,6 +29,7 @@ add_executable(osc_tests
     test_navigation_throttle.cpp
     test_build_placement.cpp
     test_build_structure.cpp
+    test_moho_sort.cpp
     test_manipulators.cpp
     test_patrol.cpp
     test_guard.cpp
