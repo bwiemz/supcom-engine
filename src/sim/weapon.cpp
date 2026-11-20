@@ -907,18 +907,17 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     // ground there takes the point within its own range, or at any range on
     // an aircraft (CAcquireTargetTask), and keeps it while the order lasts.
     const UnitCommand* order = queue.empty() ? nullptr : &queue.front();
-    if (!passing_over && order && order->type == CommandType::Attack && !order->target_id &&
-        order->engaged && attacks_on_order() &&
-        can_attack_ground(order->target_pos, sim ? sim->terrain() : nullptr) &&
-        (flier || in_firing_range(owner, order->target_pos))) {
+    const map::Terrain* terrain = sim ? sim->terrain() : nullptr;
+    const bool ground_order = order && order->type == CommandType::Attack && !order->target_id &&
+                              order->engaged && attacks_on_order() &&
+                              can_attack_ground(order->target_pos, terrain);
+    if (!passing_over && ground_order && (flier || in_firing_range(owner, order->target_pos))) {
         set_target_ground(order->target_pos);
         ground_from_order = true;
         target_check_clock = 0;
         return;
     }
-    // The order gone, or the point out of this weapon's reach: it looks for
-    // targets again.
-    if (ground_from_order) {
+    if (ground_from_order && !ground_order) {
         set_target_entity(EntityId());
     }
     // An aircraft's weapons take its ordered target once the attack engages,
@@ -926,25 +925,15 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     // attacker's desired target out of reach too, so it is kept through the
     // runs' loops.
     const EntityId ordered = attack_order_target(owner);
-    // The order's target out of reach is dropped before it is followed. A vanished target is held
-    // (acquire_step); range and recon are checked on TargetCheckInterval, like acquisition.
-    if (target_entity_id && target_entity_id == ordered) {
-        const Entity* target = registry.find(target_entity_id);
-        if (!target || !can_target(owner, *target, sim, !flier)) {
-            target_entity_id = EntityId();
-        }
-    }
 
     // An attack order's target comes first, for every weapon that can hit
     // it, whatever the priorities say.
     if (ordered && !passing_over) {
-        if (ordered == target_entity_id) {
-            target_check_clock = 0;
-            return;
-        }
         const Entity* target = registry.find(ordered);
         if (target && can_target(owner, *target, sim, !flier)) {
-            set_target_entity(ordered);
+            if (ordered != target_entity_id) {
+                set_target_entity(ordered);
+            }
             target_check_clock = 0;
             return;
         }
@@ -969,6 +958,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         acquire_projectile(owner, registry, sim);
         return;
     }
+    const EntityId had = target_entity_id;
     if (target_entity_id) {
         const Entity& target = *registry.find(target_entity_id);
         if (!can_target(owner, target, sim) ||
@@ -978,7 +968,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
             return;
         }
     } else if (has_ground_target && !always_recheck_target &&
-               can_attack_ground(ground_target, sim ? sim->terrain() : nullptr)) {
+               can_attack_ground(ground_target, terrain)) {
         const f32 dx = ground_target.x - owner.position().x;
         const f32 dz = ground_target.z - owner.position().z;
         if (solution_status(owner, ground_target, dx * dx + dz * dz) == Solution::Available) {
@@ -1001,8 +991,22 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         best_id = best->entity_id();
     }
     if (!best_id) {
-        // Moho's acquire task, finding no enemy, clears the target ReTargetOnMiss gave up
-        set_target_entity(EntityId());
+        // Moho's acquire task, finding no enemy, takes the attacker's desired target if the weapon
+        // can attack it, at any range, and otherwise clears even the one ReTargetOnMiss gave up.
+        const Entity* desired = ordered ? registry.find(ordered) : nullptr;
+        if (desired && attacks_on_order() && can_attack(*desired, sim) &&
+            !(desired->is_unit() && static_cast<const Unit*>(desired)->is_dying())) {
+            if (had == ordered) {
+                target_entity_id = ordered;
+            } else {
+                set_target_entity(ordered);
+            }
+        } else if (ground_order) {
+            set_target_ground(order->target_pos);
+            ground_from_order = true;
+        } else {
+            set_target_entity(EntityId());
+        }
         return;
     }
     // An idle aircraft's weapon with AutoInitiateAttackCommand makes the enemy it found its unit's

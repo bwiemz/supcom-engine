@@ -833,6 +833,13 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
             return OrderStep::Next;
         }
     }
+    // An immobile unit's attacker has the target from the start, and the attack fails once its
+    // target weapon has no solution for it (CUnitAttackTargetTask::HandleAiAttackerEvent).
+    if (!is_mobile() && cmd.engaged && weapon &&
+        weapon->solution_status(*this, target->position(), dist2) != Weapon::Solution::Available) {
+        command_queue_.pop_front();
+        return OrderStep::Next;
+    }
     // A winged aircraft flies at its target and, once within a weapon's
     // reach or its EngageDistance, makes its runs: Moho's attack task hands
     // the target to the attacker and CalcMoveAir flies the combat tactics
@@ -889,7 +896,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
         }
         nav_update();
     };
-    if (!in_reach) {
+    if (!in_reach && is_mobile()) {
         close_in();
     } else {
         // In reach, the formation is dropped: from now on the unit attacks
@@ -1028,9 +1035,14 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, SimContext& ctx) {
             return OrderStep::Hold;
         }
     }
-    // A structure's attacker takes the point at once; its weapons fire when
-    // it is in their range.
+    // A structure's attacker takes the point at once, and gives the attack up as an attack on a
+    // unit, once its weapon has no solution for the point.
     if (!is_mobile()) {
+        if (cmd.engaged && weapon &&
+            weapon->solution_status(*this, at, dist2) != Weapon::Solution::Available) {
+            command_queue_.pop_front();
+            return OrderStep::Next;
+        }
         if (!cmd.engaged && !engage(cmd, ctx.L)) {
             return destroyed() ? OrderStep::Gone : OrderStep::Hold;
         }
