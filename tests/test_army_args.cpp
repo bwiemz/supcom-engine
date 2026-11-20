@@ -7,6 +7,7 @@
 #include "sim/sim_state.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
@@ -78,6 +79,7 @@ TEST_CASE("A function taking an army raises Moho's error for one that isn't ther
         "SetArmyUnitCap(@, 500)",
         "SetIgnoreArmyUnitCap(@, false)",
         "SetArmyShowScore(@, true)",
+        "SetAlliedVictory(@, true)",
         "SetIgnorePlayableRect(@, false)",
         "SetArmyEconomy(@, 0, 0)",
         "SetArmyColor(@, 255, 0, 0)",
@@ -153,4 +155,34 @@ TEST_CASE("A decal's or a splat's army reads as Moho's ARMY_IndexFromLuaState", 
             CHECK(w.error_of(call, army).empty());
         }
     }
+}
+
+TEST_CASE("SetAlliedVictory sets the army brain's RequestingAlliedVictory, as Moho's", "[army]") {
+    World w;
+    lua_State* L = w.state.raw();
+    for (int i = 0; i < 2; ++i) {
+        lua_newtable(L);
+        w.sim.get_army(i)->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+    }
+    const auto requesting = [&](const char* army) {
+        REQUIRE(w.state
+                    .do_string(std::string("answer = tostring(GetArmyBrain(") + army +
+                               ").RequestingAlliedVictory)")
+                    .ok());
+        lua_getglobal(L, "answer");
+        std::string out = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        return out;
+    };
+    CHECK(w.error_of("SetAlliedVictory(@, true)", "'ARMY_2'").empty());
+    CHECK(requesting("'ARMY_2'") == "true");
+    CHECK(requesting("'ARMY_1'") == "nil");
+    CHECK(w.error_of("SetAlliedVictory(@, false)", "2").empty());
+    CHECK(requesting("'ARMY_2'") == "false");
+    CHECK(w.error_of("SetAlliedVictory(@, nil)", "1").empty());
+    CHECK(requesting("'ARMY_1'") == "false");
+    CHECK(says(w.error_of("SetAlliedVictory(@)", "1"),
+               "SetAlliedVictory(army,bool)\n  expected 2 args, but got 1"));
+    CHECK(says(w.error_of("SetAlliedVictory(@, 1)", "1"),
+               "attempt to use as boolean a number value"));
 }
