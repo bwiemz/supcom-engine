@@ -55,7 +55,7 @@ struct World {
                     Economy = { BuildableCategory = { 'ueb1101', 'ueb1103', 'xeb0010' } },
                 },
                 ueb1101 = { Footprint = { SizeX = 2, SizeZ = 2 } },
-                ueb1103 = { Footprint = { SizeX = 2, SizeZ = 2 },
+                ueb1103 = { Footprint = { SizeX = 1, SizeZ = 1 },
                             Physics = { BuildRestriction = 'RULEUBR_OnMassDeposit' } },
                 ueb1301 = { Footprint = { SizeX = 4, SizeZ = 4 } },
                 xeb0010 = { Footprint = { SizeX = 10, SizeZ = 10 } },
@@ -351,6 +351,61 @@ TEST_CASE("FindPlaceToBuild and CreateResourceBuildingNearest pass over BuildStr
                  "engineer)") == mass);
     CHECK(w.site("moho.aibrain_methods.CreateResourceBuildingNearest(brain, 'ueb1103', 20, 20)") ==
           mass);
+}
+
+TEST_CASE("CreateResourceBuildingNearest puts the building on the middle of the deposit's cells",
+          "[brain][build]") {
+    World w;
+    w.sim.add_resource_deposit({40.4f, 0, 20.6f, 1.0f, osc::sim::ResourceDeposit::Mass});
+    REQUIRE(w.lua.do_string(
+        "rawset(_G, 'CreateUnitHPR', function(bp, army, x, y, z) return {x, z} end)"));
+    CHECK(w.site("moho.aibrain_methods.CreateResourceBuildingNearest(brain, 'ueb1103', 40, 20)") ==
+          "40.5 20.5");
+}
+
+TEST_CASE("An extractor stands on a deposit whose cells it covers, rounded from its point",
+          "[brain][build]") {
+    World w;
+    w.sim.add_resource_deposit({45.0f, 0, 45.0f, 1.0f, osc::sim::ResourceDeposit::Mass});
+    const auto at = [&](const char* where) {
+        return w.answer(std::string("moho.aibrain_methods.CanBuildStructureAt(brain, 'ueb1103', ") +
+                        where + ")");
+    };
+    CHECK(at("{44.5, 0, 44.5}") == "true");
+    CHECK(at("{45.5, 0, 45.5}") == "false");
+}
+
+TEST_CASE("CreateResourceBuildingNearest takes tied deposits in the order Moho's sort leaves them",
+          "[brain][build]") {
+    World w;
+    w.block(30.5f, 30.5f);
+    std::vector<std::pair<osc::f32, osc::f32>> far;
+    for (int i = 0; i < 6; ++i) {
+        for (int j = 0; j < 6; ++j) {
+            const osc::f32 x = 8.5f + 8.0f * static_cast<osc::f32>(i);
+            const osc::f32 z = 8.5f + 9.0f * static_cast<osc::f32>(j);
+            if ((x - 32.0f) * (x - 32.0f) + (z - 32.0f) * (z - 32.0f) > 60.0f) {
+                far.emplace_back(x, z);
+            }
+        }
+    }
+    REQUIRE(far.size() == 34);
+    const auto add = [&](osc::f32 x, osc::f32 z) {
+        w.sim.add_resource_deposit({x, 0, z, 1.0f, osc::sim::ResourceDeposit::Mass});
+    };
+    for (size_t i = 0; i < far.size(); ++i) {
+        if (i == 3) {
+            add(27.5f, 27.5f);
+            add(36.5f, 27.5f);
+            add(27.5f, 36.5f);
+            add(36.5f, 36.5f);
+        }
+        add(far[i].first, far[i].second);
+    }
+    REQUIRE(w.lua.do_string(
+        "rawset(_G, 'CreateUnitHPR', function(bp, army, x, y, z) return {x, z} end)"));
+    CHECK(w.site("moho.aibrain_methods.CreateResourceBuildingNearest(brain, 'ueb1103', 32, 32)") ==
+          "36.5 36.5");
 }
 
 TEST_CASE("CreateUnitNearSpot puts a unit on a site BuildStructure has ordered", "[brain][build]") {
