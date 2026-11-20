@@ -226,7 +226,7 @@ TEST_CASE("A gunship brakes onto the centre of its goal's cell as retail's does"
     Unit& gunship = w.make("gun1", 100.0f, 128.5f);
     gunship.set_position({108.9213f, 20.0f, 128.5f});
     gunship.set_current_altitude(10.0f);
-    gunship.set_heading(1.5707964f);
+    gunship.set_flight_orientation(osc::sim::euler_to_quat(1.5707964f, 0.0f, 0.0f));
     gunship.set_air_velocity({11.982f, 0.0f, 0.0f});
     World::move(gunship, 120.0f, 128.0f);
     int t = 0;

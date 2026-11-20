@@ -987,6 +987,8 @@ public:
     void set_bank_angle(f32 b) { bank_angle_ = b; }
     /// An aircraft's orientation, and its heading, bank and pitch as read from it.
     void set_flight_orientation(const Quaternion& q);
+    /// Where Moho's SPhysBody holds it: its collision box's centre, turned with it.
+    Vector3 air_body_offset() const;
     f32 current_airspeed() const { return current_airspeed_; }
     void set_current_airspeed(f32 s) { current_airspeed_ = s; }
     f32 current_altitude() const { return current_altitude_; }
