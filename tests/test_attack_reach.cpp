@@ -158,3 +158,59 @@ TEST_CASE("The first weapon that can hit the target decides, though a later one 
     CHECK(apart(*u, *target) <= 10.0f);
     CHECK(apart(*u, *target) > 5.0f);
 }
+
+TEST_CASE("While its unit attacks a target it can't hit, an AutoInitiateAttackCommand weapon "
+          "takes no other until the target is dying, another weapon does",
+          "[attack-reach]") {
+    for (const bool auto_initiate : {false, true}) {
+        CAPTURE(auto_initiate);
+        LuaGuard g;
+        SimState sim(g.L, nullptr);
+        land(sim);
+        sim.con_vars().weapon_terrain_blockage_test = false;
+        Unit* u = attacker(sim, 20.0f, 64.0f, {{30.0f, kAir}, {10.0f, kSurface}});
+        Weapon& aa = *u->weapons()[0];
+        aa.auto_initiate_attack_command = auto_initiate;
+        aa.target_check_period = 5;
+        Unit* target = foe(sim, 25.0f, 64.0f);
+        Unit* plane = foe(sim, 100.0f, 100.0f);
+        plane->set_layer("Air");
+        attack(*u, *target);
+        tick_until([&] { tick(sim, *u); }, "its gun takes the target", 10,
+                   [&] { return u->weapons()[1]->target_entity_id == target->entity_id(); });
+        plane->set_position({20.0f, 17.8f, 74.0f});
+        plane->place_now();
+        for (int t = 0; t < 10; ++t) {
+            tick(sim, *u);
+        }
+        CHECK((aa.target_entity_id == plane->entity_id()) == !auto_initiate);
+        target->begin_dying();
+        tick_until([&] { tick(sim, *u); }, "its anti-air takes the plane", 2,
+                   [&] { return aa.target_entity_id == plane->entity_id(); });
+    }
+}
+
+TEST_CASE("A weapon on its attack's target looks again the tick the target leaves its reach",
+          "[attack-reach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    land(sim);
+    sim.con_vars().weapon_terrain_blockage_test = false;
+    Unit* u = attacker(sim, 20.0f, 64.0f, {{10.0f, kSurface}});
+    Weapon& gun = *u->weapons()[0];
+    gun.target_check_period = 30;
+    Unit* target = foe(sim, 25.0f, 64.0f);
+    Unit* other = foe(sim, 100.0f, 100.0f);
+    tick(sim, *u);
+    REQUIRE(gun.target_entity_id == target->entity_id());
+    attack(*u, *target);
+    tick_until([&] { tick(sim, *u); }, "the attack engages", 10,
+               [&] { return u->command_queue().front().engaged; });
+    tick(sim, *u);
+    target->set_position({100.0f, 7.8f, 20.0f});
+    target->place_now();
+    other->set_position({20.0f, 7.8f, 70.0f});
+    other->place_now();
+    tick_until([&] { tick(sim, *u); }, "its gun takes the other enemy", 1,
+               [&] { return gun.target_entity_id == other->entity_id(); });
+}
