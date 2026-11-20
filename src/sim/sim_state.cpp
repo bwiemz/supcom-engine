@@ -425,7 +425,7 @@ void SimState::on_entity_unregistered(Entity& entity) {
     release_ground(entity.entity_id());
     if (entity.is_unit()) {
         static_cast<Unit&>(entity).free_landing_reservation(*this);
-        static_cast<Unit&>(entity).free_guard_anchor(this);
+        static_cast<Unit&>(entity).free_order_reservation(this);
     }
 
     // A dead structure stops blocking paths (it used to block forever).

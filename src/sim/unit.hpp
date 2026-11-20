@@ -1434,20 +1434,22 @@ public:
     void set_idle_landing(const IdleLanding& l) { idle_landing_ = l; }
     /// Its reservation goes (landed, taken off, or gone).
     void free_landing_reservation(SimState& sim);
-    /// An engineer walking up to the factory it guards: the place it reserved
-    /// there (Moho's guard task's move anchor) and the guard order's id.
-    struct GuardAnchor {
+    /// The place an order reserved to walk to (Moho's guard task's move
+    /// anchor, a repair's or a capture's place) and the order's id.
+    struct OrderReservation {
         bool held = false;
         u32 order = 0;
         OccupancyRect reserved{};
     };
-    const GuardAnchor& guard_anchor() const { return guard_anchor_; }
-    /// For tests: its anchor as given (no reservation taken or freed).
-    void set_guard_anchor(const GuardAnchor& a) { guard_anchor_ = a; }
+    const OrderReservation& order_reservation() const { return order_reservation_; }
+    /// For tests: its reservation as given (none taken or freed).
+    void set_order_reservation(const OrderReservation& a) { order_reservation_ = a; }
+    /// Unit::ReserveOgridRect: its footprint's cells at `place`, for `order`.
+    void reserve_for_order(u32 order, const Vector3& place, SimState* sim);
     /// Its reservation goes; with no sim, only its record.
-    void free_guard_anchor(SimState* sim);
+    void free_order_reservation(SimState* sim);
     /// What the unit has reserved of the ground (Moho's Unit::ReserveOgridRect):
-    /// its guard's move anchor, else its landing place; empty when nothing.
+    /// its order's place, else its landing place; empty when nothing.
     const OccupancyRect& reserved_ground() const;
     /// A transport's pickup (M206m): the units given slots, not yet aboard;
     /// whether it is at their centre; the ticks it has waited there.
@@ -1753,6 +1755,12 @@ private:
     /// takes the place nearest the unit whose cell doesn't touch the
     /// target's cells (PrepareMove(1)), else the target's position.
     Vector3 reclaim_place(const Entity& target, SimContext& ctx) const;
+    /// CUnitRepairTask's place: nearest the unit clear of `target`'s skirt
+    /// grown by a cell (PrepareMove(1)).
+    Vector3 repair_place(const Unit& target, SimContext& ctx) const;
+    /// CUnitCaptureTask's place: nearest the unit clear of `target`'s skirt
+    /// (PrepareMove(1)); an AIR unit's is the target's position.
+    Vector3 capture_place(const Unit& target, SimContext& ctx) const;
     /// Moho's EnsureReservedGuardMoveAnchorPosition: the place nearest `guarded`
     /// clear of its skirt (PrepareMove(0)), else its position.
     Vector3 guard_anchor_place(const Unit& guarded, SimContext& ctx) const;
@@ -2324,7 +2332,7 @@ private:
     f32 auto_land_time_ = 0.0f;         // Air.AutoLandTime
     f32 start_turn_distance_ = 0.0f;    // Air.StartTurnDistance
     IdleLanding idle_landing_;
-    GuardAnchor guard_anchor_;
+    OrderReservation order_reservation_;
     // A unit beaming up into its transport (M206m): ticks left of the 10,
     // and where it started.
     i32 beam_up_ticks_ = 0;

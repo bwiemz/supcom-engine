@@ -4032,16 +4032,24 @@ void Unit::free_landing_reservation(SimState& sim) {
     r = {};
 }
 
-void Unit::free_guard_anchor(SimState* sim) {
-    const OccupancyRect& r = guard_anchor_.reserved;
+void Unit::reserve_for_order(u32 order, const Vector3& place, SimState* sim) {
+    free_order_reservation(sim);
+    order_reservation_ = {true, order, footprint_rect(footprint(), place.x, place.z)};
+    if (sim) {
+        sim->reserve_ground(order_reservation_.reserved, true);
+    }
+}
+
+void Unit::free_order_reservation(SimState* sim) {
+    const OccupancyRect& r = order_reservation_.reserved;
     if (sim && r.x1 > r.x0 && r.z1 > r.z0) {
         sim->reserve_ground(r, false);
     }
-    guard_anchor_ = {};
+    order_reservation_ = {};
 }
 
 const OccupancyRect& Unit::reserved_ground() const {
-    return guard_anchor_.held ? guard_anchor_.reserved : idle_landing_.reserved;
+    return order_reservation_.held ? order_reservation_.reserved : idle_landing_.reserved;
 }
 
 void Unit::take_off(SimContext& ctx) {

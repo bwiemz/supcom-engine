@@ -101,6 +101,11 @@ struct Phases {
                  "{BlueprintId = 'block', CategoriesHash = {STRUCTURE = true},"
                  " Footprint = {SizeX = 2, SizeZ = 2}, Physics = {MotionType = 'RULEUMT_None'},"
                  " Defense = {MaxHealth = 100}}",
+                 "{BlueprintId = 'medic', Categories = {'LAND', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
+                 " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Land', "
+                 "MaxSpeed = 1},"
+                 " Economy = {BuildTime = 10, BuildCostMass = 1, BuildCostEnergy = 1}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
@@ -115,7 +120,8 @@ struct Phases {
                     " EM = moho.entity_methods PM = moho.projectile_methods"));
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"tank", "fac", "t1", "ship", "gen", "healer", "eng", "block"}) {
+        for (const char* id :
+             {"tank", "fac", "t1", "ship", "gen", "healer", "eng", "block", "medic"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -2708,4 +2714,110 @@ TEST_CASE("Units capturing one unit share the work: each tick paid adds its coun
         CHECK_FALSE(being_captured());
         CHECK_FALSE(a.is_capturing());
     }
+}
+
+namespace {
+
+struct WorkWalk {
+    Phases w;
+    bool repair;
+    Unit* target = nullptr;
+
+    explicit WorkWalk(bool repair_it, f32 x = 112.8f, f32 z = 101.3f) : repair(repair_it) {
+        osc::sim::ArmyBrain& army = *w.sim.get_army(0);
+        army.set_extra_storage(0.0, 1000.0);
+        army.set_stored_resources(0.0, 500.0);
+        REQUIRE(w.run("function Plain:GetCaptureCosts(target) return 2, 10, 0 end"));
+        target = &w.make("target", "medic", repair ? 1 : 2, x, z);
+        target->set_health(50.0f);
+    }
+
+    Unit& worker(const char* global, f32 x) {
+        Unit& u = w.make(global, "tank", 1, x, 100.5f);
+        u.set_build_rate(10.0f);
+        u.set_max_build_distance(5.0f);
+        u.push_command(
+            order(repair ? CommandType::Repair : CommandType::Capture, target->entity_id()), false);
+        return u;
+    }
+
+    f32 place_x() const { return repair ? 109.5f : 110.5f; }
+
+    bool works(const Unit& u) const { return repair ? u.is_repairing() : u.is_capturing(); }
+};
+
+} // namespace
+
+TEST_CASE("A repairer or a captor out of reach walks to the place nearest it clear of its "
+          "target's skirt, a repair's grown by a cell",
+          "[tick-phases][approach]") {
+    const bool repair = GENERATE(true, false);
+    CAPTURE(repair);
+    WorkWalk walk(repair);
+    Unit& eng = walk.worker("eng", 100.5f);
+    walk.w.sim.tick();
+    REQUIRE(eng.navigator().busy());
+    CHECK(eng.navigator().goal().x == walk.place_x());
+    CHECK(eng.navigator().goal().z == 100.5f);
+    tick_until([&] { walk.w.sim.tick(); }, "it works", 300, [&] { return walk.works(eng); });
+}
+
+TEST_CASE("A repairer or a captor walks on to its place when its target goes on the way, and the "
+          "order ends there",
+          "[tick-phases][approach]") {
+    const auto [repair, change] = GENERATE(table<bool, std::string>(
+        {{true, "none"}, {true, "gone"}, {true, "whole"}, {false, "none"}, {false, "gone"}}));
+    CAPTURE(repair, change);
+    WorkWalk walk(repair);
+    Unit& eng = walk.worker("eng", 100.5f);
+    walk.w.sim.tick();
+    walk.w.sim.tick();
+    REQUIRE(eng.navigator().busy());
+    if (change == "gone") {
+        REQUIRE(walk.w.run("EM.Destroy(target)"));
+    } else if (change == "whole") {
+        walk.target->set_health(100.0f);
+    }
+    walk.w.sim.tick();
+    CHECK(eng.navigator().busy());
+    CHECK(eng.navigator().goal().x == walk.place_x());
+    CHECK(eng.command_queue().size() == 1);
+    tick_until([&] { walk.w.sim.tick(); }, "the walk ends", 300,
+               [&] { return !eng.navigator().busy(); });
+    CHECK(std::abs(eng.position().x - walk.place_x()) < 0.5f);
+    if (change == "none") {
+        tick_until([&] { walk.w.sim.tick(); }, "it works", 20, [&] { return walk.works(eng); });
+    } else {
+        walk.w.sim.tick();
+        CHECK(eng.command_queue().empty());
+    }
+}
+
+TEST_CASE("Of two units sent to one target, the second keeps off the place the first reserved",
+          "[tick-phases][approach]") {
+    const bool repair = GENERATE(true, false);
+    CAPTURE(repair);
+    WorkWalk walk(repair);
+    Unit& a = walk.worker("a", 100.5f);
+    Unit& b = walk.worker("b", 98.5f);
+    walk.w.sim.tick();
+    CHECK(a.navigator().goal().x == walk.place_x());
+    CHECK(a.navigator().goal().z == 100.5f);
+    CHECK(b.navigator().goal().x == walk.place_x());
+    CHECK(b.navigator().goal().z == 99.5f);
+    CHECK(a.order_reservation().held);
+    tick_until([&] { walk.w.sim.tick(); }, "the first works", 300, [&] { return walk.works(a); });
+    CHECK(a.order_reservation().held == !repair);
+}
+
+TEST_CASE("A repairer in reach that stands where it doesn't fit walks off first",
+          "[tick-phases][approach]") {
+    WorkWalk walk(true, 104.5f, 100.5f);
+    walk.w.make("block", "block", 1, 100.0f, 100.0f);
+    Unit& eng = walk.worker("eng", 100.5f);
+    walk.w.sim.tick();
+    REQUIRE(eng.navigator().busy());
+    CHECK(eng.navigator().goal().x == 101.5f);
+    CHECK(eng.navigator().goal().z == 100.5f);
+    tick_until([&] { walk.w.sim.tick(); }, "it repairs", 100, [&] { return eng.is_repairing(); });
 }
