@@ -17333,21 +17333,23 @@ void test_prebuilt(TestContext& ctx) {
 
     // A factory and four power generators by the start: off the start spot
     // (+-5), clear of each other, and close.
-    const osc::sim::StructureSite start_box{static_cast<osc::f32>(static_cast<int>(start.x)),
-                                            static_cast<osc::f32>(static_cast<int>(start.z)), 10,
-                                            10};
+    const auto sx = static_cast<osc::f32>(std::lrint(start.x));
+    const auto sz = static_cast<osc::f32>(std::lrint(start.z));
+    const osc::sim::StructureSite start_box{sx - 5, sz - 5, sx + 5, sz + 5};
+    const auto site_of = [](const osc::sim::Unit* u) {
+        return osc::sim::StructureSite::of(u->position().x, u->position().z, u->footprint_size_x(),
+                                           u->footprint_size_z());
+    };
     bool clear_of_start = true, clear_of_each_other = true;
     osc::f32 farthest_other = 0;
     for (size_t i = 0; i < others.size(); ++i) {
         const auto* a = others[i];
-        const osc::sim::StructureSite sa{a->position().x, a->position().z, a->footprint_size_x(),
-                                         a->footprint_size_z()};
+        const osc::sim::StructureSite sa = site_of(a);
         if (start_box.overlaps(sa)) clear_of_start = false;
         for (size_t j = i + 1; j < others.size(); ++j) {
-            const auto* b = others[j];
-            if (sa.overlaps({b->position().x, b->position().z, b->footprint_size_x(),
-                             b->footprint_size_z()}))
+            if (sa.overlaps(site_of(others[j]))) {
                 clear_of_each_other = false;
+            }
         }
         farthest_other =
             std::max(farthest_other, std::sqrt(dist2(a->position().x, a->position().z)));

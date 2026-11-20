@@ -246,6 +246,9 @@ public:
     /// clears those too; this keeps them, so a load can rebuild the grid
     /// from its occupants.
     void release_ground(EntityId id);
+    /// Set or clear `r`'s cells on the grids `caps` writes, held by no
+    /// occupant (Moho's COGrid::ExecuteOccupy and ReleaseOccupy of a rect).
+    void occupy_cells(u8 caps, const OccupancyRect& r, bool occupied);
     /// Reserve, or free, a place a unit will come to rest (Moho's
     /// Unit::ReserveOgridRect, an aircraft's landing place).
     void reserve_ground(const OccupancyRect& r, bool reserved) { occupancy_.reserve(r, reserved); }
