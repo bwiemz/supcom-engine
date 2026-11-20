@@ -258,10 +258,12 @@ void Navigator::navigate(Unit& unit) {
             return;
         }
         // Moho's move goal: the cell the footprint would stand on there, the
-        // destination first moved to a place it fits (Unit::PrepareMove).
+        // destination first moved to a place it fits. Reservations aside: a
+        // Moho task that minds them settles its goal itself (Unit::PrepareMove).
         const blueprints::Footprint& fp = unit.footprint();
         Vector3 dest = goal_;
-        prepare_move(unit, *map, sim_->occupancy(), sim_->move_bounds(unit.army()), dest);
+        prepare_move(unit, *map, sim_->occupancy(), sim_->move_bounds(unit.army()), dest, 0,
+                     nullptr, {false});
         const OccupancyRect at = footprint_rect(fp, dest.x, dest.z);
         const path::NavGoal goal{{at.x0, at.z0, at.x0 + 1, at.z0 + 1}, {}};
         // The move it is on, asked again (an order re-asserts its goal while

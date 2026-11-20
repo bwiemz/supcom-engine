@@ -411,6 +411,16 @@ void Unit::cancel_upgrade(EntityRegistry& registry, lua_State* L) {
     tell_build_failed(*this, L, frame_ref, "Upgrade");
 }
 
+OccupancyRect Unit::skirt_cells() const {
+    const f32 x0 =
+        static_cast<f32>(std::lrint(position().x - footprint_size_x() * 0.5f)) + skirt_offset_x();
+    const f32 z0 =
+        static_cast<f32>(std::lrint(position().z - footprint_size_z() * 0.5f)) + skirt_offset_z();
+    return {static_cast<i32>(std::floor(x0)), static_cast<i32>(std::floor(z0)),
+            static_cast<i32>(std::ceil(x0 + skirt_size_x())),
+            static_cast<i32>(std::ceil(z0 + skirt_size_z()))};
+}
+
 // --- Adjacency helpers ---
 
 namespace {
@@ -4025,16 +4035,24 @@ void Unit::free_landing_reservation(SimState& sim) {
     r = {};
 }
 
-void Unit::free_guard_anchor(SimState* sim) {
-    const OccupancyRect& r = guard_anchor_.reserved;
+void Unit::reserve_for_order(u32 order, const Vector3& place, SimState* sim) {
+    free_order_reservation(sim);
+    order_reservation_ = {true, order, footprint_rect(footprint(), place.x, place.z)};
+    if (sim) {
+        sim->reserve_ground(order_reservation_.reserved, true);
+    }
+}
+
+void Unit::free_order_reservation(SimState* sim) {
+    const OccupancyRect& r = order_reservation_.reserved;
     if (sim && r.x1 > r.x0 && r.z1 > r.z0) {
         sim->reserve_ground(r, false);
     }
-    guard_anchor_ = {};
+    order_reservation_ = {};
 }
 
 const OccupancyRect& Unit::reserved_ground() const {
-    return guard_anchor_.held ? guard_anchor_.reserved : idle_landing_.reserved;
+    return order_reservation_.held ? order_reservation_.reserved : idle_landing_.reserved;
 }
 
 void Unit::take_off(SimContext& ctx) {

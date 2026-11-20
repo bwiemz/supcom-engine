@@ -217,10 +217,10 @@ void mix_unit_flight(Fnv& units, const Unit& u) {
         units.mix(path::pack_cell({il.reserved.x0, il.reserved.z0}));
         units.mix(path::pack_cell({il.reserved.x1, il.reserved.z1}));
     }
-    if (const Unit::GuardAnchor& ga = u.guard_anchor(); ga.held) {
-        units.mix(0x47414e4300000000ull | ga.order); // "GANC"
-        units.mix(path::pack_cell({ga.reserved.x0, ga.reserved.z0}));
-        units.mix(path::pack_cell({ga.reserved.x1, ga.reserved.z1}));
+    if (const Unit::OrderReservation& res = u.order_reservation(); res.held) {
+        units.mix(0x47414e4300000000ull | res.order); // "GANC"
+        units.mix(path::pack_cell({res.reserved.x0, res.reserved.z0}));
+        units.mix(path::pack_cell({res.reserved.x1, res.reserved.z1}));
     }
     // A walk off a build site (step_aside), only on one.
     if (u.stepping_aside()) {
@@ -488,6 +488,14 @@ void mix_command(Fnv& orders, const UnitCommand& cmd, bool need_unpack) {
     if (cmd.target_point >= 0) {
         orders.mix(0x54504e54u); // "TPNT"
         orders.mix(static_cast<u64>(static_cast<u32>(cmd.target_point)));
+    }
+    // A factory-issued order, and the goal its move settled on, only then.
+    if (cmd.from_factory || cmd.goal_prepared) {
+        orders.mix(0x46414354u | (cmd.goal_prepared ? 1ull << 32 : 0u)); // "FACT"
+        if (cmd.goal_prepared) {
+            mix_vec(orders, cmd.prepared_goal);
+            mix_vec(orders, cmd.prepared_for);
+        }
     }
     // A winged attack within reach, flying its runs, only then.
     if (cmd.engaged) orders.mix(0x454e4744u); // "ENGD"

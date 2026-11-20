@@ -16,6 +16,7 @@ class Terrain;
 
 namespace osc::sim {
 
+class SimState;
 class Unit;
 
 /// The footprint PrepareMove tests for `unit` at `dest`: its own, or a
@@ -33,14 +34,23 @@ struct MoveExclusion {
     f32 z1 = 0;
 };
 
-/// A destination the unit's footprint won't fit, or that another has
-/// reserved, moves to the nearest place it will (nearest the unit), looked
-/// for in rings `step` cells apart (twice its larger side for 0), 900 places
-/// at most, each inside `bounds` by that side. With `exclude`, a place whose
+/// What a place must be besides one the unit fits. Moho's PrepareMove asks
+/// both; only the engine's own goals leave them out.
+struct MoveTests {
+    /// No other unit has reserved it (Unit::CanReserveOgridRect).
+    bool reservations = true;
+    /// With the sim: no unit stands on it (COORDS_CanMoveAt).
+    const SimState* units = nullptr;
+};
+
+/// A destination the unit's footprint won't fit, or that fails `tests`,
+/// moves to the nearest place that passes (nearest the unit), looked for in
+/// rings `step` cells apart (twice its larger side for 0), 900 places at
+/// most, each inside `bounds` by that side. With `exclude`, a place whose
 /// cell touches it is no place (Moho's skirt rect). False, `dest` untouched,
 /// if none.
 bool prepare_move(const Unit& unit, const map::Terrain& map, const OccupancyGrid& grid,
                   const OccupancyRect& bounds, Vector3& dest, i32 step = 0,
-                  const MoveExclusion* exclude = nullptr);
+                  const MoveExclusion* exclude = nullptr, const MoveTests& tests = {});
 
 } // namespace osc::sim
