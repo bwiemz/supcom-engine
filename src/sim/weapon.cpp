@@ -408,7 +408,9 @@ void Weapon::fire_step(Unit& owner, EntityRegistry& registry, lua_State* L, cons
     }
     if (target_entity_id) {
         const Entity* target = registry.find(target_entity_id);
-        if (!target || !can_attack(*target, sim)) {
+        // CFireWeaponTask fires only at a target CAiTarget::HasTarget takes: no dying unit.
+        if (!target || !can_attack(*target, sim) ||
+            (target->is_unit() && static_cast<const Unit*>(target)->is_dying())) {
             return;
         }
     }
