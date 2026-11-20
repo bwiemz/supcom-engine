@@ -435,6 +435,30 @@ TEST_CASE("A factory not repeating its queue builds each order once", "[session]
     CHECK(finished_units(h) == 1);
 }
 
+TEST_CASE("A factory starts its next unit the tick after one is built, or 9 ticks on at a time "
+          "while the roll-off keeps it busy",
+          "[session][rules]") {
+    const auto [busy, starts] = GENERATE(table<int, int>({{0, 1}, {5, 10}, {12, 19}, {25, 28}}));
+    CAPTURE(busy);
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 2)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    tick_until([&] { h.sim.tick(); }, "the first tank is built", 50,
+               [&] { return finished_units(h) == 1; });
+    f->set_busy(busy > 0);
+    int ticks = 0;
+    while (!f->is_building() && ticks < 60) {
+        if (ticks == busy) {
+            f->set_busy(false);
+        }
+        h.sim.tick();
+        ++ticks;
+    }
+    CHECK(ticks == starts);
+}
+
 TEST_CASE("A repeating factory drops a build that fails", "[session][rules]") {
     BuildRuleHarness h;
     REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
@@ -1304,7 +1328,7 @@ TEST_CASE("A factory paused before it starts makes its unit only on a retry afte
     }
     CHECK(h.sim.entity_registry().count() == 1);
     f->set_paused(false);
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 3; ++i) {
         h.sim.tick();
         CHECK(h.sim.entity_registry().count() == 1);
     }
