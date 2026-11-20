@@ -389,6 +389,10 @@ public:
     TargetMark target_mark() const {
         return {target_entity_id, has_ground_target, ground_target, target_held};
     }
+    /// After a script's UnitWeapon::SetTarget (SetTargetEntity, SetTargetGround, ResetTarget,
+    /// TransferTarget): its unit's place among the shooters, and its script's event.
+    void script_target_changed(Unit& owner, EntityRegistry& registry, lua_State* L,
+                               const TargetMark& previous);
 
 private:
     void update_targeting(Unit& owner, EntityRegistry& registry, const SimState* sim);
@@ -410,7 +414,8 @@ private:
     /// OnGotTarget for a target after none, OnLostTarget (a manual weapon's OnHaltFire first) for
     /// none after a target, nothing for one target after another. False if the script killed
     /// its unit or took the weapon's script away.
-    bool report_target_change(const Unit& owner, lua_State* L, const TargetMark& previous);
+    bool report_target_change(const Unit& owner, lua_State* L, const TargetMark& previous,
+                              bool halt_manual = true);
     void fire_scripted(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
     void fire_direct(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
     /// A manual weapon's target: what its unit's launch order names, if the
