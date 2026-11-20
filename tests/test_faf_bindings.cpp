@@ -62,7 +62,7 @@ struct World {
         // marker is size 1, a hydrocarbon's 3 (retail's save.lua files).
         sim.add_resource_deposit({10.5f, 0, 20.5f, 1.0f, osc::sim::ResourceDeposit::Mass});
         sim.add_resource_deposit({30.5f, 0, 40.5f, 3.0f, osc::sim::ResourceDeposit::Hydrocarbon});
-        sim.add_resource_deposit({12.7f, 0, 20.2f, 1.0f, osc::sim::ResourceDeposit::Mass});
+        sim.add_resource_deposit({12.3f, 0, 19.2f, 1.0f, osc::sim::ResourceDeposit::Mass});
         osc::lua::register_moho_bindings(sim_lua, sim);
         osc::lua::register_sim_bindings(sim_lua, sim);
         osc::lua::register_moho_bindings(ui, sim);
@@ -110,7 +110,7 @@ constexpr const char* kDepositChecks = R"(
     if h.X1 ~= 29 or h.Z1 ~= 39 or h.X2 ~= 32 or h.Z2 ~= 42 or h.Type ~= 2 then
         error('hydrocarbon square ' .. h.X1 .. ',' .. h.Z1 .. ',' .. h.X2 .. ',' .. h.Z2)
     end
-    -- (12.7, 20.2) truncates to the cell from (12, 19): centre (12.5, 19.5)
+    -- (12.3, 19.2) rounds to the cell from (12, 19): centre (12.5, 19.5)
     local m2 = all[3]
     if m2.X1 ~= 12 or m2.Z1 ~= 19 or m2.X2 ~= 13 or m2.Z2 ~= 20 then
         error('second mass square ' .. m2.X1 .. ',' .. m2.Z1)

@@ -20,6 +20,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
+#include "support/builder.hpp"
 #include "support/tick_until.hpp"
 
 extern "C" {
@@ -329,6 +330,7 @@ TEST_CASE("A factory with builds queued anchors its patrol on its rally orders",
     // A build order from the UI has no place: neither it nor (0, 0) is the
     // anchor.
     FactoryPatrol t;
+    osc::test::make_builder(t.g.L, *t.factory, "ueb0101", {"uel0101"});
     osc::sim::UnitCommand build;
     build.type = CommandType::BuildFactory;
     build.blueprint_id = "uel0101";

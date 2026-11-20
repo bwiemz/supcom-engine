@@ -388,6 +388,8 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.f32v(c.site_skirt_z);
     w.b(c.site_cleared);
     w.b(c.prepared);
+    w.b(c.reached);
+    w.b(c.faced);
     w.id(c.rebuild_wreck_id);
     w.f32v(c.rebuild_bonus);
     w.id(c.clearing_prop_id);
@@ -451,6 +453,8 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.site_skirt_z = r.f32v();
     c.site_cleared = r.b();
     c.prepared = r.b();
+    c.reached = r.b();
+    c.faced = r.b();
     c.rebuild_wreck_id = r.id();
     c.rebuild_bonus = r.f32v();
     c.clearing_prop_id = r.id();
