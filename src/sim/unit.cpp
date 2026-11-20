@@ -5250,6 +5250,10 @@ void Unit::stop_silo_build() {
 }
 
 void Unit::run_stop(lua_State* L) {
+    stop_attacker(L);
+    if (destroyed() || dying_) {
+        return;
+    }
     if (std::none_of(weapons_.begin(), weapons_.end(),
                      [](const auto& w) { return w->counted_projectile; })) {
         return;

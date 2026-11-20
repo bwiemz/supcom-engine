@@ -614,7 +614,22 @@ bool Weapon::blacklisted(EntityId id) const {
                        [id](const auto& e) { return e.first == id; });
 }
 
-bool Weapon::report_target_change(const Unit& owner, lua_State* L, const TargetMark& previous) {
+void Weapon::script_target_changed(Unit& owner, EntityRegistry& registry, lua_State* L,
+                                   const TargetMark& previous) {
+    if (target_mark() == previous) {
+        return;
+    }
+    sync_shooter(owner, registry);
+    if (!blacklist.empty() && (has_target() || target_held)) {
+        age_blacklist(registry);
+    }
+    if (L && fires_through_script()) {
+        report_target_change(owner, L, previous, false);
+    }
+}
+
+bool Weapon::report_target_change(const Unit& owner, lua_State* L, const TargetMark& previous,
+                                  bool halt_manual) {
     const auto still_firing = [&] {
         return !owner.destroyed() && !owner.is_dying() && fires_through_script();
     };
@@ -627,7 +642,7 @@ bool Weapon::report_target_change(const Unit& owner, lua_State* L, const TargetM
     const bool has = has_target() || target_held;
     if (had && !has) {
         // Moho's OnHaltFire: a manual weapon whose order went must not fire on.
-        if (manual_fire) {
+        if (manual_fire && halt_manual) {
             call_script(L, "OnHaltFire");
             if (!still_firing()) {
                 return false;
@@ -933,8 +948,6 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         }
     }
 
-    // A ground target its script set stays until the script changes it.
-    if (has_ground_target) return;
     // Attacking, a unit that unpacks to fire takes its ordered target only.
     if (owner.need_unpack() && head == CommandType::Attack) return;
 
@@ -957,13 +970,19 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         } else if (!always_recheck_target) {
             return;
         }
+    } else if (has_ground_target && !always_recheck_target &&
+               can_attack_ground(ground_target, sim ? sim->terrain() : nullptr)) {
+        const f32 dx = ground_target.x - owner.position().x;
+        const f32 dz = ground_target.z - owner.position().z;
+        if (solution_status(owner, ground_target, dx * dx + dz * dz) == Solution::Available) {
+            return;
+        }
     }
     // Moho's CAcquireTargetTask, under hold fire, drops a target it doesn't keep and looks for no
     // other (the Steam exe's 0x5DFCD9, after its keep check). The order's target and the primary
     // weapon's above it still reach the weapon, which doesn't fire (fire_step).
     if (owner.fire_state() == 1) {
-        target_entity_id = EntityId();
-        target_held = false;
+        set_target_entity(EntityId());
         return;
     }
 
@@ -976,8 +995,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     }
     if (!best_id) {
         // Moho's acquire task, finding no enemy, clears the target ReTargetOnMiss gave up
-        target_entity_id = EntityId();
-        target_held = false;
+        set_target_entity(EntityId());
         return;
     }
     // An idle aircraft's weapon with AutoInitiateAttackCommand makes the enemy it found its unit's
@@ -992,6 +1010,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     target_entity_id = best_id;
     retarget_misses = 0;
     target_held = false;
+    has_ground_target = false;
 }
 
 void Weapon::acquire_projectile(const Unit& owner, EntityRegistry& registry, const SimState* sim) {

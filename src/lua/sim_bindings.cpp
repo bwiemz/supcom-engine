@@ -5030,6 +5030,10 @@ static int l_IssueClearCommands(lua_State* L) {
         if (e && !e->destroyed() && e->is_unit()) {
             static_cast<sim::Unit*>(e)->clear_commands(ctx);
         }
+        e = sim->entity_registry().find(id);
+        if (e && !e->destroyed() && e->is_unit()) {
+            static_cast<sim::Unit*>(e)->stop_attacker(L);
+        }
     }
     return 0;
 }
