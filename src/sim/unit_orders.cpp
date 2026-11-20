@@ -1403,7 +1403,8 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
         if (waits_out_task(cmd)) {
             return OrderStep::Hold;
         }
-        if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
+        if (cmd.type == CommandType::BuildFactory ? L && !unit_can_build(L, *this, cmd, ctx)
+                                                  : build_blocked_by_lobby_rules(*this, cmd, ctx)) {
             command_queue_.pop_front();
             return OrderStep::Next;
         }
@@ -2738,10 +2739,10 @@ OrderStep Unit::guard_factory_queue(UnitCommand& cmd, Unit& target_unit, f64 dt,
         // is taken.
         if (spare) --queue[i].count;
         else queue.erase(queue.begin() + static_cast<std::ptrdiff_t>(i));
-        // Taken even if the lobby's rules forbid it, as Moho's build task
+        // Taken even if the factory may not build it, as Moho's build task
         // fails after the take; such an order is dropped, repeating or
         // not, as the guarded factory drops it when it comes to it.
-        if (build_blocked_by_lobby_rules(*this, build, ctx)) break;
+        if (!unit_can_build(L, *this, build, ctx)) break;
         // A repeating guarded factory has the order sent round, its count
         // back at its most (Moho's MoveCommandToBackOfQueue)
         if (repeats && !spare) {

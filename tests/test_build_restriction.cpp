@@ -47,7 +47,7 @@ struct Builds {
             __blueprints = {
                 uel0001 = {
                     BlueprintId = 'uel0001',
-                    Economy = { BuildableCategory = { 'ueb1101', 'ueb1103' } },
+                    Economy = { BuildableCategory = { 'ueb1101', 'ueb1103', 'uel0105' } },
                 },
                 uel0105 = {
                     BlueprintId = 'uel0105',
@@ -279,4 +279,30 @@ TEST_CASE("A factory build is dropped as it comes up where its unit's script ref
         CHECK(b.engineer->position().z == at.z);
     }
     CHECK(b.failed() == 0);
+}
+
+TEST_CASE("A factory build its factory may not make is dropped as its task prepares, with nothing "
+          "built",
+          "[build][build_restriction]") {
+    enum class Why { Allowed, NotBuildable, ArmyRestricted, UnitRestricted };
+    const Why why =
+        GENERATE(Why::Allowed, Why::NotBuildable, Why::ArmyRestricted, Why::UnitRestricted);
+    CAPTURE(static_cast<int>(why));
+    Builds b;
+    Unit* factory = b.factory(40.0f, 40.0f);
+    const char* blueprint = why == Why::NotBuildable ? "ueb1101" : "uel0105";
+    if (why == Why::ArmyRestricted) {
+        b.sim.get_army(0)->add_build_restriction({"uel0105"});
+    } else if (why == Why::UnitRestricted) {
+        factory->add_build_restriction(osc::sim::CategoryExpr::name("uel0105"));
+    }
+    UnitCommand build;
+    build.type = CommandType::BuildFactory;
+    build.blueprint_id = blueprint;
+    factory->push_command(build, true);
+    for (int i = 0; i < 10; ++i) {
+        b.sim.tick();
+    }
+    CHECK(b.frame_at(factory->position()) == (why == Why::Allowed));
+    CHECK(factory->command_queue().empty() == (why != Why::Allowed));
 }
