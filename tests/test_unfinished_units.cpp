@@ -3,6 +3,7 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include "blueprints/blueprint_store.hpp"
+#include "core/dmath.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
@@ -13,6 +14,7 @@
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/script_class.hpp"
+#include "sim/sim_random.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -23,6 +25,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -352,6 +355,67 @@ TEST_CASE("A unit is made with its consumption off, for its script to switch on"
                 .do_string("local d = moho.unit_methods.GetEconData(radar)"
                            " assert(d.energyProduced == 0, d.energyProduced)")
                 .ok());
+}
+
+TEST_CASE("A unit made in place faces a random spawn rotation as its blueprint says",
+          "[sim][build]") {
+    const bool flag = GENERATE(false, true);
+    const bool mobile = GENERATE(false, true);
+    const bool in_place = GENERATE(false, true);
+    CAPTURE(flag, mobile, in_place);
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store{state.raw()};
+    SimState sim{state.raw(), &store};
+    osc::lua::register_moho_bindings(state, sim);
+    osc::lua::register_sim_bindings(state, sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.random().set_mt19937(true);
+    sim.random().seed(1234);
+    lua_State* L = state.raw();
+    const std::string physics = mobile ? "{MotionType = 'RULEUMT_Land', MaxSpeed = 2}" : "{}";
+    const std::string bp =
+        std::string("return {BlueprintId = 'thing', Categories = {'") +
+        (mobile ? "MOBILE" : "STRUCTURE") +
+        "'}, Defense = {MaxHealth = 100}, Economy = {BuildTime = 10}, Physics = " + physics +
+        ", Display = {SpawnRandomRotation = " + (flag ? "true" : "false") + "}}";
+    REQUIRE(state.do_string(bp).ok());
+    store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+    lua_settop(L, 0);
+    store.expose_to_lua(L);
+    osc::sim::SimRandom expect = sim.random();
+
+    lua_pushstring(L, "__osc_create_building_unit");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "thing");
+    lua_pushnumber(L, 1);
+    lua_pushnumber(L, 10);
+    if (in_place) {
+        lua_pushnumber(L, 0);
+    } else {
+        lua_pushnil(L);
+    }
+    lua_pushnumber(L, 10);
+    REQUIRE(lua_pcall(L, 5, 2, 0) == 0);
+    auto* unit = static_cast<Unit*>(sim.entity_registry().find(osc::sim::to_entity_key(L, -2)));
+    lua_settop(L, 0);
+    REQUIRE(unit);
+    const auto q = unit->orientation();
+    if (flag && mobile && in_place) {
+        const float half = expect.range(-0.52359879f, 0.52359879f) * 0.5f;
+        const float s = osc::dmath::sin(half);
+        CHECK(q.y == s);
+        CHECK(q.w == osc::dmath::cos(half));
+        CHECK(q.x == 0.0f);
+        CHECK(q.z == 0.0f);
+        CHECK(std::signbit(q.x) == std::signbit(s));
+        CHECK(std::signbit(q.z) == std::signbit(s));
+    } else {
+        CHECK(q.x == 0.0f);
+        CHECK(q.y == 0.0f);
+        CHECK(q.z == 0.0f);
+        CHECK(q.w == 1.0f);
+    }
+    CHECK(sim.random().next_u32() == expect.next_u32());
 }
 
 TEST_CASE("A unit is a natural producer as its blueprint's Economy says", "[sim][economy]") {
