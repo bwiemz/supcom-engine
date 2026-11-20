@@ -18,6 +18,8 @@
 #include <utility>
 #include <vector>
 
+struct lua_State;
+
 namespace osc::map {
 class Terrain;
 }
@@ -136,19 +138,21 @@ public:
     StructurePlacement(const SimState& sim, i32 army, PlacementRulesLookup rules,
                        bool scheduled = false, u32 moving = 0);
 
-    /// Can `bp_id` be built centered at (x, z)? Requires the footprint inside
-    /// the playable area, over cells of a layer the blueprint builds on, clear
-    /// of every structure (finished or under construction) and of reserved()
-    /// sites, and -- for extractors -- over a deposit.
-    bool can_build(const std::string& bp_id, f32 x, f32 z) const;
-    /// can_build without reserved() sites (Moho's func_LocationIsFree).
+    /// Moho's func_LocationIsFree: OCCUPY_Check (the map, the ground's
+    /// flatness, the water, the deposit rule), no other structure's skirt
+    /// across the site's, and the footprint's cells free in the occupancy grid.
     bool location_free(const std::string& bp_id, f32 x, f32 z) const;
+    /// location_free, clear of reserved() sites (Moho's CanBuildStructureAt).
+    /// The UI's, `scheduled`, asks no occupancy grid, and keeps the footprint
+    /// within the playable area over pathfinding cells of its layers.
+    bool can_build(const std::string& bp_id, f32 x, f32 z) const;
 
     /// The rules for `bp_id` (cached per query object).
     const PlacementRules& rules(const std::string& bp_id) const;
 
 private:
-    bool fits(const std::string& bp_id, f32 x, f32 z, bool pending_orders) const;
+    /// The layers location_free leaves the structure, 0 for none.
+    u8 free_site_layers(const PlacementRules& r, f32 x, f32 z) const;
     /// `layers`: the placement_layer bits occupy_layers allows there.
     bool terrain_allows(const StructureSite& site, u8 layers) const;
     bool in_playable(const StructureSite& site) const;
@@ -173,6 +177,10 @@ private:
 
 const UnitCommand* reserved_order(const SimState& sim, const BuildReservation& r);
 void drop_stale_build_reservations(const SimState& sim, ArmyBrain& brain);
+
+/// A structure blueprint's placement rules, as its Physics give them (the
+/// sim keeps them once read)
+const PlacementRules& structure_rules(lua_State* L, const SimState& sim, const std::string& bp_id);
 
 /// Moho's TryBuildStructureAt (faf-re unit/tasks/CUnitCallTeleport.cpp) for a script's build
 /// order: the centre `bp_id` is built at for one asked at (x, z), or none.

@@ -1218,7 +1218,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             return OrderStep::Hold;
         }
         if (!find_build_site_frame(registry, cmd.blueprint_id, cmd.target_pos)) {
-            if (build_site_taken(L, registry, cmd.blueprint_id, cmd.target_pos)) {
+            if (build_site_taken(L, *ctx.sim, army(), cmd.blueprint_id, cmd.target_pos)) {
                 command_queue_.pop_front();
                 call_lua_method(L, "OnFailedToBuild");
                 return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;

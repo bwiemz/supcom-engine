@@ -1106,116 +1106,11 @@ static int brain_GetPlatoonsList(lua_State* L) {
     return 1;
 }
 
-// Placement rules for a structure blueprint, read from __blueprints.
-static sim::PlacementRules placement_rules_of(lua_State* L, const sim::SimState& sim,
-                                              const std::string& bp_id) {
-    sim::PlacementRules r;
-    const int top = lua_gettop(L);
-    if (!blueprints::push_blueprint(L, bp_id)) return r;
-    const int bp = lua_gettop(L);
-
-    if (const auto [fx, fz] = sim::blueprint_footprint(L, bp); fx > 0 && fz > 0) {
-        r.size_x = fx;
-        r.size_z = fz;
-    }
-    const auto cells = [](f32 size) {
-        return static_cast<u8>(std::clamp(std::lround(size), 0L, 255L));
-    };
-    blueprints::Footprint own;
-    own.size_x = cells(r.size_x);
-    own.size_z = cells(r.size_z);
-    std::string motion;
-    lua_pushstring(L, "Footprint");
-    lua_rawget(L, bp);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, "MinWaterDepth");
-        lua_rawget(L, -2);
-        if (lua_isnumber(L, -1)) r.min_water_depth = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_pushstring(L, "MaxSlope");
-        lua_rawget(L, -2);
-        if (lua_isnumber(L, -1)) {
-            own.max_slope = static_cast<f32>(lua_tonumber(L, -1));
-        }
-        lua_pop(L, 1);
-        lua_pushstring(L, "MaxWaterDepth");
-        lua_rawget(L, -2);
-        if (lua_isnumber(L, -1)) {
-            own.max_water_depth = static_cast<f32>(lua_tonumber(L, -1));
-        }
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
-    own.min_water_depth = r.min_water_depth;
-
-    lua_pushstring(L, "Physics");
-    lua_rawget(L, bp);
-    if (lua_istable(L, -1)) {
-        const int phys = lua_gettop(L);
-        lua_pushstring(L, "BuildOnLayerCaps"); // absent: land only
-        lua_rawget(L, phys);
-        if (const auto layers = blueprints::read_flag_enum(L, -1, blueprints::kLayerEnum)) {
-            namespace oc = blueprints::occupancy;
-            r.on_land = (*layers & oc::kLand) != 0;
-            r.on_water = (*layers & oc::kWater) != 0;
-            r.on_seabed = (*layers & oc::kSeabed) != 0;
-            r.on_sub = (*layers & oc::kSub) != 0;
-        }
-        lua_pop(L, 1);
-        const auto number = [L, phys](const char* key) {
-            lua_pushstring(L, key);
-            lua_rawget(L, phys);
-            const f32 v = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
-            lua_pop(L, 1);
-            return v;
-        };
-        r.skirt_x = number("SkirtSizeX");
-        r.skirt_z = number("SkirtSizeZ");
-        r.skirt_off_x = number("SkirtOffsetX");
-        r.skirt_off_z = number("SkirtOffsetZ");
-        lua_pushstring(L, "MaxGroundVariation");
-        lua_rawget(L, phys);
-        if (lua_isnumber(L, -1)) r.max_ground_variation = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_pushstring(L, "FlattenSkirt");
-        lua_rawget(L, phys);
-        r.flatten_skirt = lua_toboolean(L, -1) != 0;
-        lua_pop(L, 1);
-        lua_pushstring(L, "MotionType");
-        lua_rawget(L, phys);
-        if (lua_type(L, -1) == LUA_TSTRING) {
-            motion = lua_tostring(L, -1);
-        }
-        lua_pop(L, 1);
-        lua_pushstring(L, "BuildRestriction");
-        lua_rawget(L, phys);
-        if (lua_type(L, -1) == LUA_TSTRING) {
-            const std::string restriction = lua_tostring(L, -1);
-            if (restriction == "RULEUBR_OnMassDeposit")
-                r.deposit = sim::PlacementRules::Deposit::Mass;
-            else if (restriction == "RULEUBR_OnHydrocarbonDeposit")
-                r.deposit = sim::PlacementRules::Deposit::Hydrocarbon;
-        }
-        lua_pop(L, 1);
-    }
-    lua_settop(L, top);
-    if (!motion.empty() && motion != "RULEUMT_None" && sim.blueprint_store()) {
-        r.mobile = blueprints::resolve_unit_footprints(sim.blueprint_store()->footprint_classes(),
-                                                       own, own, motion, {}, 0)
-                       .main;
-    }
-    return r;
-}
-
-const sim::PlacementRules& structure_rules(lua_State* L, const sim::SimState& sim,
-                                           const std::string& bp_id) {
-    return sim.placement_rules(bp_id, [&] { return placement_rules_of(L, sim, bp_id); });
-}
-
 static sim::StructurePlacement placement_for(lua_State* L, const sim::SimState& sim, i32 army,
                                              bool scheduled = false, u32 moving = 0) {
     return sim::StructurePlacement(
-        sim, army, [L, &sim](const std::string& bp_id) { return structure_rules(L, sim, bp_id); },
+        sim, army,
+        [L, &sim](const std::string& bp_id) { return sim::structure_rules(L, sim, bp_id); },
         scheduled, moving);
 }
 
@@ -2088,24 +1983,6 @@ static int brain_CreateUnitNearSpot(lua_State* L) {
     const sim::OccupancyRect start_cells{sx - 5, sz - 5, sx + 5, sz + 5};
     sim->occupy_cells(caps, start_cells, true);
 
-    namespace layer = sim::placement_layer;
-    const auto grid_free = [&](f32 cx, f32 cz) {
-        if (!sim->terrain()) {
-            return true;
-        }
-        u8 layers = sim::occupy_layers(*sim->terrain(), rules, cx, cz);
-        const auto x0 = static_cast<i32>(std::lrint(cx - rules.size_x * 0.5f));
-        const auto z0 = static_cast<i32>(std::lrint(cz - rules.size_z * 0.5f));
-        const sim::OccupancyRect cells{x0, z0, x0 + static_cast<i32>(std::lround(rules.size_x)),
-                                       z0 + static_cast<i32>(std::lround(rules.size_z))};
-        if ((layers & (layer::Land | layer::Seabed)) != 0 && sim->occupancy().ground_any(cells)) {
-            layers &= static_cast<u8>(~(layer::Land | layer::Seabed));
-        }
-        if ((layers & layer::Water) != 0 && sim->occupancy().water_any(cells)) {
-            layers &= static_cast<u8>(~layer::Water);
-        }
-        return layers != 0;
-    };
     // TryBuildStructureAt's coerced skirt: the skirt one cell bigger all round, clear of units.
     const auto skirt_clear = [&](f32 cx, f32 cz) {
         const f32 corner_x = std::nearbyint(cx - rules.size_x * 0.5f);
@@ -2121,7 +1998,7 @@ static int brain_CreateUnitNearSpot(lua_State* L) {
     };
     const auto free_at = [&](f32 cx, f32 cz, f32& out_x, f32& out_z) {
         sim::snap_structure_center(cx, cz, rules.size_x, rules.size_z);
-        if (!placement.location_free(bp, cx, cz) || !grid_free(cx, cz) || !skirt_clear(cx, cz)) {
+        if (!placement.location_free(bp, cx, cz) || !skirt_clear(cx, cz)) {
             return false;
         }
         out_x = cx;
