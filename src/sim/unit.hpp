@@ -907,6 +907,8 @@ public:
     /// attack (a FormAttack too) whose target is dying or gone -- may take an
     /// attack order of its weapons' own choosing.
     bool auto_initiate_allowed(const EntityRegistry& registry) const;
+    /// Moho's UNITSTATE_Attacking: an attack order's task runs.
+    bool attacking() const { return attack_task_; }
     /// Whether Moho's FindBestEnemy skips `enemy` whatever the weapon.
     bool passes_over(const Unit& enemy, const SimState* sim, const EntityRegistry& registry) const;
     /// A weapon with AutoInitiateAttackCommand picked `target`: the unit

@@ -876,7 +876,6 @@ Entity* Weapon::find_best_enemy(const Unit& owner, const std::vector<Entity*>& c
 void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimState* sim) {
     if (unpack_search_paused(owner)) return;
     const auto& queue = owner.command_queue();
-    const CommandType head = queue.empty() ? CommandType::Stop : queue.front().type;
     // Moho's CAcquireTargetTask checks these before the attacker's desired target.
     if (const Weapon* primary = primary_weapon(owner);
         primary && primary != this && primary->has_target()) {
@@ -916,6 +915,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         (flier || in_firing_range(owner, order->target_pos))) {
         set_target_ground(order->target_pos);
         ground_from_order = true;
+        target_check_clock = 0;
         return;
     }
     // The order gone, or the point out of this weapon's reach: it looks for
@@ -940,16 +940,25 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     // An attack order's target comes first, for every weapon that can hit
     // it, whatever the priorities say.
     if (ordered && !passing_over) {
-        if (ordered == target_entity_id) return;
+        if (ordered == target_entity_id) {
+            target_check_clock = 0;
+            return;
+        }
         const Entity* target = registry.find(ordered);
         if (target && can_target(owner, *target, sim, !flier)) {
             set_target_entity(ordered);
+            target_check_clock = 0;
             return;
         }
     }
 
-    // Attacking, a unit that unpacks to fire takes its ordered target only.
-    if (owner.need_unpack() && head == CommandType::Attack) return;
+    // CAcquireTargetTask, its unit Attacking, looks again next tick: a unit that unpacks to fire
+    // takes its ordered target only, and so does a weapon that may not start its own attack.
+    if (owner.attacking() && (owner.need_unpack() || (auto_initiate_attack_command &&
+                                                      !owner.auto_initiate_allowed(registry)))) {
+        target_check_clock = 0;
+        return;
+    }
 
     // Otherwise look for targets every TargetCheckInterval: when there is
     // none, or, with AlwaysRecheckTarget, again.
