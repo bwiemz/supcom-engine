@@ -293,10 +293,7 @@ bool StructurePlacement::fits(const std::string& bp_id, f32 x, f32 z, bool pendi
     return !structure_overlaps(sim_.entity_registry(), site);
 }
 
-namespace {
-
-// Moho's STIMap::IsWithin.
-bool within(const SimState& sim, f32 x, f32 z, f32 border, bool whole_map) {
+bool within_map(const SimState& sim, f32 x, f32 z, f32 border, bool whole_map) {
     const map::Terrain* terrain = sim.terrain();
     if (!terrain) {
         return true;
@@ -315,7 +312,14 @@ bool within(const SimState& sim, f32 x, f32 z, f32 border, bool whole_map) {
     return !(x0 > x - border) && !(z0 > z - border) && !(x + border > x1) && !(z + border > z1);
 }
 
-} // namespace
+u8 occupancy_caps(const PlacementRules& r) {
+    if (r.mobile) {
+        return r.mobile->caps;
+    }
+    namespace oc = blueprints::occupancy;
+    return static_cast<u8>((r.on_land ? oc::kLand : 0) | (r.on_seabed ? oc::kSeabed : 0) |
+                           (r.on_sub ? oc::kSub : 0) | (r.on_water ? oc::kWater : 0));
+}
 
 std::optional<std::pair<f32, f32>> try_build_structure_at(const SimState& sim,
                                                           const StructurePlacement& placement,
@@ -328,7 +332,7 @@ std::optional<std::pair<f32, f32>> try_build_structure_at(const SimState& sim,
         return std::pair<f32, f32>{at_x, at_z};
     };
     // Moho tests every ring's site against the asked one's bounds, so outside them none is free.
-    if (!within(sim, x, z, static_cast<f32>(border), whole_map)) {
+    if (!within_map(sim, x, z, static_cast<f32>(border), whole_map)) {
         return std::nullopt;
     }
     if (placement.location_free(bp_id, x, z)) {

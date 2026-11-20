@@ -114,6 +114,13 @@ void SimState::occupy_ground(EntityId id, GroundOccupant occupant) {
     ground_occupants_[id] = std::move(occupant);
 }
 
+void SimState::occupy_cells(u8 caps, const OccupancyRect& r, bool occupied) {
+    occupancy_.fill(caps, r, occupied);
+    if (path_tables_) {
+        path_tables_->dirty(r);
+    }
+}
+
 void SimState::release_ground(EntityId id) {
     const auto it = ground_occupants_.find(id);
     if (it == ground_occupants_.end()) return;
