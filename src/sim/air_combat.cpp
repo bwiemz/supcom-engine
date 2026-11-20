@@ -37,6 +37,7 @@ void air_control(Unit& unit, const Vector3& force, f32 lift, f32 damping, const 
                  bool winged, f32 turn_mult, f32 turn_add, SimState* sim,
                  const map::Terrain* terrain, f32 dt) {
     const AirCombatRules& r = unit.air_combat_rules();
+    const Vector3 lever = unit.air_body_offset();
     const AirMoveStep step = air_move_step(unit.air_velocity(), force, r.k_move, damping, dt);
     unit.set_air_velocity(step.velocity);
     Vector3 next = unit.pending_position();
@@ -45,8 +46,11 @@ void air_control(Unit& unit, const Vector3& force, f32 lift, f32 damping, const 
     const f32 floor_here = unit.air_floor(terrain, next.x, next.z);
     const EntityRegistry* registry = sim ? &sim->entity_registry() : nullptr;
     next.y = unit.lift_toward(lift, winged, floor_here, terrain, registry, dt);
-    unit.set_current_altitude(next.y - floor_here);
     steer_attitude(unit, attitude_of(axes), registry, turn_mult, turn_add, dt);
+    const Vector3 turned = unit.air_body_offset();
+    next = {next.x + (lever.x - turned.x), next.y + (lever.y - turned.y),
+            next.z + (lever.z - turned.z)};
+    unit.set_current_altitude(next.y - floor_here);
     if (sim) {
         next = sim->clamp_to_playable(next, unit.army());
     }
