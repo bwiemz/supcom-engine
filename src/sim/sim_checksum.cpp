@@ -489,6 +489,14 @@ void mix_command(Fnv& orders, const UnitCommand& cmd, bool need_unpack) {
         orders.mix(0x54504e54u); // "TPNT"
         orders.mix(static_cast<u64>(static_cast<u32>(cmd.target_point)));
     }
+    // A factory-issued order, and the goal its move settled on, only then.
+    if (cmd.from_factory || cmd.goal_prepared) {
+        orders.mix(0x46414354u | (cmd.goal_prepared ? 1ull << 32 : 0u)); // "FACT"
+        if (cmd.goal_prepared) {
+            mix_vec(orders, cmd.prepared_goal);
+            mix_vec(orders, cmd.prepared_for);
+        }
+    }
     // A winged attack within reach, flying its runs, only then.
     if (cmd.engaged) orders.mix(0x454e4744u); // "ENGD"
     // A patrol's or guard's wait before it next looks about, only

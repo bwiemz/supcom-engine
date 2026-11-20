@@ -379,6 +379,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.str(c.script_args);
     w.u32v(c.task_serial);
     w.b(c.factory);
+    w.b(c.from_factory);
     w.b(c.launched);
     w.b(c.started);
     w.b(c.approached);
@@ -426,6 +427,9 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.b(c.has_slot);
     w.vec3(c.slot_offset);
     w.i32v(c.target_point);
+    w.b(c.goal_prepared);
+    w.vec3(c.prepared_goal);
+    w.vec3(c.prepared_for);
 }
 
 void StateIO::load(StateReader& r, UnitCommand& c) {
@@ -444,6 +448,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.script_args = r.str();
     c.task_serial = r.u32v();
     c.factory = r.b();
+    c.from_factory = r.b();
     c.launched = r.b();
     c.started = r.b();
     c.approached = r.b();
@@ -491,6 +496,9 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.has_slot = r.b();
     c.slot_offset = r.vec3();
     c.target_point = r.i32v();
+    c.goal_prepared = r.b();
+    c.prepared_goal = r.vec3();
+    c.prepared_for = r.vec3();
 }
 
 // ------------------------------------------------------------- Navigator

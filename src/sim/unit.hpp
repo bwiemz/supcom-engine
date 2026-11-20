@@ -359,6 +359,11 @@ public:
     /// roll-off move its script gives it. Only an immobile FACTORY keeps
     /// them.
     bool keeps_rally_orders() const { return !is_mobile() && has_category("FACTORY"); }
+    /// Moho's Unit constructor: a factory with no motion reserves the cells
+    /// under its skirt (skirt_cells) for as long as it stands.
+    bool reserves_skirt() const { return !has_motion() && has_category("FACTORY"); }
+    /// RUnitBlueprint::GetSkirtRect where it stands, out to whole cells.
+    OccupancyRect skirt_cells() const;
     // FAF's CQUEMOV: FA-Binary-Patches hooks/BuildUnit.cpp, section/SelectUnit.cpp
     bool takes_orders_unfinished() const {
         return has_category("FACTORY") || has_category("CQUEMOV");
@@ -1435,7 +1440,8 @@ public:
     /// Its reservation goes (landed, taken off, or gone).
     void free_landing_reservation(SimState& sim);
     /// The place an order reserved to walk to (Moho's guard task's move
-    /// anchor, a repair's or a capture's place) and the order's id.
+    /// anchor, a repair's or a capture's place, a factory move's goal) and
+    /// the order's id.
     struct OrderReservation {
         bool held = false;
         u32 order = 0;
@@ -1785,7 +1791,11 @@ private:
     /// does as it is made. A Move, Patrol, Guard or Attack drops the weapons'
     /// targets of an immobile NeedUnpack unit, so its weapon packs up and
     /// the unit can go.
-    void begin_order(UnitCommand& cmd, lua_State* L);
+    void begin_order(UnitCommand& cmd, SimContext& ctx);
+    /// Moho's move task's goal for a factory-issued move (see begin_order):
+    /// `dest` moved to a place the unit fits that no unit stands on or has
+    /// reserved, which the order then reserves.
+    void settle_factory_move(UnitCommand& cmd, Vector3 dest, SimContext& ctx);
     /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
     /// target, and one that needs prep (NeedPrep) hears OnGotTarget. False
     /// when a script took the unit or the order.

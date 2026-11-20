@@ -603,7 +603,7 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
                 }
             }
             // Its scripts may change the queue, or kill the unit: look again.
-            begin_order(command_queue_.front(), ctx.L);
+            begin_order(command_queue_.front(), ctx);
             continue;
         }
         UnitCommand& front = command_queue_.front();
@@ -618,8 +618,20 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
     return end_gone_attack(ctx.L);
 }
 
-void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
+void Unit::begin_order(UnitCommand& cmd, SimContext& ctx) {
+    lua_State* L = ctx.L;
     cmd.begun = true;
+    // Moho's CUnitMoveTask constructor (ShouldUseCurrentCommandTargetPosition):
+    // a factory-issued move that is the unit's last order settles its goal.
+    if (cmd.type == CommandType::Move && cmd.from_factory && command_queue_.size() == 1 &&
+        !can_fly() && !has_unit_state("TransportLoading") && !has_unit_state("Teleporting") &&
+        !has_unit_state("Guarding")) {
+        const Vector3 dest{static_cast<f32>(std::lrint(cmd.target_pos.x)), cmd.target_pos.y,
+                           static_cast<f32>(std::lrint(cmd.target_pos.z))};
+        if (dest.x != 0 || dest.y != 0 || dest.z != 0) {
+            settle_factory_move(cmd, dest, ctx);
+        }
+    }
     // Moho's command dispatch makes an attack order's task as the order comes up
     // (CUnitAttackTargetTask); its end stops the attacker (end_gone_attack).
     if (cmd.type == CommandType::Attack) {
@@ -850,10 +862,25 @@ OrderStep Unit::order_stop(lua_State* L) {
     return OrderStep::Next;
 }
 
+void Unit::settle_factory_move(UnitCommand& cmd, Vector3 dest, SimContext& ctx) {
+    if (!ctx.sim || !ctx.terrain) {
+        return;
+    }
+    prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()), dest, 0,
+                 nullptr, {true, ctx.sim});
+    cmd.goal_prepared = true;
+    cmd.prepared_goal = dest;
+    cmd.prepared_for = cmd.target_pos;
+    reserve_for_order(cmd.command_id, dest, ctx.sim);
+}
+
 OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
     // Moho's move task hears AINAVEVENT_Aborted as a failure: the order ends.
     if (aborted_command_ != 0 && cmd.command_id == aborted_command_) {
         aborted_command_ = 0;
+        if (cmd.goal_prepared) {
+            free_order_reservation(ctx.sim);
+        }
         command_queue_.pop_front();
         if (is_air_unit() &&
             (command_queue_.empty() || instant_order(command_queue_.front().type))) {
@@ -861,11 +888,27 @@ OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
         }
         return OrderStep::Next;
     }
-    if ((!navigator_.is_moving() && !navigator_.ended()) ||
-        navigator_.goal().x != cmd.target_pos.x || navigator_.goal().z != cmd.target_pos.z) {
-        set_path_goal(cmd.target_pos, ctx);
+    // A settled goal whose order was moved (Moho's move task hears the
+    // command's event): its new cell's centre, settled again.
+    if (cmd.goal_prepared &&
+        (cmd.target_pos.x != cmd.prepared_for.x || cmd.target_pos.z != cmd.prepared_for.z)) {
+        const OccupancyRect cell = footprint_rect(footprint(), cmd.target_pos.x, cmd.target_pos.z);
+        Vector3 centre{static_cast<f32>(cell.x0 + cell.x1) * 0.5f, cmd.target_pos.y,
+                       static_cast<f32>(cell.z0 + cell.z1) * 0.5f};
+        if (ctx.terrain) {
+            centre.y = ctx.terrain->get_terrain_height(centre.x, centre.z);
+        }
+        settle_factory_move(cmd, centre, ctx);
+    }
+    const Vector3& goal = cmd.goal_prepared ? cmd.prepared_goal : cmd.target_pos;
+    if ((!navigator_.is_moving() && !navigator_.ended()) || navigator_.goal().x != goal.x ||
+        navigator_.goal().z != goal.z) {
+        set_path_goal(goal, ctx);
     }
     if (!nav_update(cmd.speed_cap)) {
+        if (cmd.goal_prepared) {
+            free_order_reservation(ctx.sim);
+        }
         command_queue_.pop_front();
         if (is_air_unit() &&
             (command_queue_.empty() || instant_order(command_queue_.front().type))) {
@@ -2196,6 +2239,7 @@ void Unit::hand_over_rally_orders(EntityId built_id, EntityId rally_id, SimConte
     for (const UnitCommand& order : rally.validated_rally_orders(ctx.L, ctx.sim)) {
         if (order.type == CommandType::TransportLoad && air_or_naval) continue;
         built.command_queue_.push_back(order);
+        built.command_queue_.back().from_factory = true;
     }
 }
 

@@ -411,6 +411,16 @@ void Unit::cancel_upgrade(EntityRegistry& registry, lua_State* L) {
     tell_build_failed(*this, L, frame_ref, "Upgrade");
 }
 
+OccupancyRect Unit::skirt_cells() const {
+    const f32 x0 =
+        static_cast<f32>(std::lrint(position().x - footprint_size_x() * 0.5f)) + skirt_offset_x();
+    const f32 z0 =
+        static_cast<f32>(std::lrint(position().z - footprint_size_z() * 0.5f)) + skirt_offset_z();
+    return {static_cast<i32>(std::floor(x0)), static_cast<i32>(std::floor(z0)),
+            static_cast<i32>(std::ceil(x0 + skirt_size_x())),
+            static_cast<i32>(std::ceil(z0 + skirt_size_z()))};
+}
+
 // --- Adjacency helpers ---
 
 namespace {
