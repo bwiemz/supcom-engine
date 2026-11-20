@@ -92,10 +92,13 @@ static sim::Unit* check_weapon_unit(lua_State* L, int idx = 1) {
 }
 
 /// Moho's UnitWeapon::SetTarget lists the weapon's unit among its new target's shooters at once.
-static void sync_shooter(lua_State* L, sim::Weapon& w, int idx = 1) {
+static void target_changed(lua_State* L, sim::Weapon& w, const sim::Weapon::TargetMark& previous,
+                           int idx = 1) {
     auto* sim = get_sim(L);
-    const sim::Unit* u = check_weapon_unit(L, idx);
-    if (sim && u) w.sync_shooter(*u, sim->entity_registry());
+    sim::Unit* u = check_weapon_unit(L, idx);
+    if (sim && u) {
+        w.script_target_changed(*u, sim->entity_registry(), L, previous);
+    }
 }
 
 /// weapon:PlaySound(sound) -- a one-shot at the weapon's unit
@@ -191,32 +194,31 @@ static int weapon_GetMinRadius(lua_State* L) {
     return 1;
 }
 
-// weapon:SetTargetEntity(entity): its target now, with an aim spot picked
+// weapon:SetTargetEntity(unit): its target now if it can attack it, with an aim spot picked
 // on it at once if it is a new one (Moho's UnitWeapon::SetTarget).
 static int weapon_SetTargetEntity(lua_State* L) {
     auto* w = check_weapon(L);
     if (!w) return 0;
     auto* target = check_entity(L, 2);
     auto* sim = get_sim(L);
-    if (target && !target->destroyed() && !w->can_attack(*target, sim)) {
+    if (!target || target->destroyed() || !target->is_unit() || !w->can_attack(*target, sim)) {
         return 0;
     }
-    w->set_target_entity((target && !target->destroyed()) ? target->entity_id() : sim::EntityId());
-    sync_shooter(L, *w);
+    const sim::Weapon::TargetMark previous = w->target_mark();
+    w->set_target_entity(target->entity_id());
     if (sim && w->aim_spot_target != w->target_entity_id) {
         w->pick_aim_spot(sim->entity_registry(), sim);
     }
+    target_changed(L, *w, previous);
     return 0;
 }
 
-// weapon:ResetTarget(): drop the target and look again on the next tick,
-// whatever TargetCheckInterval says ("force the weapon to recheck").
 static int weapon_ResetTarget(lua_State* L) {
     auto* w = check_weapon(L);
     if (w) {
+        const sim::Weapon::TargetMark previous = w->target_mark();
         w->set_target_entity(sim::EntityId());
-        sync_shooter(L, *w);
-        w->target_check_clock = 0;
+        target_changed(L, *w, previous);
     }
     return 0;
 }
@@ -369,11 +371,17 @@ static int weapon_SetTargetGround(lua_State* L) {
     lua_rawgeti(L, 2, 1);
     lua_rawgeti(L, 2, 2);
     lua_rawgeti(L, 2, 3);
-    w->set_target_ground({static_cast<f32>(lua_tonumber(L, -3)),
+    const sim::Vector3 at{static_cast<f32>(lua_tonumber(L, -3)),
                           static_cast<f32>(lua_tonumber(L, -2)),
-                          static_cast<f32>(lua_tonumber(L, -1))});
+                          static_cast<f32>(lua_tonumber(L, -1))};
     lua_pop(L, 3);
-    sync_shooter(L, *w);
+    auto* sim = get_sim(L);
+    if (!w->can_attack_ground(at, sim ? sim->terrain() : nullptr)) {
+        return 0;
+    }
+    const sim::Weapon::TargetMark previous = w->target_mark();
+    w->set_target_ground(at);
+    target_changed(L, *w, previous);
     return 0;
 }
 
@@ -409,14 +417,15 @@ static int weapon_TransferTarget(lua_State* L) {
     auto* dst = check_weapon(L, 2);
     auto* sim = get_sim(L);
     if (!src || !dst) return 0;
+    const sim::Weapon::TargetMark previous = dst->target_mark();
     if (!src->target_entity_id && src->has_ground_target) {
         dst->set_target_ground(src->ground_target);
     } else {
         dst->set_target_entity(src->target_entity_id);
     }
-    sync_shooter(L, *dst, 2);
     dst->shots_at_target = 0;
     if (sim) dst->pick_aim_spot(sim->entity_registry(), sim);
+    target_changed(L, *dst, previous, 2);
     return 0;
 }
 

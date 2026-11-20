@@ -877,6 +877,7 @@ struct Turret {
         gun.max_range = 40;
         gun.damage = 10;
         gun.firing_tolerance = 1;
+        gun.always_recheck_target = false;
         gun.muzzle_velocity = muzzle_velocity;
         gun.projectile_bp_id = "/shell";
         gun.projectile_physics = osc::sim::Weapon::ProjectilePhysics{};

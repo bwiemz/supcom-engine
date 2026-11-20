@@ -856,9 +856,13 @@ public:
     /// ordered are dropped.
     void stop_silo_build();
     /// What a Stop order does as it reaches the head (faf-re
-    /// IAiCommandDispatchImpl::Stop): a silo's auto mode goes off and its
-    /// missile under way is dropped, with the builds ordered.
+    /// IAiCommandDispatchImpl::Stop): the attacker stops, then a silo's auto
+    /// mode goes off and its missile under way is dropped, with the builds ordered.
     void run_stop(lua_State* L);
+    /// Moho's CAiAttackerImpl::Stop, SetDesiredTarget with no target: every
+    /// weapon drops its target, its script told, and looks again two ticks on
+    /// with AutoInitiateAttackCommand, else a TargetCheckInterval on.
+    void stop_attacker(lua_State* L);
     /// GiveNukeSiloAmmo(blocks, true), FAF's: the missile under way, else the
     /// next one, has `blocks` of its 10 * BuildTime / build rate done.
     void set_silo_blocks(i32 blocks);
@@ -1771,10 +1775,6 @@ private:
     /// SetDesiredTarget's notice: each NeedPrep weapon hears OnGotTarget.
     /// False when a script took the unit.
     bool ready_prep_weapons(lua_State* L);
-    /// Moho's CAiAttackerImpl::Stop, SetDesiredTarget with no target: every
-    /// weapon drops its target, its script told, and looks again two ticks on
-    /// with AutoInitiateAttackCommand, else a TargetCheckInterval on.
-    void stop_attacker(lua_State* L);
     /// Moho's ~CUnitAttackTargetTask: once the attack order whose task ran
     /// is gone from the head of the queue (done, cleared or replaced), the
     /// attacker stops. False when a script took the unit.
