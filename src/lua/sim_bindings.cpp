@@ -269,22 +269,47 @@ static f32 blueprint_cap_cost(lua_State* L, const blueprints::BlueprintStore& st
     return cost;
 }
 
-/// A blueprint's AI.InitialAutoMode: whether the unit starts in auto mode
-/// (silos building missiles, Cybran hives assisting); false when unset.
-static bool blueprint_initial_auto_mode(lua_State* L, const blueprints::BlueprintStore& store,
-                                        const blueprints::BlueprintEntry& entry) {
+/// A blueprint's flag at section.key, a number or a boolean; false when unset.
+static bool blueprint_flag(lua_State* L, const blueprints::BlueprintStore& store,
+                           const blueprints::BlueprintEntry& entry, const char* section,
+                           const char* key) {
     bool on = false;
     const int top = lua_gettop(L);
     store.push_lua_table(entry, L);
-    lua_pushstring(L, "AI");
+    lua_pushstring(L, section);
     lua_gettable(L, -2);
     if (lua_istable(L, -1)) {
-        lua_pushstring(L, "InitialAutoMode");
+        lua_pushstring(L, key);
         lua_gettable(L, -2);
         on = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) != 0 : lua_toboolean(L, -1) != 0;
     }
     lua_settop(L, top);
     return on;
+}
+
+/// A blueprint's AI.InitialAutoMode: whether the unit starts in auto mode
+/// (silos building missiles, Cybran hives assisting).
+static bool blueprint_initial_auto_mode(lua_State* L, const blueprints::BlueprintStore& store,
+                                        const blueprints::BlueprintEntry& entry) {
+    return blueprint_flag(L, store, entry, "AI", "InitialAutoMode");
+}
+
+/// Moho's Unit made from a position alone (faf-re unit/core/UnitGuard.inl): a mobile unit whose
+/// blueprint sets Display.SpawnRandomRotation faces a draw in [-pi/6, pi/6) about Y.
+static void spawn_random_rotation(lua_State* L, sim::SimState& sim, sim::EntityId id) {
+    auto* e = sim.entity_registry().find(id);
+    auto* store = sim.blueprint_store();
+    if (!e || !e->is_unit() || !store || !static_cast<sim::Unit*>(e)->is_mobile()) {
+        return;
+    }
+    const auto* entry = store->find(e->blueprint_id());
+    if (!entry || !blueprint_flag(L, *store, *entry, "Display", "SpawnRandomRotation")) {
+        return;
+    }
+    const f32 half = sim.random().range(-0.52359879f, 0.52359879f) * 0.5f;
+    const f32 s = osc::dmath::sin(half);
+    e->set_orientation({0.0f * s, s, 0.0f * s, osc::dmath::cos(half)});
+    e->place_now();
 }
 
 /// Moho's Unit, made: its army's unit stats (faf-re unit/core/Unit.cpp:13160-13195)
@@ -831,7 +856,8 @@ static int l_create_building_unit(lua_State* L) {
     f32 x = static_cast<f32>(lua_tonumber(L, 3));
     f32 z = static_cast<f32>(lua_tonumber(L, 5));
     f32 y = static_cast<f32>(lua_tonumber(L, 4));
-    if (lua_isnil(L, 4)) {
+    const bool in_place = !lua_isnil(L, 4);
+    if (!in_place) {
         auto* sim = get_sim(L);
         y = sim ? sim::structure_elevation(*sim, structure_rules(L, *sim, bp_id), x, z) : 0.0f;
     }
@@ -875,6 +901,9 @@ static int l_create_building_unit(lua_State* L) {
         lua_pop(L, 1);
     }
     if (auto* sim = get_sim(L)) {
+        if (in_place) {
+            spawn_random_rotation(L, *sim, id);
+        }
         tell_starting_layer(L, *sim, id);
         tell_terrain_type(L, *sim, id);
     }
