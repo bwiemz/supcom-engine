@@ -181,6 +181,14 @@ std::optional<std::pair<f32, f32>> try_build_structure_at(const SimState& sim,
                                                           const std::string& bp_id, f32 x, f32 z,
                                                           bool whole_map);
 
+/// Moho's STIMap::IsWithin: (x, z) at least `border` inside the map, or
+/// with `whole_map` false, inside the playable area
+bool within_map(const SimState& sim, f32 x, f32 z, f32 border, bool whole_map);
+
+/// The occupancy caps of a blueprint's footprint: a structure's
+/// BuildOnLayerCaps, a mobile unit's own
+u8 occupancy_caps(const PlacementRules& r);
+
 /// Where a structure stands at (x, z): on the ground for one that can sit
 /// on the seabed, else on the water's surface where there is water
 f32 structure_elevation(const SimState& sim, const PlacementRules& rules, f32 x, f32 z);

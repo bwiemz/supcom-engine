@@ -20,6 +20,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/lua_keys.hpp"
 #include "sim/build_placement.hpp"
+#include "sim/build_site_units.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
 #include "sim/entity.hpp"
@@ -2066,11 +2067,7 @@ static int brain_CreateResourceBuildingNearest(lua_State* L) {
     return 1;
 }
 
-// brain:CreateUnitNearSpot(bp, x, z) -> unit or nil: the unit at the first
-// free site found about (x, z), keeping clear of the army's start spot
-// (Moho's CAiBrain::CreateUnitNearSpot occupies the start +-5 while it
-// looks). The search is Moho's TryBuildStructureAt: the spot itself, then
-// square rings one cell further out each time, up to 900 tries.
+// brain:CreateUnitNearSpot(bp, x, z) -> unit or nil: Moho's CAiBrain::CreateUnitNearSpot.
 static int brain_CreateUnitNearSpot(lua_State* L) {
     auto* brain = check_brain(L);
     auto* sim = get_sim(L);
@@ -2084,13 +2081,47 @@ static int brain_CreateUnitNearSpot(lua_State* L) {
     const f32 z = static_cast<f32>(lua_tonumber(L, 4));
     const auto placement = placement_for(L, *sim, brain->index());
     const auto& rules = placement.rules(bp);
+    const u8 caps = sim::occupancy_caps(rules);
     const sim::Vector3& start = brain->start_position();
-    const sim::StructureSite start_box{static_cast<f32>(static_cast<i32>(start.x)),
-                                       static_cast<f32>(static_cast<i32>(start.z)), 10.0f, 10.0f};
+    const auto sx = static_cast<i32>(std::lrint(start.x));
+    const auto sz = static_cast<i32>(std::lrint(start.z));
+    const sim::OccupancyRect start_cells{sx - 5, sz - 5, sx + 5, sz + 5};
+    sim->occupy_cells(caps, start_cells, true);
+
+    namespace layer = sim::placement_layer;
+    const auto grid_free = [&](f32 cx, f32 cz) {
+        if (!sim->terrain()) {
+            return true;
+        }
+        u8 layers = sim::occupy_layers(*sim->terrain(), rules, cx, cz);
+        const auto x0 = static_cast<i32>(std::lrint(cx - rules.size_x * 0.5f));
+        const auto z0 = static_cast<i32>(std::lrint(cz - rules.size_z * 0.5f));
+        const sim::OccupancyRect cells{x0, z0, x0 + static_cast<i32>(std::lround(rules.size_x)),
+                                       z0 + static_cast<i32>(std::lround(rules.size_z))};
+        if ((layers & (layer::Land | layer::Seabed)) != 0 && sim->occupancy().ground_any(cells)) {
+            layers &= static_cast<u8>(~(layer::Land | layer::Seabed));
+        }
+        if ((layers & layer::Water) != 0 && sim->occupancy().water_any(cells)) {
+            layers &= static_cast<u8>(~layer::Water);
+        }
+        return layers != 0;
+    };
+    // TryBuildStructureAt's coerced skirt: the skirt one cell bigger all round, clear of units.
+    const auto skirt_clear = [&](f32 cx, f32 cz) {
+        const f32 corner_x = std::nearbyint(cx - rules.size_x * 0.5f);
+        const f32 corner_z = std::nearbyint(cz - rules.size_z * 0.5f);
+        const f32 x0 = rules.skirt_x != 0.0f ? corner_x + rules.skirt_off_x : corner_x;
+        const f32 z0 = rules.skirt_z != 0.0f ? corner_z + rules.skirt_off_z : corner_z;
+        const f32 x1 = x0 + (rules.skirt_x != 0.0f ? rules.skirt_x : rules.size_x);
+        const f32 z1 = z0 + (rules.skirt_z != 0.0f ? rules.skirt_z : rules.size_z);
+        const sim::OccupancyRect around{
+            static_cast<i32>(std::floor(x0 - 1.0f)), static_cast<i32>(std::floor(z0 - 1.0f)),
+            static_cast<i32>(std::ceil(x1 + 1.0f)), static_cast<i32>(std::ceil(z1 + 1.0f))};
+        return sim::location_is_free(*sim, nullptr, around, false);
+    };
     const auto free_at = [&](f32 cx, f32 cz, f32& out_x, f32& out_z) {
         sim::snap_structure_center(cx, cz, rules.size_x, rules.size_z);
-        if (start_box.overlaps({cx, cz, rules.size_x, rules.size_z})) return false;
-        if (!placement.location_free(bp, cx, cz)) {
+        if (!placement.location_free(bp, cx, cz) || !grid_free(cx, cz) || !skirt_clear(cx, cz)) {
             return false;
         }
         out_x = cx;
@@ -2098,24 +2129,25 @@ static int brain_CreateUnitNearSpot(lua_State* L) {
         return true;
     };
     f32 at_x = 0, at_z = 0;
-    bool found = free_at(x, z, at_x, at_z);
-    constexpr i32 kBorder = 1; // the cell step (Moho passes `true` for its border)
-    for (i32 ring = 1, attempts = 0; !found && attempts < 900; ++ring) {
+    const bool inside = sim::within_map(*sim, x, z, 1.0f, true);
+    bool found = inside && free_at(x, z, at_x, at_z);
+    for (i32 ring = 1, attempts = 0; inside && !found && attempts < 900; ++ring) {
         const i32 lower = -ring, upper = ring;
         for (i32 i = lower; i <= upper && !found; ++i) {
             const i32 dj = (i == lower || i == upper) ? 1 : 2 * upper;
             for (i32 j = lower; j <= upper && !found; j += dj) {
                 ++attempts;
-                found = free_at(x + static_cast<f32>(kBorder * i),
-                                z + static_cast<f32>(kBorder * j), at_x, at_z);
+                found = free_at(x + static_cast<f32>(i), z + static_cast<f32>(j), at_x, at_z);
             }
         }
     }
-    if (!found) {
+    if (found) {
+        create_brain_unit(L, *brain, bp, at_x, sim::structure_elevation(*sim, rules, at_x, at_z),
+                          at_z);
+    } else {
         lua_pushnil(L);
-        return 1;
     }
-    create_brain_unit(L, *brain, bp, at_x, sim::structure_elevation(*sim, rules, at_x, at_z), at_z);
+    sim->occupy_cells(caps, start_cells, false);
     return 1;
 }
 
