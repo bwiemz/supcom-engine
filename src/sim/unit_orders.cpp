@@ -91,9 +91,9 @@ Vector3 build_aim_point(lua_State* L, const map::Terrain* terrain, const std::st
 }
 
 /// Ticks a build or repair waits at its army's unit cap, or paused, before
-/// trying again: Moho's tasks return 10 there (a task waits 9 ticks and runs
-/// on the 10th), the brain hearing OnUnitCapLimitReached at each try at the cap.
-constexpr i32 kTaskRetryTicks = 10;
+/// trying again: Moho's tasks return 10 there, which runs them again 9 ticks
+/// on, the brain hearing OnUnitCapLimitReached at each try at the cap.
+constexpr i32 kTaskRetryTicks = 9;
 
 /// FAF's StopReclaimWhenPaused: on FAF's data a paused unit's reclaim of a
 /// prop holds. Retail's paused reclaimer goes on, and a unit target (a wreck
@@ -1330,7 +1330,7 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
             command_queue_.front().command_id != order_id)
             return OrderStep::Next;
         if (built && factory_build) {
-            cmd.rolloff_wait = 2; // the roll-off, above
+            cmd.rolloff_wait = 1; // the roll-off, above
             return OrderStep::Hold;
         }
         // A failed build (or a finished upgrade) goes at once.
@@ -1363,14 +1363,14 @@ OrderStep Unit::hold_for_unit_cap(u32 command_id) {
 }
 
 bool Unit::holds_for_rolloff(i32& wait) const {
-    // Moho's CFactoryBuildTask, its unit built: two steps (Starting, then
-    // Processing), then 10 ticks at a time while the factory is busy -- its
-    // FinishBuildThread and RolloffBody keep it so until the new unit's
-    // roll-off move is done.
+    // Moho's CFactoryBuildTask, its unit built: Starting at once, Processing
+    // the next tick, then again every kTaskRetryTicks while the factory is
+    // busy -- its FinishBuildThread and RolloffBody keep it so until the new
+    // unit's roll-off move is done.
     if (wait <= 0) return false;
     if (--wait > 0) return true;
     if (busy_) {
-        wait = 10;
+        wait = kTaskRetryTicks;
         return true;
     }
     return false;
@@ -2568,7 +2568,7 @@ OrderStep Unit::guard_factory_queue(UnitCommand& cmd, Unit& target_unit, f64 dt,
             // orders: Moho's guard task hands the build task that
             // factory as the one whose orders the unit takes.
             if (built) hand_over_rally_orders(built_id, guarded_id, ctx);
-            if (built) assist_rolloff_wait_ = 2;
+            if (built) assist_rolloff_wait_ = 1;
             else factory_assist_build_ = false; // failed: free again
         }
         return OrderStep::Hold;
