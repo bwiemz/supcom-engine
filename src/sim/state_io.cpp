@@ -713,11 +713,11 @@ void StateIO::load(StateReader& r, SimState& sim) {
         }
         sim.occupy_ground(id, std::move(g));
     }
-    // The places aircraft reserved to land on, and guarding engineers to walk
-    // up to, from the units.
+    // The places aircraft reserved to land on, and orders to walk to, from the
+    // units.
     sim.entity_registry_.for_each_unit([&](Entity& e) {
         const auto& u = static_cast<Unit&>(e);
-        for (const OccupancyRect& rr : {u.idle_landing_.reserved, u.guard_anchor_.reserved}) {
+        for (const OccupancyRect& rr : {u.idle_landing_.reserved, u.order_reservation_.reserved}) {
             if (rr.x1 > rr.x0 && rr.z1 > rr.z0) {
                 sim.occupancy_.reserve(rr, true);
             }
