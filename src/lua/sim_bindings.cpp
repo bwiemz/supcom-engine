@@ -4375,6 +4375,27 @@ static int l_SetArmyShowScore(lua_State* L) {
     return 0;
 }
 
+/// SetAlliedVictory(army, bool): Moho's cfunc_SetAlliedVictoryL sets the army
+/// brain's RequestingAlliedVictory, which retail's victory.lua reads.
+static int l_SetAlliedVictory(lua_State* L) {
+    if (lua_gettop(L) != 2) {
+        return arg_count_error(L, "SetAlliedVictory(army,bool)", 2, lua_gettop(L));
+    }
+    auto* sim = get_sim(L);
+    const i32 army = resolve_army(L, 1, sim);
+    const bool requesting = arg_boolean(L, 2);
+    auto* brain = sim ? sim->get_army(army) : nullptr;
+    if (!brain || brain->lua_table_ref() < 0) {
+        return 0;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, brain->lua_table_ref());
+    lua_pushstring(L, "RequestingAlliedVictory");
+    lua_pushboolean(L, requesting ? 1 : 0);
+    lua_settable(L, -3);
+    lua_pop(L, 1);
+    return 0;
+}
+
 // Moho's cfunc_SetArmyColorIndexL: GameColors.PlayerColors[index + 1].
 static int l_SetArmyColorIndex(lua_State* L) {
     auto* sim = get_sim(L);
@@ -6288,6 +6309,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
         return 0;
     });
     state.register_function("SetArmyShowScore", l_SetArmyShowScore);
+    state.register_function("SetAlliedVictory", l_SetAlliedVictory);
 
     // Damage
     state.register_function("Damage", l_Damage);
