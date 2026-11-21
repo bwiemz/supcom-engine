@@ -13,184 +13,39 @@ This is **not** a compatibility layer or wrapper around the original binary. It 
 The original Moho engine is closed-source, 32-bit, single-threaded, and increasingly difficult to maintain. A clean reimplementation opens the door to:
 
 - **64-bit and cross-platform support** (Windows, Linux and macOS on Apple Silicon)
-- **Modern C++ performance** (C++17, no legacy COM/DirectX constraints in the sim)
+- **Modern C++ performance** (C++20, no legacy COM/DirectX constraints in the sim)
 - **Debuggability** (full source, structured logging, deterministic replay)
 - **Community extension** (open codebase for FAForever and modders)
 
-### Current Status
+## At a glance
 
-The engine can run a **fully playable single-player skirmish match** — from the front-end lobby through game setup, real-time gameplay, to score screen and return-to-lobby. AI armies load with FA's brain system, autonomously build bases (power generators, factories, engineers), produce armies, and attack. The complete game loop is functional: lobby map/faction/AI personality selection → army creation → AI initialization (OnCreateAI, ExecutePlan, 37+ active AI threads) → autonomous base building and army production → real-time combat with economy, construction, air/naval/land movement → game-over detection → score screen → return to lobby for another match. AI personality types (adaptive, rush, turtle, tech, random) and difficulty settings (cheat multipliers for build rate and income) are configurable via CLI.
+**What works today:**
 
-Over 166 milestones have been completed across the simulation, renderer, UI, and game infrastructure. The engine bootstraps the full FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy) and executes autonomous AI behavior with base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement. Over 111 former moho stubs have been converted to real implementations. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes, GPU blend-weight skeletal animation, team colors, normal mapping, Blinn-Phong specular, PCF soft shadows (4096²), 9-stratum terrain blending with per-stratum normal maps, 5,000+ map props, 2,000+ terrain decals, animated water, fog of war, atmospheric fog, LOD mesh switching, bloom post-processing, particle system with emitter blueprints, frustum culling, and death animations. The full MAUI UI framework provides 13 control types with reactive LazyVar layout, a complete Vulkan 2D rendering pipeline, and GLFW input dispatch. A complete game HUD delivers a playable RTS experience with minimap, strategic zoom, economy bars, selection info, command visualization, control groups, camera bookmarks, and full overlay rendering.
+- **Skirmish against FA's AI**, on the retail game's data or on FAForever's. Steam's install is found on its own, and any other by its folder. Retail's own front end and lobby set the game up, and it plays through to the score screen.
+- **FA's own interface in the game:** the orders and construction panels, selection, the minimap, build templates, the key map and the console.
+- **The campaign:** from the operation select through the briefing, the operation and its score to the next briefing, and the tutorial and the outro.
+- **Multiplayer:** LAN games (find, host and join a lobby) and FAForever's client protocol (GPGNet), played in lockstep. Desyncs are detected, a dropped or slow player is handled, and chat, pause and game speed work. Windows and Linux players can play together.
+- **Saves and replays:** save a game and load it to play on, campaign saves included; record a game and play its replay back.
+- **Mods:** game and UI mods, hooks and the player's mods folder, loaded as the original engine loads them. `opensupcom --check-mods` reports what is broken in a mod, by file and line.
+- **The game's systems, as FA's scripts drive them:**
+  - combat: weapons, projectiles, missiles and their defences, shields, armour and veterancy;
+  - movement on the original engine's pathing, by each unit's footprint;
+  - aircraft: attack runs, landing and refuelling, transports and carriers;
+  - construction and economy: adjacency, upgrades, reclaim and capture;
+  - intel and fog of war.
+- **Graphics and sound from FA's own data:** terrain, water, sky, units, decals, shadows, effects and strategic icons drawn with FA's shaders, the range overlays, and FA's sounds, voices and music.
+- **Windows and Linux,** with a zip for Windows and an AppImage (glibc 2.35+, such as Ubuntu 22.04 or SteamOS) and a tarball for Linux. It also builds on macOS on Apple Silicon, where CI runs its data-free tests.
+- **Tests:** CI runs the unit tests on GCC, Clang, ASan, MSVC and macOS, and a gate of tests plays retail's scripts and data. The counts, and the test behind each claim above, are in [docs/current-state.md](docs/current-state.md).
 
-**What works today (Milestones 1-163):**
+**Not yet:**
 
-- Lua 5.0 VM (LuaPlus fork) with full VFS and blueprint loading (8,260 blueprints)
-- Session lifecycle: map loading, army creation, brain initialization
-- Entity system: units, props, projectiles, shields with full Lua lifecycle callbacks
-- Economy: per-unit production/consumption, army aggregation, storage, stalling with efficiency scaling
-- Construction: building placement, build progress, factory production, engineer assist
-- Orders: Move, Stop, Attack, Guard, Patrol, Reclaim, Repair, Capture, Build, Enhance, Dive with command queues
-- Combat: weapons, auto-targeting, projectile flight, damage pipeline, unit death
-- AI: brain threads, categories, spatial queries, threat evaluation, platoon management, HuntAI attack loops, autonomous base building (FindPlaceToBuild, BuildStructure, factory production), personality selection (adaptive/rush/turtle/tech/random), cheat difficulty (build rate and income multipliers via buff system)
-- Pathfinding: A* with octile heuristic, path smoothing, dynamic building obstacles, terrain height following, real CanPathTo/CanPathToCell queries, GetThreatBetweenPositions for path danger evaluation
-- Structure upgrades: T1->T2 structure upgrade via build system
-- Capture: engineer captures enemy units, army transfer
-- Toggle system: script bits (shield/weapon/intel/stealth/cloak toggles), dive command, layer changes
-- Enhancement system: ACU/SACU self-upgrades (AdvancedEngineering etc.), OnWorkBegin/OnWorkEnd Lua callbacks
-- Intel system: per-unit radar/sonar/omni/vision state tracking, enable/disable/radius queries
-- Shield system: personal shields with health, regen, energy drain, toggle on/off
-- Transport system: air transport load/unload, cargo tracking, attach/detach lifecycle, capacity limits
-- Fog of war: per-army visibility grid, Vision/Radar/Sonar/Omni paint, alliance sharing, OnIntelChange callbacks, terrain LOS occlusion (Bresenham height ray), real blip methods with dead-reckoning
-- Radar jamming: RadarStealth/SonarStealth filtering, IsKnownFake (Omni reveals jammers), IsMaybeDead (no current intel), dead-reckoning position freeze for out-of-sight entities
-- Moho stub conversions: 111 stubs converted to real implementations across 5 milestones (M35 + M49-M51 + M65), covering brain events/utility, weapon fire/control/targeting, projectile collision/child spawning, platoon formation/targeting, damage/kill flags, command caps, movement/fuel/speed multipliers, navigator, elevation, rotation, visibility, scale, mesh override, collision shapes, attachment system, and more
-- Audio: XWB/XSB bank parsers, miniaudio backend, PlaySound/SetAmbientSound real implementations, 3D spatial audio
-- Vulkan renderer: terrain heightmap mesh, textured SCM mesh rendering (DDS BC1/BC2/BC3 with mipmaps), team color via SpecTeam alpha mask (set=2 descriptor), water plane, RTS camera (WASD/scroll/orbit; arrows only since M217e, when the letters went to FA's key map)
-- Bone system: SCM v5 mesh parser, per-blueprint bone cache, bone position/direction queries, ShowBone/HideBone, muzzle bone weapon fire
-- Manipulators: 4 real types (Rotate, Anim, Slide, Aim) with per-tick simulation, WaitFor coroutine synchronization, 28 moho method implementations, shortest-arc rotation
-- Armor system: per-unit armor types from blueprints, damage multipliers in all damage paths
-- Veterancy: HP regen from blueprint, SetRegenRate/RevertRegenRate moho methods
-- Wreckage: prop reclaim values, GetHeading quaternion-to-yaw conversion
-- Adjacency bonuses: skirt-based neighbor detection, OnAdjacentTo/OnNotAdjacentTo callbacks
-- Stats/telemetry: per-unit SetStat/GetStat/UpdateStat for veterancy and scoring
-- Silo ammo: nuke and tactical missile counters (Give/Remove/Get), fire-gate pattern
-- Targeting flags: SetDoNotTarget, SetReclaimable, IsValidTarget — guards in weapon auto-targeting and reclaim
-- SCM mesh rendering: per-blueprint GPU mesh cache, real 3D unit models with directional lighting, DDS texture rendering (albedo from mesh blueprints), cube fallback for missing meshes
-- Weapon layer caps: per-weapon `FireTargetLayerCapsTable` enforcement — weapons only auto-target entities on allowed layers (Land, Water, Sub, Seabed, Air)
-- Mass stub conversions I-III: 84 stubs (weapon Change*, movement mults, fuel, projectile guidance, damage/kill flags, command caps, build restrictions, elevation, weapon targeting/priorities, brain events/utility, platoon formation/targeting)
-- Mass stub conversion IV: 27 stubs (visibility flags, scale, mesh override, collision shapes, attachment system, ShakeCamera, SetUnSelectable)
-- SCA skeletal animation: SCA v5 parser, AnimCache lazy loading, per-unit bone matrices, GPU skinning via SSBO, nlerp quaternion interpolation, SCA-to-SCM bone mapping
-- Blend-weight skinning: 4 bone indices + equal weights per vertex (SCM v5 convention), GPU multi-bone matrix blending in mesh and shadow shaders, bone index clamping for safety, 64-byte vertex struct (was 48 with rigid skinning)
-- Team color rendering: SpecTeam DDS texture alpha mask for selective army color blending, convention-based texture path derivation, per-group Vulkan descriptor binding (set=2)
-- Normal map rendering: tangent-space DXT5nm normal maps (`*_normalsTS.dds`), TBN matrix from SCM tangent vectors, GA-channel decode in fragment shader, flat-normal fallback for unmapped meshes
-- Map prop rendering: full .scmap binary prop parsing (5,182 trees/rocks/debris on Seton's Clutch), SCMAP section skipper (water/strata/decals/DDS), euler_to_quat + rot_matrix_to_quat orientation, props rendered as textured 3D SCM meshes alongside units
-- Prop scale & distance culling: per-entity non-uniform scale (sx/sy/sz), SCMAP scale applied to props, non-uniform model matrix, MAX_INSTANCES raised to 8192, XZ ground-plane distance culling for props (600 unit radius), camera eye position accessor
-- Specular lighting: Blinn-Phong specular highlights, eye position in push constants (84 bytes), world-space fragment position, SpecTeam R channel for specular intensity, shininess=32, white specular on top of diffuse+team color
-- Terrain textures: 9-stratum blending from .scmap data, embedded DDS blend maps (2x RGBA = 8 overlay weights), per-stratum UV scaling, 108-byte push constants, TextureCache::get_raw() for embedded DDS
-- Terrain normal maps: per-stratum DXT5nm normal maps (bindings 11-19), world-aligned TBN with Gram-Schmidt orthogonalization, blended tangent-space normals, 20-binding descriptor set, Lambertian lighting with perturbed normals
-- Terrain decal rendering: .scmap binary decal parsing (2,236 decals on Seton's Clutch), instanced textured quads with per-decal model matrices, alpha blending with depth bias z-fighting prevention, LOD distance culling, pre-sorted texture grouping for allocation-free per-frame draw
-- Projectile rendering: weapon ProjectileId parsing, blueprint_id on projectiles in all creation paths (C++ auto-fire + 3 Lua paths), velocity-aligned orientation via euler_to_quat, MeshCache mesh/texture resolution for projectile blueprints, UnitRenderer integration (no new pipeline needed)
-- Shadow mapping: 2048x2048 depth-only shadow pass (terrain + meshes + cubes), orthographic light frustum centered on camera, comparison sampler with hardware bilinear PCF, calcShadow() in terrain/mesh/unit fragment shaders, depth bias for acne prevention
-- Spatial hash grid: 32-unit cell spatial partitioning for EntityRegistry, auto-notify on set_position, O(K) collect_in_radius/collect_in_rect (was O(N) over 5,000+ entities), retroactive entity insertion, swap-and-pop cell removal
-- Unit sound: PlayUnitSound/PlayUnitAmbientSound/StopUnitAmbientSound with Blueprint.Audio lookup
-- Medium-priority stubs: SetBoneEnabled per-bone anim disable, AddOnGivenCallback with army transfer
-- Low-priority stubs: IEffect/CollisionBeam Destroy/BeenDestroyed state, CreateBuilderArmController
-- **MAUI UI framework (M71-M76):**
-  - UIControl C++ base class with parent/children tree, moho.control_methods (24 real methods: Destroy/GetParent/SetParent/Show/Hide/SetAlpha/GetRootFrame/HitTest/etc.), Group and Frame classes, InternalCreateGroup/InternalCreateFrame factories, LazyVar reactive layout properties (Left/Top/Width/Height/Depth), GLFW input event dispatch, per-frame OnFrame callbacks, UIControlRegistry
-  - Bitmap control: 21 real bitmap_methods (SetNewTexture single/multi DDS, SetSolidColor, SetColorMask, SetUV, SetTiled, UseAlphaHitTest, BitmapWidth/Height via DDS header parsing, animation Play/Stop/Loop/Frame/Pattern, ShareTextures), InternalCreateBitmap factory, GetTextureDimensions global
-  - Text control: 9 real text_methods (SetNewFont, SetNewColor, SetText/GetText, SetDropShadow, SetNewClipToWidth, SetCenteredVertically/Horizontally, GetStringAdvance), InternalCreateText factory, 4 font metric LazyVars (FontAscent/FontDescent/FontExternalLeading/TextAdvance)
-  - Edit control: 31 real edit_methods (SetText/GetText/ClearText, 5 color pairs, caret, highlight, max chars, font, enable/disable, focus)
-  - ItemList control: 20 real item_list_methods (Add/Delete/Modify/GetItem, selection, font, 6-color SetNewColors, scroll, show flags)
-  - Scrollbar control: 4 real scrollbar_methods (SetScrollable with Lua ref tracking, SetNewTextures, DoScrollLines/Pages)
-  - Border control: 2 real border_methods (SetNewTextures 6-texture ninepatch, SetSolidColor), BorderWidth/BorderHeight LazyVars
-  - Dragger control: standalone mouse drag tracking (Destroy, PostDragger global for active dragger dispatch)
-  - Cursor control: 5 real cursor_methods (SetNewTexture, SetDefaultTexture, ResetToDefault, Show, Hide)
-  - Movie control: 7 stub movie_methods (InternalSet, IsLoaded, Play, Stop, Loop, GetFrameRate, GetNumFrames), MovieWidth/MovieHeight LazyVars
-  - Histogram control: 3 stub histogram_methods (SetData, SetXIncrement, SetYIncrement — deprecated)
-  - WorldMesh control: 16 real world_mesh_methods (Destroy, SetMesh, SetStance, SetHidden/IsHidden, SetColor, SetScale, 5x parameter setters, 5x GetInterpolated* returning stub tables)
-  - Game UI bootstrap: GetFrame(0) root frame with LazyVars, GetNumRootFrames, SetCursor, frame_methods (GetTopmostDepth/GetTargetHead/SetTargetHead), UIWorldView (19 methods with __init constructor, Project, CameraReset, etc.), WldUIProvider_methods, discovery_service_methods (GetGameCount/Reset/Destroy + InternalCreateDiscoveryService), lobby_methods (18 methods + InternalCreateLobby)
-- **UI Vulkan 2D rendering pipeline (M77-M78):**
-  - UIRenderer: control tree walk, instanced textured quads (48B UIInstance), pixel-to-NDC conversion, alpha blend no depth test, depth-sorted back-to-front rendering, consecutive-texture batching
-  - Font rendering: stb_truetype GPU atlas (R8→RGBA swizzle), per-glyph quad emission with drop shadow, centering, clip-to-width, real TrueType metrics replacing all heuristic values, FontCache + FontMetricsProvider
-- **UI rendering features (M79-M89):**
-  - Scissor/clip rectangles: Vulkan dynamic scissor, clip rect stack intersection during tree walk, controls outside clip rect skipped
-  - Border 9-patch rendering: 8 quads (4 corners + 4 edges), BorderWidth/BorderHeight from DDS dimensions
-  - Edit control visuals: caret rendering (blinking vertical line), selection highlight, per-glyph cursor positioning
-  - ItemList rendering: multi-row text items, scroll offset, selection highlight row, scissor clipping
-  - Scrollbar rendering: thumb position/size from scroll state, 3-piece texture (background, thumb-top, thumb-mid)
-  - Bitmap animation rendering: accumulator-based frame timing, forward/backward/pingpong patterns, auto-stop/loop
-  - Tiled bitmap rendering: UV repeat override, sampler REPEAT wrap mode
-  - Input event dispatch: GLFW keyboard/mouse callbacks → event buffer → hit-test tree walk → HandleEvent Lua callbacks, keyboard focus routing, mouse enter/exit tracking
-  - OnFrame update loop: NeedsFrameUpdate controls get OnFrame(self, dt) per rendered frame
-  - Cursor rendering: custom cursor texture at mouse-hotspot position, topmost depth layer
-  - Drag visual feedback: active dragger intercepts mouse events (OnMove/OnRelease/OnCancel), ESC cancellation
-- **VFX & Command Systems (M90-M96):**
-  - VFX/emitter system: 14 Create* globals (CreateEmitterAtEntity/AtBone/Attached, CreateBeamEmitter/AttachedBeam, CreateLightParticle, CreateDecal/Splat), IEffect tracked objects with parameter overrides, IEffectRegistry with auto-expiry GC
-  - CollisionBeam entity system: beam enable/disable, endpoint tracking, Lua lifecycle
-  - Decal/Splat system: CreateDecal/CreateSplat Lua globals with tracked IEffect objects
-  - Issue commands from Lua: IssueMove/Attack/Guard/Patrol/Reclaim/Repair/Capture/Build/Enhance/Dive/TransportLoad/TransportUnload/Nuke/Tactical, economy event tracking
-  - Resource deposits: mass/hydrocarbon deposit entities with Lua queries
-  - Interactive game loop: pause/resume, sim speed control (0.5x-10x), title bar stats display
-  - Player input command pipeline: left-click unit selection, Shift+click additive selection, drag-box area selection, right-click move/attack commands, minimap click-to-jump
-- **Game HUD & Overlays (M97-M112):**
-  - Interactive RTS camera: arrow+WASD+mouse-edge scrolling (WASD removed in M217e: FA's hotkeys), middle-mouse orbit, scroll-wheel zoom with acceleration, camera speed scales with altitude
-  - Game overlays: health bars (green/yellow/red by HP fraction), selection rings (army-colored diamonds), command queue lines (8 command types with distinct colors), build progress bars, waypoint markers
-  - Win/lose detection: EndGame/defeat checks, game-over banner overlay (victory/defeat/draw)
-  - Minimap: heightmap texture rendering, army-colored unit dots, camera frustum outline, click-to-jump and drag-to-pan
-  - Strategic icons: procedural 224x32 icon atlas (7 shapes), zoom-based 3D mesh→2D icon switch at 250u altitude, army-colored
-  - Resource economy HUD: mass/energy bars with fill+income indicators, format_number display, DrawGroup-based font switching
-  - Selection info panel: single-unit (icon+name+HP bar) and multi-unit (grid of type-grouped icons with counts) display modes
-  - Command queue visualization: full command chain lines, 8 command types with distinct colors, entity-targeted projection, waypoint markers
-  - Control groups: Ctrl+0-9 assign, 0-9 recall, dead unit pruning on recall (replaced by FA's own groups in M217e)
-  - Camera bookmarks: Ctrl+Shift+0-9 save, Shift+0-9 recall (removed in M217e; FA binds those keys)
-  - Beam rendering: construction/reclaim/repair/capture operation beams + CollisionBeam weapon beams (army-colored, AABB quad approximation)
-  - Shield bubble rendering: projected 16-segment circle outline, army-colored, HP-based alpha, filled center quad
-  - Veterancy indicators: gold chevron squares above health bars (capped at 5)
-  - Adjacency lines: orange lines between adjacent selected buildings (dedup by lower-ID draws)
-  - Intel range circles: 24-segment projected circles for Radar (teal), Sonar (blue), Omni (yellow), Vision (faint green)
-  - Wreckage desaturation: BT.601 luminance-based color reduction for prop wreckage meshes
-  - VFX particle rendering: billboard emitter particles at entity+offset positions, beam lines between entities, light particles as larger glowing squares
-  - Transport cargo indicators: light blue dots below unit (capped at 8)
-  - Silo ammo indicators: nuke (red, left) and tactical (blue, right) dots (capped at 5 each)
-- **Visual Polish (M113-M117):**
-  - Water rendering: tessellated grid from heightmap, 3 overlapping sine wave displacement attenuated near shore, depth-based coloring (shallow teal→deep blue), Fresnel specular glint, animated shore foam, 84-byte push constants (viewProj+time+eye+waterElev)
-  - Fog of war rendering: R8_UNORM GPU texture from VisibilityGrid (Vision=255, Radar/Omni=200, EverSeen=100, Unexplored=0), bilinear sampled in terrain shader, brightness multiplier per fog state, per-frame CPU→GPU upload with pipeline barriers
-  - Projected selection circles: 12-segment projected circle outlines replacing 4-point diamonds, AABB line quad approximation
-  - Death/explosion VFX: SimState death event pipeline (Lua Destroy→SimState→overlay renderer), age-based particle system with expanding orange flash, bright white center, 4 scattered debris particles, 0.6s duration, max 64 concurrent
-  - Build preview ghost: semi-transparent placement mesh at mouse cursor, screen→world projection with grid snapping, footprint-aware even/odd alignment, pathfinding grid validity check (green=valid, red=invalid), alpha=0.35, SetBuildGhost/ClearBuildGhost Lua bindings
-- **Terrain Polish (M118-M121):**
-  - PCF soft shadows: 4x4 kernel (16 samples) replacing single-sample hard shadows across terrain, unit cubes, and skeletal meshes
-  - Terrain specular + hemisphere ambient: Blinn-Phong specular (power 24, intensity 0.15), hemisphere ambient lighting (sky blue above, warm brown below) replacing flat 0.3 ambient, eye position in terrain push constants (120B)
-  - Shadow map quality: 4096x4096 depth map (up from 2048), smooth edge fade at shadow frustum boundaries via smoothstep
-  - Atmospheric distance fog: exponential fog (density 0.0018) fading terrain/units/meshes/water to blue-grey haze at distance, FoW-aware haze darkening, water alpha increases in fog, unit cube push constants expanded (76B) with eye position
-- **Advanced Rendering (M122-M134):**
-  - Particle system: EmitterBlueprintData parsed from .bp Lua tables (15+ time-parameterized curves), ParticleSystem CPU sim (Euler integration, curve-driven emission), ParticleRenderer with 2 Vulkan pipelines (alpha + additive blend), instanced billboards, depth test on / depth write off
-  - Decal normal maps: CPU-baked RG overlay (RGBA8, 1 texel/game unit), BC3 decoder, terrain shader perturbs blended stratum normals
-  - Frustum culling: Gribb-Hartmann plane extraction from VP matrix, `is_sphere_visible()` per entity in UnitRenderer/OverlayRenderer/ParticleSystem
-  - LOD mesh switching: LODEntry/LODSet structs, load LODs[1]-[4] from blueprints, distance-based mesh selection per entity
-  - Death animations: `dying_` state with configurable duration, begin_dying() clears commands and sets do_not_target, tick_dying() countdown to wreckage
-  - Bloom post-processing: HDR render split, bright extract threshold, 9-tap separable Gaussian blur at half-res, additive composite, B key toggle (removed in M217e; B is FA's build mode)
-- **Single-Player Skirmish Infrastructure (M135-M152):**
-  - WorldView: UIWorldView with camera control, Project() screen↔world coordinate mapping, IssueSim commands from UI
-  - Command pipeline: SimCallback bridge between UI Lua VM and sim Lua VM, build placement with footprint snapping and validity checking
-  - HUD panels: construction panel, orders panel, unit info panel with real-time stat display, tooltips
-  - Game state machine: GameStateManager (INIT→FRONT_END→LOADING→GAME→SCORE) with Lua callback firing on transitions
-  - Beat system: per-army economic/military beat callbacks at configurable intervals
-  - Score and game-over: EndGame detection, score accumulation, game-over screen with stats
-  - Front-end UI: main menu, skirmish lobby with map/faction/AI selection, FrontEndData cross-state key-value store
-  - Preferences: GetPreference/SetPreference with nested key lookup, profile system
-  - Hotkeys: KeyMapRegistry with stacked key binding tables, GLFW→key name mapping, configurable bindings
-  - Chat system: SendSystemMessage, chat callback dispatch
-  - End-to-end integration: lobby→loading→gameplay→score→return-to-lobby full cycle
-- **Playable Skirmish (M153-M163):**
-  - Smoke test harness: method/global interceptors for missing-method detection, panic handler, logged pcall for error recording
-  - Sim generation safety: static generation counter, `check_entity()`/`check_brain()` verify `_c_sim_gen` before dereferencing handles — prevents stale pointers across reloads
-  - Sim reload: 19-step reload sequence (clear scene, destroy old state, fresh Lua VM, rebind blueprints, new SimState, load scenario, boot sim, rebuild scene)
-  - Return-to-lobby: `ReturnToLobby` Lua global, sim teardown, transition to FRONT_END, null sim_state guards throughout render loop
-  - Air movement: heading-based flight (atan2 Y-up convention), pitch/bank/airspeed interpolation, altitude over terrain (not water), blueprint fields (MaxAirspeed, TurnSpeed, Elevation)
-  - Air combat: weapon layer targeting (AntiAir/DirectFire/AntiNavy bitmasks), bombing runs with ballistic projectile drop, fuel consumption with crash on empty
-  - Air crash physics: gravity + spin + forward momentum, splash damage on impact, debris particles
-  - Air separation: boids-style repulsion for same-army air units within 8u radius
-  - Naval movement: water depth storage, draft-aware passability in PathfindingGrid, naval Y positioning with sub dive depth, amphibious auto layer transitions (Land↔Water)
-  - Torpedoes: homing/tracking with stay_underwater clamping
-  - Veterancy: XP tracking, 5-level progression, damage-based XP awards, stat bonuses per level (HP regen, max health)
-  - AI-vs-AI validation: two AI armies load with FA's adaptive AI brain, OnCreateAI succeeds, ExecutePlan runs, 37+ active threads, 6000+ tick stable game loop
-  - Score tracking: real GetArmyStat/SetArmyStat storage, kill/loss/resource accumulation, score screen with meaningful stats
-  - Performance: periodic Lua GC (every 50 ticks), pathfinding request throttle (8/tick cap), simultaneous-death Draw handling
-- **Game modes / victory conditions (2026-07-03):**
-  - All four FA modes are distinct and enforced in the sim: Assassination (`demoralization`, lose the ACU), Supremacy (`domination`, lose all structures + significant units), Annihilation (`eradication`, lose every unit), Sandbox (no win)
-  - Team-aware game-over: armies group into alliance teams; match ends when one team remains (victory) or zero remain (draw); a defeated player whose ally survives no longer ends the game
-  - Share conditions on defeat: `ShareUntilDeath` destroys the defeated army's units, `FullShare`/`CivilianDeserter` transfer them to an ally/civilian
-  - `FogOfWar=none` reveals the whole map; `explored` keeps normal per-army fog
-  - Deterministic sim sync checksum (`compute_sync_checksum`) for desync detection / determinism validation — the first primitive of lockstep multiplayer
-- 250+ unit test cases and ~100 integration test modes (see [Testing](#testing))
+- **A release for players:** packages are built, but launching through Steam (with the Steam Deck) and the 1.0 criteria are still open. See [Phase I](docs/ROADMAP.md) in the roadmap.
+- **Hardened multiplayer:** peers are not authenticated, two players dropping at once can leave the others disagreeing, and FAForever's ICE adapter and client are tested only through stand-ins. See [Phase G](docs/ROADMAP.md).
+- **The original engine's simulation, bit for bit:** some movement still parts from it in a float's last bits, as Moho's x87 math isn't reproduced. See [Known gaps](docs/current-state.md#known-gaps).
+- **A threaded renderer and GPU-driven instancing,** the open part of the performance work. See [Phase H](docs/ROADMAP.md).
+- **Checks that need a person:** Steam and the Steam Deck, and a full side-by-side look against the original game.
 
-**What's not yet implemented:**
-
-- Multiplayer beyond LAN basics: LAN lockstep works (lobby handshake, command routing, desync detection, peer drop), but pipelined command delay, slot/faction sync over the wire, LAN discovery, cross-OS determinism and FAF client integration remain (see `docs/ROADMAP.md`, Phases D and G)
-- Retail (non-FAF) FA data boots and simulates, but some retail-only engine API and the retail front end are still missing (`docs/ROADMAP.md`, Phase B)
-- Some lobby options are parsed but not yet enforced in C++: difficulty-tier cheat multipliers (consumed by FA's AI Lua), PrebuiltUnits (NoRush, TeamShareOverflow, and per-army handicap are now enforced; FAF's CommonArmy is its scripts', over the armies' command sources)
-- Remaining moho binding stubs (mostly cosmetic/polish)
+What works and how each part is checked: [docs/current-state.md](docs/current-state.md). The plan: [docs/ROADMAP.md](docs/ROADMAP.md). The early milestones: [docs/milestones.md](docs/milestones.md).
 
 ## Prerequisites
 
@@ -387,8 +242,8 @@ gives its scripts no access to your files.
 | All data-backed modes, including known retail gaps | `ctest --preset linux-debug -L data` | Yes |
 | Sim benchmark: a pinned four-AI game held to this machine's baseline (Release; `tools/bench.py`) | `ctest --test-dir build/linux-release -L bench` | Yes |
 
-CI (GitHub Actions) builds on GCC, Clang, ASan+UBSan and MSVC and runs every
-data-free test. The `--<name>-test` integration modes are in the integration
+CI (GitHub Actions) builds on GCC, Clang, ASan+UBSan, MSVC and macOS (arm64) and
+runs every data-free test. The `--<name>-test` integration modes are in the integration
 runner, `osc_integration` (built beside `opensupcom`, which doesn't ship them;
 `osc_integration --help` lists them). They exit non-zero when a check fails
 and with 77 (skipped) when no game data is available. Their
@@ -500,6 +355,7 @@ and with 77 (skipped) when no game data is available. Their
 
 ```
 src/
+  app/         # The game's run: boot, session, CLI flags, headless and frame loops, benchmarks
   core/        # Fundamental types (Vector3, numeric aliases)
   vfs/         # Virtual filesystem (.scd/.nx2 archive mounting)
   map/         # Map loading (.scmap terrain, scenario files, A* pathfinding, visibility grid)
@@ -507,13 +363,15 @@ src/
   lua/         # Lua<->C++ bridge (moho bindings, sim bindings, session management)
   blueprints/  # Blueprint loading and registry
   audio/       # Audio system (miniaudio, XWB/XSB bank parsers, sound manager)
+  video/       # FA's movies (MPEG decoding, movie player)
+  platform/    # OS services (game install and Steam library lookup, settings, paths, first run, crash handler)
   ui/          # UI control system (UIControl base, UIControlRegistry, input dispatch, font metrics)
   renderer/    # Vulkan renderer (terrain mesh, SCM mesh units, water plane, camera, shaders, mesh cache, UI 2D pipeline, font atlas, HUD, minimap, overlays, strategic icons, selection info, input handler)
-  main.cpp     # Entry point, CLI flags, test harnesses
+  main.cpp     # Entry point, handing over to src/app
 third_party/
   lua-5.0/     # Vendored Lua 5.0 (LuaPlus fork)
   stb/         # stb_truetype for font rendering
-tests/         # Catch2 unit tests
+tests/         # Catch2 unit tests; the integration runner osc_integration and its test modes (tests/integration)
 tools/         # Formatting check and clang-tidy ratchet (see CONTRIBUTING.md)
 ```
 
