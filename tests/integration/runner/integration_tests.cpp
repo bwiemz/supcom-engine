@@ -13579,8 +13579,11 @@ void test_factory_rally(TestContext& ctx) {
                         }
                     end
                     if p[1] > __osc_let_go[1] - 30 then
+                        local dx, dz = 626.5 - __osc_let_go[1], 176.5 - __osc_let_go[3]
+                        local ax, az = p[1] - __osc_let_go[1], p[3] - __osc_let_go[3]
                         __osc_climb = math.max(__osc_climb, p[2] - __osc_was[2])
-                        __osc_aside = math.max(__osc_aside, math.abs(p[3] - __osc_let_go[3]))
+                        __osc_aside = math.max(__osc_aside,
+                                               math.abs(ax * dz - az * dx) / math.sqrt(dx * dx + dz * dz))
                     end
                 end
             )");
@@ -13590,10 +13593,13 @@ void test_factory_rally(TestContext& ctx) {
             return lua_true(ctx.lua_state, "__osc_let_go ~= false and "
                                            "__osc_scout:GetPosition()[1] <= __osc_let_go[1] - 30");
         });
-    lua_check("the scout climbs from the factory and flies straight west", R"(
-        if __osc_climb > 1 or __osc_aside > 1 then
+    // Its rally move settles: its landing footprint fits neither at (620, 180)
+    // nor two rings round it, and the third's nearest place is (626.5, 176.5),
+    // the line the original game's scout flies.
+    lua_check("the scout climbs from the factory and flies straight to its settled rally point", R"(
+        if __osc_climb > 1 or __osc_aside > 0.5 then
             error('climbed ' .. __osc_climb .. ' in a tick, flew ' .. __osc_aside ..
-                  ' aside of its line west')
+                  ' aside of its line to (626.5, 176.5)')
         end
     )");
     lua_check("the scout is let go facing the roll-off point nearest the rally", R"(

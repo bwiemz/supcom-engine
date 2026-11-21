@@ -1126,8 +1126,14 @@ public:
     void set_footprints(const blueprints::UnitFootprints& f) { footprints_ = f; }
     bool uses_alt_footprint() const { return using_alt_footprint_ || force_alt_footprint_; }
     void set_force_alt_footprint(bool on) { force_alt_footprint_ = on; }
-    /// Moho's CAiPathNavigator::RequestPath.
-    void set_path_goal(const Vector3& goal, const SimContext& ctx);
+    /// Where an aircraft flies for `goal`: the centre of the cells its
+    /// footprint takes there, on the ground or the water (Moho's
+    /// CAiNavigatorAir::SetGoal, COORDS_ToWorldPos).
+    Vector3 air_target(const Vector3& goal, const map::Terrain* terrain) const;
+    /// Moho's CAiPathNavigator::RequestPath; an aircraft flies to
+    /// air_target(goal), or with `chase` to `goal` itself, a mobile unit
+    /// followed (CAiNavigatorAir::SetDestUnit).
+    void set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase = false);
     /// A goal Moho's SIM_TryToBuild hands its navigator, sending it off a
     /// build site (build_site_units.cpp): it walks there on no order, for as
     /// long as its navigator keeps that goal.

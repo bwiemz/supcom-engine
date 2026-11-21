@@ -375,10 +375,25 @@ EntityId Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
     return made;
 }
 
+Vector3 Unit::air_target(const Vector3& goal, const map::Terrain* terrain) const {
+    const blueprints::Footprint& fp = footprint();
+    if (fp.size_x == 0 || fp.size_z == 0) {
+        return goal;
+    }
+    const OccupancyRect cell = footprint_rect(fp, goal.x, goal.z);
+    Vector3 at{static_cast<f32>(cell.x0 + cell.x1) * 0.5f, goal.y,
+               static_cast<f32>(cell.z0 + cell.z1) * 0.5f};
+    if (terrain) {
+        at.y = terrain->has_water() ? terrain->get_surface_height(at.x, at.z)
+                                    : terrain->get_terrain_height(at.x, at.z);
+    }
+    return at;
+}
+
 // faf-re CAiPathNavigator's UpdateWaterFavorAltFootprintMode: the alt
 // footprint while it, and every FAVORSWATER unit given its order, are on
 // water and bound for water.
-void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx) {
+void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase) {
     static const CategoryName kFavorsWater{"FAVORSWATER"};
     // CUnitMoveTask's constructor
     if (!is_air_unit()) {
@@ -430,6 +445,9 @@ void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx) {
     if (!uses_alt_footprint()) {
         navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
                             is_amphibious() || is_hover());
+        if (is_air_unit() && !chase) {
+            navigator_.set_air_target(air_target(goal, ctx.terrain));
+        }
         return;
     }
     const blueprints::Footprint& fp = footprint();
@@ -624,7 +642,7 @@ void Unit::begin_order(UnitCommand& cmd, SimContext& ctx) {
     // Moho's CUnitMoveTask constructor (ShouldUseCurrentCommandTargetPosition):
     // a factory-issued move that is the unit's last order settles its goal.
     if (cmd.type == CommandType::Move && cmd.from_factory && command_queue_.size() == 1 &&
-        !can_fly() && !has_unit_state("TransportLoading") && !has_unit_state("Teleporting") &&
+        !has_unit_state("TransportLoading") && !has_unit_state("Teleporting") &&
         !has_unit_state("Guarding")) {
         const Vector3 dest{static_cast<f32>(std::lrint(cmd.target_pos.x)), cmd.target_pos.y,
                            static_cast<f32>(std::lrint(cmd.target_pos.z))};
@@ -1092,7 +1110,9 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
         }
         if (!navigator_.is_moving() || navigator_.goal().x != goal.x ||
             navigator_.goal().z != goal.z) {
-            set_path_goal(goal, ctx);
+            const bool mobile =
+                target->is_unit() && static_cast<const Unit*>(target)->has_category("MOBILE");
+            set_path_goal(goal, ctx, mobile && !cmd.has_slot);
         }
         nav_update();
     };
