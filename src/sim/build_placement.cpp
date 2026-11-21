@@ -180,8 +180,8 @@ std::vector<std::pair<f32, f32>> structure_line_sites(f32 x0, f32 z0, f32 x1, f3
 
 StructureSite StructureSite::of(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x, f32 skirt_z,
                                 f32 off_x, f32 off_z) {
-    const f32 x0 = x - size_x * 0.5f + std::min(off_x, 0.0f);
-    const f32 z0 = z - size_z * 0.5f + std::min(off_z, 0.0f);
+    const f32 x0 = static_cast<f32>(std::lrint(x - size_x * 0.5f)) + std::min(off_x, 0.0f);
+    const f32 z0 = static_cast<f32>(std::lrint(z - size_z * 0.5f)) + std::min(off_z, 0.0f);
     return {x0, z0, x0 + std::max(skirt_x, size_x), z0 + std::max(skirt_z, size_z)};
 }
 
@@ -319,17 +319,7 @@ u8 occupy_layers(const map::Terrain& terrain, const PlacementRules& r, f32 x, f3
     }
     u8 caps = static_cast<u8>((r.on_land ? layer::Land : 0) | (r.on_seabed ? layer::Seabed : 0) |
                               (r.on_sub ? layer::Sub : 0) | (r.on_water ? layer::Water : 0));
-    // The skirt (RUnitBlueprint::GetSkirtRect): from the footprint's corner
-    // cell, the skirt's offset and size if it has one, else the footprint.
-    const auto corner = [](f32 at, f32 size) {
-        return static_cast<f32>(std::lrint(at - size * 0.5f));
-    };
-    const f32 cx = corner(x, r.size_x);
-    const f32 cz = corner(z, r.size_z);
-    const f32 x0 = r.skirt_x != 0.0f ? cx + r.skirt_off_x : cx;
-    const f32 x1 = x0 + (r.skirt_x != 0.0f ? r.skirt_x : r.size_x);
-    const f32 z0 = r.skirt_z != 0.0f ? cz + r.skirt_off_z : cz;
-    const f32 z1 = z0 + (r.skirt_z != 0.0f ? r.skirt_z : r.size_z);
+    const auto [x0, z0, x1, z1] = StructureSite::of(r, x, z);
 
     const map::Heightmap& field = terrain.heightmap();
     const auto w = static_cast<i32>(field.grid_width());

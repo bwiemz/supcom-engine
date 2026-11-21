@@ -111,7 +111,8 @@ using PlacementRulesLookup = std::function<PlacementRules(const std::string& bp_
 struct StructureSite {
     f32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
 
-    /// The skirt of a footprint `size_x` by `size_z` centred at (x, z)
+    /// The skirt of a footprint `size_x` by `size_z` centred at (x, z), as Moho's
+    /// RUnitBlueprint::GetSkirtRect: from the footprint's corner rounded to a cell
     static StructureSite of(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x = 0, f32 skirt_z = 0,
                             f32 off_x = 0, f32 off_z = 0);
     static StructureSite of(const PlacementRules& r, f32 x, f32 z);

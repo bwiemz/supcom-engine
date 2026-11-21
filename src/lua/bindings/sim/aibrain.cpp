@@ -1985,12 +1985,7 @@ static int brain_CreateUnitNearSpot(lua_State* L) {
 
     // TryBuildStructureAt's coerced skirt: the skirt one cell bigger all round, clear of units.
     const auto skirt_clear = [&](f32 cx, f32 cz) {
-        const f32 corner_x = std::nearbyint(cx - rules.size_x * 0.5f);
-        const f32 corner_z = std::nearbyint(cz - rules.size_z * 0.5f);
-        const f32 x0 = rules.skirt_x != 0.0f ? corner_x + rules.skirt_off_x : corner_x;
-        const f32 z0 = rules.skirt_z != 0.0f ? corner_z + rules.skirt_off_z : corner_z;
-        const f32 x1 = x0 + (rules.skirt_x != 0.0f ? rules.skirt_x : rules.size_x);
-        const f32 z1 = z0 + (rules.skirt_z != 0.0f ? rules.skirt_z : rules.size_z);
+        const auto [x0, z0, x1, z1] = sim::StructureSite::of(rules, cx, cz);
         const sim::OccupancyRect around{
             static_cast<i32>(std::floor(x0 - 1.0f)), static_cast<i32>(std::floor(z0 - 1.0f)),
             static_cast<i32>(std::ceil(x1 + 1.0f)), static_cast<i32>(std::ceil(z1 + 1.0f))};
