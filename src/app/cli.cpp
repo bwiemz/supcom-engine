@@ -64,7 +64,7 @@ constexpr std::string_view kValueOptions[] = {
     "--entity-trace-ticks", "--rng-trace", "--rng-trace-ticks", "--gpgnet", "--lan-game-join",
     "--mp-port", "--lan-game-save", "--lan-game-resume", "--lan-game-quit-at",
     "--lan-game-self-destruct-at", "--render-dump", "--count-marks", "--mp-join", "--mp-frames",
-    "--mp-drop-at", "--mp-slow", "--mod"
+    "--mp-drop-at", "--mp-slow", "--mod", "--allow-lua-error"
 };
 // clang-format on
 
@@ -211,6 +211,8 @@ void print_usage() {
               << "  --scripted-orders  With --ai-skirmish: army 1 also takes a player's\n"
               << "                     orders (moves, pauses, fire states, stops), and one\n"
               << "                     more just before --save-at's save\n"
+              << "  --allow-lua-error <text>  In a test mode: a script error whose message\n"
+              << "                     holds the text is not a failure\n"
               << "  --bench <file>     With --ticks, --ai-skirmish or --fast-match: write\n"
               << "                     each tick's time and the game's checksum as JSON\n"
               << "                     (tools/bench.py); with --profile, the profile too\n"

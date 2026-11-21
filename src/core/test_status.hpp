@@ -20,7 +20,11 @@ int failure_count();
 /// The first recorded failure messages (capped), in order.
 std::vector<std::string> failure_messages();
 
-/// Forget all recorded failures.
+/// A failure whose message holds `text` is not recorded: an error of the
+/// game's own scripts that a test run allows (--allow-lua-error).
+void allow_failure(std::string text);
+
+/// Forget all recorded failures, and the allowed ones.
 void reset();
 
 /// Embedded Lua tests report by LOG/WARN-ing a line containing "FAIL"

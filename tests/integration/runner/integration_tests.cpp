@@ -122,7 +122,7 @@ void register_test_helpers(lua_State* L, bool moho_pathing) {
     lua_pushcfunction(L, l_test_find_unit);
     lua_rawset(L, LUA_GLOBALSINDEX);
 
-    // __osc_test_find_place(brain, bp, near) -> {x, z, 0} or false: the free
+    // __osc_test_find_place(brain, bp, near) -> {x, z, 0} or nil: the free
     // site for `bp` nearest `near`, via FindPlaceToBuild over a 2-unit grid
     // template around it (the AI supplies real base templates; tests have none).
     static const char* kFindPlace =

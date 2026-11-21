@@ -83,6 +83,10 @@ int run(int argc, char* argv[], TestModes* tests) {
         opt->self_destruct_flow_test || opt->restart_flow_test || opt->campaign_flow_test ||
         opt->loading_screen_test || opt->lan_game_test() || opt->gpgnet_scripted)
         osc::test_status::set_count_lua_failures(true);
+    if (const auto allowed = parse_string_arg(argc, argv, "--allow-lua-error", "");
+        !allowed.empty()) {
+        osc::test_status::allow_failure(allowed);
+    }
 
     // The first run (M228a): a player's game that found no FA asks where it
     // is, then looks again (never a test: nothing would answer)

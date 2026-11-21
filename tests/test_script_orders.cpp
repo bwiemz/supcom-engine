@@ -289,6 +289,20 @@ TEST_CASE("A Script task: the fallback class, errors, endless repeats, no status
     CHECK(osc::test_status::failure_count() == 3);
 }
 
+TEST_CASE("A script error the run allows is not a failure, and any other still is",
+          "[script_orders]") {
+    TaskSim w;
+    CountingLuaFailures counting;
+    osc::test_status::allow_failure("broken task");
+    Unit& u = w.unit(w.spawn());
+    u.push_command(w.script("{ TaskName = 'Broken' }"), false);
+    w.sim.tick();
+    CHECK(osc::test_status::failure_count() == 0);
+    u.push_command(w.script("{ TaskName = 'Mute' }"), false);
+    w.sim.tick();
+    CHECK(osc::test_status::failure_count() == 1);
+}
+
 TEST_CASE("A Script task reaches its unit, and gives the order's AI result", "[script_orders]") {
     TaskSim w;
     const EntityId id = w.spawn();

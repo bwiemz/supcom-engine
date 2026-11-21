@@ -334,6 +334,205 @@ TEST_CASE("A BuildStructure reservation lasts while its builder lives and has th
     }
 }
 
+TEST_CASE("FindPlaceToBuild with an alliance takes a site its side's structures or the ground "
+          "refuse, as Moho's CanBuildStructureAt",
+          "[brain][build]") {
+    struct Row {
+        const char* what;
+        int holder;
+        bool water;
+        const char* alliance;
+        bool taken;
+    };
+    const Row rows[] = {
+        {"our own structure, none asked", 0, false, "nil", false},
+        {"our own structure, Ally", 0, false, "'Ally'", true},
+        {"our own structure, Enemy", 0, false, "'Enemy'", false},
+        {"our own structure, Neutral", 0, false, "'Neutral'", false},
+        {"an enemy's structure, none asked", 1, false, "nil", false},
+        {"an enemy's structure, Ally", 1, false, "'Ally'", false},
+        {"an enemy's structure, Enemy", 1, false, "'Enemy'", true},
+        {"under water, none asked", -1, true, "nil", false},
+        {"under water, Ally", -1, true, "'Ally'", true},
+        {"under water, Enemy", -1, true, "'Enemy'", true},
+    };
+    for (const Row& row : rows) {
+        DYNAMIC_SECTION(row.what) {
+            World w(std::vector<osc::u16>(65 * 65, 1000), row.water ? 10.0f : 0.0f);
+            w.sim.add_army("ARMY_2", "ARMY_2");
+            w.sim.set_alliance(0, 1, osc::sim::Alliance::Enemy);
+            if (row.holder >= 0) {
+                w.block(30.0f, 40.0f)->set_army(row.holder);
+            }
+            CHECK(w.answer(std::string("moho.aibrain_methods.FindPlaceToBuild(brain, 'OscSite', ") +
+                           "'ueb1101', {{{'OscSite'}, {30, 40, 0}}}, false, nil, " + row.alliance +
+                           ") ~= nil") == (row.taken ? "true" : "false"));
+        }
+    }
+}
+
+TEST_CASE("FindPlaceToBuild answers with the template's own entry, or nil", "[brain][build]") {
+    World w;
+    REQUIRE(w.lua.do_string("site_list = {{{'OscSite'}, {30, 40, 9}}}"));
+    CHECK(w.answer("rawequal(moho.aibrain_methods.FindPlaceToBuild(brain, 'OscSite', 'ueb1101', "
+                   "site_list, false, nil), site_list[1][2])") == "true");
+    w.block(30.0f, 40.0f);
+    CHECK(w.answer("moho.aibrain_methods.FindPlaceToBuild(brain, 'OscSite', 'ueb1101', site_list, "
+                   "false, nil)") == "nil");
+}
+
+TEST_CASE("FindPlaceToBuild keeps a template site's skirt off a deposit's cells, with an alliance "
+          "too",
+          "[brain][build]") {
+    World w;
+    CHECK(w.answer("moho.aibrain_methods.FindPlaceToBuild(brain, 'OscSite', 'ueb1101', "
+                   "{{{'OscSite'}, {31, 31, 0}}}, false, nil, 'Ally')") == "nil");
+}
+
+TEST_CASE("FindPlaceToBuild's resource answer is the middle of the deposit's cells",
+          "[brain][build]") {
+    World w;
+    w.sim.add_resource_deposit({22.9f, 0, 35.9f, 1.0f, osc::sim::ResourceDeposit::Mass});
+    CHECK(w.site("moho.aibrain_methods.FindPlaceToBuild(brain, 'T1Resource', 'ueb1103', {}, false, "
+                 "nil, nil, 22, 35)") == "22.5 35.5");
+    CHECK(w.site("moho.aibrain_methods.FindPlaceToBuild(brain, 'T1Resource', 'ueb1103', {}, true, "
+                 "nil, nil, 22, 35)") == "0.5 0.5");
+}
+
+TEST_CASE("FindPlaceToBuild starts from the override only when both its coordinates are given",
+          "[brain][build]") {
+    World w;
+    w.sim.add_resource_deposit({22.9f, 0, 35.9f, 1.0f, osc::sim::ResourceDeposit::Mass});
+    const auto from = [&](const std::string& override_xz) {
+        return w.site("moho.aibrain_methods.FindPlaceToBuild(brain, 'T1Resource', 'ueb1103', {}, "
+                      "true, nil, nil, " +
+                      override_xz + ")");
+    };
+    CHECK(from("22, 35") == "0.5 0.5");
+    CHECK(from("22, nil") == "10.5 10.5");
+    CHECK(from("nil, 35") == "10.5 10.5");
+}
+
+TEST_CASE("FindPlaceToBuild matches its type to a template's names in any case", "[brain][build]") {
+    World w;
+    CHECK(w.site("moho.aibrain_methods.FindPlaceToBuild(brain, 'OscSite', 'ueb1101', "
+                 "{{{'oscSITE'}, {30, 40, 0}}}, false, nil)") == "30 40");
+}
+
+TEST_CASE("FindPlaceToBuild adds the builder's height to every distance, as Moho",
+          "[brain][build]") {
+    const bool high = GENERATE(false, true);
+    World w;
+    w.engineer->set_position({40.0f, high ? 1000.0f : 7.8125f, 40.0f});
+    w.engineer->place_now();
+    CHECK(w.site("moho.aibrain_methods.FindPlaceToBuild(brain, 'OscSite', 'ueb1101', "
+                 "{{{'OscSite'}, {41, 41, 0}, {41.41, 40, 0}}}, false, engineer)") ==
+          (high ? "41 41" : "41.41 40"));
+}
+
+TEST_CASE("FindPlaceToBuild raises Moho's errors for its arguments", "[brain][build]") {
+    struct Row {
+        const char* args;
+        const char* error;
+    };
+    const Row rows[] = {
+        {"'OscSite', 'ueb1101', sites", "expected between 6 and 10 args, but got 4"},
+        {"'OscSite', 'ueb1101', sites, false", "expected between 6 and 10 args, but got 5"},
+        {"'OscSite', 'ueb1101', sites, false, nil, nil, 1, 2, 3, 4",
+         "expected between 6 and 10 args, but got 11"},
+        {"{}, 'ueb1101', sites, false, nil", "Invalid Type name passed in"},
+        {"5, 'ueb1101', sites, false, nil", "Invalid Type name passed in"},
+        {"'OscSite', nil, sites, false, nil", "Invalid Structure name passed in"},
+        {"'OscSite', 5, sites, false, nil", "Invalid Structure name passed in"},
+        {"'OscSite', 'ueb1101', nil, false, nil",
+         "Invalid buildingTypes passed in. Not a lua table!"},
+        {"'OscSite', 'ueb1101', 'x', false, nil",
+         "Invalid buildingTypes passed in. Not a lua table!"},
+        {"'OscSite', 'ueb1101', sites, false, nil, 'Bogus'", "Invalid enum value Bogus"},
+        {"'OscSite', 'ueb1101', sites, false, {}", "Expected a game object."},
+        {"'OscSite', 'ueb1101', sites, 1, nil", "attempt to use as boolean a number value"},
+        {"'OscSite', 'ueb1101', sites, false, nil, nil, 'x', 40",
+         "attempt to use as number a string value"},
+        {"'OscSite', 'ueb1101', sites, false, nil, nil, 30, '40'",
+         "attempt to use as number a string value"},
+        {"'OscSite', 'ueb1101', sites, false, nil, nil, 30, 40, '5'",
+         "attempt to use as integer a string value"},
+        {"'OscSite', 'ueb1101', sites, nil, nil", ""},
+        {"'OscSite', 'ueb1101', sites, false, nil, nil, 'x', nil", ""},
+        {"'OscSite', 'ueb1101', {5}, false, nil", "attempt to index a number value"},
+        {"'OscSite', 'ueb1101', {{'OscSite', {30, 40, 0}}}, false, nil",
+         "Error parsing building types. Missing type match lua table!"},
+        {"'OscSite', 'ueb1101', {{{5}, {30, 40, 0}}}, false, nil",
+         "attempt to get as string a number value"},
+        {"'OscSite', 'ueb1101', {{{'OscSite'}, {'a', 40, 0}}}, false, nil",
+         "attempt to get as number a string value"},
+        {"'OscSite', 'ueb1101', {{{'OscSite'}, {30}}}, false, nil",
+         "attempt to get as number a nil value"},
+        {"'OscSite', 'ueb1101', {{{'X'}, 5}, sites[1]}, false, nil", ""},
+        {"'OscSite', 'ueb1101', sites, false, nil, 12", ""},
+        {"'OscSite', 'ueb1101', sites, false, engineer", ""},
+    };
+    for (const Row& row : rows) {
+        DYNAMIC_SECTION(row.args) {
+            World w;
+            REQUIRE(w.lua.do_string("sites = {{{'OscSite'}, {30, 40, 0}}}"));
+            const std::string error = w.answer(std::string("(function() local ok, e = pcall(") +
+                                               "moho.aibrain_methods.FindPlaceToBuild, brain, " +
+                                               row.args + ") return ok and '' or e end)()");
+            if (*row.error == '\0') {
+                CHECK(error.empty());
+            } else {
+                CHECK(error.find(row.error) != std::string::npos);
+            }
+        }
+    }
+}
+
+TEST_CASE("FindPlaceToBuild with Enemy takes a deposit an enemy's extractor holds",
+          "[brain][build]") {
+    const bool enemy = GENERATE(true, false);
+    World w;
+    w.sim.add_resource_deposit({40.5f, 0, 20.5f, 1.0f, osc::sim::ResourceDeposit::Mass});
+    w.sim.add_army("ARMY_2", "ARMY_2");
+    w.sim.set_alliance(0, 1, osc::sim::Alliance::Enemy);
+    w.block(30.5f, 30.5f)->set_army(1);
+    const std::string alliance = enemy ? "'Enemy'" : "nil";
+    CHECK(w.site("moho.aibrain_methods.FindPlaceToBuild(brain, 'T1Resource', 'ueb1103', {}, false, "
+                 "nil, " +
+                 alliance + ")") == (enemy ? "30.5 30.5" : "40.5 20.5"));
+}
+
+TEST_CASE("FindPlaceToBuild takes tied deposits in the order Moho's sort leaves them",
+          "[brain][build]") {
+    World w;
+    w.block(30.5f, 30.5f);
+    std::vector<std::pair<osc::f32, osc::f32>> far;
+    for (int i = 0; i < 6; ++i) {
+        for (int j = 0; j < 6; ++j) {
+            const osc::f32 x = 8.5f + 8.0f * static_cast<osc::f32>(i);
+            const osc::f32 z = 8.5f + 9.0f * static_cast<osc::f32>(j);
+            if ((x - 32.0f) * (x - 32.0f) + (z - 32.0f) * (z - 32.0f) > 60.0f) {
+                far.emplace_back(x, z);
+            }
+        }
+    }
+    REQUIRE(far.size() == 34);
+    const auto add = [&](osc::f32 x, osc::f32 z) {
+        w.sim.add_resource_deposit({x, 0, z, 1.0f, osc::sim::ResourceDeposit::Mass});
+    };
+    for (size_t i = 0; i < far.size(); ++i) {
+        if (i == 3) {
+            add(27.5f, 27.5f);
+            add(36.5f, 27.5f);
+            add(27.5f, 36.5f);
+            add(36.5f, 36.5f);
+        }
+        add(far[i].first, far[i].second);
+    }
+    CHECK(w.site("moho.aibrain_methods.FindPlaceToBuild(brain, 'T1Resource', 'ueb1103', {}, false, "
+                 "nil, nil, 32, 32)") == "36.5 36.5");
+}
+
 TEST_CASE("FindPlaceToBuild and CreateResourceBuildingNearest pass over BuildStructure's sites",
           "[brain][build]") {
     const bool structure = GENERATE(true, false);
