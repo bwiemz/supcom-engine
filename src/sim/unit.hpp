@@ -1802,6 +1802,14 @@ private:
     /// `dest` moved to a place the unit fits that no unit stands on or has
     /// reserved, which the order then reserves.
     void settle_factory_move(UnitCommand& cmd, Vector3 dest, SimContext& ctx);
+    /// Moho's move task's goal for an aircraft's move onto the land layer
+    /// (ShouldRecentreOnGoalCell): `goal`'s cell centre, settled as a factory
+    /// move's and reserved for the order until end_land_goal.
+    Vector3 land_goal(const Vector3& goal, SimContext& ctx);
+    /// ~CUnitMoveTask: the reservation goes; with `forget`, the goal too.
+    void end_land_goal(SimState* sim, bool forget);
+    /// Flies to land_goal(goal); true once there.
+    bool reach_land_goal(const Vector3& goal, SimContext& ctx);
     /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
     /// target, and one that needs prep (NeedPrep) hears OnGotTarget. False
     /// when a script took the unit or the order.
@@ -2349,6 +2357,14 @@ private:
     f32 start_turn_distance_ = 0.0f;    // Air.StartTurnDistance
     IdleLanding idle_landing_;
     OrderReservation order_reservation_;
+    struct LandGoal {
+        bool held = false;
+        u32 order = 0;
+        Vector3 asked{};
+        Vector3 at{};
+        bool arrived = false;
+    };
+    LandGoal land_goal_;
     // A unit beaming up into its transport (M206m): ticks left of the 10,
     // and where it started.
     i32 beam_up_ticks_ = 0;

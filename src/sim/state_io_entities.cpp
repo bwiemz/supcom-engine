@@ -1473,6 +1473,11 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.i32v(u.order_reservation_.reserved.z0);
     w.i32v(u.order_reservation_.reserved.x1);
     w.i32v(u.order_reservation_.reserved.z1);
+    w.b(u.land_goal_.held);
+    w.u32v(u.land_goal_.order);
+    w.vec3(u.land_goal_.asked);
+    w.vec3(u.land_goal_.at);
+    w.b(u.land_goal_.arrived);
     w.b(u.stepping_aside_);
     w.vec3(u.aside_goal_);
     w.i32v(u.beam_up_ticks_);
@@ -1920,6 +1925,11 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.order_reservation_.reserved.z0 = r.i32v();
     u.order_reservation_.reserved.x1 = r.i32v();
     u.order_reservation_.reserved.z1 = r.i32v();
+    u.land_goal_.held = r.b();
+    u.land_goal_.order = r.u32v();
+    u.land_goal_.asked = r.vec3();
+    u.land_goal_.at = r.vec3();
+    u.land_goal_.arrived = r.b();
     u.stepping_aside_ = r.b();
     u.aside_goal_ = r.vec3();
     u.beam_up_ticks_ = r.i32v();
