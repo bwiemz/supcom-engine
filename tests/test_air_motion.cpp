@@ -4,6 +4,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
@@ -13,6 +14,7 @@
 #include "map/terrain.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/flight_math.hpp"
+#include "sim/occupancy.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -611,6 +613,39 @@ bool attacks(const Unit& u, osc::sim::EntityId target) {
 }
 
 } // namespace
+
+TEST_CASE("An aircraft closing in on a unit it attacks flies at it if it is mobile, else at its "
+          "cell's centre",
+          "[air_motion]") {
+    const std::string kind = GENERATE("tank", "pad");
+    CAPTURE(kind);
+    World w(true);
+    Unit& a = w.make("gun1", 30.0f, 128.77f);
+    a.add_weapon(auto_gun(3));
+    Unit& target = w.make(kind.c_str(), 130.31f, 128.77f, 2);
+    const f32 start_z = a.position().z;
+    osc::sim::UnitCommand attack;
+    attack.type = osc::sim::CommandType::Attack;
+    attack.target_id = target.entity_id();
+    a.push_command(attack, true);
+    tick_until([&] { w.sim.tick(); }, "the gunship comes near its target", 200,
+               [&] { return target.position().x - a.position().x < 30.0f; });
+    REQUIRE_FALSE(a.command_queue().empty());
+    REQUIRE_FALSE(a.command_queue().front().engaged);
+    REQUIRE(a.navigator().waypoint());
+    const osc::sim::Vector3& at = *a.navigator().waypoint();
+    if (kind == "tank") {
+        REQUIRE(start_z == target.position().z);
+        CHECK(at.x == target.position().x);
+        CHECK(at.z == target.position().z);
+        CHECK(a.position().z == Approx(target.position().z).margin(0.01f));
+    } else {
+        const osc::sim::OccupancyRect cell =
+            osc::sim::footprint_rect(a.footprint(), target.position().x, target.position().z);
+        CHECK(at.x == static_cast<f32>(cell.x0 + cell.x1) * 0.5f);
+        CHECK(at.z == static_cast<f32>(cell.z0 + cell.z1) * 0.5f);
+    }
+}
 
 // Moho's CAcquireTargetTask::Execute (Steam 0x5DF7E0) orders the attack after every search that
 // finds an enemy while CheckAutoInitiate passes, whether or not the weapon had it already.

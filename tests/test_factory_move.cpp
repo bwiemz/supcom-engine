@@ -4,6 +4,7 @@
 // them (CUnitMoveTask's constructor, Unit::PrepareMove).
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "blueprints/blueprint_store.hpp"
 #include "blueprints/footprint.hpp"
@@ -43,8 +44,10 @@ namespace {
 constexpr u32 kMap = 128;
 
 /// A sim on a flat map, its land units pathing as Moho's: 'walker', an
-/// engineer's size, 'builder', one that builds 'pgen' (a 2x2 footprint), and
-/// 'yard', a land factory's (a 5x5 footprint, an 8x8 skirt 1.5 out from it).
+/// engineer's size, 'builder', one that builds 'pgen' (a 2x2 footprint),
+/// 'yard', a land factory's (a 5x5 footprint, an 8x8 skirt 1.5 out from it),
+/// two aircraft, 'lifter' (1x4, as a T1 transport) and 'fighter' (1x1,
+/// winged), and 'beacon', the lifter's ferry beacon.
 struct World {
     osc::lua::LuaState state;
     osc::blueprints::BlueprintStore store{state.raw()};
@@ -89,6 +92,21 @@ struct World {
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Economy = {BuildTime = 10, BuildCostEnergy = 1, BuildCostMass = 1},"
                  " Physics = {MotionType = 'RULEUMT_None'}}",
+                 "{BlueprintId = 'lifter', Categories = {'AIR', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 1, SizeY = 0.5, SizeZ = 4,"
+                 " Footprint = {SizeX = 1, SizeZ = 4}, AI = {BeaconName = 'beacon'},"
+                 " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1,"
+                 "  StartTurnDistance = 5},"
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 10, Elevation = 10}}",
+                 "{BlueprintId = 'fighter', Categories = {'AIR', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 1, SizeY = 0.5, SizeZ = 1,"
+                 " Footprint = {SizeX = 1, SizeZ = 1},"
+                 " Air = {CanFly = true, Winged = true, MaxAirspeed = 15, KMove = 1,"
+                 "  KMoveDamping = 1, StartTurnDistance = 5, TurnSpeed = 1.5, AutoLandTime = 1},"
+                 " Physics = {MotionType = 'RULEUMT_Air', MaxSpeed = 15, Elevation = 18}}",
+                 "{BlueprintId = 'beacon', Categories = {'FERRYBEACON', 'STRUCTURE'},"
+                 " Defense = {MaxHealth = 100}, Footprint = {SizeX = 1, SizeZ = 1},"
+                 " Physics = {MotionType = 'RULEUMT_None'}}",
                  "{BlueprintId = 'yard', Categories = {'FACTORY', 'STRUCTURE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 4.2, SizeY = 0.6, SizeZ = 4.4,"
                  " Footprint = {SizeX = 5, SizeZ = 5},"
@@ -106,7 +124,8 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"walker", "builder", "pgen", "yard"}) {
+        for (const char* id :
+             {"walker", "builder", "pgen", "lifter", "fighter", "beacon", "yard"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -278,4 +297,67 @@ TEST_CASE("A structure next to a factory is placed and built as before, from off
     CHECK(built->position().z == 71.0f);
     // The nearest place a cell clear of the site, (37, 67), is on the skirt.
     CHECK(stands_at(b, 40, 67));
+}
+
+TEST_CASE("An aircraft flies each goal at its cell's centre: a move's, a patrol leg's, a guard's, "
+          "a ferry's and one set from Lua",
+          "[factory_move]") {
+    const std::string kind = GENERATE("move", "patrol", "guard", "ferry", "navigator");
+    CAPTURE(kind);
+    World w;
+    // A hovering aircraft guards flying winged, with no navigator goal (the
+    // original game's gunship circles what it guards); a winged one has one.
+    Unit& l = *w.make(kind == "guard" ? "fighter" : "lifter", 20.5f, 50.5f, "l");
+    if (kind == "navigator") {
+        REQUIRE(w.state.do_string("l:GetNavigator():SetGoal({40.31, 0, 50.77})").ok());
+    } else {
+        UnitCommand cmd = move_to(40.31f, 50.77f, false);
+        cmd.target_pos.y = 0.0f;
+        if (kind == "patrol") {
+            cmd.type = osc::sim::CommandType::Patrol;
+        } else if (kind == "guard") {
+            cmd.type = osc::sim::CommandType::Guard;
+            cmd.target_id = w.make("walker", 60.31f, 50.77f, "a")->entity_id();
+        } else if (kind == "ferry") {
+            cmd.type = osc::sim::CommandType::Ferry;
+        }
+        l.push_command(cmd, true);
+        tick_until([&] { w.sim.tick(); }, "it sets out", 30,
+                   [&] { return l.navigator().is_moving(); });
+        REQUIRE_FALSE(l.command_queue().empty());
+        CHECK_FALSE(l.command_queue().front().goal_prepared);
+    }
+    REQUIRE(l.navigator().waypoint());
+    const osc::sim::Vector3& at = *l.navigator().waypoint();
+    const OccupancyRect cell = osc::sim::footprint_rect(l.footprint(), at.x, at.z);
+    CHECK(at.x == static_cast<f32>(cell.x0 + cell.x1) * 0.5f);
+    CHECK(at.z == static_cast<f32>(cell.z0 + cell.z1) * 0.5f);
+    CHECK(at.y == w.sim.terrain()->get_terrain_height(at.x, at.z));
+    if (kind != "guard") {
+        // A 1x4 footprint at (40.31, 50.77) takes the cells 40 by 49-52.
+        CHECK(at.x == 40.5f);
+        CHECK(at.z == 51.0f);
+    }
+}
+
+TEST_CASE("An aircraft's factory-issued move settles its goal with a landing footprint, clear of a "
+          "unit standing there",
+          "[factory_move]") {
+    World w;
+    // The point rounds to (40, 51); its 4x4 landing footprint there takes
+    // the walker's cell, and the nearest of the ring 8 cells out is 8 north.
+    w.make("walker", 40.5f, 50.5f, "a");
+    Unit& l = *w.make("lifter", 40.5f, 70.5f, "l");
+    l.push_command(move_to(40.31f, 50.77f, true), true);
+    w.sim.tick();
+    REQUIRE_FALSE(l.command_queue().empty());
+    const UnitCommand& cmd = l.command_queue().front();
+    CHECK(cmd.goal_prepared);
+    CHECK(cmd.prepared_goal.x == 40.0f);
+    CHECK(cmd.prepared_goal.z == 59.0f);
+    CHECK(l.order_reservation().held);
+    CHECK(w.reserved(40, 57));
+    REQUIRE(l.navigator().waypoint());
+    CHECK(l.navigator().waypoint()->x == 40.5f);
+    CHECK(l.navigator().waypoint()->z == 59.0f);
 }

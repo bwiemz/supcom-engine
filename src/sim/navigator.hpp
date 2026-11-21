@@ -33,6 +33,8 @@ public:
 
     /// Set goal with straight-line movement (legacy/fallback).
     void set_goal(const Vector3& pos);
+    /// Where an aircraft flies for its goal (CAiNavigatorAir's mCurrentTargetPos).
+    void set_air_target(const Vector3& at);
 
     /// `keep_spline`: a spline it is on stays, for its steering to brake along
     /// (steer_no_waypoints).
