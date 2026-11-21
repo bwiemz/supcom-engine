@@ -1744,9 +1744,14 @@ void test_upgrade(TestContext& ctx) {
                 return
             end
 
-            -- Build a T1 mass extractor near ACU
             local pos = acu:GetPosition()
-            local build_pos = {pos[1] + 10, pos[2], pos[3]}
+            local build_pos, best
+            for _, m in import('/lua/sim/ScenarioUtilities.lua').GetMarkers() do
+                if m.type == 'Mass' then
+                    local d = VDist2(m.position[1], m.position[3], pos[1], pos[3])
+                    if not best or d < best then build_pos, best = m.position, d end
+                end
+            end
             LOG('Upgrade test: building ueb1103 (T1 mex)')
             IssueBuildMobile({acu}, build_pos, 'ueb1103', {})
 
@@ -12548,9 +12553,9 @@ void test_range(TestContext& ctx) {
         __osc_prize:SetFireState(1)
         IssueCapture({__osc_taker}, __osc_prize)
 
-        __osc_shop = __osc_spawn('ueb0101', 'ARMY_1', 610.5, 160.5)
-        __osc_onsite = __osc_spawn('uel0001', 'ARMY_1', 610.5, 165.5)
-        IssueBuildMobile({__osc_onsite}, __osc_at(610.5, 165.5), 'ueb1101', {})
+        __osc_shop = __osc_spawn('ueb0101', 'ARMY_1', 646.5, 179.5)
+        __osc_onsite = __osc_spawn('uel0001', 'ARMY_1', 646.5, 184.5)
+        IssueBuildMobile({__osc_onsite}, __osc_at(646.5, 184.5), 'ueb1101', {})
         __osc_armed = __osc_spawn('uel0001', 'ARMY_1', 650.5, 130.5)
         __osc_arm_prep = 0
         __osc_arm_prep_tick = false
@@ -12702,7 +12707,7 @@ void test_range(TestContext& ctx) {
             end
             if not fired then return false end
             for _, u in GetArmyBrain('ARMY_1'):GetListOfUnits(categories.ueb1101, false) do
-                if __osc_from(u, 610.5, 165.5) < 1 then return true end
+                if __osc_from(u, 646.5, 184.5) < 1 then return true end
             end
             return false
         end)()
@@ -12724,7 +12729,7 @@ void test_range(TestContext& ctx) {
     lua_check("Test 12b: a builder on its site builds there once clear of it", R"(
         local built = false
         for _, u in GetArmyBrain('ARMY_1'):GetListOfUnits(categories.ueb1101, false) do
-            if __osc_from(u, 610.5, 165.5) < 1 then built = true end
+            if __osc_from(u, 646.5, 184.5) < 1 then built = true end
         end
         if not built then
             error('no power generator on the site; the ACU has ' ..
@@ -12755,9 +12760,9 @@ void test_range(TestContext& ctx) {
         local brain = GetArmyBrain('ARMY_1')
         brain:GiveResource('MASS', 10000)
         brain:GiveResource('ENERGY', 100000)
-        __osc_queued_acu = __osc_spawn('uel0001', 'ARMY_1', 600.5, 190.5)
-        IssueBuildMobile({__osc_queued_acu}, __osc_at(600.5, 182.5), 'ueb2101', {})
-        IssueBuildMobile({__osc_queued_acu}, __osc_at(608.5, 190.5), 'ueb2101', {})
+        __osc_queued_acu = __osc_spawn('uel0001', 'ARMY_1', 700.5, 188.5)
+        IssueBuildMobile({__osc_queued_acu}, __osc_at(700.5, 180.5), 'ueb2101', {})
+        IssueBuildMobile({__osc_queued_acu}, __osc_at(708.5, 188.5), 'ueb2101', {})
     )");
     tick_until(ctx, "the queued ACU builds its second, its torso turned to the site", 600, R"(
         (function()
@@ -17333,21 +17338,23 @@ void test_prebuilt(TestContext& ctx) {
 
     // A factory and four power generators by the start: off the start spot
     // (+-5), clear of each other, and close.
-    const osc::sim::StructureSite start_box{static_cast<osc::f32>(static_cast<int>(start.x)),
-                                            static_cast<osc::f32>(static_cast<int>(start.z)), 10,
-                                            10};
+    const auto sx = static_cast<osc::f32>(std::lrint(start.x));
+    const auto sz = static_cast<osc::f32>(std::lrint(start.z));
+    const osc::sim::StructureSite start_box{sx - 5, sz - 5, sx + 5, sz + 5};
+    const auto site_of = [](const osc::sim::Unit* u) {
+        return osc::sim::StructureSite::of(u->position().x, u->position().z, u->footprint_size_x(),
+                                           u->footprint_size_z());
+    };
     bool clear_of_start = true, clear_of_each_other = true;
     osc::f32 farthest_other = 0;
     for (size_t i = 0; i < others.size(); ++i) {
         const auto* a = others[i];
-        const osc::sim::StructureSite sa{a->position().x, a->position().z, a->footprint_size_x(),
-                                         a->footprint_size_z()};
+        const osc::sim::StructureSite sa = site_of(a);
         if (start_box.overlaps(sa)) clear_of_start = false;
         for (size_t j = i + 1; j < others.size(); ++j) {
-            const auto* b = others[j];
-            if (sa.overlaps({b->position().x, b->position().z, b->footprint_size_x(),
-                             b->footprint_size_z()}))
+            if (sa.overlaps(site_of(others[j]))) {
                 clear_of_each_other = false;
+            }
         }
         farthest_other =
             std::max(farthest_other, std::sqrt(dist2(a->position().x, a->position().z)));

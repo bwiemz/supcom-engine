@@ -20,6 +20,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/lua_keys.hpp"
 #include "sim/build_placement.hpp"
+#include "sim/build_site_units.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
 #include "sim/entity.hpp"
@@ -1105,116 +1106,11 @@ static int brain_GetPlatoonsList(lua_State* L) {
     return 1;
 }
 
-// Placement rules for a structure blueprint, read from __blueprints.
-static sim::PlacementRules placement_rules_of(lua_State* L, const sim::SimState& sim,
-                                              const std::string& bp_id) {
-    sim::PlacementRules r;
-    const int top = lua_gettop(L);
-    if (!blueprints::push_blueprint(L, bp_id)) return r;
-    const int bp = lua_gettop(L);
-
-    if (const auto [fx, fz] = sim::blueprint_footprint(L, bp); fx > 0 && fz > 0) {
-        r.size_x = fx;
-        r.size_z = fz;
-    }
-    const auto cells = [](f32 size) {
-        return static_cast<u8>(std::clamp(std::lround(size), 0L, 255L));
-    };
-    blueprints::Footprint own;
-    own.size_x = cells(r.size_x);
-    own.size_z = cells(r.size_z);
-    std::string motion;
-    lua_pushstring(L, "Footprint");
-    lua_rawget(L, bp);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, "MinWaterDepth");
-        lua_rawget(L, -2);
-        if (lua_isnumber(L, -1)) r.min_water_depth = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_pushstring(L, "MaxSlope");
-        lua_rawget(L, -2);
-        if (lua_isnumber(L, -1)) {
-            own.max_slope = static_cast<f32>(lua_tonumber(L, -1));
-        }
-        lua_pop(L, 1);
-        lua_pushstring(L, "MaxWaterDepth");
-        lua_rawget(L, -2);
-        if (lua_isnumber(L, -1)) {
-            own.max_water_depth = static_cast<f32>(lua_tonumber(L, -1));
-        }
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
-    own.min_water_depth = r.min_water_depth;
-
-    lua_pushstring(L, "Physics");
-    lua_rawget(L, bp);
-    if (lua_istable(L, -1)) {
-        const int phys = lua_gettop(L);
-        lua_pushstring(L, "BuildOnLayerCaps"); // absent: land only
-        lua_rawget(L, phys);
-        if (const auto layers = blueprints::read_flag_enum(L, -1, blueprints::kLayerEnum)) {
-            namespace oc = blueprints::occupancy;
-            r.on_land = (*layers & oc::kLand) != 0;
-            r.on_water = (*layers & oc::kWater) != 0;
-            r.on_seabed = (*layers & oc::kSeabed) != 0;
-            r.on_sub = (*layers & oc::kSub) != 0;
-        }
-        lua_pop(L, 1);
-        const auto number = [L, phys](const char* key) {
-            lua_pushstring(L, key);
-            lua_rawget(L, phys);
-            const f32 v = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
-            lua_pop(L, 1);
-            return v;
-        };
-        r.skirt_x = number("SkirtSizeX");
-        r.skirt_z = number("SkirtSizeZ");
-        r.skirt_off_x = number("SkirtOffsetX");
-        r.skirt_off_z = number("SkirtOffsetZ");
-        lua_pushstring(L, "MaxGroundVariation");
-        lua_rawget(L, phys);
-        if (lua_isnumber(L, -1)) r.max_ground_variation = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_pushstring(L, "FlattenSkirt");
-        lua_rawget(L, phys);
-        r.flatten_skirt = lua_toboolean(L, -1) != 0;
-        lua_pop(L, 1);
-        lua_pushstring(L, "MotionType");
-        lua_rawget(L, phys);
-        if (lua_type(L, -1) == LUA_TSTRING) {
-            motion = lua_tostring(L, -1);
-        }
-        lua_pop(L, 1);
-        lua_pushstring(L, "BuildRestriction");
-        lua_rawget(L, phys);
-        if (lua_type(L, -1) == LUA_TSTRING) {
-            const std::string restriction = lua_tostring(L, -1);
-            if (restriction == "RULEUBR_OnMassDeposit")
-                r.deposit = sim::PlacementRules::Deposit::Mass;
-            else if (restriction == "RULEUBR_OnHydrocarbonDeposit")
-                r.deposit = sim::PlacementRules::Deposit::Hydrocarbon;
-        }
-        lua_pop(L, 1);
-    }
-    lua_settop(L, top);
-    if (!motion.empty() && motion != "RULEUMT_None" && sim.blueprint_store()) {
-        r.mobile = blueprints::resolve_unit_footprints(sim.blueprint_store()->footprint_classes(),
-                                                       own, own, motion, {}, 0)
-                       .main;
-    }
-    return r;
-}
-
-const sim::PlacementRules& structure_rules(lua_State* L, const sim::SimState& sim,
-                                           const std::string& bp_id) {
-    return sim.placement_rules(bp_id, [&] { return placement_rules_of(L, sim, bp_id); });
-}
-
 static sim::StructurePlacement placement_for(lua_State* L, const sim::SimState& sim, i32 army,
                                              bool scheduled = false, u32 moving = 0) {
     return sim::StructurePlacement(
-        sim, army, [L, &sim](const std::string& bp_id) { return structure_rules(L, sim, bp_id); },
+        sim, army,
+        [L, &sim](const std::string& bp_id) { return sim::structure_rules(L, sim, bp_id); },
         scheduled, moving);
 }
 
@@ -2066,11 +1962,7 @@ static int brain_CreateResourceBuildingNearest(lua_State* L) {
     return 1;
 }
 
-// brain:CreateUnitNearSpot(bp, x, z) -> unit or nil: the unit at the first
-// free site found about (x, z), keeping clear of the army's start spot
-// (Moho's CAiBrain::CreateUnitNearSpot occupies the start +-5 while it
-// looks). The search is Moho's TryBuildStructureAt: the spot itself, then
-// square rings one cell further out each time, up to 900 tries.
+// brain:CreateUnitNearSpot(bp, x, z) -> unit or nil: Moho's CAiBrain::CreateUnitNearSpot.
 static int brain_CreateUnitNearSpot(lua_State* L) {
     auto* brain = check_brain(L);
     auto* sim = get_sim(L);
@@ -2084,13 +1976,29 @@ static int brain_CreateUnitNearSpot(lua_State* L) {
     const f32 z = static_cast<f32>(lua_tonumber(L, 4));
     const auto placement = placement_for(L, *sim, brain->index());
     const auto& rules = placement.rules(bp);
+    const u8 caps = sim::occupancy_caps(rules);
     const sim::Vector3& start = brain->start_position();
-    const sim::StructureSite start_box{static_cast<f32>(static_cast<i32>(start.x)),
-                                       static_cast<f32>(static_cast<i32>(start.z)), 10.0f, 10.0f};
+    const auto sx = static_cast<i32>(std::lrint(start.x));
+    const auto sz = static_cast<i32>(std::lrint(start.z));
+    const sim::OccupancyRect start_cells{sx - 5, sz - 5, sx + 5, sz + 5};
+    sim->occupy_cells(caps, start_cells, true);
+
+    // TryBuildStructureAt's coerced skirt: the skirt one cell bigger all round, clear of units.
+    const auto skirt_clear = [&](f32 cx, f32 cz) {
+        const f32 corner_x = std::nearbyint(cx - rules.size_x * 0.5f);
+        const f32 corner_z = std::nearbyint(cz - rules.size_z * 0.5f);
+        const f32 x0 = rules.skirt_x != 0.0f ? corner_x + rules.skirt_off_x : corner_x;
+        const f32 z0 = rules.skirt_z != 0.0f ? corner_z + rules.skirt_off_z : corner_z;
+        const f32 x1 = x0 + (rules.skirt_x != 0.0f ? rules.skirt_x : rules.size_x);
+        const f32 z1 = z0 + (rules.skirt_z != 0.0f ? rules.skirt_z : rules.size_z);
+        const sim::OccupancyRect around{
+            static_cast<i32>(std::floor(x0 - 1.0f)), static_cast<i32>(std::floor(z0 - 1.0f)),
+            static_cast<i32>(std::ceil(x1 + 1.0f)), static_cast<i32>(std::ceil(z1 + 1.0f))};
+        return sim::location_is_free(*sim, nullptr, around, false);
+    };
     const auto free_at = [&](f32 cx, f32 cz, f32& out_x, f32& out_z) {
         sim::snap_structure_center(cx, cz, rules.size_x, rules.size_z);
-        if (start_box.overlaps({cx, cz, rules.size_x, rules.size_z})) return false;
-        if (!placement.location_free(bp, cx, cz)) {
+        if (!placement.location_free(bp, cx, cz) || !skirt_clear(cx, cz)) {
             return false;
         }
         out_x = cx;
@@ -2098,24 +2006,25 @@ static int brain_CreateUnitNearSpot(lua_State* L) {
         return true;
     };
     f32 at_x = 0, at_z = 0;
-    bool found = free_at(x, z, at_x, at_z);
-    constexpr i32 kBorder = 1; // the cell step (Moho passes `true` for its border)
-    for (i32 ring = 1, attempts = 0; !found && attempts < 900; ++ring) {
+    const bool inside = sim::within_map(*sim, x, z, 1.0f, true);
+    bool found = inside && free_at(x, z, at_x, at_z);
+    for (i32 ring = 1, attempts = 0; inside && !found && attempts < 900; ++ring) {
         const i32 lower = -ring, upper = ring;
         for (i32 i = lower; i <= upper && !found; ++i) {
             const i32 dj = (i == lower || i == upper) ? 1 : 2 * upper;
             for (i32 j = lower; j <= upper && !found; j += dj) {
                 ++attempts;
-                found = free_at(x + static_cast<f32>(kBorder * i),
-                                z + static_cast<f32>(kBorder * j), at_x, at_z);
+                found = free_at(x + static_cast<f32>(i), z + static_cast<f32>(j), at_x, at_z);
             }
         }
     }
-    if (!found) {
+    if (found) {
+        create_brain_unit(L, *brain, bp, at_x, sim::structure_elevation(*sim, rules, at_x, at_z),
+                          at_z);
+    } else {
         lua_pushnil(L);
-        return 1;
     }
-    create_brain_unit(L, *brain, bp, at_x, sim::structure_elevation(*sim, rules, at_x, at_z), at_z);
+    sim->occupy_cells(caps, start_cells, false);
     return 1;
 }
 

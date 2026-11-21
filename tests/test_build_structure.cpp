@@ -9,6 +9,7 @@
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/build_placement.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
@@ -353,12 +354,94 @@ TEST_CASE("FindPlaceToBuild and CreateResourceBuildingNearest pass over BuildStr
           mass);
 }
 
+TEST_CASE("The sim's placement check refuses ground cells the occupancy grid holds, the UI's not",
+          "[brain][build]") {
+    namespace occupancy = osc::blueprints::occupancy;
+    World w;
+    const auto sim_answer = [&] {
+        return w.answer(
+            "moho.aibrain_methods.CanBuildStructureAt(brain, 'ueb1103', {30.5, 0, 30.5})");
+    };
+    CHECK(sim_answer() == "true");
+    w.sim.occupy_cells(occupancy::kWater, {30, 30, 31, 31}, true);
+    CHECK(sim_answer() == "true");
+    w.sim.occupy_cells(occupancy::kLand | occupancy::kSeabed, {30, 30, 31, 31}, true);
+    CHECK(sim_answer() == "false");
+    CHECK(osc::lua::can_build_structure(w.lua.raw(), w.sim, 0, "ueb1103", 30.5f, 30.5f));
+}
+
+TEST_CASE("CreateResourceBuildingNearest passes over a deposit whose cell the occupancy grid holds",
+          "[brain][build]") {
+    namespace occupancy = osc::blueprints::occupancy;
+    World w;
+    w.sim.add_resource_deposit({36.5f, 0, 30.5f, 1.0f, osc::sim::ResourceDeposit::Mass});
+    REQUIRE(w.lua.do_string(
+        "rawset(_G, 'CreateUnitHPR', function(bp, army, x, y, z) return {x, z} end)"));
+    w.sim.occupy_cells(occupancy::kLand | occupancy::kSeabed, {30, 30, 31, 31}, true);
+    CHECK(w.site("moho.aibrain_methods.CreateResourceBuildingNearest(brain, 'ueb1103', 30, 30)") ==
+          "36.5 30.5");
+}
+
+TEST_CASE("Moho's func_LocationIsFree keeps a land structure out of the water", "[brain][build]") {
+    const bool water = GENERATE(true, false);
+    World w(std::vector<osc::u16>(65 * 65, 1000), water ? 10.0f : 0.0f);
+    const osc::sim::StructurePlacement placement(w.sim, 0, [&w](const std::string& bp) {
+        return osc::sim::structure_rules(w.lua.raw(), w.sim, bp);
+    });
+    CHECK(placement.location_free("ueb1101", 30.0f, 40.0f) == !water);
+}
+
 TEST_CASE("CreateUnitNearSpot puts a unit on a site BuildStructure has ordered", "[brain][build]") {
     World w;
     REQUIRE(w.lua.do_string(
         "rawset(_G, 'CreateUnitHPR', function(bp, army, x, y, z) return {x, z} end)"));
     REQUIRE(w.order("'ueb1101', {30, 40, 0}, false").size() == 1);
     CHECK(w.site("moho.aibrain_methods.CreateUnitNearSpot(brain, 'ueb1101', 30, 40)") == "30 40");
+}
+
+TEST_CASE("CreateUnitNearSpot looks past the cells 5 either way of the start, rounded",
+          "[brain][build]") {
+    World w;
+    REQUIRE(w.lua.do_string(
+        "rawset(_G, 'CreateUnitHPR', function(bp, army, x, y, z) return {x, z} end) "
+        "__blueprints.ueb0101 = { Footprint = { SizeX = 5, SizeZ = 5 } }"));
+    w.sim.get_army(0)->set_start_position({29.5f, 0.0f, 28.5f});
+    CHECK(w.site("moho.aibrain_methods.CreateUnitNearSpot(brain, 'ueb0101', 29.5, 28.5)") ==
+          "22.5 21.5");
+}
+
+TEST_CASE("CreateUnitNearSpot keeps a cell between its site's skirt and another structure's",
+          "[brain][build]") {
+    World w;
+    REQUIRE(w.lua.do_string(
+        "rawset(_G, 'CreateUnitHPR', function(bp, army, x, y, z) return {x, z} end)"));
+    Unit* other = w.block(12.0f, 10.0f);
+    other->set_skirt(2.0f, 2.0f, 0.0f, 0.0f);
+    other->set_collision_shape(
+        {osc::sim::CollisionShapeType::BOX, 0.0f, 0.5f, 0.0f, 1.0f, 0.5f, 1.0f});
+    CHECK(w.site("moho.aibrain_methods.CreateUnitNearSpot(brain, 'ueb1101', 14, 10)") == "15 9");
+}
+
+TEST_CASE("CreateUnitNearSpot leaves the start's cells clear, those another structure held too",
+          "[brain][build]") {
+    World w;
+    REQUIRE(w.lua.do_string(
+        "rawset(_G, 'CreateUnitHPR', function(bp, army, x, y, z) return {x, z} end)"));
+    Unit* held = w.block(20.0f, 20.0f);
+    w.sim.occupy_ground(held->entity_id(), {osc::blueprints::occupancy::kLand, {{19, 19, 21, 21}}});
+    REQUIRE(w.sim.occupancy().ground_at(19, 19));
+    CHECK(w.site("moho.aibrain_methods.CreateUnitNearSpot(brain, 'ueb1101', 30, 40)") == "30 40");
+    CHECK_FALSE(w.sim.occupancy().ground_at(19, 19));
+    CHECK_FALSE(w.sim.occupancy().ground_at(15, 15));
+}
+
+TEST_CASE("CreateUnitNearSpot places nothing about a spot within a cell of the map's edge",
+          "[brain][build]") {
+    World w;
+    REQUIRE(w.lua.do_string(
+        "rawset(_G, 'CreateUnitHPR', function(bp, army, x, y, z) return {x, z} end)"));
+    CHECK(w.site("moho.aibrain_methods.CreateUnitNearSpot(brain, 'ueb1101', 0.5, 30)") == "nil");
+    CHECK(w.site("moho.aibrain_methods.CreateUnitNearSpot(brain, 'ueb1101', 1.5, 30)") == "1 30");
 }
 
 TEST_CASE("A brain's BuildStructure reservations survive a save", "[brain][build][save]") {
