@@ -883,7 +883,9 @@ static int l_create_building_unit(lua_State* L) {
         if (lua_isnumber(L, 8) && built) {
             // func_OrderBuildStructure's build orientation from its angle in degrees.
             const f32 half = static_cast<f32>(lua_tonumber(L, 8)) * 0.017453292f * -0.5f;
-            built->set_orientation({0.0f, osc::dmath::sin(half), 0.0f, osc::dmath::cos(half)});
+            const f32 s = osc::dmath::sin(half);
+            built->set_orientation({s * 0.0f, s, s * 0.0f, osc::dmath::cos(half)});
+            built->place_now();
         }
         if (lua_isnumber(L, 7) && built && built->is_unit()) {
             static_cast<sim::Unit*>(built)->set_creator_id(sim::to_entity_key(L, 7));
