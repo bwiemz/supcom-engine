@@ -425,7 +425,11 @@ bool StructurePlacement::can_build(const std::string& bp_id, f32 x, f32 z) const
             return false;
         }
     }
-    const StructureSite site = StructureSite::of(r, x, z);
+    return clear_of_reserved(bp_id, x, z);
+}
+
+bool StructurePlacement::clear_of_reserved(const std::string& bp_id, f32 x, f32 z) const {
+    const StructureSite site = StructureSite::of(rules(bp_id), x, z);
     for (const auto& pending : reserved()) {
         if (pending.overlaps(site)) {
             return false;
@@ -559,7 +563,8 @@ bool StructurePlacement::in_playable(const StructureSite& site) const {
             site.z0 >= sim_.playable_z0() && site.z1 <= sim_.playable_z1());
 }
 
-bool structure_overlaps(const EntityRegistry& registry, const StructureSite& site) {
+bool structure_overlaps(const EntityRegistry& registry, const StructureSite& site,
+                        const std::function<bool(const Unit&)>& counts) {
     static const CategoryName kStructure{"STRUCTURE"};
     const f32 reach =
         0.5f * osc::dmath::hypot(site.x1 - site.x0, site.z1 - site.z0) + MAX_STRUCTURE_HALF_EXTENT;
@@ -567,7 +572,7 @@ bool structure_overlaps(const EntityRegistry& registry, const StructureSite& sit
          registry.units_in_radius((site.x0 + site.x1) * 0.5f, (site.z0 + site.z1) * 0.5f, reach)) {
         const auto& unit = static_cast<const Unit&>(*e);
         if (!unit.has_category(kStructure) || unit.footprint_size_x() <= 0 ||
-            unit.footprint_size_z() <= 0) {
+            unit.footprint_size_z() <= 0 || (counts && !counts(unit))) {
             continue;
         }
         const StructureSite other = StructureSite::of(

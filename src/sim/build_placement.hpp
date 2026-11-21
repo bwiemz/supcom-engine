@@ -30,6 +30,7 @@ class ArmyBrain;
 struct BuildReservation;
 class EntityRegistry;
 class SimState;
+class Unit;
 struct ResourceDeposit;
 struct UnitCommand;
 
@@ -123,8 +124,9 @@ struct StructureSite {
 };
 
 /// Whether a structure of any army, finished or under construction, takes
-/// part of `site`
-bool structure_overlaps(const EntityRegistry& registry, const StructureSite& site);
+/// part of `site`; with `counts`, only one it holds true for
+bool structure_overlaps(const EntityRegistry& registry, const StructureSite& site,
+                        const std::function<bool(const Unit&)>& counts = {});
 
 /// Placement checks for one army at one moment. Collects the army's pending
 /// build orders once, the first time a site passes the terrain checks, so a
@@ -146,6 +148,8 @@ public:
     /// The UI's, `scheduled`, asks no occupancy grid, and keeps the footprint
     /// within the playable area over pathfinding cells of its layers.
     bool can_build(const std::string& bp_id, f32 x, f32 z) const;
+    /// No reserved() site across the skirt `bp_id` would have at (x, z).
+    bool clear_of_reserved(const std::string& bp_id, f32 x, f32 z) const;
 
     /// The rules for `bp_id` (cached per query object).
     const PlacementRules& rules(const std::string& bp_id) const;
