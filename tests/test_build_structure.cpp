@@ -3,13 +3,17 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include "blueprints/blueprint_store.hpp"
+#include "core/dmath.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/script_class.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/state_io.hpp"
@@ -20,6 +24,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <cmath>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -279,8 +284,53 @@ TEST_CASE("BuildStructure gives the order its place's angle", "[brain][build]") 
     World w;
     const auto& queue = w.order("'ueb1101', {30, 40, " + std::to_string(angle) + "}, false");
     REQUIRE(queue.size() == 1);
-    CHECK(queue.front().has_facing == (angle != 0));
+    CHECK(queue.front().has_facing);
     CHECK(queue.front().facing == static_cast<osc::f32>(angle));
+}
+
+TEST_CASE("A structure built to an order's angle faces Moho's quaternion of it, zeros signed",
+          "[brain][build]") {
+    const osc::f32 angle = GENERATE(0.0f, 90.0f);
+    CAPTURE(angle);
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store{state.raw()};
+    osc::sim::SimState sim{state.raw(), &store};
+    osc::lua::register_moho_bindings(state, sim);
+    osc::lua::register_sim_bindings(state, sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    lua_State* L = state.raw();
+    REQUIRE(state
+                .do_string("return {BlueprintId = 'pgen', Categories = {'STRUCTURE'},"
+                           " Defense = {MaxHealth = 100}, Economy = {BuildTime = 10}}")
+                .ok());
+    store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+    lua_settop(L, 0);
+    store.expose_to_lua(L);
+
+    lua_pushstring(L, "__osc_create_building_unit");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "pgen");
+    lua_pushnumber(L, 1);
+    lua_pushnumber(L, 10);
+    lua_pushnil(L);
+    lua_pushnumber(L, 10);
+    lua_pushboolean(L, 1);
+    lua_pushnil(L);
+    lua_pushnumber(L, angle);
+    REQUIRE(lua_pcall(L, 8, 2, 0) == 0);
+    auto* pgen = sim.entity_registry().find(osc::sim::to_entity_key(L, -2));
+    lua_settop(L, 0);
+    REQUIRE(pgen);
+    const osc::f32 half = angle * 0.017453292f * -0.5f;
+    const osc::f32 s = osc::dmath::sin(half);
+    const auto q = pgen->orientation();
+    CHECK(q.y == s);
+    CHECK(q.w == osc::dmath::cos(half));
+    CHECK(q.x == 0.0f);
+    CHECK(q.z == 0.0f);
+    CHECK(std::signbit(q.x) == std::signbit(s));
+    CHECK(std::signbit(q.y) == std::signbit(s));
+    CHECK(std::signbit(q.z) == std::signbit(s));
 }
 
 TEST_CASE("CanBuildStructureAt refuses the site of a BuildStructure order, not of other orders",

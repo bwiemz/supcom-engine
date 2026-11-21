@@ -1414,10 +1414,8 @@ static int brain_BuildStructure(lua_State* L) {
         cmd.type = sim::CommandType::BuildMobile;
         cmd.target_pos = {site->first, 0.0f, site->second};
         cmd.blueprint_id = bp_id;
-        if (angle != 0.0f) {
-            cmd.has_facing = true;
-            cmd.facing = angle;
-        }
+        cmd.has_facing = true;
+        cmd.facing = angle;
         if (sim) {
             cmd.command_id = sim->next_command_id();
             ordered = cmd.command_id;
