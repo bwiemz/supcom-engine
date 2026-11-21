@@ -8,5 +8,4 @@ RepairRate
 ShowAssistRangeOnSelect
 ShowIntelOnSelect
 Silhouette
-SpawnRandomRotation
 StraddleWater
