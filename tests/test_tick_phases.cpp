@@ -94,6 +94,10 @@ struct Phases {
                  " ProductionPerSecondEnergy = 5}, Defense = {MaxHealth = 10}}",
                  "{BlueprintId = 'healer', Categories = {'LAND', 'MOBILE'},"
                  " Defense = {MaxHealth = 100, RegenRate = 10}}",
+                 "{BlueprintId = 'eng', Categories = {'LAND', 'MOBILE', 'ENGINEER'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
+                 " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Land', "
+                 "MaxSpeed = 1}, Economy = {BuildableCategory = {'fac'}}}",
                  "{BlueprintId = 'block', CategoriesHash = {STRUCTURE = true},"
                  " Footprint = {SizeX = 2, SizeZ = 2}, Physics = {MotionType = 'RULEUMT_None'},"
                  " Defense = {MaxHealth = 100}}",
@@ -105,11 +109,13 @@ struct Phases {
         store.expose_to_lua(L);
         REQUIRE(run("Plain = setmetatable({}, {__index = moho.unit_methods})"
                     " Plain.__index = Plain"
+                    " function Plain:CheckBuildRestriction(bp)"
+                    " return self:CanBuild(bp.BlueprintId) end"
                     " function WaitTicks(n) coroutine.yield(n) end"
                     " EM = moho.entity_methods PM = moho.projectile_methods"));
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"tank", "fac", "t1", "ship", "gen", "healer", "block"}) {
+        for (const char* id : {"tank", "fac", "t1", "ship", "gen", "healer", "eng", "block"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -2277,7 +2283,7 @@ TEST_CASE("A pause requested by a command of a beat stops that beat's tick",
 TEST_CASE("A Stop given to a building engineer while paused ends its build before the game resumes",
           "[tick-phases][beats]") {
     Phases w;
-    Unit& eng = w.make("eng", "tank", 1, 100.0f, 100.0f);
+    Unit& eng = w.make("eng", "eng", 1, 100.0f, 100.0f);
     eng.add_category("ENGINEER");
     eng.set_build_rate(10.0f);
     eng.set_max_build_distance(10.0f);

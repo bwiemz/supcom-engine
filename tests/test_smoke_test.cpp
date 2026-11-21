@@ -265,6 +265,12 @@ void register_test_unit_blueprint(osc::lua::LuaState& state,
     lua_pop(L, 1);
 }
 
+/// A unit's script, as the game's Unit class answers a build order's dispatch.
+constexpr const char* kAllowBuilds =
+    "moho.unit_methods.CheckBuildRestriction = function() return true end\n"
+    "__unit_class = setmetatable({}, {__index = moho.unit_methods})\n"
+    "__unit_class.__index = __unit_class\n";
+
 struct BuildRuleHarness {
     osc::lua::LuaState state;
     osc::blueprints::BlueprintStore store;
@@ -285,6 +291,7 @@ struct BuildRuleHarness {
         store.expose_to_lua(state.raw());
         REQUIRE(state.do_string(
             "__blueprints.test_factory.General = {CommandCaps = {RULEUCC_Pause = true}}\n"));
+        REQUIRE(state.do_string(kAllowBuilds));
         // What the factory makes has no shape: the harness has no scripts to roll
         // a finished unit off the factory, and a unit left on its footprint would
         // hold the next build up (CFactoryBuildTask asks Sim::LocationIsFree).
@@ -1469,6 +1476,7 @@ struct UpgradeHarness {
             lua_pop(L, 1);
         }
         store.expose_to_lua(L);
+        REQUIRE(state.do_string(kAllowBuilds).ok());
         REQUIRE(state.do_string("CreateUnit('f1', 1, 0, 0, 0)").ok());
         sim.entity_registry().for_each_unit(
             [&](osc::sim::Entity& e) { factory = static_cast<osc::sim::Unit*>(&e); });

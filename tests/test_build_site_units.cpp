@@ -53,6 +53,10 @@ struct Site {
         lua_settop(L, 0);
         const std::string code = R"(
             __blueprints = {
+                uel0105 = {
+                    BlueprintId = 'uel0105',
+                    Economy = { BuildableCategory = { 'ueb0101' } },
+                },
                 ueb0101 = {
                     BlueprintId = 'ueb0101',
                     Footprint = { SizeX = 5, SizeZ = 5 },
@@ -62,7 +66,10 @@ struct Site {
                 },
             }
             __failed = 0
-            Engineer = { OnFailedToBuild = function(self) __failed = __failed + 1 end }
+            Engineer = {
+                OnFailedToBuild = function(self) __failed = __failed + 1 end,
+                CheckBuildRestriction = function(self, bp) return true end,
+            }
             Engineer.__index = Engineer
         )";
         REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "stub") == 0);
@@ -83,6 +90,7 @@ struct Site {
         sim.set_victory_condition("sandbox");
 
         engineer = walker(0, 50.5f, 62.5f, 1.9f);
+        engineer->set_blueprint_id("uel0105");
         engineer->set_build_rate(5.0f);
         engineer->set_max_build_distance(5.0f);
         bind(*engineer, "Engineer");
@@ -180,6 +188,9 @@ struct Site {
 
     bool built() const { return static_cast<bool>(built_id); }
     bool ordered() const { return !engineer->command_queue().empty(); }
+    bool held_by_units() const {
+        return ordered() && engineer->command_queue().front().site_tries > 0;
+    }
     int failed() {
         lua_getglobal(L, "__failed");
         const int n = static_cast<int>(lua_tonumber(L, -1));
@@ -252,6 +263,67 @@ TEST_CASE("A build whose site never clears fails at its 12th look, 11 waits of 4
     const int ticks =
         tick_until([&] { s.sim.tick(); }, "the build fails", 600, [&] { return !s.ordered(); });
     CHECK(ticks == 11 * 49);
+    CHECK_FALSE(s.built());
+    CHECK(s.failed() == 1);
+}
+
+TEST_CASE("A builder pushed out of reach while units hold up its site builds from there once "
+          "they are gone",
+          "[build][build_site]") {
+    for (const bool walked : {false, true}) {
+        DYNAMIC_SECTION((walked ? "after its walk to the site" : "from where it stood")) {
+            Site s;
+            Unit* foe = s.walker(1, 50.5f, 50.5f);
+            if (walked) {
+                s.engineer->set_position({50.5f, 0.0f, 80.5f});
+            }
+            s.sim.tick();
+            s.build();
+            tick_until([&] { s.sim.tick(); }, "the builder finds a unit on its site", 300,
+                       [&] { return s.held_by_units(); });
+            s.engineer->set_position({50.5f, 0.0f, 70.5f});
+            foe->set_position({50.5f, 0.0f, 30.5f});
+            tick_until([&] { s.sim.tick(); }, "the frame stands", 49, [&] { return s.built(); });
+            CHECK(s.ordered());
+            CHECK(s.failed() == 0);
+            CHECK(s.engineer->position().z == 70.5f);
+        }
+    }
+}
+
+TEST_CASE("A builder that must face its site turns to it once, not again after a wait for units "
+          "on it",
+          "[build][build_site][face]") {
+    Site s;
+    Unit::Drive drive;
+    drive.max_accel = 50.0f;
+    drive.turn_rate = 1.5f;
+    s.engineer->set_drive(drive);
+    s.engineer->set_need_to_face_target_to_build(true);
+    Unit* foe = s.walker(1, 50.5f, 50.5f);
+    s.sim.tick();
+    s.build();
+    tick_until([&] { s.sim.tick(); }, "the builder turns and finds a unit on its site", 60,
+               [&] { return s.held_by_units(); });
+    s.engineer->set_orientation(osc::sim::euler_to_quat(0.0f, 0.0f, 0.0f));
+    foe->set_position({50.5f, 0.0f, 30.5f});
+    tick_until([&] { s.sim.tick(); }, "the frame stands", 49, [&] { return s.built(); });
+    CHECK(osc::sim::quat_yaw(s.engineer->orientation()) == 0.0f);
+}
+
+TEST_CASE("A builder out of reach that cannot move fails its build the tick after it takes it, "
+          "with OnFailedToBuild",
+          "[build][build_site]") {
+    Site s;
+    s.engineer->set_position({50.5f, 0.0f, 80.5f});
+    s.engineer->set_max_speed(0.0f);
+    s.sim.tick();
+    s.build();
+    s.sim.tick();
+    CHECK(s.ordered());
+    CHECK(s.failed() == 0);
+    s.sim.tick();
+    CHECK_FALSE(s.ordered());
     CHECK_FALSE(s.built());
     CHECK(s.failed() == 1);
 }

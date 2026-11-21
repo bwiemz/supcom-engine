@@ -245,6 +245,11 @@ struct UnitCommand {
     /// walk is sent, cleared when it ends, so a later move is not taken for
     /// it. Runtime state.
     bool prepared = false;
+    /// A mobile build's task has found its site in range (Moho's
+    /// TASKSTATE_Waiting) and turned to it (TASKSTATE_Starting): it looks at
+    /// neither again. Runtime state.
+    bool reached = false;
+    bool faced = false;
     EntityId rebuild_wreck_id{};
     f32 rebuild_bonus = 0;
     EntityId clearing_prop_id{};

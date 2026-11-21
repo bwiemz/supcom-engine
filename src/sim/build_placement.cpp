@@ -438,25 +438,21 @@ bool structure_overlaps(const EntityRegistry& registry, const StructureSite& sit
 bool StructurePlacement::on_deposit(const PlacementRules& r, f32 x, f32 z) const {
     const auto want = r.deposit == PlacementRules::Deposit::Mass
                           ? ResourceDeposit::Mass : ResourceDeposit::Hydrocarbon;
-    for (const auto& d : sim_.resource_deposits()) {
-        if (d.type == want && std::abs(d.x - x) < 0.5f && std::abs(d.z - z) < 0.5f) {
-            return true;
-        }
-    }
-    return false;
+    const auto x0 = static_cast<i32>(std::lrint(x - r.size_x * 0.5f));
+    const auto z0 = static_cast<i32>(std::lrint(z - r.size_z * 0.5f));
+    const DepositRect cells{x0, z0, x0 + static_cast<i32>(std::lround(r.size_x)),
+                            z0 + static_cast<i32>(std::lround(r.size_z))};
+    return deposit_in_area(sim_.resource_deposits(), want, cells);
 }
 
 bool StructurePlacement::deposit_under(const StructureSite& skirt) const {
     for (const auto& d : sim_.resource_deposits()) {
-        // Its cells as Moho keeps them (BuildRectFromPointAndSize).
-        const auto size = static_cast<i32>(d.size);
-        const auto gx0 = static_cast<i32>(std::nearbyint(d.x - static_cast<f32>(size) * 0.5f));
-        const auto gz0 = static_cast<i32>(std::nearbyint(d.z - static_cast<f32>(size) * 0.5f));
+        const DepositRect c = deposit_rect(d);
         const f32 pad = d.type == ResourceDeposit::Mass ? 0.5f : 1.5f;
-        const f32 x0 = static_cast<f32>(gx0) - pad;
-        const f32 z0 = static_cast<f32>(gz0) - pad;
-        const f32 x1 = static_cast<f32>(gx0 + size) + pad;
-        const f32 z1 = static_cast<f32>(gz0 + size) + pad;
+        const f32 x0 = static_cast<f32>(c.x0) - pad;
+        const f32 z0 = static_cast<f32>(c.z0) - pad;
+        const f32 x1 = static_cast<f32>(c.x1) + pad;
+        const f32 z1 = static_cast<f32>(c.z1) + pad;
         if (x1 > skirt.x0 && skirt.x1 > x0 && z1 > skirt.z0 && skirt.z1 > z0) return true;
     }
     return false;
