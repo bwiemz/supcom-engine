@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 namespace osc::sim {
@@ -64,7 +65,54 @@ const Unit* find_unit(const SimState& sim, EntityId id) {
     return e && e->is_unit() && !e->destroyed() ? static_cast<const Unit*>(e) : nullptr;
 }
 
+/// Whether any of `v`'s bits are set (Wm3's exact compare against zero).
+bool moving_bits(const Vector3& v) {
+    for (const f32 c : {v.x, v.y, v.z}) {
+        u32 bits = 0;
+        std::memcpy(&bits, &c, sizeof bits);
+        if (bits != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// A unit Moho gives an AiTransport (RULEUCC_Transport, or a pod platform).
+bool has_transport(const Unit& u) {
+    static const CategoryName kPodStaging{"PODSTAGINGPLATFORM"};
+    return u.has_command_cap("RULEUCC_Transport") || u.has_category(kPodStaging);
+}
+
 } // namespace
+
+bool can_move_at(const SimState& sim, const Unit& unit, i32 x, i32 z) {
+    static const CategoryName kFerryBeacon{"FERRYBEACON"};
+    static const CategoryName kPodStaging{"PODSTAGINGPLATFORM"};
+    const blueprints::Footprint& fp = unit.footprint();
+    const f32 span = std::max(fp.size_x, fp.size_z);
+    const Vector3 lo{static_cast<f32>(x), -1000.0f, static_cast<f32>(z)};
+    const Vector3 hi{lo.x + span, 1000.0f, lo.z + span};
+    const bool carrier = has_transport(unit);
+    return !any_unit_touching(sim, lo, hi, [&](const Unit& c) {
+        if (&c == &unit || c.destroyed() || c.is_dying() || c.is_being_built()) {
+            return false;
+        }
+        if (c.layer() == "Air" || (unit.layer() == "Sub" && c.layer() != "Sub")) {
+            return false;
+        }
+        if (c.has_category(kFerryBeacon) && c.creator_id() == unit.entity_id()) {
+            return false;
+        }
+        // A transport looking for a place minds no other unit moving, nor any
+        // while it loads; another transport always counts.
+        if (carrier && !(has_transport(c) && !c.has_category(kPodStaging))) {
+            if (moving_bits(c.velocity()) || unit.has_unit_state("TransportLoading")) {
+                return false;
+            }
+        }
+        return !c.has_unit_state("Attached");
+    });
+}
 
 bool boxes_overlap(const OrientedBox& a, const OrientedBox& b) {
     // The fifteen axes; a zero cross product projects both to [0, 0] and

@@ -2,6 +2,7 @@
 
 #include "map/terrain.hpp"
 #include "sim/unit.hpp"
+#include "sim/unit_blocking.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -32,7 +33,7 @@ blueprints::Footprint move_footprint(const Unit& unit, const map::Terrain& map,
 
 bool prepare_move(const Unit& unit, const map::Terrain& map, const OccupancyGrid& grid,
                   const OccupancyRect& bounds, Vector3& dest, i32 step,
-                  const MoveExclusion* exclude) {
+                  const MoveExclusion* exclude, const MoveTests& tests) {
     const blueprints::Footprint fp = move_footprint(unit, map, dest);
     const i32 side = std::max<i32>(std::max(fp.size_x, fp.size_z), 1);
     const f32 hx = static_cast<f32>(fp.size_x) * 0.5f;
@@ -40,7 +41,7 @@ bool prepare_move(const Unit& unit, const map::Terrain& map, const OccupancyGrid
     // Moho's IsPrepareMoveCandidateValid: clear of the skirt rect (its one
     // cell, touching counting: ShouldTestPrepareMoveCellAgainstSkirt); inside
     // the bounds by its side; its footprint fits (on the Water layer, SUB
-    // aside); no other unit has reserved it.
+    // aside); no other unit has reserved it, nor stands on it.
     const auto valid = [&](i32 x, i32 z, f32 wx, f32 wz) {
         if (exclude && exclude->x1 > exclude->x0 && exclude->z1 > exclude->z0) {
             const auto cx = static_cast<f32>(x);
@@ -57,7 +58,11 @@ bool prepare_move(const Unit& unit, const map::Terrain& map, const OccupancyGrid
         u8 caps = map_caps(fp, map, x, z);
         if (unit.layer() == "Water") caps = static_cast<u8>(caps & ~oc::kSub);
         if (footprint_fits(fp, map, grid, x, z, caps) == 0) return false;
-        return !grid.reserved_any({x, z, x + fp.size_x, z + fp.size_z}, unit.reserved_ground());
+        if (tests.reservations &&
+            grid.reserved_any({x, z, x + fp.size_x, z + fp.size_z}, unit.reserved_ground())) {
+            return false;
+        }
+        return !tests.units || can_move_at(*tests.units, unit, x, z);
     };
     // The cell the goal will be (ToCellPos, rounded). Moho truncates here,
     // the same cell for its destinations, which are cell centres; the

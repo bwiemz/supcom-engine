@@ -474,6 +474,9 @@ static sim::EntityId create_unit_core(lua_State* L, const char* bp_id, int army,
             ground.rects.push_back(sim::footprint_rect(unit_ptr->footprint(), at.x, at.z));
         sim->occupy_ground(id, std::move(ground));
     }
+    if (unit_ptr->reserves_skirt()) {
+        sim->reserve_ground(unit_ptr->skirt_cells(), true);
+    }
 
     // Set weapon owner back-pointers now that entity ID is assigned
     for (i32 wi = 0; wi < unit_ptr->weapon_count(); ++wi) {
@@ -5498,6 +5501,7 @@ static int l_IssueMoveOffFactory(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
+    cmd.from_factory = true;
     return push_command_handle(L, route_capable_command(L, "RULEUCC_Move", cmd));
 }
 

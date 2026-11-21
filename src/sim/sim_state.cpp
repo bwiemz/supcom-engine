@@ -410,10 +410,32 @@ void SimState::on_entity_unregistered(Entity& entity) {
             r.z1 = r.z0 + h;
         }
     }
+    const bool on_ground = ground_occupants_.count(entity.entity_id()) != 0;
     release_ground(entity.entity_id());
     if (entity.is_unit()) {
         static_cast<Unit&>(entity).free_landing_reservation(*this);
-        static_cast<Unit&>(entity).free_guard_anchor(this);
+        static_cast<Unit&>(entity).free_order_reservation(this);
+    }
+    if (entity.is_unit()) {
+        auto& unit = static_cast<Unit&>(entity);
+        // Moho's Unit::OnDestroy: a structure on the ground gives its reserved
+        // cells back; unless it died, the structures they overlap take theirs again.
+        if (unit.reserves_skirt() && on_ground) {
+            const OccupancyRect gone = unit.skirt_cells();
+            reserve_ground(gone, false);
+            if (!unit.is_dying() && !unit.is_being_built()) {
+                entity_registry_.for_each_unit([&](Entity& e) {
+                    auto& other = static_cast<Unit&>(e);
+                    if (&other == &unit || other.destroyed() || !other.reserves_skirt()) {
+                        return;
+                    }
+                    const OccupancyRect r = other.skirt_cells();
+                    if (r.x0 < gone.x1 && gone.x0 < r.x1 && r.z0 < gone.z1 && gone.z0 < r.z1) {
+                        reserve_ground(r, true);
+                    }
+                });
+            }
+        }
     }
 
     // A dead structure stops blocking paths (it used to block forever).

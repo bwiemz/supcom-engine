@@ -28,6 +28,11 @@ bool box_sphere_overlap(const OrientedBox& box, const Vector3& centre, f32 radiu
 /// against `box`. Without a shape, no.
 bool shape_overlaps_box(const Entity& e, const OrientedBox& box);
 
+/// Moho's COORDS_CanMoveAt as Unit::PrepareMove asks it (attached units
+/// barred): whether no unit stands where `unit`, its footprint's larger side
+/// square, would at cell (x, z).
+bool can_move_at(const SimState& sim, const Unit& unit, i32 x, i32 z);
+
 /// Moho's func_IsSourceUnit: whether `owner` ignores `candidate` when it
 /// asks what is in its way. `mode` 1 plans: units that moved last tick
 /// don't count, nor ones `owner` outranks. 2 counts every unit not ignored
