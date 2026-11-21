@@ -74,6 +74,7 @@ Unit* walker(SimState& sim, int army, f32 x, f32 z, f32 speed = 5.0f) {
 /// A walker with a gun of range 5 (no damage: what it shoots at lives).
 Unit* armed(SimState& sim, int army, f32 x, f32 z) {
     Unit* u = walker(sim, army, x, z);
+    u->set_motion_type("RULEUMT_Land");
     auto gun = std::make_unique<osc::sim::Weapon>();
     gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
     gun->max_range = 5.0f;

@@ -612,7 +612,22 @@ bool Weapon::blacklisted(EntityId id) const {
                        [id](const auto& e) { return e.first == id; });
 }
 
-bool Weapon::report_target_change(const Unit& owner, lua_State* L, const TargetMark& previous) {
+void Weapon::script_target_changed(Unit& owner, EntityRegistry& registry, lua_State* L,
+                                   const TargetMark& previous) {
+    if (target_mark() == previous) {
+        return;
+    }
+    sync_shooter(owner, registry);
+    if (!blacklist.empty() && (has_target() || target_held)) {
+        age_blacklist(registry);
+    }
+    if (L && fires_through_script()) {
+        report_target_change(owner, L, previous, false);
+    }
+}
+
+bool Weapon::report_target_change(const Unit& owner, lua_State* L, const TargetMark& previous,
+                                  bool halt_manual) {
     const auto still_firing = [&] {
         return !owner.destroyed() && !owner.is_dying() && fires_through_script();
     };
@@ -625,7 +640,7 @@ bool Weapon::report_target_change(const Unit& owner, lua_State* L, const TargetM
     const bool has = has_target() || target_held;
     if (had && !has) {
         // Moho's OnHaltFire: a manual weapon whose order went must not fire on.
-        if (manual_fire) {
+        if (manual_fire && halt_manual) {
             call_script(L, "OnHaltFire");
             if (!still_firing()) {
                 return false;
@@ -859,7 +874,6 @@ Entity* Weapon::find_best_enemy(const Unit& owner, const std::vector<Entity*>& c
 void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimState* sim) {
     if (unpack_search_paused(owner)) return;
     const auto& queue = owner.command_queue();
-    const CommandType head = queue.empty() ? CommandType::Stop : queue.front().type;
     // Moho's CAcquireTargetTask checks these before the attacker's desired target.
     if (const Weapon* primary = primary_weapon(owner);
         primary && primary != this && primary->has_target()) {
@@ -893,17 +907,17 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     // ground there takes the point within its own range, or at any range on
     // an aircraft (CAcquireTargetTask), and keeps it while the order lasts.
     const UnitCommand* order = queue.empty() ? nullptr : &queue.front();
-    if (!passing_over && order && order->type == CommandType::Attack && !order->target_id &&
-        order->engaged && attacks_on_order() &&
-        can_attack_ground(order->target_pos, sim ? sim->terrain() : nullptr) &&
-        (flier || in_firing_range(owner, order->target_pos))) {
+    const map::Terrain* terrain = sim ? sim->terrain() : nullptr;
+    const bool ground_order = order && order->type == CommandType::Attack && !order->target_id &&
+                              order->engaged && attacks_on_order() &&
+                              can_attack_ground(order->target_pos, terrain);
+    if (!passing_over && ground_order && (flier || in_firing_range(owner, order->target_pos))) {
         set_target_ground(order->target_pos);
         ground_from_order = true;
+        target_check_clock = 0;
         return;
     }
-    // The order gone, or the point out of this weapon's reach: it looks for
-    // targets again.
-    if (ground_from_order) {
+    if (ground_from_order && !ground_order) {
         set_target_entity(EntityId());
     }
     // An aircraft's weapons take its ordered target once the attack engages,
@@ -911,30 +925,27 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     // attacker's desired target out of reach too, so it is kept through the
     // runs' loops.
     const EntityId ordered = attack_order_target(owner);
-    // The order's target out of reach is dropped before it is followed. A vanished target is held
-    // (acquire_step); range and recon are checked on TargetCheckInterval, like acquisition.
-    if (target_entity_id && target_entity_id == ordered) {
-        const Entity* target = registry.find(target_entity_id);
-        if (!target || !can_target(owner, *target, sim, !flier)) {
-            target_entity_id = EntityId();
-        }
-    }
 
     // An attack order's target comes first, for every weapon that can hit
     // it, whatever the priorities say.
     if (ordered && !passing_over) {
-        if (ordered == target_entity_id) return;
         const Entity* target = registry.find(ordered);
         if (target && can_target(owner, *target, sim, !flier)) {
-            set_target_entity(ordered);
+            if (ordered != target_entity_id) {
+                set_target_entity(ordered);
+            }
+            target_check_clock = 0;
             return;
         }
     }
 
-    // A ground target its script set stays until the script changes it.
-    if (has_ground_target) return;
-    // Attacking, a unit that unpacks to fire takes its ordered target only.
-    if (owner.need_unpack() && head == CommandType::Attack) return;
+    // CAcquireTargetTask, its unit Attacking, looks again next tick: a unit that unpacks to fire
+    // takes its ordered target only, and so does a weapon that may not start its own attack.
+    if (owner.attacking() && (owner.need_unpack() || (auto_initiate_attack_command &&
+                                                      !owner.auto_initiate_allowed(registry)))) {
+        target_check_clock = 0;
+        return;
+    }
 
     // Otherwise look for targets every TargetCheckInterval: when there is
     // none, or, with AlwaysRecheckTarget, again.
@@ -947,6 +958,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         acquire_projectile(owner, registry, sim);
         return;
     }
+    const EntityId had = target_entity_id;
     if (target_entity_id) {
         const Entity& target = *registry.find(target_entity_id);
         if (!can_target(owner, target, sim) ||
@@ -955,13 +967,19 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         } else if (!always_recheck_target) {
             return;
         }
+    } else if (has_ground_target && !always_recheck_target &&
+               can_attack_ground(ground_target, terrain)) {
+        const f32 dx = ground_target.x - owner.position().x;
+        const f32 dz = ground_target.z - owner.position().z;
+        if (solution_status(owner, ground_target, dx * dx + dz * dz) == Solution::Available) {
+            return;
+        }
     }
     // Moho's CAcquireTargetTask, under hold fire, drops a target it doesn't keep and looks for no
     // other (the Steam exe's 0x5DFCD9, after its keep check). The order's target and the primary
     // weapon's above it still reach the weapon, which doesn't fire (fire_step).
     if (owner.fire_state() == 1) {
-        target_entity_id = EntityId();
-        target_held = false;
+        set_target_entity(EntityId());
         return;
     }
 
@@ -973,9 +991,22 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         best_id = best->entity_id();
     }
     if (!best_id) {
-        // Moho's acquire task, finding no enemy, clears the target ReTargetOnMiss gave up
-        target_entity_id = EntityId();
-        target_held = false;
+        // Moho's acquire task, finding no enemy, takes the attacker's desired target if the weapon
+        // can attack it, at any range, and otherwise clears even the one ReTargetOnMiss gave up.
+        const Entity* desired = ordered ? registry.find(ordered) : nullptr;
+        if (desired && attacks_on_order() && can_attack(*desired, sim) &&
+            !(desired->is_unit() && static_cast<const Unit*>(desired)->is_dying())) {
+            if (had == ordered) {
+                target_entity_id = ordered;
+            } else {
+                set_target_entity(ordered);
+            }
+        } else if (ground_order) {
+            set_target_ground(order->target_pos);
+            ground_from_order = true;
+        } else {
+            set_target_entity(EntityId());
+        }
         return;
     }
     // An idle aircraft's weapon with AutoInitiateAttackCommand makes the enemy it found its unit's
@@ -990,6 +1021,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     target_entity_id = best_id;
     retarget_misses = 0;
     target_held = false;
+    has_ground_target = false;
 }
 
 void Weapon::acquire_projectile(const Unit& owner, EntityRegistry& registry, const SimState* sim) {

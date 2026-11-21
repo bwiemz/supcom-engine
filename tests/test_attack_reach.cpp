@@ -158,3 +158,131 @@ TEST_CASE("The first weapon that can hit the target decides, though a later one 
     CHECK(apart(*u, *target) <= 10.0f);
     CHECK(apart(*u, *target) > 5.0f);
 }
+
+TEST_CASE("While its unit attacks a target it can't hit, an AutoInitiateAttackCommand weapon "
+          "takes no other until the target is dying, another weapon does",
+          "[attack-reach]") {
+    for (const bool auto_initiate : {false, true}) {
+        CAPTURE(auto_initiate);
+        LuaGuard g;
+        SimState sim(g.L, nullptr);
+        land(sim);
+        sim.con_vars().weapon_terrain_blockage_test = false;
+        Unit* u = attacker(sim, 20.0f, 64.0f, {{30.0f, kAir}, {10.0f, kSurface}});
+        Weapon& aa = *u->weapons()[0];
+        aa.auto_initiate_attack_command = auto_initiate;
+        aa.target_check_period = 5;
+        Unit* target = foe(sim, 25.0f, 64.0f);
+        Unit* plane = foe(sim, 100.0f, 100.0f);
+        plane->set_layer("Air");
+        attack(*u, *target);
+        tick_until([&] { tick(sim, *u); }, "its gun takes the target", 10,
+                   [&] { return u->weapons()[1]->target_entity_id == target->entity_id(); });
+        plane->set_position({20.0f, 17.8f, 74.0f});
+        plane->place_now();
+        for (int t = 0; t < 10; ++t) {
+            tick(sim, *u);
+        }
+        CHECK((aa.target_entity_id == plane->entity_id()) == !auto_initiate);
+        target->begin_dying();
+        tick_until([&] { tick(sim, *u); }, "its anti-air takes the plane", 2,
+                   [&] { return aa.target_entity_id == plane->entity_id(); });
+    }
+}
+
+TEST_CASE("A weapon on its attack's target looks again the tick the target leaves its reach",
+          "[attack-reach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    land(sim);
+    sim.con_vars().weapon_terrain_blockage_test = false;
+    Unit* u = attacker(sim, 20.0f, 64.0f, {{10.0f, kSurface}});
+    Weapon& gun = *u->weapons()[0];
+    gun.target_check_period = 30;
+    Unit* target = foe(sim, 25.0f, 64.0f);
+    Unit* other = foe(sim, 100.0f, 100.0f);
+    tick(sim, *u);
+    REQUIRE(gun.target_entity_id == target->entity_id());
+    attack(*u, *target);
+    tick_until([&] { tick(sim, *u); }, "the attack engages", 10,
+               [&] { return u->command_queue().front().engaged; });
+    tick(sim, *u);
+    target->set_position({100.0f, 7.8f, 20.0f});
+    target->place_now();
+    other->set_position({20.0f, 7.8f, 70.0f});
+    other->place_now();
+    tick_until([&] { tick(sim, *u); }, "its gun takes the other enemy", 1,
+               [&] { return gun.target_entity_id == other->entity_id(); });
+}
+
+TEST_CASE("A weapon keeps its attack's target out of its reach until it finds another enemy",
+          "[attack-reach]") {
+    for (const bool ground : {false, true}) {
+        CAPTURE(ground);
+        LuaGuard g;
+        SimState sim(g.L, nullptr);
+        land(sim);
+        sim.con_vars().weapon_terrain_blockage_test = false;
+        Unit* u = attacker(sim, 20.0f, 64.0f, {{10.0f, kSurface}});
+        Weapon& gun = *u->weapons()[0];
+        gun.target_check_period = 5;
+        Unit* target = foe(sim, 25.0f, 64.0f);
+        Unit* other = foe(sim, 100.0f, 100.0f);
+        UnitCommand c;
+        c.type = CommandType::Attack;
+        c.target_id = ground ? osc::sim::EntityId() : target->entity_id();
+        c.target_pos = target->position();
+        u->push_command(c, true);
+        const auto on_it = [&] {
+            return ground ? gun.has_ground_target && gun.ground_target.x == c.target_pos.x
+                          : gun.target_entity_id == target->entity_id();
+        };
+        tick_until([&] { tick(sim, *u); }, "its gun takes the attack's target", 10, on_it);
+        u->set_position({0.0f, 7.8f, 64.0f});
+        u->place_now();
+        for (int t = 0; t < 12; ++t) {
+            tick(sim, *u);
+            CHECK(on_it());
+        }
+        if (!ground) {
+            other->set_position({u->position().x, 7.8f, 70.0f});
+            other->place_now();
+            tick_until([&] { tick(sim, *u); }, "its gun takes the other enemy", 5,
+                       [&] { return gun.target_entity_id == other->entity_id(); });
+        }
+    }
+}
+
+TEST_CASE(
+    "A structure's attack ends once its weapon has no solution for the target, from the start "
+    "or as the target leaves its reach",
+    "[attack-reach]") {
+    for (const bool ground : {false, true}) {
+        for (const bool from_start : {false, true}) {
+            CAPTURE(ground, from_start);
+            LuaGuard g;
+            SimState sim(g.L, nullptr);
+            land(sim);
+            sim.con_vars().weapon_terrain_blockage_test = false;
+            Unit* u = attacker(sim, 20.0f, 64.0f, {{10.0f, kSurface}});
+            u->set_motion_type("RULEUMT_None");
+            Unit* target = foe(sim, from_start ? 50.0f : 25.0f, 64.0f);
+            UnitCommand c;
+            c.type = CommandType::Attack;
+            c.target_id = ground ? osc::sim::EntityId() : target->entity_id();
+            c.target_pos = target->position();
+            u->push_command(c, true);
+            const auto attacking = [&] { return !u->command_queue().empty(); };
+            if (!from_start) {
+                for (int t = 0; t < 5; ++t) {
+                    tick(sim, *u);
+                }
+                REQUIRE(attacking());
+                u->set_position({0.0f, 7.8f, 64.0f});
+                u->place_now();
+            }
+            tick_until([&] { tick(sim, *u); }, "the attack ends", 2, [&] { return !attacking(); });
+            CHECK_FALSE(u->weapons()[0]->has_target());
+        }
+    }
+}

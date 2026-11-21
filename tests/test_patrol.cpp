@@ -58,6 +58,7 @@ void flat(SimState& sim) {
 Unit* walker(SimState& sim, osc::f32 x, osc::f32 z) {
     auto u = std::make_unique<Unit>();
     u->set_army(0);
+    u->set_motion_type("RULEUMT_Land");
     u->set_max_speed(5.0f);
     u->set_position({x, 0.0f, z});
     Unit::Drive drive;
