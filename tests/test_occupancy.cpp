@@ -16,6 +16,7 @@
 #include "sim/saved_game.hpp"
 #include "sim/sim_snapshot.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -165,8 +166,8 @@ TEST_CASE("A footprint's cells start where Moho's ToCellPos puts them", "[occupa
     CHECK(s.z0 == 9);
 }
 
-TEST_CASE("Claims on the ground come and go; an overlapping one keeps its cells, and a "
-          "load rebuilds them",
+TEST_CASE("Claims on the ground come and go; a release clears an overlapping one's cells too, "
+          "and a load rebuilds them",
           "[occupancy]") {
     LuaGuard g;
     osc::sim::SimState sim(g.L, nullptr);
@@ -189,7 +190,7 @@ TEST_CASE("Claims on the ground come and go; an overlapping one keeps its cells,
     CHECK(sim.footprint_fits_at(kVehicle2x2, 43.0f, 13.0f) == 0);
     sim.release_ground(EntityId::of(101, 1));
     CHECK_FALSE(sim.occupancy().ground_at(41, 11));
-    CHECK(sim.occupancy().ground_at(43, 13)); // b still stands there
+    CHECK_FALSE(sim.occupancy().ground_at(43, 13));
     CHECK(sim.occupancy().ground_at(45, 15));
 
     // Saved and restored, the grid is made again from what stands on it.
@@ -229,8 +230,19 @@ struct UnitWorld {
         osc::lua::register_sim_bindings(state, sim);
         sim.set_terrain(terrain(true));
         sim.add_army("ARMY_1", "ARMY_1");
+        sim.add_army("ARMY_2", "ARMY_2");
         lua_State* L = state.raw();
         for (const char* bp : {
+                 "{BlueprintId = 'mex1', Categories = {'STRUCTURE'}, Defense = {MaxHealth = 100},"
+                 " Footprint = {SizeX = 2, SizeZ = 2}, General = {UpgradesTo = 'mex2'},"
+                 " Economy = {BuildRate = 10, BuildableCategory = {'mex2'}},"
+                 " Physics = {MotionType = 'RULEUMT_None', BuildOnLayerCaps = {LAYER_Land = "
+                 "true}}}",
+                 "{BlueprintId = 'mex2', Categories = {'STRUCTURE'}, Defense = {MaxHealth = 100},"
+                 " Footprint = {SizeX = 2, SizeZ = 2}, General = {UpgradesFrom = 'mex1'},"
+                 " Economy = {BuildTime = 10, BuildCostMass = 1, BuildCostEnergy = 1},"
+                 " Physics = {MotionType = 'RULEUMT_None', BuildOnLayerCaps = {LAYER_Land = "
+                 "true}}}",
                  "{BlueprintId = 'pgen', Categories = {'STRUCTURE'}, Defense = {MaxHealth = 100},"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Physics = {MotionType = 'RULEUMT_None', BuildOnLayerCaps = {LAYER_Land = "
@@ -264,7 +276,7 @@ struct UnitWorld {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"pgen", "gate", "beacon", "tank", "sbed", "naval"}) {
+        for (const char* id : {"mex1", "mex2", "pgen", "gate", "beacon", "tank", "sbed", "naval"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -304,8 +316,8 @@ TEST_CASE("An immobile unit claims its ground as it is made, and frees it as it 
     CHECK(grid.ground_at(37, 27));
 }
 
-TEST_CASE("A structure's ground freed under another's: the other keeps its cells on that grid "
-          "whatever its caps, and the other grid's claims stand",
+TEST_CASE("A structure's ground freed under another's: the cells they share go free on that grid "
+          "whatever the other's caps, and the other grid's claims stand",
           "[occupancy]") {
     UnitWorld w;
     const auto& grid = w.sim.occupancy();
@@ -323,13 +335,15 @@ TEST_CASE("A structure's ground freed under another's: the other keeps its cells
     CHECK(grid.ground_at(21, 11));
     CHECK(grid.water_at(21, 9));
     CHECK_FALSE(grid.water_at(19, 9));
-    // The seabed structure goes: its own cells are free, the land one's
-    // stay, and the water above is untouched.
+    // The seabed structure goes: its cells are free, the one the land
+    // structure shares with it too; the land one's own stay, and the water
+    // above is untouched.
     REQUIRE(w.state.do_string("moho.entity_methods.Destroy(sbed)").ok());
     w.sim.tick();
     CHECK_FALSE(grid.ground_at(19, 9));
     CHECK_FALSE(grid.ground_at(20, 9));
-    CHECK(grid.ground_at(20, 10));
+    CHECK_FALSE(grid.ground_at(20, 10));
+    CHECK(grid.ground_at(21, 10));
     CHECK(grid.ground_at(21, 11));
     CHECK(grid.water_at(20, 9));
     CHECK(grid.water_at(21, 10));
@@ -338,9 +352,91 @@ TEST_CASE("A structure's ground freed under another's: the other keeps its cells
     w.sim.tick();
     CHECK_FALSE(grid.water_at(20, 9));
     CHECK_FALSE(grid.water_at(21, 10));
-    CHECK(grid.ground_at(20, 10));
     CHECK(grid.ground_at(21, 10));
+    CHECK(grid.ground_at(20, 11));
     CHECK_FALSE(grid.ground_at(21, 9));
+}
+
+TEST_CASE("A structure frees its blueprint's footprint where it stands, not only its OccupyRects",
+          "[occupancy]") {
+    UnitWorld w;
+    const auto& grid = w.sim.occupancy();
+    // A power generator on a quantum gateway's way through: cells 39-40 x
+    // 29-30, in the gateway's footprint, 37-43 x 27-33.
+    REQUIRE(w.state
+                .do_string("gate = CreateUnit('gate', 1, 40.5, 10, 30.5)"
+                           " pgen = CreateUnit('pgen', 1, 40, 10, 30)")
+                .ok());
+    CHECK(grid.ground_at(37, 28));
+    CHECK(grid.ground_at(39, 29));
+    REQUIRE(w.state.do_string("moho.entity_methods.Destroy(gate)").ok());
+    w.sim.tick();
+    CHECK_FALSE(grid.ground_at(37, 28));
+    CHECK_FALSE(grid.ground_at(43, 33));
+    CHECK_FALSE(grid.ground_at(39, 29));
+    CHECK_FALSE(grid.ground_at(40, 30));
+}
+
+TEST_CASE("An upgrade's unit keeps the ground its old one leaves; a cancelled one's goes, and the "
+          "old one occupies its own again",
+          "[occupancy][upgrade]") {
+    UnitWorld w;
+    const auto& grid = w.sim.occupancy();
+    REQUIRE(w.state
+                .do_string("old = CreateUnit('mex1', 1, 40, 10, 10)"
+                           " function old:OnStopBuild(built, order)"
+                           "   if order == 'Upgrade' and"
+                           "       moho.entity_methods.GetFractionComplete(built) >= 1 then"
+                           "     moho.entity_methods.Destroy(self)"
+                           "   end"
+                           " end"
+                           " IssueUpgrade({old}, 'mex2')")
+                .ok());
+    osc::sim::Unit* old = nullptr;
+    w.sim.entity_registry().for_each_unit(
+        [&](osc::sim::Entity& e) { old = static_cast<osc::sim::Unit*>(&e); });
+    REQUIRE(old);
+    old->economy().production_mass = 100.0;
+    old->economy().production_energy = 100.0;
+    old->economy().production_active = true;
+    old->economy().natural_producer = true;
+    const EntityId old_id = old->entity_id();
+    w.sim.tick();
+    w.sim.tick();
+    REQUIRE(old->is_building());
+    const EntityId frame = old->build_target_id();
+    const auto gone = [&](EntityId id) { return w.sim.entity_registry().find(id) == nullptr; };
+
+    SECTION("finished") {
+        for (int i = 0; i < 40 && !gone(old_id); ++i) {
+            w.sim.tick();
+        }
+        REQUIRE(gone(old_id));
+        REQUIRE_FALSE(gone(frame));
+    }
+    SECTION("cancelled") {
+        REQUIRE(w.state.do_string("IssueClearCommands({old})").ok());
+        w.sim.tick();
+        REQUIRE(gone(frame));
+        REQUIRE_FALSE(gone(old_id));
+    }
+    CHECK(grid.ground_at(39, 9));
+    CHECK(grid.ground_at(40, 10));
+}
+
+TEST_CASE("A structure given to another army keeps its ground under its replacement",
+          "[occupancy]") {
+    UnitWorld w;
+    const auto& grid = w.sim.occupancy();
+    REQUIRE(
+        w.state.do_string("pgen = CreateUnit('pgen', 1, 40, 10, 10) ChangeUnitArmy(pgen, 2)").ok());
+    w.sim.tick();
+    int left = 0;
+    w.sim.entity_registry().for_each_unit(
+        [&](osc::sim::Entity& e) { left += static_cast<osc::sim::Unit&>(e).army() == 1 ? 1 : 0; });
+    REQUIRE(left == 1);
+    CHECK(grid.ground_at(39, 9));
+    CHECK(grid.ground_at(40, 10));
 }
 
 TEST_CASE("A claim with no caps, a tree's or a wreck's, fills nothing, and its release clears "

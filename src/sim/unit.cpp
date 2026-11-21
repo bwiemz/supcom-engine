@@ -1671,6 +1671,9 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
     work_progress_ = 0.0f;
 
     if (success && target_id) {
+        if (auto* sim = get_sim(L); sim && order == "Upgrade") {
+            sim->drop_ground_claim(entity_id());
+        }
         auto* target = registry.find(target_id);
         Unit* completed_here = nullptr;
         // Completed once: another builder (or a repairer) may have finished
@@ -1765,6 +1768,14 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
     } else if (target_id) {
         spdlog::debug("finish_build: entity #{} failed/cancelled build of target #{}", entity_id(),
                       target_id);
+        // Moho's ~CUnitUpgradeTask: the new unit's ground goes now, before
+        // it leaves the sim, and the old one occupies its own again.
+        if (auto* sim = get_sim(L); sim && order == "Upgrade") {
+            if (const Entity* frame = registry.find(target_id); frame && frame->is_unit()) {
+                sim->release_ground(*static_cast<const Unit*>(frame));
+            }
+            sim->occupy_ground_again(entity_id());
+        }
 
         // Call builder:OnFailedToBuild()
         if (lua_table_ref() >= 0) {
