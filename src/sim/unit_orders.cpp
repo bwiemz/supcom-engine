@@ -892,6 +892,54 @@ void Unit::settle_factory_move(UnitCommand& cmd, Vector3 dest, SimContext& ctx) 
     reserve_for_order(cmd.command_id, dest, ctx.sim);
 }
 
+Vector3 Unit::land_goal(const Vector3& goal, SimContext& ctx) {
+    if (command_queue_.empty()) {
+        return goal;
+    }
+    const u32 order = command_queue_.front().command_id;
+    if (land_goal_.held && land_goal_.order == order && land_goal_.asked.x == goal.x &&
+        land_goal_.asked.z == goal.z) {
+        return land_goal_.at;
+    }
+    Vector3 at = air_target(goal, ctx.terrain);
+    if (ctx.sim && ctx.terrain) {
+        prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()), at, 0,
+                     nullptr, {true, ctx.sim});
+        reserve_for_order(order, at, ctx.sim);
+    }
+    land_goal_ = {true, order, goal, at, false};
+    return at;
+}
+
+void Unit::end_land_goal(SimState* sim, bool forget) {
+    if (land_goal_.held && order_reservation_.held &&
+        order_reservation_.order == land_goal_.order) {
+        free_order_reservation(sim);
+    }
+    land_goal_.arrived = true;
+    if (forget) {
+        land_goal_ = {};
+    }
+}
+
+bool Unit::reach_land_goal(const Vector3& goal, SimContext& ctx) {
+    const Vector3 at = land_goal(goal, ctx);
+    if (land_goal_.arrived) {
+        return true;
+    }
+    const Vector3 heading = navigator_.goal();
+    if ((!navigator_.is_moving() && !navigator_.ended()) || heading.x != at.x ||
+        heading.z != at.z) {
+        set_path_goal(at, ctx);
+    }
+    if (nav_update()) {
+        return false;
+    }
+    end_land_goal(ctx.sim, false);
+    abort_move();
+    return true;
+}
+
 OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
     // Moho's move task hears AINAVEVENT_Aborted as a failure: the order ends.
     if (aborted_command_ != 0 && cmd.command_id == aborted_command_) {
@@ -3225,16 +3273,10 @@ Unit::PickupStep Unit::pickup_step(SimContext& ctx) {
     auto* L = ctx.L;
     const EntityId me = entity_id();
     if (pickup_phase_ == PickupPhase::Flying) {
-        const Vector3 goal = navigator_.goal();
-        if ((!navigator_.is_moving() && !navigator_.ended()) ||
-            std::abs(goal.x - pickup_center_.x) > 1.0f ||
-            std::abs(goal.z - pickup_center_.z) > 1.0f) {
-            set_path_goal(pickup_center_, ctx);
-        }
-        if (nav_update()) {
+        if (!reach_land_goal(pickup_center_, ctx)) {
             return PickupStep::Running;
         }
-        abort_move();
+        end_land_goal(ctx.sim, true);
         pickup_phase_ = PickupPhase::Landing;
     }
     // Over the centre, it comes down to its hover height; only then is it at
@@ -3521,26 +3563,29 @@ bool Unit::cargo_aboard(const std::vector<EntityId>& ids) const {
 
 Unit::UnloadStep Unit::unload_at(Vector3 at, const std::vector<EntityId>& ids, SimContext& ctx) {
     if (!cargo_aboard(ids)) {
+        end_land_goal(ctx.sim, true);
         set_unit_state("TransportUnloading", false);
         return UnloadStep::Done;
     }
-    // Move to drop position
-    constexpr f32 unload_range = 5.0f;
-    f32 udx = at.x - position().x;
-    f32 udz = at.z - position().z;
-    f32 udist2 = udx * udx + udz * udz;
-    if (udist2 > unload_range * unload_range) {
-        set_unit_state("TransportUnloading", true);
-        if (!navigator_.is_moving() || navigator_.goal().x != at.x || navigator_.goal().z != at.z) {
-            set_path_goal(at, ctx);
-        }
-        // Flown, for an aircraft (the ground navigator had dragged transports
-        // along the ground).
-        nav_update();
-        return UnloadStep::Holding;
-    }
-    abort_move();
     set_unit_state("TransportUnloading", true);
+    if (is_air_unit()) {
+        if (!reach_land_goal(at, ctx)) {
+            return UnloadStep::Holding;
+        }
+    } else {
+        constexpr f32 unload_range = 5.0f;
+        const f32 udx = at.x - position().x;
+        const f32 udz = at.z - position().z;
+        if (udx * udx + udz * udz > unload_range * unload_range) {
+            if (!navigator_.is_moving() || navigator_.goal().x != at.x ||
+                navigator_.goal().z != at.z) {
+                set_path_goal(at, ctx);
+            }
+            nav_update();
+            return UnloadStep::Holding;
+        }
+        abort_move();
+    }
 
     // Over the drop: down to its hover height, then its cargo is set down
     // where it fits.
@@ -3548,6 +3593,7 @@ Unit::UnloadStep Unit::unload_at(Vector3 at, const std::vector<EntityId>& ids, S
         return UnloadStep::Holding;
     }
     if (destroyed() || !in_registry()) return UnloadStep::Gone;
+    end_land_goal(ctx.sim, true);
     set_unit_state("TransportUnloading", false);
     return UnloadStep::Done;
 }
@@ -3934,6 +3980,11 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, SimContext& ctx) {
     const auto point = [&](i32 i) {
         return command_queue_[static_cast<size_t>(std::clamp(i, 0, route - 1))].target_pos;
     };
+    // Its stop at the beacon is a move onto the land layer (Preparing,
+    // ResumeFerryRoute).
+    const auto to_beacon = [&] {
+        return is_air_unit() ? !reach_land_goal(home, ctx) : ferry_fly(ctx, home);
+    };
 
     if (ferry_phase_ == FerryPhase::Load) {
         // The army's land units waiting at the beacon, as many as it
@@ -3997,11 +4048,12 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, SimContext& ctx) {
             });
         }
         if (boarding == 0 && !cargo_ids_.empty()) {
+            end_land_goal(ctx.sim, true);
             ferry_phase_ = FerryPhase::Out;
             ferry_index_ = 1;
             ferry_leg_set_ = false;
         } else {
-            ferry_fly(ctx, home);
+            to_beacon();
             return OrderStep::Hold;
         }
     }
@@ -4016,20 +4068,28 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, SimContext& ctx) {
         ferry_phase_ = FerryPhase::Unload;
     }
     if (ferry_phase_ == FerryPhase::Unload) {
-        constexpr f32 unload_range = 5.0f;
         const Vector3 drop = point(route - 1);
-        const f32 udx = drop.x - position().x;
-        const f32 udz = drop.z - position().z;
-        if (udx * udx + udz * udz > unload_range * unload_range && !cargo_ids_.empty()) {
-            ferry_fly(ctx, drop);
-            return OrderStep::Hold;
+        if (is_air_unit()) {
+            // Its unload (IssueUnloadAtRoutePoint) is a CUnitUnloadUnits.
+            if (!cargo_ids_.empty() && !reach_land_goal(drop, ctx)) {
+                return OrderStep::Hold;
+            }
+        } else {
+            constexpr f32 unload_range = 5.0f;
+            const f32 udx = drop.x - position().x;
+            const f32 udz = drop.z - position().z;
+            if (udx * udx + udz * udz > unload_range * unload_range && !cargo_ids_.empty()) {
+                ferry_fly(ctx, drop);
+                return OrderStep::Hold;
+            }
+            abort_move();
         }
-        abort_move();
         ferry_leg_set_ = false;
         if (!unload_step(ctx, {})) {
             return OrderStep::Hold;
         }
         if (destroyed() || !in_registry()) return OrderStep::Gone;
+        end_land_goal(ctx.sim, true);
         ferry_phase_ = FerryPhase::Back;
         ferry_index_ = route - 1;
         return OrderStep::Hold;
@@ -4041,7 +4101,7 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, SimContext& ctx) {
         }
         return OrderStep::Hold;
     }
-    if (!ferry_fly(ctx, home)) {
+    if (!to_beacon()) {
         ferry_phase_ = FerryPhase::Load;
         ferry_index_ = 0;
     }
