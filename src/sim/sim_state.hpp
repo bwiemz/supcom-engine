@@ -241,11 +241,17 @@ public:
     /// Entity `id` stands on `occupant`'s rects (Moho's ExecuteOccupyGround,
     /// a prop's reclaim-area claim), in place of any claim it had.
     void occupy_ground(EntityId id, GroundOccupant occupant);
-    /// Its claim goes (Moho's ReleaseOccupyGround): its cells clear, but for
-    /// those another occupant also stands on. Moho's grid, bits alone,
-    /// clears those too; this keeps them, so a load can rebuild the grid
-    /// from its occupants.
+    /// Its claim's rects occupied again (Moho's ExecuteOccupyGround).
+    void occupy_ground_again(EntityId id);
+    /// Its claim goes, and `cells` (by default the claim's rects) clear for
+    /// its caps, whoever else stands there (Moho's COGrid::ReleaseOccupy).
     void release_ground(EntityId id);
+    void release_ground(EntityId id, const OccupancyRect& cells);
+    /// A unit's: its footprint where it stands (Moho's ReleaseOccupyGround).
+    void release_ground(const Unit& unit);
+    /// Its claim goes and its cells stay occupied (Moho's FootprintDown
+    /// cleared).
+    void drop_ground_claim(EntityId id) { ground_occupants_.erase(id); }
     /// Reserve, or free, a place a unit will come to rest (Moho's
     /// Unit::ReserveOgridRect, an aircraft's landing place).
     void reserve_ground(const OccupancyRect& r, bool reserved) { occupancy_.reserve(r, reserved); }

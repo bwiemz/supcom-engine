@@ -5241,9 +5241,12 @@ static sim::EntityId transfer_unit(lua_State* L, sim::SimState& sim, sim::Entity
     }
 
     // The old one is destroyed: a hand-over, not a loss. A structure's
-    // footprint stays blocked by its replacement's own claim (the grid
-    // counts claims per cell), where Moho has to tell the old one not to
-    // lift it.
+    // ground stays occupied by its replacement: the old one's claim goes
+    // without clearing it.
+    fresh = transferable_unit(sim, new_id);
+    if (fresh && !fresh->is_mobile()) {
+        sim.drop_ground_claim(unit_id);
+    }
     unit = transferable_unit(sim, unit_id);
     if (unit && unit->lua_table_ref() >= 0) {
         unit->set_transferred();
