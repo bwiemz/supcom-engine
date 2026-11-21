@@ -11,6 +11,7 @@
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/prepare_move.hpp"
 #include "sim/prop.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_callback_queue.hpp"
@@ -535,6 +536,39 @@ Unit* engineer_of(SimState& sim, f32 x, f32 z) {
 }
 
 } // namespace
+
+TEST_CASE("A sacrifice walks to the place clear of its recipient's skirt, the skirt from the "
+          "footprint's corner rounded to a cell, as Moho's",
+          "[guard][sacrifice]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* pgen = still(sim, 0, 30.0f, 30.0f);
+    pgen->add_category("STRUCTURE");
+    pgen->set_footprint_size(1.0f, 1.0f);
+    pgen->set_skirt(2.0f, 2.0f, -0.5f, -0.5f);
+    pgen->set_health(50.0f);
+    Unit* eng = engineer_of(sim, 20.5f, 30.5f);
+    const auto clear_of = [&](osc::sim::MoveExclusion skirt) {
+        osc::sim::Vector3 place = pgen->position();
+        REQUIRE(osc::sim::prepare_move(*eng, *sim.terrain(), sim.occupancy(), sim.move_bounds(0),
+                                       place, 1, &skirt));
+        return place;
+    };
+    const osc::sim::Vector3 rounded = clear_of({29.5f, 29.5f, 31.5f, 31.5f});
+    const osc::sim::Vector3 as_fell = clear_of({29.0f, 29.0f, 31.0f, 31.0f});
+    REQUIRE((rounded.x != as_fell.x || rounded.z != as_fell.z));
+    UnitCommand sacrifice;
+    sacrifice.type = CommandType::Sacrifice;
+    sacrifice.target_id = pgen->entity_id();
+    sacrifice.target_pos = pgen->position();
+    eng->push_command(sacrifice, true);
+
+    sim.tick();
+    REQUIRE(eng->is_moving());
+    CHECK(eng->navigator().goal().x == rounded.x);
+    CHECK(eng->navigator().goal().z == rounded.z);
+}
 
 TEST_CASE("A guarding engineer walks up to an idle factory at once, to the nearest place two cells "
           "apart clear of its skirt",

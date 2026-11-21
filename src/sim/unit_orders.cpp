@@ -3816,10 +3816,11 @@ OrderStep Unit::order_sacrifice(UnitCommand& cmd, SimContext& ctx) {
         // Moho's sacrifice task: the recipient's place, clear of its skirt (PrepareMove(1)).
         if (ctx.sim && ctx.terrain) {
             Vector3 place = go_to->position();
-            const f32 x0 = place.x - go_to->footprint_size_x() * 0.5f + go_to->skirt_offset_x();
-            const f32 z0 = place.z - go_to->footprint_size_z() * 0.5f + go_to->skirt_offset_z();
-            const MoveExclusion skirt{x0, z0, x0 + go_to->skirt_size_x(),
-                                      z0 + go_to->skirt_size_z()};
+            const StructureSite site = StructureSite::of(
+                place.x, place.z, go_to->footprint_size_x(), go_to->footprint_size_z(),
+                go_to->skirt_size_x(), go_to->skirt_size_z(), go_to->skirt_offset_x(),
+                go_to->skirt_offset_z());
+            const MoveExclusion skirt{site.x0, site.z0, site.x1, site.z1};
             if (prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(),
                              ctx.sim->move_bounds(army()), place, 1, &skirt)) {
                 goal = place;

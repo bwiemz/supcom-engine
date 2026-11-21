@@ -236,8 +236,58 @@ TEST_CASE("placement: an off-half-cell deposit rounds its refused ring with its 
     sim.add_resource_deposit(mass);
     StructurePlacement p(sim, 0, rules_for);
     CHECK_FALSE(p.can_build("pgen", 877.5f, 281.5f));
-    CHECK(p.can_build("pgen", 874.5f, 281.5f));
+    CHECK(p.can_build("pgen", 874.0f, 281.5f));
     CHECK(p.can_build("pgen", 878.5f, 281.5f));
+}
+
+TEST_CASE("placement: a structure's skirt starts from its footprint's corner rounded to a cell, "
+          "as Moho's GetSkirtRect",
+          "[placement]") {
+    const auto pgen_at = [](osc::f32 x) {
+        return osc::sim::StructureSite::of(x, 335.5f, 1.0f, 1.0f, 2.0f, 2.0f, -0.5f, -0.5f);
+    };
+    CHECK(pgen_at(680.0f).x0 == 679.5f);
+    CHECK(pgen_at(680.0f).x1 == 681.5f);
+    CHECK(pgen_at(680.0f).z0 == 334.5f);
+    CHECK(pgen_at(681.0f).x0 == 679.5f);
+    CHECK(pgen_at(682.0f).x0 == 681.5f);
+    const auto odd = osc::sim::StructureSite::of(30.0f, 40.0f, 4.0f, 4.0f, 1.0f, 1.0f, 0.5f, 0.5f);
+    CHECK(odd.x0 == 28.0f);
+    CHECK(odd.x1 == 32.0f);
+
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_coast_world(sim);
+    osc::sim::ResourceDeposit mass;
+    mass.x = 28.5f;
+    mass.z = 40.5f;
+    sim.add_resource_deposit(mass);
+    const auto rules = [](const std::string& bp) {
+        PlacementRules r = rules_for(bp);
+        if (bp == "pgen") {
+            r.size_x = r.size_z = 1.0f;
+            r.skirt_x = r.skirt_z = 2.0f;
+            r.skirt_off_x = r.skirt_off_z = -0.5f;
+        } else if (bp == "odd") {
+            r.size_x = r.size_z = 4.0f;
+            r.skirt_x = r.skirt_z = 1.0f;
+        }
+        return r;
+    };
+    StructurePlacement p(sim, 0, rules);
+    CHECK(p.can_build("pgen", 30.0f, 40.5f));
+    CHECK_FALSE(p.can_build("pgen", 29.0f, 40.5f));
+
+    LuaGuard g2;
+    SimState bumpy(g2.L, nullptr);
+    std::vector<osc::u16> heights((kMapSize + 1) * (kMapSize + 1), 1000);
+    heights[20 * (kMapSize + 1) + 21] = 2000;
+    osc::map::Heightmap hm(kMapSize, kMapSize, 1.0f / 128.0f, std::move(heights));
+    bumpy.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
+    bumpy.build_pathfinding_grid();
+    StructurePlacement q(bumpy, 0, rules);
+    CHECK_FALSE(q.can_build("odd", 20.0f, 20.0f));
+    CHECK(q.can_build("odd", 30.0f, 20.0f));
 }
 
 TEST_CASE("placement: a structure's skirt is its pad", "[placement]") {

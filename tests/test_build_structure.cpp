@@ -726,6 +726,20 @@ TEST_CASE("CreateUnitNearSpot keeps a cell between its site's skirt and another 
     CHECK(w.site("moho.aibrain_methods.CreateUnitNearSpot(brain, 'ueb1101', 14, 10)") == "15 9");
 }
 
+TEST_CASE("CreateUnitNearSpot keeps the cell round a skirt at least its footprint, as Moho's",
+          "[brain][build]") {
+    World w;
+    REQUIRE(w.lua.do_string(
+        "rawset(_G, 'CreateUnitHPR', function(bp, army, x, y, z) return {x, z} end) "
+        "__blueprints.oscodd = { Footprint = { SizeX = 4, SizeZ = 4 }, "
+        "Physics = { SkirtSizeX = 1, SkirtSizeZ = 1 } }"));
+    Unit* other = w.block(33.0f, 41.0f);
+    other->set_skirt(2.0f, 2.0f, 0.0f, 0.0f);
+    other->set_collision_shape(
+        {osc::sim::CollisionShapeType::BOX, 0.0f, 0.5f, 0.0f, 1.0f, 0.5f, 1.0f});
+    CHECK(w.site("moho.aibrain_methods.CreateUnitNearSpot(brain, 'oscodd', 30, 40)") == "29 39");
+}
+
 TEST_CASE("CreateUnitNearSpot leaves the start's cells clear, those another structure held too",
           "[brain][build]") {
     World w;
