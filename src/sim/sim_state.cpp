@@ -783,6 +783,7 @@ Entity::Walk SimState::step_entity(Entity& e, bool attached, SimContext& ctx) {
     if (e.is_unit()) {
         auto& unit = static_cast<Unit&>(e);
         collide_with_props(unit, entity_registry_, L_, tick_count(), moho_pathing_);
+        note_platform_candidates(*this, unit);
         if (moho_pathing_) collide_units(*this, unit);
         unit.update(SECONDS_PER_TICK, ctx);
         unit.note_queue_head();

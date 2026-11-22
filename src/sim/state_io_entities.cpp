@@ -1320,6 +1320,11 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.pushed_);
     w.b(u.in_state_transition_);
     w.b(u.surface_collision_);
+    w.size(u.raised_platform_candidates_.size());
+    for (const EntityId id : u.raised_platform_candidates_) {
+        w.id(id);
+    }
+    w.id(u.raised_platform_id_);
     w.id(u.shield_entity_id_);
     w.b(u.busy_);
     w.i32v(u.stun_ticks_);
@@ -1765,6 +1770,11 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.pushed_ = r.b();
     u.in_state_transition_ = r.b();
     u.surface_collision_ = r.b();
+    u.raised_platform_candidates_.resize(r.size(4));
+    for (EntityId& id : u.raised_platform_candidates_) {
+        id = r.id();
+    }
+    u.raised_platform_id_ = r.id();
     u.shield_entity_id_ = r.id();
     u.busy_ = r.b();
     u.stun_ticks_ = r.i32v();
