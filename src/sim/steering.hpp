@@ -36,6 +36,9 @@ u64 formation_layer(const Unit& u);
 /// apart by an impulse, shared by their masses.
 void collide_units(SimState& sim, Unit& u);
 
+/// Moho's CUnitMotion::ProcessSurfaceCollisionFromLastMove, its candidates half.
+void note_platform_candidates(SimState& sim, Unit& owner);
+
 /// With Moho pathing, CAiSteeringImpl::Stop: the unit off its spline, and with nodes left
 /// on it its meetings checked afresh, with it standing (which clears the neighbours' meetings
 /// with it that no longer hold).

@@ -52,7 +52,7 @@ std::vector<f32> decks() {
             1.1f,  -1.6f, 0.0f, 2.1f, -1.6f, 1.0f, 1.1f,  1.9f, 0.0f, 2.1f, 1.9f, 1.0f};
 }
 
-Unit* factory(SimState& sim, f32 x, f32 z) {
+Unit* factory(SimState& sim, f32 x, f32 z, f32 box_x = 2.1f) {
     auto u = std::make_unique<Unit>();
     u->set_army(0);
     u->set_position({x, kGround, z});
@@ -63,7 +63,7 @@ Unit* factory(SimState& sim, f32 x, f32 z) {
     CollisionShape box;
     box.type = CollisionShapeType::BOX;
     box.cy = 0.3f;
-    box.sx = 2.1f;
+    box.sx = box_x;
     box.sy = 0.3f;
     box.sz = 2.2f;
     u->set_default_collision_shape(box);
@@ -73,11 +73,11 @@ Unit* factory(SimState& sim, f32 x, f32 z) {
     return raw;
 }
 
-Unit* tank(SimState& sim, f32 x, f32 z) {
+Unit* tank(SimState& sim, f32 x, f32 z, const char* motion = "RULEUMT_Land") {
     auto u = std::make_unique<Unit>();
     u->set_army(0);
     u->set_max_speed(1.0f);
-    u->set_motion_type("RULEUMT_Land");
+    u->set_motion_type(motion);
     u->set_position({x, kGround, z});
     u->set_max_health(100.0f);
     u->set_health(100.0f);
@@ -99,6 +99,7 @@ TEST_CASE("A land unit on a factory's deck stands on its raised platform", "[pla
     flat(sim);
     factory(sim, 64.0f, 64.0f);
     Unit* u = tank(sim, 64.0f, 64.5f);
+    sim.tick();
     const auto* terrain = sim.terrain();
     CHECK(u->ground_y(terrain, 64.0f, 64.5f) == Approx(kGround + 0.5f));
     CHECK(u->ground_y(terrain, 65.6f, 64.5f) == Approx(kGround + 0.5f));
@@ -123,6 +124,45 @@ TEST_CASE("A unit driving off a deck rides it, and a dying factory's deck is gon
     REQUIRE(u->position().z < 65.5f);
     CHECK(u->position().y == Approx(kGround + 0.5f));
     f->begin_dying();
+    sim.tick();
+    CHECK(u->position().y == kGround);
+}
+
+TEST_CASE("A hover unit stands on the deck its box met where it stood before its move",
+          "[platforms]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    factory(sim, 64.0f, 64.0f, 1.0f);
+    Unit* u = tank(sim, 65.25f, 64.0f, "RULEUMT_Hover");
+    u->set_orientation(osc::sim::euler_to_quat(1.5707964f, 0.0f, 0.0f));
+    UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {72.0f, 0.0f, 64.0f};
+    u->push_command(move, true);
+    f32 was = u->position().x;
+    bool crossed = false;
+    for (int i = 0; i < 40 && !crossed; ++i) {
+        sim.tick();
+        const f32 x = u->position().x;
+        if (was - 0.4f < 65.0f && x - 0.4f > 65.0f) {
+            crossed = true;
+            CAPTURE(was, x);
+            CHECK(u->position().y > kGround);
+        }
+        was = x;
+    }
+    CHECK(crossed);
+}
+
+TEST_CASE("A unit stands on no mobile unit's deck", "[platforms]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* rover = factory(sim, 64.0f, 64.0f);
+    rover->set_motion_type("RULEUMT_Land");
+    rover->set_max_speed(1.0f);
+    Unit* u = tank(sim, 64.0f, 64.5f);
     sim.tick();
     CHECK(u->position().y == kGround);
 }

@@ -1193,7 +1193,14 @@ public:
     void set_raised_platforms(std::vector<f32> quads) { raised_platforms_ = std::move(quads); }
     /// Moho's Unit::DistanceToOccupiedRect: its deck's height at (x, z), 0 off it.
     f32 raised_platform_height(f32 x, f32 z) const;
+    /// The deck it stands on (Moho's mRaisedPlatformUnit), as last found.
     const Unit* raised_platform() const;
+    /// Moho's mRaisedPlatformCandidates: the units its box met as its motion ticked.
+    void set_raised_platform_candidates(std::vector<EntityId> ids) {
+        raised_platform_candidates_ = std::move(ids);
+    }
+    /// Moho's CUnitMotion::FindIntersectingRaisedPlatform, from where it stood before its move.
+    void find_raised_platform();
     /// Physics.LayerChangeOffsetHeight: how far above (+) or below (-) the
     /// water's surface the ground must lie for it to count as under water.
     f32 layer_change_offset() const { return layer_change_offset_; }
@@ -2129,6 +2136,8 @@ private:
     Vector3 layer_transition_step_;
     u8 terrain_type_ = 0; // Moho's CurrentTerrainType
     std::vector<f32> raised_platforms_;
+    std::vector<EntityId> raised_platform_candidates_;
+    EntityId raised_platform_id_{};
     bool stand_upright_ = false;
     bool sink_lower_ = false;
     HoverPhysics hover_physics_;

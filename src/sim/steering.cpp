@@ -930,6 +930,42 @@ void collide_units(SimState& sim, Unit& u) {
     collide_moho_units(sim, u);
 }
 
+void note_platform_candidates(SimState& sim, Unit& owner) {
+    if (!owner.has_motion() || owner.is_being_built()) {
+        return;
+    }
+    const Vector3& ov = owner.motion_velocity();
+    if (!(ov.x * ov.x + ov.y * ov.y + ov.z * ov.z > 0.000001f) && !owner.surface_collision()) {
+        return;
+    }
+    std::vector<EntityId> met;
+    if (owner.layer() != "Air" && owner.layer() != "Sub" && !owner.is_dying() &&
+        !owner.parent_entity_id() && !can_fly(owner) && !owner.pushed()) {
+        const OrientedBox box =
+            oriented_box(owner.position(), owner.orientation(),
+                         {owner.size_x() * 0.5f, owner.size_y(), owner.size_z() * 0.5f});
+        f32 reach_x = 0;
+        f32 reach_z = 0;
+        for (size_t i = 0; i < 3; ++i) {
+            reach_x += std::abs(box.axis[i].x) * box.extent[i];
+            reach_z += std::abs(box.axis[i].z) * box.extent[i];
+        }
+        sim.entity_registry().any_unit_collider(box.centre.x - reach_x, box.centre.z - reach_z,
+                                                box.centre.x + reach_x, box.centre.z + reach_z,
+                                                [&](const Entity& e) {
+                                                    if (&e == &owner || e.destroyed()) {
+                                                        return false;
+                                                    }
+                                                    const auto shape = collision_box(e);
+                                                    if (shape && box_contact(*shape, box)) {
+                                                        met.push_back(e.entity_id());
+                                                    }
+                                                    return false;
+                                                });
+    }
+    owner.set_raised_platform_candidates(std::move(met));
+}
+
 void steer_stop(SimState& sim, Unit& u) {
     Navigator& nav = u.navigator();
     if (nav.has_spline()) {

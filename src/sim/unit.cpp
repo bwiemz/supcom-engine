@@ -1126,9 +1126,15 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
     const Vector3 from = pending_position();
     const u32 snaps = snap_serial();
     const f32 crossing = layer_transition_ticks_;
+    const EntityId deck = raised_platform_id_;
+    const bool meets = surface_collision_;
+    find_raised_platform();
     const bool goes_on = motion_tick(dt, ctx);
     if (!in_registry()) {
         return;
+    }
+    if (!meets && pending_position().x == from.x && pending_position().z == from.z) {
+        raised_platform_id_ = deck;
     }
     if (goes_on && ctx.sim) {
         tick_hover(ctx.terrain, ctx.sim->tick_count(), ctx.sim->random(), ctx.sim->moho_pathing());
@@ -3864,41 +3870,42 @@ void Unit::stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quater
     set_orientation(stance.orientation);
 }
 
-// Moho's CUnitMotion::FindIntersectingRaisedPlatform, over the units its box
-// meets (ProcessSurfaceCollisionFromLastMove).
 const Unit* Unit::raised_platform() const {
     const EntityRegistry* registry = this->registry();
-    if (!registry || is_air_unit() || is_being_built_ || parent_entity_id() || layer_ == "Sub") {
+    if (!registry || !raised_platform_id_) {
         return nullptr;
     }
-    const Vector3 at = pending_position();
-    const Vector3 ax = quat_rotate(pending_orientation(), {size_x_ * 0.5f, 0, 0});
-    const Vector3 az = quat_rotate(pending_orientation(), {0, 0, size_z_ * 0.5f});
-    const f32 hx = std::abs(ax.x) + std::abs(az.x);
-    const f32 hz = std::abs(ax.z) + std::abs(az.z);
-    const Unit* nearest = nullptr;
+    const Entity* e = registry->find(raised_platform_id_);
+    return e && e->is_unit() && !e->destroyed() ? static_cast<const Unit*>(e) : nullptr;
+}
+
+void Unit::find_raised_platform() {
+    raised_platform_id_ = EntityId();
+    const EntityRegistry* registry = this->registry();
+    if (!registry) {
+        return;
+    }
+    const Vector3 at = position();
     f32 nearest_d2 = std::numeric_limits<f32>::infinity();
-    registry->any_unit_collider(at.x - hx, at.z - hz, at.x + hx, at.z + hz, [&](const Entity& e) {
-        const auto* u = dynamic_cast<const Unit*>(&e);
-        if (!u || u == this || u->raised_platforms_.empty() || u->dying_) {
-            return false;
+    for (const EntityId id : raised_platform_candidates_) {
+        const Entity* e = registry->find(id);
+        if (!e || e->destroyed() || !e->is_unit()) {
+            continue;
         }
-        const auto bounds = collision_bounds(*u);
-        if (!bounds || bounds->first.x > at.x + hx || bounds->second.x < at.x - hx ||
-            bounds->first.z > at.z + hz || bounds->second.z < at.z - hz ||
-            bounds->first.y > at.y + size_y_ || bounds->second.y < at.y - size_y_) {
-            return false;
+        const auto& u = static_cast<const Unit&>(*e);
+        if (u.is_mobile() || u.raised_platforms_.empty()) {
+            continue;
         }
-        const Vector3 p = u->position();
-        const f32 d2 =
-            (at.x - p.x) * (at.x - p.x) + (at.y - p.y) * (at.y - p.y) + (at.z - p.z) * (at.z - p.z);
-        if (d2 < nearest_d2 || (d2 == nearest_d2 && u->entity_id() < nearest->entity_id())) {
-            nearest = u;
+        const Vector3 p = u.position();
+        const f32 dx = at.x - p.x;
+        const f32 dy = at.y - p.y;
+        const f32 dz = at.z - p.z;
+        const f32 d2 = (dx * dx + dz * dz) + dy * dy;
+        if (d2 < nearest_d2) {
             nearest_d2 = d2;
+            raised_platform_id_ = id;
         }
-        return false;
-    });
-    return nearest;
+    }
 }
 
 f32 Unit::raised_platform_height(f32 x, f32 z) const {
