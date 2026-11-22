@@ -244,6 +244,8 @@ void StateIO::save(StateWriter& w, const path::PathNavigator& n) {
     w.b(n.repath_requested_);
     w.b(n.extended_probe_);
     w.b(n.target_within_one_cell_);
+    w.b(n.pathfinding_);
+    w.b(n.goal_problem_);
     w.i32v(n.request_mode_);
     w.i32v(n.request_countdown_);
 }
@@ -281,6 +283,8 @@ void StateIO::load(StateReader& r, path::PathNavigator& n, SimState& sim, i32 ar
     n.repath_requested_ = r.b();
     n.extended_probe_ = r.b();
     n.target_within_one_cell_ = r.b();
+    n.pathfinding_ = r.b();
+    n.goal_problem_ = r.b();
     n.request_mode_ = r.i32v();
     n.request_countdown_ = r.i32v();
 }

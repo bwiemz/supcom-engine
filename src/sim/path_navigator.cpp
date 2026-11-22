@@ -103,6 +103,8 @@ void PathNavigator::reset() {
     last_blocked_cell_ = 0;
     repath_threshold_ = kInfinity;
     no_progress_ticks_ = 0;
+    pathfinding_ = false;
+    goal_problem_ = false;
 }
 
 f32 PathNavigator::target_x() const {
@@ -294,6 +296,7 @@ void PathNavigator::request_path(i32 mode) {
     repath_requested_ = false;
     // (Moho's FAVORSWATER alt footprint choice is left to the unit.)
     finder_.set_goal(goal_);
+    pathfinding_ = true;
     queue_search(search_type(mode));
     state_ = State::Searching;
     target_within_one_cell_ = false;
@@ -439,13 +442,16 @@ void PathNavigator::update(const NavUnit& unit, const PathWorld& world, PathQueu
 void PathNavigator::on_path_event(bool /*reached*/, const std::vector<Cell>& cells) {
     if (state_ == State::Searching) {
         path_ = cells;
+        pathfinding_ = false;
         if (path_.empty()) {
             state_ = State::Failed;
             retry_delay_ = 0;
+            goal_problem_ = true;
             return;
         }
         // Short of the goal: its centre goes on the end, if no unit holds it.
         if (!cell_in_goal(path_.back())) {
+            goal_problem_ = true;
             const Cell centre = goal_centre(goal_);
             if (can_transition(centre, centre)) path_.push_back(centre);
         }
@@ -552,7 +558,9 @@ void PathNavigator::fingerprint(Fnv& f) const {
     f.mix(static_cast<u64>(forward_probe_ ? 1 : 0) |
           static_cast<u64>(repath_requested_ ? 1 : 0) << 1 |
           static_cast<u64>(extended_probe_ ? 1 : 0) << 2 |
-          static_cast<u64>(target_within_one_cell_ ? 1 : 0) << 3);
+          static_cast<u64>(target_within_one_cell_ ? 1 : 0) << 3 |
+          static_cast<u64>(pathfinding_ ? 1 : 0) << 4 |
+          static_cast<u64>(goal_problem_ ? 1 : 0) << 5);
     f.mix(static_cast<u32>(request_mode_));
     f.mix(static_cast<u32>(request_countdown_));
 }

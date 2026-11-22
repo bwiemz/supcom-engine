@@ -237,6 +237,7 @@ constexpr Mode kModesBefore[] = {
     {"--transport-pickup-test", test_transport_pickup, false},
     {"--transport-drop-test", test_transport_drop, false},
     {"--transport-assist-move-test", test_assist_move, false},
+    {"--transport-assist-move-pickups-test", test_assist_move_pickups, false},
     {"--carrier-test", test_carrier, false},
     {"--right-click-test", test_right_click, false},
     {"--carrier-land-test", test_carrier_land, false},
@@ -494,6 +495,8 @@ void IntegrationModes::print_usage() const {
               << "  --ferry-test       A ferry carries units from its beacon to its drop-off\n"
               << "  --transport-assist-move-test The Transport order: transports carry the land\n"
               << "                     units ordered with them (AssistMove)\n"
+              << "  --transport-assist-move-pickups-test The Transport order's pickups: a goal\n"
+              << "                     no land path reaches, the goal cell a lift is timed to\n"
               << "  --factory-assist-test A factory guarding a factory builds from its queue\n"
               << "  --factory-rally-test What a factory builds takes its rally orders\n"
               << "  --influence-test   The AI's threat is what its intel has seen (influence map)\n"

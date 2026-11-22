@@ -75,6 +75,11 @@ public:
     void reset();
 
     State state() const { return state_; }
+    /// UNITSTATE_PathFinding: its search asked and not yet answered.
+    bool pathfinding() const { return pathfinding_; }
+    /// UNITSTATE_ProblemGettingToGoal: the path it was given stops short of
+    /// its goal, or there is none.
+    bool goal_problem() const { return goal_problem_; }
     /// mLastPathNodeIndex: the last node of its path still ahead, -1 past them all.
     i32 last_node_index() const { return last_node_index_; }
     /// Everything that decides its next step (its path, cells, clocks,
@@ -141,6 +146,8 @@ private:
     bool repath_requested_ = false;
     bool extended_probe_ = false;
     bool target_within_one_cell_ = false;
+    bool pathfinding_ = false;
+    bool goal_problem_ = false;
     i32 request_mode_ = 0;
     i32 request_countdown_ = 0;
 };
