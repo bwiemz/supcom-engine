@@ -547,7 +547,18 @@ void mix_orders(Fnv& orders, const Unit& u) {
         for (const EntityId id : u.pickup_ids()) {
             orders.mix(id);
         }
+        orders.mix(static_cast<u64>(u.pickup_called().size()));
+        for (const EntityId id : u.pickup_called()) {
+            orders.mix(id);
+        }
         orders.mix(static_cast<u64>(static_cast<u32>(u.beam_up_ticks())));
+    }
+    if (!u.load_requested().empty()) {
+        orders.mix(0x4c4f4144u); // "LOAD"
+        orders.mix(static_cast<u64>(u.load_requested().size()));
+        for (const EntityId id : u.load_requested()) {
+            orders.mix(id);
+        }
     }
     // A factory's rally orders (M206j), only where it has some.
     if (!u.rally_orders().empty()) {

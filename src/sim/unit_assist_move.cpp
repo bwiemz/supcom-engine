@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -133,41 +134,11 @@ OrderStep Unit::order_assist_transport(UnitCommand& cmd, SimContext& ctx) {
                     finish_pickup(false, L);
                     return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
                 }
-                // DoTask: of those, the units free to come (alive, not aboard
-                // anything, not boarding or waiting for another transport).
-                std::erase_if(pickups, [](const Unit* u) {
-                    if (u->destroyed() || u->is_dying() || u->transport_id() ||
-                        u->parent_entity_id() || u->awaited_transport()) {
-                        return true;
-                    }
-                    const auto& q = u->command_queue_;
-                    return !q.empty() && q.front().type == CommandType::WaitForFerry &&
-                           q.front().assigned_id;
-                });
-                if (!begin_pickup(pickups, false, L)) return OrderStep::Gone;
-                if (!still_head()) {
-                    finish_pickup(false, L);
-                    return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+                load_requested_.clear();
+                for (const Unit* u : pickups) {
+                    load_requested_.push_back(u->entity_id());
                 }
-                // An AssistMoving transport's load gives each unit it takes
-                // itself as its transport (AssignedTransportRef), which a
-                // land unit's AssistMove calls.
-                for (const EntityId id : pickup_ids_) {
-                    Entity* e = ctx.registry.find(id);
-                    if (!e || e->destroyed() || !e->is_unit()) continue;
-                    auto& q = static_cast<Unit*>(e)->command_queue_;
-                    if (!q.empty() && q.front().type == CommandType::AssistMove) {
-                        q.front().assigned_id = me;
-                    }
-                }
-                if (pickup_ids_.empty()) {
-                    // A load that took none ends at once; it looks again
-                    // next tick.
-                    finish_pickup(false, L);
-                    return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Hold;
-                }
-                // The load runs from the next tick (Wait returns 1).
-                cmd.assist_phase = AssistPhase::Loading;
+                cmd.assist_phase = AssistPhase::LoadPreparing;
                 return OrderStep::Hold;
             }
             // One still waiting for its path may need a lift: look again.
@@ -185,6 +156,51 @@ OrderStep Unit::order_assist_transport(UnitCommand& cmd, SimContext& ctx) {
                 cmd.assist_phase = AssistPhase::Unloading;
             }
             return OrderStep::Hold;
+        }
+        case AssistPhase::LoadPreparing: {
+            // CUnitLoadUnits::DoTask, on the load's first tick.
+            std::vector<Unit*> pickups;
+            for (const EntityId id : std::exchange(load_requested_, {})) {
+                Entity* e = ctx.registry.find(id);
+                if (e && e->is_unit()) {
+                    pickups.push_back(static_cast<Unit*>(e));
+                }
+            }
+            std::erase_if(pickups, [](const Unit* u) {
+                if (u->destroyed() || u->is_dying() || u->transport_id() || u->parent_entity_id() ||
+                    u->awaited_transport()) {
+                    return true;
+                }
+                const auto& q = u->command_queue_;
+                return !q.empty() && q.front().type == CommandType::WaitForFerry &&
+                       q.front().assigned_id;
+            });
+            if (!begin_pickup(pickups, false, L)) {
+                return OrderStep::Gone;
+            }
+            if (!still_head()) {
+                finish_pickup(false, L);
+                return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+            }
+            // Each taken unit's AssignedTransportRef.
+            for (const EntityId id : pickup_ids_) {
+                Entity* e = ctx.registry.find(id);
+                if (!e || e->destroyed() || !e->is_unit()) {
+                    continue;
+                }
+                auto& q = static_cast<Unit*>(e)->command_queue_;
+                if (!q.empty() && q.front().type == CommandType::AssistMove) {
+                    q.front().assigned_id = me;
+                }
+            }
+            if (pickup_ids_.empty()) {
+                finish_pickup(false, L);
+                cmd.assist_phase = AssistPhase::Waiting;
+                return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Hold;
+            }
+            // TASKSTATE_Waiting in the same tick (NewMoveTask).
+            cmd.assist_phase = AssistPhase::Loading;
+            continue;
         }
         case AssistPhase::Loading: {
             const PickupStep step = pickup_step(ctx);

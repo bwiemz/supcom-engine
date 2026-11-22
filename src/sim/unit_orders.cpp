@@ -3254,12 +3254,28 @@ Unit::PickupStep Unit::pickup_step(SimContext& ctx) {
     // At the pickup: hover while the units come aboard, as long as the wait
     // allows.
     ++pickup_ticks_;
+    // TransportRemovePickupUnit: on boarding or ~CUnitCallTransport; one that
+    // never called stays till the 300-tick wait runs out.
     std::erase_if(pickup_ids_, [&](EntityId id) {
         const Entity* e = registry.find(id);
         const auto* u =
             e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
-        if (u && u->transport_id() == me) return true;                   // aboard
-        if (u && !u->is_dying() && u->calls_transport(me)) return false; // still coming
+        if (u && u->transport_id() == me) {
+            return true;
+        }
+        const bool called =
+            std::find(pickup_called_.begin(), pickup_called_.end(), id) != pickup_called_.end();
+        if (u && !u->is_dying()) {
+            if (u->calls_transport(me)) {
+                if (!called) {
+                    pickup_called_.push_back(id);
+                }
+                return false;
+            }
+            if (!called) {
+                return false;
+            }
+        }
         if (transport_slots_) transport_slots_->release(id);
         return true;
     });
@@ -3280,6 +3296,7 @@ void Unit::finish_pickup(bool completed, lua_State* L) {
         }
     }
     pickup_ids_.clear();
+    pickup_called_.clear();
     pickup_phase_ = PickupPhase::None;
     pickup_ticks_ = 0;
     call_lua_method(L, "OnStopTransportLoading");
