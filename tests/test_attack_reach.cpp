@@ -17,12 +17,14 @@
 #include "support/tick_until.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
 #include <cmath>
 #include <initializer_list>
 #include <memory>
+#include <string>
 #include <vector>
 
 using osc::f32;
@@ -120,9 +122,29 @@ bool at_rest_on(const Unit& u, size_t i, const Unit& target) {
            u.ground_speed() == 0.0f && u.weapons()[i]->target_entity_id == target.entity_id();
 }
 
+/// Gives `w` a script that notes in the global `heard` what it hears of its target.
+void listen(lua_State* L, Weapon& w) {
+    REQUIRE(lua_dostring(L, "heard = ''"
+                            " gun = {OnGotTarget = function() heard = heard .. 'got ' end,"
+                            " OnLostTarget = function() heard = heard .. 'lost ' end}") == 0);
+    lua_pushstring(L, "gun");
+    lua_gettable(L, LUA_GLOBALSINDEX);
+    w.lua_table_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    w.script_class = true;
+}
+
+std::string heard(lua_State* L) {
+    lua_pushstring(L, "heard");
+    lua_gettable(L, LUA_GLOBALSINDEX);
+    std::string text = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+    return text;
+}
+
 // Layer caps, as layer_to_bit's: Land | Water | Seabed, and Air.
 constexpr osc::u8 kSurface = 0x01 | 0x02 | 0x04;
 constexpr osc::u8 kAir = 0x10;
+constexpr f32 kDeg = 3.14159265358979f / 180.0f;
 
 } // namespace
 
@@ -157,6 +179,82 @@ TEST_CASE("The first weapon that can hit the target decides, though a later one 
                [&] { return at_rest_on(*u, 0, *target); });
     CHECK(apart(*u, *target) <= 10.0f);
     CHECK(apart(*u, *target) > 5.0f);
+}
+
+TEST_CASE("A target in range but out of its weapon's arc is out of reach: the attack engages once "
+          "its unit has turned the arc onto it",
+          "[attack-reach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    land(sim);
+    Unit* u = attacker(sim, 20.0f, 64.0f, {{30.0f, kSurface}});
+    Unit::Drive drive = u->drive();
+    drive.turn_rate = 90.0f * kDeg;
+    u->set_drive(drive);
+    u->weapons()[0]->heading_arc_range = 30.0f;
+    Unit* target = foe(sim, 40.0f, 64.0f);
+    attack(*u, *target);
+    tick_until([&] { tick(sim, *u); }, "its attack engages", 60,
+               [&] { return u->command_queue().front().engaged; });
+    CHECK(u->weapons()[0]->in_heading_arc(*u, target->position()));
+}
+
+TEST_CASE("Inside its weapon's minimum range, a unit backs off from its target and looks again 9 "
+          "ticks on",
+          "[attack-reach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    land(sim);
+    Unit* u = attacker(sim, 20.0f, 64.0f, {{30.0f, kSurface}});
+    u->weapons()[0]->min_range = 6.0f;
+    Unit* target = foe(sim, 20.0f, 66.0f);
+    attack(*u, *target);
+    int ticks = 0;
+    tick_until(
+        [&] {
+            tick(sim, *u);
+            ++ticks;
+        },
+        "its attack engages", 200, [&] { return u->command_queue().front().engaged; });
+    CHECK(apart(*u, *target) > 6.0f);
+    CHECK(ticks >= 11);
+}
+
+TEST_CASE("An attack keeps while its unit's only weapon is switched off, and engages once it is on",
+          "[attack-reach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    land(sim);
+    Unit* u = attacker(sim, 20.0f, 64.0f, {{30.0f, kSurface}});
+    u->weapons()[0]->enabled = false;
+    Unit* target = foe(sim, 30.0f, 64.0f);
+    attack(*u, *target);
+    for (int t = 0; t < 20; ++t) {
+        tick(sim, *u);
+    }
+    REQUIRE_FALSE(u->command_queue().empty());
+    CHECK_FALSE(u->command_queue().front().engaged);
+    u->weapons()[0]->enabled = true;
+    tick_until([&] { tick(sim, *u); }, "its attack engages", 3,
+               [&] { return u->command_queue().front().engaged; });
+}
+
+TEST_CASE("With no weapon that can hit its target, a DIRECTFIRE unit's attack never engages: it "
+          "closes on the target",
+          "[attack-reach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    land(sim);
+    Unit* u = attacker(sim, 20.0f, 64.0f, {{30.0f, kAir}});
+    u->add_category("DIRECTFIRE");
+    Unit* target = foe(sim, 60.0f, 64.0f);
+    attack(*u, *target);
+    for (int t = 0; t < 120; ++t) {
+        tick(sim, *u);
+    }
+    REQUIRE_FALSE(u->command_queue().empty());
+    CHECK_FALSE(u->command_queue().front().engaged);
+    CHECK(apart(*u, *target) < 10.0f);
 }
 
 TEST_CASE("While its unit attacks a target it can't hit, an AutoInitiateAttackCommand weapon "
@@ -285,4 +383,42 @@ TEST_CASE(
             CHECK_FALSE(u->weapons()[0]->has_target());
         }
     }
+}
+
+TEST_CASE("An attack's start drops its unit's weapons' targets, their scripts told, and they look "
+          "again at once",
+          "[attack-reach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    land(sim);
+    sim.con_vars().weapon_terrain_blockage_test = false;
+    Unit* u = attacker(sim, 20.0f, 64.0f, {{10.0f, kSurface}});
+    Weapon& gun = *u->weapons()[0];
+    listen(g.L, gun);
+    Unit* first = foe(sim, 25.0f, 64.0f);
+    Unit* second = foe(sim, 20.0f, 70.0f);
+    tick_until([&] { tick(sim, *u); }, "its gun takes the nearer enemy", 2,
+               [&] { return gun.target_entity_id == first->entity_id(); });
+    REQUIRE(heard(g.L) == "got ");
+    attack(*u, *second);
+    tick_until([&] { tick(sim, *u); }, "its gun takes the attack's target", 3,
+               [&] { return gun.target_entity_id == second->entity_id(); });
+    CHECK(heard(g.L) == "got lost got ");
+}
+
+TEST_CASE("A structure's gun takes its attack's target out of reach at once, and drops it as the "
+          "attack ends",
+          "[attack-reach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    land(sim);
+    sim.con_vars().weapon_terrain_blockage_test = false;
+    Unit* u = attacker(sim, 20.0f, 64.0f, {{10.0f, kSurface}});
+    u->set_motion_type("RULEUMT_None");
+    listen(g.L, *u->weapons()[0]);
+    Unit* target = foe(sim, 50.0f, 64.0f);
+    attack(*u, *target);
+    tick_until([&] { tick(sim, *u); }, "the attack ends", 2,
+               [&] { return u->command_queue().empty(); });
+    CHECK(heard(g.L) == "got lost ");
 }

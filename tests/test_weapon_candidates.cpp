@@ -160,6 +160,36 @@ TEST_CASE("A weapon with no target priorities picks no unit", "[weapon][targets]
     CHECK_FALSE(s.weapon->target_entity_id);
 }
 
+TEST_CASE("A weapon with no damage, or one fired on death, looks for targets; a ManualFire one "
+          "doesn't",
+          "[weapon][targets]") {
+    struct Case {
+        f32 damage;
+        bool on_death;
+        bool manual;
+        bool picked;
+    };
+    for (const Case& c : {
+             Case{0.0f, false, false, true},
+             Case{10.0f, true, false, true},
+             Case{10.0f, false, true, false},
+         }) {
+        CAPTURE(c.damage, c.on_death, c.manual);
+        Scene s;
+        s.weapon->damage = c.damage;
+        s.weapon->fire_on_death = c.on_death;
+        s.weapon->manual_fire = c.manual;
+        CHECK(s.picks(s.enemy) == c.picked);
+    }
+}
+
+TEST_CASE("A weapon with no damage fires at its target", "[weapon][targets]") {
+    Scene s;
+    s.weapon->damage = 0.0f;
+    tick_until([&] { s.sim.tick(); }, "it fires", 10,
+               [&] { return s.weapon->shots_at_target > 0; });
+}
+
 TEST_CASE("A turreted weapon takes the enemy nearest its line of fire, another the nearest",
           "[weapon][targets]") {
     for (const bool turreted : {false, true}) {

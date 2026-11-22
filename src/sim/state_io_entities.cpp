@@ -385,6 +385,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.b(c.approached);
     w.b(c.engaged);
     w.i32v(c.facing_clock);
+    w.i32v(c.backoff_wait);
     w.f32v(c.site_skirt_x);
     w.f32v(c.site_skirt_z);
     w.b(c.site_cleared);
@@ -454,6 +455,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.approached = r.b();
     c.engaged = r.b();
     c.facing_clock = r.i32v();
+    c.backoff_wait = r.i32v();
     c.site_skirt_x = r.f32v();
     c.site_skirt_z = r.f32v();
     c.site_cleared = r.b();

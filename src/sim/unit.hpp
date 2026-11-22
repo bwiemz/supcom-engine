@@ -1803,12 +1803,9 @@ private:
     /// reserved, which the order then reserves.
     void settle_factory_move(UnitCommand& cmd, Vector3 dest, SimContext& ctx);
     /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
-    /// target, and one that needs prep (NeedPrep) hears OnGotTarget. False
-    /// when a script took the unit or the order.
+    /// target and looks again at once, and one that needs prep (NeedPrep)
+    /// hears OnGotTarget. False when a script took the unit or the order.
     bool engage(UnitCommand& cmd, lua_State* L);
-    /// SetDesiredTarget's notice: each NeedPrep weapon hears OnGotTarget.
-    /// False when a script took the unit.
-    bool ready_prep_weapons(lua_State* L);
     /// Moho's ~CUnitAttackTargetTask: once the attack order whose task ran
     /// is gone from the head of the queue (done, cleared or replaced), the
     /// attacker stops. False when a script took the unit.

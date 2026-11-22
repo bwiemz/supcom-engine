@@ -269,10 +269,11 @@ ReclaimCosts reclaim_costs(lua_State* L, const Unit& reclaimer, const Entity& ta
 
 /// The weapon `unit` attacks `target` with: the first of its weapons, in
 /// blueprint order, that can attack it (Moho's CAiAttackerImpl::
-/// GetTargetWeapon), or null.
+/// GetTargetWeapon: UnitWeapon::CanAttackTarget, switched off or not, of any
+/// army), or null.
 const Weapon* target_weapon(const Unit& unit, const Entity& target, const SimState* sim) {
     for (const auto& w : unit.weapons()) {
-        if (w->enabled && w->attacks_on_order() && w->can_pick(unit, target, sim)) {
+        if (w->attacks_on_order() && w->can_attack(target, sim)) {
             return w.get();
         }
     }
@@ -694,16 +695,6 @@ void Unit::begin_order(UnitCommand& cmd, SimContext& ctx) {
     }
 }
 
-bool Unit::ready_prep_weapons(lua_State* L) {
-    // UnitWeapon::NotifyOnGotTarget: a NeedPrep weapon hears OnGotTarget before it takes the
-    // target, so its script readies it
-    for (size_t i = 0; i < weapons_.size(); ++i) {
-        if (destroyed() || is_dying()) return false;
-        if (weapons_[i]->need_prep) weapons_[i]->call_script(L, "OnGotTarget");
-    }
-    return !destroyed() && !is_dying();
-}
-
 bool Unit::engage(UnitCommand& cmd, lua_State* L) {
     cmd.engaged = true;
     const UnitCommand* const order = &cmd;
@@ -978,11 +969,6 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
         if (w->enabled && !w->fire_on_death && !w->manual_fire)
             best_range = std::max(best_range, w->max_range);
     }
-    if (best_range <= 0) {
-        release_navigator();
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
     // Check distance to target
     f32 dx = target->position().x - position().x;
     f32 dz = target->position().z - position().z;
@@ -1025,14 +1011,13 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
             }
         }
     }
-    // The attack is made with its target weapon, and the unit is in reach
-    // once the target is within that weapon's range (CUnitAttackTargetTask::
-    // TaskTick, Processing: TargetIsWithinWeaponAttackRange), not its
-    // longest weapon's: a frigate's anti-air reaches 48, its gun 28. With no
-    // weapon that can hit the target, its longest weapon's range stands.
+    // In reach once its target weapon has a firing solution for the target, heading arc and
+    // minimum range included (CUnitAttackTargetTask::TaskTick, Processing:
+    // TargetIsWithinWeaponAttackRange); with no target weapon, never.
     const Weapon* const weapon = target_weapon(*this, *target, ctx.sim);
-    const f32 reach = weapon ? weapon->max_range : best_range;
-    const bool in_reach = dist2 <= reach * reach;
+    const bool in_reach =
+        weapon && weapon->enabled &&
+        weapon->solution_status(*this, target->position(), dist2) == Weapon::Solution::Available;
     // A plain attack's unit with no weapon that can hit its target gives the
     // order up, unless it is DIRECTFIRE or a sub under water
     // (CUnitAttackTargetTask::TaskTick's first test, every tick: its
@@ -1053,8 +1038,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     }
     // An immobile unit's attacker has the target from the start, and the attack fails once its
     // target weapon has no solution for it (CUnitAttackTargetTask::HandleAiAttackerEvent).
-    if (!is_mobile() && cmd.engaged && weapon &&
-        weapon->solution_status(*this, target->position(), dist2) != Weapon::Solution::Available) {
+    if (!is_mobile() && cmd.engaged && weapon && weapon->enabled && !in_reach) {
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -1108,6 +1092,30 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
             goal.x += cmd.slot_offset.x;
             goal.z += cmd.slot_offset.z;
         }
+        // Moho's Update: on the ground the task's first look sends its unit to the nearest part of
+        // its target weapon's square about the target (SetWeaponGoal, while mIsGrounded), and only
+        // once the navigator stops there at the target itself
+        if (weapon && !can_fly() && !cmd.has_slot) {
+            const i32 side = static_cast<i32>(weapon->max_range);
+            const f32 x0 = static_cast<f32>(std::lrint(goal.x - static_cast<f32>(side) * 0.5f));
+            const f32 z0 = static_cast<f32>(std::lrint(goal.z - static_cast<f32>(side) * 0.5f));
+            const f32 x1 = x0 + static_cast<f32>(side);
+            const f32 z1 = z0 + static_cast<f32>(side);
+            if (!cmd.approached) {
+                cmd.approached = true;
+                set_path_goal(
+                    {std::clamp(position().x, x0, x1), goal.y, std::clamp(position().z, z0, z1)},
+                    ctx);
+                nav_update();
+                return;
+            }
+            const Vector3 heading = navigator_.goal();
+            if (navigator_.is_moving() && (heading.x != goal.x || heading.z != goal.z) &&
+                heading.x >= x0 && heading.x <= x1 && heading.z >= z0 && heading.z <= z1) {
+                nav_update();
+                return;
+            }
+        }
         if (!navigator_.is_moving() || navigator_.goal().x != goal.x ||
             navigator_.goal().z != goal.z) {
             const bool mobile =
@@ -1116,20 +1124,60 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
         }
         nav_update();
     };
+    // Moho's CAiAttackerImpl::IsTooClose: no weapon that can hit the target has a solution for
+    // it, and one has it inside its minimum range
+    const auto too_close = [&] {
+        bool inside = false;
+        for (const auto& w : weapons_) {
+            if (!w->attacks_on_order() || !w->can_attack(*target, ctx.sim)) {
+                continue;
+            }
+            const Weapon::Solution status = w->solution_status(*this, target->position(), dist2);
+            if (status == Weapon::Solution::Available && w->enabled) {
+                return false;
+            }
+            if (status == Weapon::Solution::InsideMinRange) {
+                inside = true;
+            }
+        }
+        return inside;
+    };
+    // The task's Starting state: too close, the unit backs off GuardScanRadius from the target and
+    // looks again 9 ticks on (return 10)
+    if (is_mobile() && cmd.backoff_wait > 1) {
+        --cmd.backoff_wait;
+        nav_update();
+        return OrderStep::Hold;
+    }
+    if (is_mobile() && cmd.backoff_wait == 1) {
+        cmd.backoff_wait = 0;
+        if (too_close() && dist2 > 0) {
+            const f32 dist = std::sqrt(dist2);
+            const Vector3 at = target->position();
+            set_path_goal({at.x - dx / dist * guard_scan_radius_, at.y,
+                           at.z - dz / dist * guard_scan_radius_},
+                          ctx);
+            nav_update();
+            cmd.backoff_wait = 9;
+            return OrderStep::Hold;
+        }
+    }
     if (!in_reach && is_mobile()) {
-        close_in();
+        if (too_close()) {
+            cmd.backoff_wait = 1;
+            nav_update();
+        } else {
+            close_in();
+        }
     } else {
         // In reach, the formation is dropped: from now on the unit attacks
         // as a plain attack does (TaskTick's Processing: mFormation = null).
         cmd.has_slot = false;
+        cmd.approached = true;
         // ...and its attacker is handed the target (UpdateAttacker's
-        // SetDesiredTarget), which a weapon that needs prep hears of
-        if (!cmd.engaged) {
-            cmd.engaged = true;
-            const UnitCommand* const order = &cmd;
-            if (!ready_prep_weapons(ctx.L)) return destroyed() ? OrderStep::Gone : OrderStep::Hold;
-            // (a script there that changed the unit's orders took this one)
-            if (command_queue_.empty() || &command_queue_.front() != order) return OrderStep::Hold;
+        // SetDesiredTarget)
+        if (!cmd.engaged && !engage(cmd, ctx.L)) {
+            return destroyed() ? OrderStep::Gone : OrderStep::Hold;
         }
         // Moho's AAS_6: while its target weapon passes over the target (ReTargetOnMiss), the
         // attack task sends it at the target

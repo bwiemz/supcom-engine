@@ -402,8 +402,8 @@ void Weapon::fire_step(Unit& owner, EntityRegistry& registry, lua_State* L, cons
     if (fire_clock > 0) {
         --fire_clock;
     }
-    if (!enabled || fire_on_death || manual_fire || max_range <= 0 || damage <= 0 ||
-        owner.fire_state() == 1) {
+    // as Moho's CFireWeaponTask::Execute checks
+    if (!enabled || manual_fire || owner.fire_state() == 1) {
         return;
     }
     if (target_entity_id) {
@@ -430,7 +430,11 @@ void Weapon::acquire_step(Unit& owner, EntityRegistry& registry, lua_State* L,
     if (!blacklist.empty() && owner.moved_last_tick() && !unpack_search_paused(owner)) {
         blacklist.clear();
     }
-    if (!enabled || fire_on_death || manual_fire || max_range <= 0 || damage <= 0) return;
+    // Moho's CAiAttackerImpl::CreateWeapon gives every weapon but a ManualFire one an acquire
+    // task, which waits while its weapon is disabled
+    if (!enabled || manual_fire) {
+        return;
+    }
     // A target that is gone keeps its slot until the weapon next looks: Moho's weak pointer, an
     // entity target holding no entity. Nothing set it, so its script hears nothing of it.
     if (target_entity_id) {
@@ -721,8 +725,7 @@ bool Weapon::can_attack(const Entity& target, const SimState* sim) const {
            !restrict_disallow.matches(categories);
 }
 
-bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState* sim,
-                        bool in_reach) const {
+bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState* sim) const {
     if (!can_pick(owner, target, sim)) {
         return false;
     }
@@ -730,7 +733,9 @@ bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState*
     const f32 dz = target.position().z - owner.position().z;
     const f32 dist2 = dx * dx + dz * dz;
     const f32 reach = max_range * std::max(1.0f, tracking_radius);
-    if (in_reach && (dist2 > reach * reach || dist2 < min_range * min_range)) return false;
+    if (dist2 > reach * reach || dist2 < min_range * min_range) {
+        return false;
+    }
     // Only targets within the arc about the unit's facing; a mobile unit's
     // slaved weapon may hold one outside it, which its hull turns to (Moho's
     // FindBestEnemy keeps NoSolution candidates for it).
@@ -923,16 +928,16 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         set_target_entity(EntityId());
     }
     // An aircraft's weapons take its ordered target once the attack engages,
-    // then at any range: Moho's CAcquireTargetTask gives a flier the
-    // attacker's desired target out of reach too, so it is kept through the
-    // runs' loops.
+    // then at any range and bearing: Moho's CAcquireTargetTask gives a flier
+    // the attacker's desired target without asking for a solution, so it is
+    // kept through the runs' loops.
     const EntityId ordered = attack_order_target(owner);
 
     // An attack order's target comes first, for every weapon that can hit
     // it, whatever the priorities say.
     if (ordered && !passing_over) {
         const Entity* target = registry.find(ordered);
-        if (target && can_target(owner, *target, sim, !flier)) {
+        if (target && (flier ? can_pick(owner, *target, sim) : can_target(owner, *target, sim))) {
             if (ordered != target_entity_id) {
                 set_target_entity(ordered);
             }

@@ -235,6 +235,12 @@ TEST_CASE("State that decides a unit's next move changes the sync checksum, in i
                  c.facing_clock = 5;
                  u.push_command(c, true);
              }},
+            {"an attack's back-off wait", "orders",
+             [&] {
+                 UnitCommand c = u.command_queue().front();
+                 c.backoff_wait = 3;
+                 u.push_command(c, true);
+             }},
             {"a patrol's look-about clock", "orders",
              [&] { order([](UnitCommand& c) { c.patrol_scan = 4; }); }},
             {"a patrol leg's start", "orders",
@@ -381,6 +387,7 @@ TEST_CASE("A game saved with that state, restored and played on, matches", "[syn
         attack.type = CommandType::Attack;
         attack.target_id = ids[1];
         attack.facing_clock = 5;
+        attack.backoff_wait = 3;
         u.push_command(attack, false);
         osc::sim::EconomyEvent* drain = sim.economy_events().create(ids[0], 0.0, 10.0, 1.0);
         drain->step();
