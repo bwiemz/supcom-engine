@@ -133,13 +133,14 @@ inline int moho_command_number(CommandType type, bool formed) {
 /// Where an AssistMove order is (Moho's IAiCommandDispatchImpl arm for it,
 /// then CUnitAssistMoveTask's states for a transport's).
 enum class AssistPhase : u8 {
-    Start,     ///< not yet dispatched: who carries it out, and how
-    Preparing, ///< a transport's: it looks for units to carry 2 ticks on
-    Waiting,   ///< a transport's: looking (CUnitAssistMoveTask::Wait)
-    Loading,   ///< a transport's: picking units up (its CUnitLoadUnits)
-    Unloading, ///< a transport's: setting them down at the goal (CUnitUnloadUnits)
-    Finishing, ///< a transport's: none left to carry; it goes to the goal
-    Walking,   ///< a land unit's: it drives to the goal, or boards its transport
+    Start,         ///< not yet dispatched: who carries it out, and how
+    Preparing,     ///< a transport's: it looks for units to carry 2 ticks on
+    Waiting,       ///< a transport's: looking (CUnitAssistMoveTask::Wait)
+    Loading,       ///< a transport's: picking units up (its CUnitLoadUnits)
+    Unloading,     ///< a transport's: setting them down at the goal (CUnitUnloadUnits)
+    Finishing,     ///< a transport's: none left to carry; it goes to the goal
+    Walking,       ///< a land unit's: it drives to the goal, or boards its transport
+    LoadPreparing, ///< a transport's: its load made, which takes its units next tick
 };
 
 /// Where a refuel order is (Moho's CUnitRefuel task states, M206r).

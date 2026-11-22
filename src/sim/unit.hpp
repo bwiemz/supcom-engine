@@ -1466,6 +1466,8 @@ public:
     /// A transport's pickup (M206m): the units given slots, not yet aboard;
     /// whether it is at their centre; the ticks it has waited there.
     const std::vector<EntityId>& pickup_ids() const { return pickup_ids_; }
+    const std::vector<EntityId>& pickup_called() const { return pickup_called_; }
+    const std::vector<EntityId>& load_requested() const { return load_requested_; }
     bool pickup_ready() const { return pickup_phase_ == PickupPhase::Waiting; }
     bool pickup_running() const { return pickup_phase_ != PickupPhase::None; }
     i32 pickup_ticks() const { return pickup_ticks_; }
@@ -2341,6 +2343,8 @@ private:
     enum class PickupPhase : u8 { None, Holding, Flying, Landing, Waiting };
     PickupPhase pickup_phase_ = PickupPhase::None;
     std::vector<EntityId> pickup_ids_;
+    std::vector<EntityId> pickup_called_;  ///< of pickup_ids_, those that have called it
+    std::vector<EntityId> load_requested_; ///< CUnitLoadUnits' mRequestedUnits, till its first tick
     Vector3 pickup_center_{};
     Quaternion pickup_facing_{};
     i32 pickup_ticks_ = 0;
