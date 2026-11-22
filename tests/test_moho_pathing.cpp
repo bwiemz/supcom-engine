@@ -1048,3 +1048,28 @@ TEST_CASE("A move whose navigator aborts ends as Moho's move task hears AINAVEVE
     w.sim.tick();
     CHECK(tank->command_queue().empty());
 }
+
+TEST_CASE("With Moho pathing a navigator's goal position is its goal cell's centre while it moves, "
+          "and its unit's place when it has no move",
+          "[moho_pathing]") {
+    World w(true);
+    Unit& tank = *w.make("tank", 20.5f, 30.5f);
+    Unit& big = *w.make("bigtank", 20.5f, 70.5f);
+    CHECK(tank.navigator().goal_pos(tank).x == tank.position().x);
+    CHECK(tank.navigator().goal_pos(tank).z == tank.position().z);
+    World::move(tank, 60.95f, 30.05f);
+    World::move(big, 60.95f, 70.05f);
+    for (int t = 0; t < 3; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(tank.navigator().busy());
+    CHECK(tank.navigator().goal_pos(tank).x == 60.5f);
+    CHECK(tank.navigator().goal_pos(tank).z == 30.5f);
+    REQUIRE(big.navigator().busy());
+    CHECK(big.navigator().goal_pos(big).x == 60.5f);
+    CHECK(big.navigator().goal_pos(big).z == 70.5f);
+    int ticks = 0;
+    w.run(tank, "the tank arrives", 400, ticks);
+    CHECK(tank.navigator().goal_pos(tank).x == tank.position().x);
+    CHECK(tank.navigator().goal_pos(tank).z == tank.position().z);
+}

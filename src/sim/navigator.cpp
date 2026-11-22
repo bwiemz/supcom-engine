@@ -124,6 +124,19 @@ void Navigator::abort_move(bool keep_spline) {
     reset_steering();
 }
 
+Vector3 Navigator::goal_pos(const Unit& unit) const {
+    if (status_ == Status::Idle) {
+        return unit.position();
+    }
+    if (!moho_active_) {
+        return goal_;
+    }
+    const blueprints::Footprint& fp = unit.footprint();
+    const OccupancyRect& at = moho_.goal().outer;
+    return {static_cast<f32>(at.x0) + static_cast<f32>(fp.size_x) * 0.5f, goal_.y,
+            static_cast<f32>(at.z0) + static_cast<f32>(fp.size_z) * 0.5f};
+}
+
 void Navigator::reset_steering() {
     collision_ = {};
     next_check_ = 0;

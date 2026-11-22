@@ -439,3 +439,28 @@ TEST_CASE("Under FAF's SetNavigatorPersonalPosMaxDistance a navigator picks targ
         else CHECK(farthest > 100.0f);
     }
 }
+
+TEST_CASE("A navigator is PathFinding while its army looks for its way, and has a problem getting "
+          "to its goal when the way it is given stops short",
+          "[path_navigator]") {
+    for (const bool walled : {false, true}) {
+        DYNAMIC_SECTION((walled ? "the goal walled in" : "the goal open")) {
+            Walk w;
+            if (walled) {
+                w.grid.fill(oc::kLand, {80, 80, 96, 82}, true);
+                w.grid.fill(oc::kLand, {80, 94, 96, 96}, true);
+                w.grid.fill(oc::kLand, {80, 82, 82, 94}, true);
+                w.grid.fill(oc::kLand, {94, 82, 96, 94}, true);
+            }
+            w.start(0, 20.5f, 87.5f, {88, 88});
+            CHECK_FALSE(w.nav.pathfinding());
+            tick_until([&] { w.step(); }, "it asks", 5, [&] { return w.nav.pathfinding(); });
+            CHECK_FALSE(w.nav.goal_problem());
+            tick_until([&] { w.step(); }, "it has its answer", 50,
+                       [&] { return !w.nav.pathfinding(); });
+            CHECK(w.nav.goal_problem() == walled);
+            w.nav.set_goal({{40, 40, 41, 41}, {}}, w.x, w.z);
+            CHECK_FALSE(w.nav.goal_problem());
+        }
+    }
+}

@@ -244,12 +244,12 @@ std::vector<Unit*> Unit::assist_pickups(const UnitCommand& cmd, SimContext& ctx,
         if (u->transport_id() || q.front().assigned_id || u->has_unit_state("TransportLoading"))
             continue;
         if (!transport_can_carry(*u) || !transport_has_space_for(*u)) continue;
-        if (u->navigator_.status() == Navigator::Status::WaitingForPath) {
+        if (u->navigator_.moho_path().pathfinding()) {
             pathfinding = true;
             continue;
         }
         if (!u->needs_pickup(*this)) continue;
-        const f32 score = distance_xz(u->navigator_.goal(), u->position()) -
+        const f32 score = distance_xz(u->navigator_.goal_pos(*u), u->position()) -
                           distance_xz(position(), u->position()) * 0.33f;
         if (score > best) {
             best = score;
@@ -270,18 +270,20 @@ std::vector<Unit*> Unit::assist_pickups(const UnitCommand& cmd, SimContext& ctx,
 bool Unit::needs_pickup(const Unit& transport) const {
     // Moho's Unit::NeedsPickup (0x005F0E80; the Steam exe's 0x005F7950): its
     // time to drive to its goal against the transport's to come for it and
-    // carry it there. (Moho's UNITSTATE_ProblemGettingToGoal, which needs a
-    // lift at once, isn't kept.)
+    // carry it there.
+    if (navigator_.moho_path().goal_problem()) {
+        return true;
+    }
     const f32 transport_speed =
         transport.can_fly() ? transport.max_airspeed() : transport.max_speed();
     if (transport_speed < 0.001f) return false;
     const f32 speed = can_fly() ? max_airspeed() : max_speed();
     if (speed < 0.001f) return false;
     const f32 inv_speed = 1.0f / speed;
-    const f32 goal_time = inv_speed * distance_xz(navigator_.goal(), position());
+    const f32 to_goal = distance_xz(navigator_.goal_pos(*this), position());
+    const f32 goal_time = inv_speed * to_goal;
     const f32 to_transport = distance_xz(transport.position(), position());
-    f32 pickup_time =
-        (to_transport + distance_xz(navigator_.goal(), position())) / transport_speed + 5.0f;
+    f32 pickup_time = (to_transport + to_goal) / transport_speed + 5.0f;
     if (transport.layer() == "Air" || to_transport > guard_scan_radius_) {
         pickup_time += 4.0f;
     } else {
