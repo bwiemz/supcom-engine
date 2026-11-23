@@ -225,7 +225,8 @@ struct UnitCommand {
     bool started = false;
     /// Out of reach, the unit was sent just clear of its target, and works
     /// from where it arrives or gives up (build, repair, reclaim, capture;
-    /// see sim/work_range.hpp); runtime state.
+    /// see sim/work_range.hpp); an attack on a unit, its unit on the ground
+    /// was sent at its target weapon's square about the target; runtime state.
     bool approached = false;
     /// The attack has handed its target to the attacker (Moho's desired target): within a weapon's
     /// reach, or an aircraft's EngageDistance. Runtime state.
@@ -233,6 +234,12 @@ struct UnitCommand {
     /// A parked attack's ticks until it next asks its unit to face its target
     /// AttackAngle off (Moho's attack task returns 10). Runtime state.
     i32 facing_clock = 0;
+    /// An attack on a unit too close to it backing off (Moho's attack task in its Starting state):
+    /// 0, none; else the ticks until the task looks again, at 1. Runtime state.
+    i32 backoff_wait = 0;
+    /// An attack on a unit: its target's aim point when the attack last set its unit's goal on the
+    /// ground (Moho's mTargetPosition). Runtime state.
+    Vector3 goal_aim;
     /// A build's site skirt, looked up once from its blueprint (runtime
     /// state; 0 until then).
     f32 site_skirt_x = 0;
@@ -247,7 +254,7 @@ struct UnitCommand {
     /// CUnitMobileBuildTask leaves TASKSTATE_Preparing returning 1. A guard's
     /// helper is walking to a structure factory's build place: set when the
     /// walk is sent, cleared when it ends, so a later move is not taken for
-    /// it. Runtime state.
+    /// it. An attack's task has passed Preparing and Waiting. Runtime state.
     bool prepared = false;
     /// A mobile build's task has found its site in range (Moho's
     /// TASKSTATE_Waiting) and turned to it (TASKSTATE_Starting): it looks at

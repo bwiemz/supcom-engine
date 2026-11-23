@@ -510,6 +510,28 @@ TEST_CASE("A HoverOverAttack aircraft flies on past its reach and hangs over its
     CHECK_FALSE(h.air_combat().flying);
 }
 
+TEST_CASE("Once its attack engages, an aircraft's AutoInitiateAttackCommand weapon holds the "
+          "target outside its arc",
+          "[air_circling]") {
+    World w;
+    w.foe();
+    Unit& g = *w.make("gunship", 20.0f, 64.0f);
+    World::arm(g, 22.0f);
+    osc::sim::Weapon& gun = *g.weapons()[0];
+    gun.heading_arc_range = 30.0f;
+    gun.auto_initiate_attack_command = true;
+    const Unit& target = *w.make("tank", 40.0f, 64.0f, 2);
+    World::attack(g, target);
+    tick_until([&] { w.tick(g); }, "its attack engages", 300, [&] { return engaged(g); });
+    for (int t = 0; t < 60; ++t) {
+        w.tick(g);
+        if (t >= 2) {
+            INFO("tick " << t);
+            REQUIRE(gun.target_entity_id == target.entity_id());
+        }
+    }
+}
+
 TEST_CASE("A unit that can't fly stops at its weapon's reach of its attack target",
           "[air_circling]") {
     World w;

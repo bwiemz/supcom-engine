@@ -385,6 +385,8 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.b(c.approached);
     w.b(c.engaged);
     w.i32v(c.facing_clock);
+    w.i32v(c.backoff_wait);
+    w.vec3(c.goal_aim);
     w.f32v(c.site_skirt_x);
     w.f32v(c.site_skirt_z);
     w.b(c.site_cleared);
@@ -454,6 +456,8 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.approached = r.b();
     c.engaged = r.b();
     c.facing_clock = r.i32v();
+    c.backoff_wait = r.i32v();
+    c.goal_aim = r.vec3();
     c.site_skirt_x = r.f32v();
     c.site_skirt_z = r.f32v();
     c.site_cleared = r.b();
@@ -543,6 +547,11 @@ void StateIO::save(StateWriter& w, const Navigator& n) {
     w.str(n.moho_layer_);
     w.f32v(n.moho_draft_);
     w.b(n.moho_amphibious_);
+    w.i32v(n.moho_square_.x0);
+    w.i32v(n.moho_square_.z0);
+    w.i32v(n.moho_square_.x1);
+    w.i32v(n.moho_square_.z1);
+    w.b(n.moho_square_set_);
     save(w, n.spline_);
     w.b(n.has_spline_);
     w.b(n.waypoint_refresh_);
@@ -595,6 +604,11 @@ void StateIO::load(StateReader& r, Navigator& n, SimState& sim, i32 army) {
     n.moho_layer_ = r.str();
     n.moho_draft_ = r.f32v();
     n.moho_amphibious_ = r.b();
+    n.moho_square_.x0 = r.i32v();
+    n.moho_square_.z0 = r.i32v();
+    n.moho_square_.x1 = r.i32v();
+    n.moho_square_.z1 = r.i32v();
+    n.moho_square_set_ = r.b();
     load(r, n.spline_);
     n.has_spline_ = r.b();
     n.waypoint_refresh_ = r.b();

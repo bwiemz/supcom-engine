@@ -335,15 +335,13 @@ public:
     /// cylinder, as Moho's is: horizontal distance within the min and max
     /// radius, and height within MaxHeightDiff when that is set.
     /// Priorities are not checked: an attack order can pick any such unit.
-    /// `in_reach` false leaves the range out: an aircraft's weapons keep its
-    /// ordered target through its runs' loops.
-    bool can_target(const Unit& owner, const Entity& target, const SimState* sim,
-                    bool in_reach = true) const;
+    bool can_target(const Unit& owner, const Entity& target, const SimState* sim) const;
     /// can_target, wherever the target is.
     bool can_pick(const Unit& owner, const Entity& target, const SimState* sim) const;
     /// Moho's CanWeaponAttackEntityTarget (layer caps, side of the water, restrictions):
-    /// SetTargetEntity's gate and, for the automatic fire step, CFireWeaponTask's.
-    bool can_attack(const Entity& target, const SimState* sim) const;
+    /// SetTargetEntity's gate and, for the automatic fire step, CFireWeaponTask's. With `rng`, a
+    /// target on the seabed draws for its target point, as Moho's does.
+    bool can_attack(const Entity& target, const SimState* sim, SimRandom* rng = nullptr) const;
     /// Moho's UnitWeapon::CanAttackTarget(holder's target, this).
     bool can_attack_target_of(const Unit& owner, const Weapon& holder,
                               const EntityRegistry& registry, const SimState* sim) const;

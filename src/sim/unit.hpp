@@ -1133,7 +1133,8 @@ public:
     /// Moho's CAiPathNavigator::RequestPath; an aircraft flies to
     /// air_target(goal), or with `chase` to `goal` itself, a mobile unit
     /// followed (CAiNavigatorAir::SetDestUnit).
-    void set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase = false);
+    void set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase = false,
+                       const OccupancyRect* square = nullptr);
     /// A goal Moho's SIM_TryToBuild hands its navigator, sending it off a
     /// build site (build_site_units.cpp): it walks there on no order, for as
     /// long as its navigator keeps that goal.
@@ -1820,12 +1821,9 @@ private:
     /// Flies to land_goal(goal); true once there.
     bool reach_land_goal(const Vector3& goal, SimContext& ctx);
     /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
-    /// target, and one that needs prep (NeedPrep) hears OnGotTarget. False
-    /// when a script took the unit or the order.
+    /// target and looks again at once, and one that needs prep (NeedPrep)
+    /// hears OnGotTarget. False when a script took the unit or the order.
     bool engage(UnitCommand& cmd, lua_State* L);
-    /// SetDesiredTarget's notice: each NeedPrep weapon hears OnGotTarget.
-    /// False when a script took the unit.
-    bool ready_prep_weapons(lua_State* L);
     /// Moho's ~CUnitAttackTargetTask: once the attack order whose task ran
     /// is gone from the head of the queue (done, cleared or replaced), the
     /// attacker stops. False when a script took the unit.

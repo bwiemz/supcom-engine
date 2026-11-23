@@ -61,8 +61,7 @@ void flat(SimState& sim) {
 }
 
 /// A land unit facing +Z (heading 0) that turns 90 degrees a second (9 a
-/// tick), with one gun of range 40 that never fires (no damage: its target
-/// stays as set).
+/// tick), with one gun of range 40 and no damage.
 Unit* hull(SimState& sim, f32 x, f32 z, const std::string& motion = "RULEUMT_Land") {
     auto u = std::make_unique<Unit>();
     u->set_army(0);
@@ -180,6 +179,9 @@ TEST_CASE("The first slaved weapon with a target decides", "[hull-facing]") {
     second->slaved_to_body = true;
     u->add_weapon(std::move(second));
     gun(*u).slaved_to_body = true;
+    // switched off, the guns look for no target: theirs stay as set
+    gun(*u, 0).enabled = false;
+    gun(*u, 1).enabled = false;
     Unit* left = dummy(sim, 0, 0);
     Unit* right = dummy(sim, 0, 0);
     left->set_position(at_bearing(*u, -40.0f, 20.0f));

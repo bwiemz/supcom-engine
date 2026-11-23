@@ -20,16 +20,18 @@
 namespace osc::sim {
 
 void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
-                          const Vector3& current_pos,
-                          const std::string& layer,
-                          f32 draft, bool amphibious) {
+                         const Vector3& current_pos, const std::string& layer, f32 draft,
+                         bool amphibious, const OccupancyRect* square) {
     ended_ = false;
     // Moho pathing: the goal is taken up by navigate() in the next army phase, where its
     // footprint is to hand (Moho's SetGoal only sets it thinking). Asked again
     // for the goal it already has, it carries on.
     if (sim_ && sim_->moho_pathing() && sim_->path_tables() && layer != "Air") {
-        const bool same = moho_active_ && pos.x == goal_.x && pos.z == goal_.z;
+        const bool same = moho_active_ && pos.x == goal_.x && pos.z == goal_.z &&
+                          (square != nullptr) == moho_square_set_;
         goal_ = pos;
+        moho_square_set_ = square != nullptr;
+        moho_square_ = square ? *square : OccupancyRect{};
         moho_pending_ = true;
         moho_layer_ = layer;
         moho_draft_ = draft;
@@ -280,19 +282,24 @@ void Navigator::navigate(Unit& unit) {
         // destination first moved to a place it fits. Reservations aside: a
         // Moho task that minds them settles its goal itself (Unit::PrepareMove).
         const blueprints::Footprint& fp = unit.footprint();
-        Vector3 dest = goal_;
-        prepare_move(unit, *map, sim_->occupancy(), sim_->move_bounds(unit.army()), dest, 0,
-                     nullptr, {false});
-        const OccupancyRect at = footprint_rect(fp, dest.x, dest.z);
-        const path::NavGoal goal{{at.x0, at.z0, at.x0 + 1, at.z0 + 1}, {}};
+        path::NavGoal goal{moho_square_, {}};
+        if (!moho_square_set_) {
+            Vector3 dest = goal_;
+            prepare_move(unit, *map, sim_->occupancy(), sim_->move_bounds(unit.army()), dest, 0,
+                         nullptr, {false});
+            const OccupancyRect at = footprint_rect(fp, dest.x, dest.z);
+            goal.outer = {at.x0, at.z0, at.x0 + 1, at.z0 + 1};
+        }
+        const OccupancyRect& at = goal.outer;
         // The move it is on, asked again (an order re-asserts its goal while
         // it waits for a path): it carries on, whatever its path navigator
         // says. One its army's queue failed is heard below and ends, as
         // Moho's move task ends on the navigator's Failed; taken
         // for a new goal, it would search again, round and round. A move
         // that ended has cleared moho_active_.
-        const bool same =
-            moho_active_ && moho_.goal().outer.x0 == at.x0 && moho_.goal().outer.z0 == at.z0;
+        const bool same = moho_active_ && moho_.goal().outer.x0 == at.x0 &&
+                          moho_.goal().outer.z0 == at.z0 && moho_.goal().outer.x1 == at.x1 &&
+                          moho_.goal().outer.z1 == at.z1;
         if (!same) {
             moho_.set_unit(fp, cls, unit.layer() == "Water");
             moho_.set_goal(goal, pos.x, pos.z);

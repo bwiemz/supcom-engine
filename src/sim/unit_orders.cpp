@@ -16,6 +16,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/prepare_move.hpp"
 #include "sim/script_class.hpp"
+#include "sim/sim_random.hpp"
 #include "sim/work_range.hpp"
 #include "map/terrain.hpp"
 
@@ -269,10 +270,12 @@ ReclaimCosts reclaim_costs(lua_State* L, const Unit& reclaimer, const Entity& ta
 
 /// The weapon `unit` attacks `target` with: the first of its weapons, in
 /// blueprint order, that can attack it (Moho's CAiAttackerImpl::
-/// GetTargetWeapon), or null.
-const Weapon* target_weapon(const Unit& unit, const Entity& target, const SimState* sim) {
+/// GetTargetWeapon: UnitWeapon::CanAttackTarget, switched off or not, of any
+/// army), or null.
+const Weapon* target_weapon(const Unit& unit, const Entity& target, const SimState* sim,
+                            SimRandom* rng = nullptr) {
     for (const auto& w : unit.weapons()) {
-        if (w->enabled && w->attacks_on_order() && w->can_pick(unit, target, sim)) {
+        if (!w->dummy && w->can_attack(target, sim, rng)) {
             return w.get();
         }
     }
@@ -393,7 +396,8 @@ Vector3 Unit::air_target(const Vector3& goal, const map::Terrain* terrain) const
 // faf-re CAiPathNavigator's UpdateWaterFavorAltFootprintMode: the alt
 // footprint while it, and every FAVORSWATER unit given its order, are on
 // water and bound for water.
-void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase) {
+void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase,
+                         const OccupancyRect* square) {
     static const CategoryName kFavorsWater{"FAVORSWATER"};
     // CUnitMoveTask's constructor
     if (!is_air_unit()) {
@@ -444,7 +448,7 @@ void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase)
     }
     if (!uses_alt_footprint()) {
         navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+                            is_amphibious() || is_hover(), square);
         if (is_air_unit() && !chase) {
             navigator_.set_air_target(air_target(goal, ctx.terrain));
         }
@@ -454,7 +458,7 @@ void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase)
     const bool afloat =
         (fp.caps & (blueprints::occupancy::kLand | blueprints::occupancy::kSeabed)) == 0;
     navigator_.set_goal(goal, ctx.pathfinder, position(), afloat ? std::string("Water") : layer_,
-                        std::max(naval_draft_, fp.min_water_depth), false);
+                        std::max(naval_draft_, fp.min_water_depth), false, square);
 }
 
 bool Unit::ferry_fly(SimContext& ctx, const Vector3& to, bool through) {
@@ -473,7 +477,7 @@ bool Unit::ferry_fly(SimContext& ctx, const Vector3& to, bool through) {
 bool Unit::approach_update(SimContext& ctx) {
     if (navigator_.status() == Navigator::Status::WaitingForPath) {
         const Vector3 goal = navigator_.goal();
-        set_path_goal(goal, ctx);
+        set_path_goal(goal, ctx, false, navigator_.square());
     }
     return nav_update();
 }
@@ -692,16 +696,6 @@ void Unit::begin_order(UnitCommand& cmd, SimContext& ctx) {
         if (destroyed() || is_dying()) return;
         weapons_[i]->drop_target(L);
     }
-}
-
-bool Unit::ready_prep_weapons(lua_State* L) {
-    // UnitWeapon::NotifyOnGotTarget: a NeedPrep weapon hears OnGotTarget before it takes the
-    // target, so its script readies it
-    for (size_t i = 0; i < weapons_.size(); ++i) {
-        if (destroyed() || is_dying()) return false;
-        if (weapons_[i]->need_prep) weapons_[i]->call_script(L, "OnGotTarget");
-    }
-    return !destroyed() && !is_dying();
 }
 
 bool Unit::engage(UnitCommand& cmd, lua_State* L) {
@@ -1026,11 +1020,6 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
         if (w->enabled && !w->fire_on_death && !w->manual_fire)
             best_range = std::max(best_range, w->max_range);
     }
-    if (best_range <= 0) {
-        release_navigator();
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
     // Check distance to target
     f32 dx = target->position().x - position().x;
     f32 dz = target->position().z - position().z;
@@ -1073,14 +1062,34 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
             }
         }
     }
-    // The attack is made with its target weapon, and the unit is in reach
-    // once the target is within that weapon's range (CUnitAttackTargetTask::
-    // TaskTick, Processing: TargetIsWithinWeaponAttackRange), not its
-    // longest weapon's: a frigate's anti-air reaches 48, its gun 28. With no
-    // weapon that can hit the target, its longest weapon's range stands.
-    const Weapon* const weapon = target_weapon(*this, *target, ctx.sim);
-    const f32 reach = weapon ? weapon->max_range : best_range;
-    const bool in_reach = dist2 <= reach * reach;
+    // Moho's attack task asks UnitWeapon::CanAttackTarget as it ticks, till its attacker has the
+    // target; each ask of a target on the seabed draws for a target point
+    SimRandom* const rng =
+        cmd.engaged || (is_mobile() && cmd.backoff_wait > 1) ? nullptr : &registry.sim_random();
+    const auto ask_attacker = [&] {
+        for (const auto& w : weapons_) {
+            if (!w->dummy && w->can_attack(*target, ctx.sim, rng)) {
+                return;
+            }
+        }
+    };
+    // In reach once its target weapon has a firing solution for the target, heading arc and
+    // minimum range included (CUnitAttackTargetTask::TaskTick, Processing:
+    // TargetIsWithinWeaponAttackRange); with no target weapon, never.
+    const Weapon* const weapon = target_weapon(*this, *target, ctx.sim, rng);
+    if (rng && !cmd.prepared && (weapon || keeps_attack_without_weapon(*this, cmd))) {
+        // Preparing, then Waiting, Update's first look on the ground and Processing (or an
+        // immobile unit's Complete), each returning 0
+        cmd.prepared = true;
+        target_weapon(*this, *target, ctx.sim, rng);
+        if (is_mobile() && !can_fly() && target_weapon(*this, *target, ctx.sim, rng)) {
+            target_weapon(*this, *target, ctx.sim, rng);
+        }
+        target_weapon(*this, *target, ctx.sim, rng);
+    }
+    const bool in_reach =
+        weapon && weapon->enabled &&
+        weapon->solution_status(*this, target->position(), dist2) == Weapon::Solution::Available;
     // A plain attack's unit with no weapon that can hit its target gives the
     // order up, unless it is DIRECTFIRE or a sub under water
     // (CUnitAttackTargetTask::TaskTick's first test, every tick: its
@@ -1089,22 +1098,60 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     // Moho's UnitWeapon::CanAttackTarget asks nothing of alliance, cloak or
     // DoNotTarget, and passes over a disabled weapon only with
     // IgnoreIfDisabled, which the engine doesn't read.
-    if (!keeps_attack_without_weapon(*this, cmd)) {
-        const bool can_hit = std::any_of(weapons_.begin(), weapons_.end(), [&](const auto& w) {
-            return w->attacks_on_order() && w->can_attack(*target, ctx.sim);
-        });
-        if (!can_hit) {
-            release_navigator();
-            command_queue_.pop_front();
-            return OrderStep::Next;
-        }
+    if (!weapon && !keeps_attack_without_weapon(*this, cmd)) {
+        release_navigator();
+        command_queue_.pop_front();
+        return OrderStep::Next;
     }
     // An immobile unit's attacker has the target from the start, and the attack fails once its
     // target weapon has no solution for it (CUnitAttackTargetTask::HandleAiAttackerEvent).
-    if (!is_mobile() && cmd.engaged && weapon &&
-        weapon->solution_status(*this, target->position(), dist2) != Weapon::Solution::Available) {
+    if (!is_mobile() && cmd.engaged && weapon && weapon->enabled && !in_reach) {
         command_queue_.pop_front();
         return OrderStep::Next;
+    }
+    // Moho's CAiAttackerImpl::IsTooClose: no weapon that can hit the target has a solution for
+    // it, and one has it inside its minimum range
+    const auto too_close = [&] {
+        bool inside = false;
+        for (const auto& w : weapons_) {
+            if (w->dummy || !w->can_attack(*target, ctx.sim, rng)) {
+                continue;
+            }
+            const Weapon::Solution status = w->solution_status(*this, target->position(), dist2);
+            if (status == Weapon::Solution::Available && w->enabled) {
+                return false;
+            }
+            if (status == Weapon::Solution::InsideMinRange) {
+                inside = true;
+            }
+        }
+        return inside;
+    };
+    // The task's Starting state: too close, the unit backs off GuardScanRadius from the target and
+    // looks again 9 ticks on (return 10)
+    if (is_mobile() && cmd.backoff_wait > 1) {
+        --cmd.backoff_wait;
+        nav_update();
+        return OrderStep::Hold;
+    }
+    const bool looked_again = is_mobile() && cmd.backoff_wait == 1;
+    if (looked_again) {
+        cmd.backoff_wait = 0;
+        if (too_close() && dist2 > 0) {
+            const f32 dist = std::sqrt(dist2);
+            const Vector3 at = target->position();
+            set_path_goal({at.x - dx / dist * guard_scan_radius_, at.y,
+                           at.z - dz / dist * guard_scan_radius_},
+                          ctx);
+            nav_update();
+            cmd.backoff_wait = 9;
+            return OrderStep::Hold;
+        }
+        target_weapon(*this, *target, ctx.sim, rng);
+    }
+    // Processing's TargetIsWithinWeaponAttackRange
+    if (rng && is_mobile() && weapon && weapon->enabled) {
+        weapon->can_attack(*target, ctx.sim, rng);
     }
     // A winged aircraft flies at its target and, once within a weapon's
     // reach or its EngageDistance, makes its runs: Moho's attack task hands
@@ -1112,9 +1159,11 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     // from then on. It never parks at range.
     if (air_combat_rules_.winged && layer_ == "Air" && ctx.sim) {
         const f32 engage_distance = air_combat_rules_.engage_distance;
-        if (!cmd.engaged && (in_reach || dist2 < engage_distance * engage_distance) &&
-            !engage(cmd, ctx.L)) {
-            return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+        if (!cmd.engaged && (in_reach || dist2 < engage_distance * engage_distance)) {
+            ask_attacker();
+            if (!engage(cmd, ctx.L)) {
+                return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+            }
         }
         if (cmd.engaged) {
             navigator_.abort_move();
@@ -1127,9 +1176,11 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     // GetTargetPosGun) at its target weapon's reach, facing it.
     if (circles(*this) && ctx.sim) {
         const f32 engage_distance = air_combat_rules_.engage_distance;
-        if (!cmd.engaged && (in_reach || dist2 < engage_distance * engage_distance) &&
-            !engage(cmd, ctx.L)) {
-            return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+        if (!cmd.engaged && (in_reach || dist2 < engage_distance * engage_distance)) {
+            ask_attacker();
+            if (!engage(cmd, ctx.L)) {
+                return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+            }
         }
         if (cmd.engaged) {
             navigator_.abort_move();
@@ -1150,34 +1201,80 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     // Move toward target: a FormAttack's unit toward its slot about it,
     // the formation centred on the target wherever it goes (Moho's
     // attack task, Update: SetCoords, GetAdjustedFormationPosition)
-    const auto close_in = [&] {
+    const auto close_in = [&](bool look_again) {
         Vector3 goal = target->position();
         if (cmd.has_slot) {
             goal.x += cmd.slot_offset.x;
             goal.z += cmd.slot_offset.z;
         }
+        const bool mobile =
+            target->is_unit() && static_cast<const Unit*>(target)->has_category("MOBILE");
+        if (can_fly()) {
+            if (!navigator_.is_moving() || navigator_.goal().x != goal.x ||
+                navigator_.goal().z != goal.z) {
+                set_path_goal(goal, ctx, mobile && !cmd.has_slot);
+            }
+            nav_update();
+            return;
+        }
+        // Moho's TaskTick, Processing: on the ground the goal stays while the navigator is busy,
+        // till a mobile target is more than 10 off where it was when the goal was set
+        const Vector3 aim = target->is_unit()
+                                ? static_cast<const Unit*>(target)->target_point(cmd.target_point)
+                                : target->position();
+        if (cmd.approached && !look_again && navigator_.busy()) {
+            const f32 ax = cmd.goal_aim.x - aim.x;
+            const f32 ay = cmd.goal_aim.y - aim.y;
+            const f32 az = cmd.goal_aim.z - aim.z;
+            const bool moved = mobile && std::sqrt(az * az + ay * ay + ax * ax) > 10.0f;
+            if (!moved || (ctx.sim && ctx.sim->footprint_fits_at(footprint(), aim.x, aim.z) == 0)) {
+                approach_update(ctx);
+                return;
+            }
+        }
+        cmd.goal_aim = aim;
+        // Moho's Update: the task's first look sends its unit to its target weapon's square about
+        // the target (SetWeaponGoal, while mIsGrounded)
+        if (!cmd.approached && weapon && !cmd.has_slot) {
+            cmd.approached = true;
+            const i32 side = static_cast<i32>(weapon->max_range);
+            const auto x0 = static_cast<i32>(std::lrint(aim.x - static_cast<f32>(side) * 0.5f));
+            const auto z0 = static_cast<i32>(std::lrint(aim.z - static_cast<f32>(side) * 0.5f));
+            const OccupancyRect square{x0, z0, x0 + side, z0 + side};
+            goal.x = std::clamp(position().x, static_cast<f32>(x0), static_cast<f32>(x0 + side));
+            goal.z = std::clamp(position().z, static_cast<f32>(z0), static_cast<f32>(z0 + side));
+            set_path_goal(goal, ctx, false, &square);
+            nav_update();
+            return;
+        }
+        cmd.approached = true;
         if (!navigator_.is_moving() || navigator_.goal().x != goal.x ||
             navigator_.goal().z != goal.z) {
-            const bool mobile =
-                target->is_unit() && static_cast<const Unit*>(target)->has_category("MOBILE");
             set_path_goal(goal, ctx, mobile && !cmd.has_slot);
         }
         nav_update();
     };
     if (!in_reach && is_mobile()) {
-        close_in();
+        if (too_close()) {
+            cmd.backoff_wait = 1;
+            nav_update();
+        } else {
+            close_in(looked_again);
+        }
     } else {
         // In reach, the formation is dropped: from now on the unit attacks
         // as a plain attack does (TaskTick's Processing: mFormation = null).
         cmd.has_slot = false;
+        cmd.approached = true;
         // ...and its attacker is handed the target (UpdateAttacker's
-        // SetDesiredTarget), which a weapon that needs prep hears of
+        // SetDesiredTarget)
         if (!cmd.engaged) {
-            cmd.engaged = true;
-            const UnitCommand* const order = &cmd;
-            if (!ready_prep_weapons(ctx.L)) return destroyed() ? OrderStep::Gone : OrderStep::Hold;
-            // (a script there that changed the unit's orders took this one)
-            if (command_queue_.empty() || &command_queue_.front() != order) return OrderStep::Hold;
+            if (is_mobile()) {
+                ask_attacker();
+            }
+            if (!engage(cmd, ctx.L)) {
+                return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+            }
         }
         // Moho's AAS_6: while its target weapon passes over the target (ReTargetOnMiss), the
         // attack task sends it at the target
@@ -1186,12 +1283,12 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
             return w && w->retarget_cooldown != 0;
         };
         if (is_mobile() && !can_fly() && passed_over()) {
-            close_in();
+            close_in(true);
             return OrderStep::Hold;
         }
         // CUnitAttackTargetTask::TaskTick, Complete: AbortNavigation unless Air.CanFly.
         if (can_fly()) {
-            close_in();
+            close_in(false);
         } else {
             abort_move();
         }
