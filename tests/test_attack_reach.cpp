@@ -7,6 +7,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "blueprints/footprint.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "sim/manipulator.hpp"
@@ -218,6 +219,45 @@ TEST_CASE("Inside its weapon's minimum range, a unit backs off from its target a
         "its attack engages", 200, [&] { return u->command_queue().front().engaged; });
     CHECK(apart(*u, *target) > 6.0f);
     CHECK(ticks >= 11);
+}
+
+TEST_CASE("Closing in, a unit keeps its goal till a MOBILE target is more than 10 off where it was "
+          "when the goal was set",
+          "[attack-reach]") {
+    for (const bool mobile : {true, false}) {
+        CAPTURE(mobile);
+        LuaGuard g;
+        SimState sim(g.L, nullptr);
+        land(sim);
+        Unit* u = attacker(sim, 20.0f, 64.0f, {{10.0f, kSurface}});
+        osc::blueprints::UnitFootprints footprints;
+        footprints.main.size_x = 1;
+        footprints.main.size_z = 1;
+        footprints.main.caps = osc::blueprints::occupancy::kLand;
+        u->set_footprints(footprints);
+        Unit* target = foe(sim, 100.0f, 64.0f);
+        if (mobile) {
+            target->add_category("MOBILE");
+        }
+        attack(*u, *target);
+        tick(sim, *u);
+        REQUIRE(u->navigator().busy());
+        const osc::sim::Vector3 first = u->navigator().goal();
+        CHECK(first.x == 95.0f);
+        CHECK(first.z == 64.0f);
+        target->set_position({100.0f, 7.8f, 70.0f});
+        target->place_now();
+        for (int t = 0; t < 3; ++t) {
+            tick(sim, *u);
+        }
+        CHECK(u->navigator().goal().x == first.x);
+        CHECK(u->navigator().goal().z == first.z);
+        target->set_position({100.0f, 7.8f, 76.0f});
+        target->place_now();
+        tick(sim, *u);
+        CHECK(u->navigator().goal().x == (mobile ? 100.0f : first.x));
+        CHECK(u->navigator().goal().z == (mobile ? 76.0f : first.z));
+    }
 }
 
 TEST_CASE("An attack keeps while its unit's only weapon is switched off, and engages once it is on",

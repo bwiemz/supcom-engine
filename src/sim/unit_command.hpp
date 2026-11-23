@@ -236,6 +236,9 @@ struct UnitCommand {
     /// An attack on a unit too close to it backing off (Moho's attack task in its Starting state):
     /// 0, none; else the ticks until the task looks again, at 1. Runtime state.
     i32 backoff_wait = 0;
+    /// An attack on a unit: its target's aim point when the attack last set its unit's goal on the
+    /// ground (Moho's mTargetPosition). Runtime state.
+    Vector3 goal_aim;
     /// A build's site skirt, looked up once from its blueprint (runtime
     /// state; 0 until then).
     f32 site_skirt_x = 0;

@@ -525,6 +525,10 @@ void mix_command(Fnv& orders, const UnitCommand& cmd, bool need_unpack) {
         orders.mix(0x424b4f46u); // "BKOF"
         orders.mix(static_cast<u64>(static_cast<u32>(cmd.backoff_wait)));
     }
+    if (cmd.goal_aim.x != 0.0f || cmd.goal_aim.y != 0.0f || cmd.goal_aim.z != 0.0f) {
+        orders.mix(0x41494d47u); // "AIMG"
+        mix_vec(orders, cmd.goal_aim);
+    }
     // A specific unload's cargo; only when set, so other orders hash
     // as before it existed.
     if (!cmd.unload_ids.empty()) {

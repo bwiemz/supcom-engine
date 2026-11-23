@@ -1086,36 +1086,49 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     // Move toward target: a FormAttack's unit toward its slot about it,
     // the formation centred on the target wherever it goes (Moho's
     // attack task, Update: SetCoords, GetAdjustedFormationPosition)
-    const auto close_in = [&] {
+    const auto close_in = [&](bool look_again) {
         Vector3 goal = target->position();
         if (cmd.has_slot) {
             goal.x += cmd.slot_offset.x;
             goal.z += cmd.slot_offset.z;
         }
-        // Moho's Update: on the ground the task's first look sends its unit to the nearest part of
-        // its target weapon's square about the target (SetWeaponGoal, while mIsGrounded), and only
-        // once the navigator stops there at the target itself
-        if (weapon && !can_fly() && !cmd.has_slot) {
-            const i32 side = static_cast<i32>(weapon->max_range);
-            const f32 x0 = static_cast<f32>(std::lrint(goal.x - static_cast<f32>(side) * 0.5f));
-            const f32 z0 = static_cast<f32>(std::lrint(goal.z - static_cast<f32>(side) * 0.5f));
-            const f32 x1 = x0 + static_cast<f32>(side);
-            const f32 z1 = z0 + static_cast<f32>(side);
-            if (!cmd.approached) {
-                cmd.approached = true;
-                set_path_goal(
-                    {std::clamp(position().x, x0, x1), goal.y, std::clamp(position().z, z0, z1)},
-                    ctx);
-                nav_update();
-                return;
+        if (can_fly()) {
+            if (!navigator_.is_moving() || navigator_.goal().x != goal.x ||
+                navigator_.goal().z != goal.z) {
+                set_path_goal(goal, ctx);
             }
-            const Vector3 heading = navigator_.goal();
-            if (navigator_.is_moving() && (heading.x != goal.x || heading.z != goal.z) &&
-                heading.x >= x0 && heading.x <= x1 && heading.z >= z0 && heading.z <= z1) {
-                nav_update();
+            nav_update();
+            return;
+        }
+        // Moho's TaskTick, Processing: on the ground the goal stays while the navigator is busy,
+        // till a mobile target is more than 10 off where it was when the goal was set
+        const Vector3 aim = target->is_unit()
+                                ? static_cast<const Unit*>(target)->target_point(cmd.target_point)
+                                : target->position();
+        if (cmd.approached && !look_again && navigator_.busy()) {
+            static const CategoryName kMobile{"MOBILE"};
+            const f32 ax = cmd.goal_aim.x - aim.x;
+            const f32 ay = cmd.goal_aim.y - aim.y;
+            const f32 az = cmd.goal_aim.z - aim.z;
+            const bool moved = target->is_unit() &&
+                               static_cast<const Unit*>(target)->has_category(kMobile) &&
+                               std::sqrt(az * az + ay * ay + ax * ax) > 10.0f;
+            if (!moved || (ctx.sim && ctx.sim->footprint_fits_at(footprint(), aim.x, aim.z) == 0)) {
+                approach_update(ctx);
                 return;
             }
         }
+        cmd.goal_aim = aim;
+        // Moho's Update: the task's first look sends its unit to the nearest part of its target
+        // weapon's square about the target (SetWeaponGoal, while mIsGrounded)
+        if (!cmd.approached && weapon && !cmd.has_slot) {
+            const i32 side = static_cast<i32>(weapon->max_range);
+            const f32 x0 = static_cast<f32>(std::lrint(goal.x - static_cast<f32>(side) * 0.5f));
+            const f32 z0 = static_cast<f32>(std::lrint(goal.z - static_cast<f32>(side) * 0.5f));
+            goal.x = std::clamp(position().x, x0, x0 + static_cast<f32>(side));
+            goal.z = std::clamp(position().z, z0, z0 + static_cast<f32>(side));
+        }
+        cmd.approached = true;
         if (!navigator_.is_moving() || navigator_.goal().x != goal.x ||
             navigator_.goal().z != goal.z) {
             const bool mobile =
@@ -1149,7 +1162,8 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
         nav_update();
         return OrderStep::Hold;
     }
-    if (is_mobile() && cmd.backoff_wait == 1) {
+    const bool looked_again = is_mobile() && cmd.backoff_wait == 1;
+    if (looked_again) {
         cmd.backoff_wait = 0;
         if (too_close() && dist2 > 0) {
             const f32 dist = std::sqrt(dist2);
@@ -1167,7 +1181,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
             cmd.backoff_wait = 1;
             nav_update();
         } else {
-            close_in();
+            close_in(looked_again);
         }
     } else {
         // In reach, the formation is dropped: from now on the unit attacks
@@ -1186,12 +1200,12 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
             return w && w->retarget_cooldown != 0;
         };
         if (is_mobile() && !can_fly() && passed_over()) {
-            close_in();
+            close_in(true);
             return OrderStep::Hold;
         }
         // CUnitAttackTargetTask::TaskTick, Complete: AbortNavigation unless Air.CanFly.
         if (can_fly()) {
-            close_in();
+            close_in(false);
         } else {
             abort_move();
         }
