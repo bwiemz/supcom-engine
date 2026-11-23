@@ -292,8 +292,8 @@ TEST_CASE("An attack on a unit on the seabed draws for a target point each time 
         int first;
         int second;
     };
-    for (const Case c : {Case{true, "Seabed", 7, 3}, Case{false, "Seabed", 0, 0},
-                         Case{true, "Land", 0, 0}}) {
+    for (const Case c :
+         {Case{true, "Seabed", 7, 3}, Case{false, "Seabed", 0, 0}, Case{true, "Land", 0, 0}}) {
         CAPTURE(c.bones, c.layer);
         LuaGuard g;
         SimState sim(g.L, nullptr);
