@@ -266,6 +266,11 @@ public:
     void set_builder_arm(bool b) { builder_arm_ = b; }
     bool builder_arm() const { return builder_arm_; }
     bool tracking() const { return tracking_; }
+    /// A build arm's tracking before this tick's pose turned it.
+    bool was_tracking() const { return was_tracking_; }
+    /// A build arm keeps where the pose just built put its reference bone: it aims from there
+    /// next tick, as Moho's from its actor's prior pose.
+    void note_pose();
     /// A lobbing weapon's launch angle above the horizontal: the pitch to
     /// take instead of the straight line to the target (none: the line).
     void set_elevation(std::optional<f32> radians) {
@@ -282,6 +287,10 @@ public:
 private:
     /// Moho's mResetTime as it tracks: SetResetPoseTime's, else its weapon's
     i32 hold_ticks(const Unit& unit) const;
+    /// Moho's CBuilderArmManipulator::TrackAimDirection, in the pose being built.
+    void track_build_aim(PoseLocals& pose);
+    /// CBuilderArmManipulator::UpdateTrackingAxis for the heading or the pitch.
+    u32 track_lane(PoseLocals& pose, const Vector3& dir, bool heading, bool world, f32 slew_scale);
 
     i32 yaw_bone_ = -1;
     i32 pitch_bone_ = -1;
@@ -304,6 +313,8 @@ private:
     bool on_target_ = false;
     bool builder_arm_ = false;
     bool tracking_ = false;
+    bool was_tracking_ = false;
+    Vector3 aim_from_;
     bool yaw_only_on_target_ = false;
     bool aims_straight_on_disable_ = false;
 };

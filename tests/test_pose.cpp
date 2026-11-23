@@ -550,6 +550,7 @@ TEST_CASE("A builder arm calls its unit's builder tracking hooks as it starts an
     arm.set_builder_arm(true);
     arm.set_yaw_bone(1);
     arm.set_firing_arc(-180.0f, 180.0f, 90.0f, -90.0f, 90.0f, 90.0f);
+    arm.note_pose();
     arm.set_target({10.0f, 0.0f, 11.0f}, 0.2617994f);
 
     unit.tick_manipulators(0.1f, L);
@@ -573,6 +574,79 @@ TEST_CASE("A builder arm calls its unit's builder tracking hooks as it starts an
     CHECK(tracked() == "stop,");
     CHECK(arm.heading() == 0.0f);
     lua_close(L);
+}
+
+TEST_CASE("A builder arm aims in its bone's frame as the manipulators before it turned it",
+          "[pose][build]") {
+    BoneData bd = make_two_bones();
+    Unit unit;
+    unit.set_bone_data(&bd);
+    unit.init_animated_bones();
+    auto& rotator = static_cast<RotateManipulator&>(
+        *unit.add_manipulator(std::make_unique<RotateManipulator>()));
+    rotator.set_bone_index(1);
+    rotator.set_axis('y');
+    rotator.set_current_angle(90.0f);
+    rotator.set_precedence(0);
+    auto& arm =
+        static_cast<AimManipulator&>(*unit.add_manipulator(std::make_unique<AimManipulator>()));
+    arm.set_precedence(10);
+    arm.set_builder_arm(true);
+    arm.set_yaw_bone(1);
+    arm.set_firing_arc(-180.0f, 180.0f, 360.0f, -90.0f, 90.0f, 360.0f);
+    arm.set_target({0.0f, 0.0f, 11.0f}, 0.2617994f);
+
+    for (int i = 0; i < 3; ++i) {
+        unit.tick_manipulators(0.1f, nullptr);
+    }
+    CHECK_THAT(arm.heading(), WithinAbs(-1.5707963, 1e-6));
+    CHECK(arm.on_target());
+    const Vector3 forward = quat_rotate(unit.bone_pose(1).rotation, {0, 0, 1});
+    CHECK_THAT(forward.z, WithinAbs(1.0, 1e-5));
+}
+
+TEST_CASE("A builder arm aims from where its reference bone stood in the last pose",
+          "[pose][build]") {
+    BoneData bd = make_two_bones();
+    Unit unit;
+    unit.set_bone_data(&bd);
+    unit.init_animated_bones();
+    auto& arm =
+        static_cast<AimManipulator&>(*unit.add_manipulator(std::make_unique<AimManipulator>()));
+    arm.set_builder_arm(true);
+    arm.set_yaw_bone(1);
+    arm.set_firing_arc(-180.0f, 180.0f, 3600.0f, -90.0f, 90.0f, 3600.0f);
+    unit.tick_manipulators(0.1f, nullptr);
+
+    arm.set_target({10.0f, 0.0f, 11.0f}, 0.2617994f);
+    unit.set_position({5.0f, 0.0f, 0.0f});
+    unit.tick_manipulators(0.1f, nullptr);
+    CHECK_THAT(arm.heading(), WithinAbs(0.78539816, 1e-6));
+    unit.tick_manipulators(0.1f, nullptr);
+    CHECK_THAT(arm.heading(), WithinAbs(std::atan2(5.0, 10.0), 1e-6));
+}
+
+TEST_CASE("An idle builder arm's pitch settles where Moho's fast arc cosine puts it",
+          "[pose][build]") {
+    BoneData bd = make_two_bones();
+    BoneInfo barrel;
+    barrel.name = "barrel";
+    barrel.parent_index = 1;
+    bd.bones.push_back(barrel);
+    bd.name_to_index["barrel"] = 2;
+    Unit unit;
+    unit.set_bone_data(&bd);
+    unit.init_animated_bones();
+    auto& arm =
+        static_cast<AimManipulator&>(*unit.add_manipulator(std::make_unique<AimManipulator>()));
+    arm.set_builder_arm(true);
+    arm.set_yaw_bone(1);
+    arm.set_pitch_bone(2);
+    arm.set_firing_arc(-180.0f, 180.0f, 360.0f, -90.0f, 90.0f, 360.0f);
+
+    unit.tick_manipulators(0.1f, nullptr);
+    CHECK(arm.heading() == 0.0f);
+    CHECK(arm.pitch() == 6.75916672e-05f);
 }
 
 TEST_CASE("CreateAnimator(unit, true) binds the animation's rate to the unit's motion",
