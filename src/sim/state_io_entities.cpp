@@ -1454,6 +1454,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.size_y_);
     w.f32v(u.size_z_);
     w.f32v(u.average_density_);
+    w.vec3(u.inertia_tensor_);
     w.u8v(u.vet_level_);
     save_str_f64(w, u.stats_);
     w.i32v(u.nuke_silo_ammo_);
@@ -1914,6 +1915,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.size_y_ = r.f32v();
     u.size_z_ = r.f32v();
     u.average_density_ = r.f32v();
+    u.inertia_tensor_ = r.vec3();
     u.vet_level_ = r.u8v();
     u.stats_ = load_str_f64<std::unordered_map<std::string, f64>>(r);
     u.nuke_silo_ammo_ = r.i32v();

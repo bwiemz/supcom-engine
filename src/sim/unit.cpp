@@ -1417,6 +1417,11 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
             return false;
         }
     }
+    // CUnitMotion::MoveTo commits a flier's every CalcMoveAir, flown or landed, normalizing its
+    // orientation.
+    if (can_fly() && !is_being_built() && motion_state_ == MotionState::None) {
+        set_orientation(quat_normalized_moho(pending_orientation()));
+    }
     return true;
 }
 
@@ -3139,38 +3144,33 @@ f32 Unit::track_lift_ground(const map::Terrain* terrain, f32 look_distance, u32 
     return factor;
 }
 
-f32 Unit::lift_toward(f32 want, bool winged, f32 floor_after, const map::Terrain* terrain,
-                      const EntityRegistry* registry, f32 dt) {
+f32 Unit::lift_steer(f32 want, bool winged, const map::Terrain* terrain) const {
+    if (!winged) {
+        return want;
+    }
     const Vector3 pos = pending_position();
-    const AirCombatRules& r = air_combat_rules_;
-    f32 steer = want;
-    if (winged) {
-        const Quaternion q = pending_orientation();
-        const f32 up_y = 1.0f - 2.0f * (q.x * q.x + q.z * q.z);
-        steer = winged_lift(want, up_y, r.lift_factor, elevation_target_ * 0.5f,
-                            pos.y - air_floor(terrain, pos.x, pos.z));
-    }
-    const f32 load = registry ? transport_load_factor(*registry) : 1.0f;
-    const LiftStep step = lift_step(lift_velocity_, steer, r.k_lift, r.k_lift_damping, load, dt);
-    const f32 before = lift_velocity_;
-    lift_velocity_ = step.velocity;
-    f32 y = pos.y + step.rise;
-    if (y < floor_after) {
-        lift_velocity_ = std::max(lift_velocity_, 0.0f);
-        y = floor_after;
-    }
-    air_dv_.y = lift_velocity_ - before;
-    return y;
+    const Quaternion q = pending_orientation();
+    const f32 up_y = 1.0f - 2.0f * (q.x * q.x + q.z * q.z);
+    return winged_lift(want, up_y, air_combat_rules_.lift_factor, elevation_target_ * 0.5f,
+                       pos.y - air_floor(terrain, pos.x, pos.z));
+}
+
+void Unit::set_lift_velocity(f32 v) {
+    air_dv_.y = v - lift_velocity_;
+    lift_velocity_ = v;
+}
+
+BodyMass Unit::body_mass() const {
+    return sim::body_mass(average_density_, size_x_, size_y_, size_z_, inertia_tensor_);
 }
 
 f32 Unit::air_turn_rate() const {
     const Quaternion q = pending_orientation();
-    return quat_rotate(q, body_spin(q, air_spin_, box_inertia(size_x_, size_y_, size_z_))).y;
+    return quat_rotate(q, body_spin(q, air_spin_, body_mass().inv_inertia)).y;
 }
 
 void Unit::set_air_turn_rate(f32 rate) {
-    air_spin_ = momentum_of(pending_orientation(), {0.0f, rate, 0.0f},
-                            box_inertia(size_x_, size_y_, size_z_));
+    air_spin_ = momentum_of(pending_orientation(), {0.0f, rate, 0.0f}, body_mass().inv_inertia);
 }
 
 f32 Unit::transport_load_factor(const EntityRegistry& registry) const {

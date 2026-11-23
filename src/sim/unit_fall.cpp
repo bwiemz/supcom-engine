@@ -120,6 +120,7 @@ void Unit::step_dead_motion(const map::Terrain* terrain, SimRandom& random, lua_
         return;
     }
     if (layer_ != "Air" && !hovers_instead_of_landing()) {
+        set_orientation(quat_normalized_moho(pending_orientation()));
         return;
     }
     start_fall(random, L);
@@ -131,32 +132,29 @@ void Unit::start_fall(SimRandom& random, lua_State* L) {
     }
     set_motion_state(MotionState::Ballistic, L);
     // Its tumble: a draw per axis, x first, over its inverse inertia, turned to the world.
-    const f32 mass = load_metric();
-    const Vector3 inertia = box_inertia(size_x_, size_y_, size_z_);
-    const Vector3 range = tumble_range(mass, inertia);
+    const BodyMass mass = body_mass();
+    const Vector3 range = tumble_range(mass.inv_inertia);
     Vector3 drawn;
     drawn.x = random.range(-range.x, range.x);
     drawn.y = random.range(-range.y, range.y);
     drawn.z = random.range(-range.z, range.z);
-    tumble_torque_ = sim::tumble_torque(pending_orientation(), mass, inertia, drawn);
+    tumble_torque_ = sim::tumble_torque(pending_orientation(), mass.inv_inertia, drawn);
 
-    // No control this beat: SPhysBody::IntegrateFreefallStep with no force and no torque, its
-    // flight body's velocity (the level axes', and the lift's) gaining gravity's pull.
+    // No control this beat: SPhysBody::IntegrateFreefallStep with no force and no torque.
+    const Vector3 pos = pending_position();
     const Vector3 lever = air_body_offset();
-    const f32 was_lift = lift_velocity_;
-    lift_velocity_ = was_lift + -Projectile::GRAVITY * kBodyStep;
-    const f32 half = kBodyStep * 0.5f;
-    Vector3 to = pending_position();
-    to.x += (air_velocity_.x + air_velocity_.x) * half;
-    to.y += (lift_velocity_ + was_lift) * half;
-    to.z += (air_velocity_.z + air_velocity_.z) * half;
-    const SpinStep spin =
-        air_torque_step(pending_orientation(), air_spin_, inertia, Vector3{}, kBodyStep);
-    air_spin_ = spin.momentum;
-    set_flight_orientation(spin.orientation);
+    PhysBody body;
+    body.mass = mass;
+    body.centre = {lever.x + pos.x, lever.y + pos.y, lever.z + pos.z};
+    body.orientation = pending_orientation();
+    body.velocity = {air_velocity_.x, lift_velocity_, air_velocity_.z};
+    body.impulse = air_spin_;
+    integrate_freefall(body, Vector3{}, Vector3{}, kBodyStep);
+    lift_velocity_ = body.velocity.y;
+    air_spin_ = body.impulse;
+    set_flight_orientation(body.orientation);
     const Vector3 turned = air_body_offset();
-    set_position(
-        {to.x + (lever.x - turned.x), to.y + (lever.y - turned.y), to.z + (lever.z - turned.z)});
+    set_position({body.centre.x - turned.x, body.centre.y - turned.y, body.centre.z - turned.z});
 }
 
 void Unit::fall(const map::Terrain* terrain, lua_State* L, SimState* sim) {
@@ -170,9 +168,8 @@ void Unit::fall(const map::Terrain* terrain, lua_State* L, SimState* sim) {
     const Vector3 to{from.x + velocity.x, from.y + velocity.y, from.z + velocity.z};
 
     if (tumble_torque_.x != 0.0f || tumble_torque_.y != 0.0f || tumble_torque_.z != 0.0f) {
-        const SpinStep spin =
-            air_torque_step(pending_orientation(), air_spin_,
-                            box_inertia(size_x_, size_y_, size_z_), tumble_torque_, kBodyStep);
+        const SpinStep spin = integrate_angular_impulse(
+            pending_orientation(), air_spin_, body_mass().inv_inertia, tumble_torque_, kBodyStep);
         air_spin_ = spin.momentum;
         set_flight_orientation(spin.orientation);
     }

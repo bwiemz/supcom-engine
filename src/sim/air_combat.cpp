@@ -13,50 +13,57 @@ namespace osc::sim {
 
 namespace {
 
-/// ComputeAirControl's turn and roll axes toward `wanted`, under KTurn and
-/// KTurnDamping, KRoll and KRollDamping.
-void steer_attitude(Unit& unit, const Quaternion& wanted, const EntityRegistry* registry,
-                    f32 turn_mult, f32 turn_add, f32 dt) {
-    const AirCombatRules& r = unit.air_combat_rules();
-    const Quaternion body = unit.pending_orientation();
-    const f32 load = registry ? unit.transport_load_factor(*registry) : 1.0f;
-    const Vector3 err = attitude_error(body, wanted);
-    const Vector3 inertia = box_inertia(unit.size_x(), unit.size_y(), unit.size_z());
-    const Vector3 w = body_spin(body, unit.air_spin(), inertia);
-    const f32 turn = r.k_turn / load * turn_mult + turn_add;
-    const Vector3 accel{err.x * turn - w.x * r.k_turn_damping,
-                        err.y * turn - w.y * r.k_turn_damping,
-                        err.z * r.k_roll / load - w.z * r.k_roll_damping};
-    const SpinStep step = air_spin_step(body, unit.air_spin(), inertia, accel, dt);
-    unit.set_air_spin(step.momentum);
-    unit.set_flight_orientation(step.orientation);
-}
-
-/// ComputeAirControl's step toward `force`, `lift` and `axes`.
+/// ComputeAirControl's step toward `force`, `lift` and `axes`, integrated as CalcMoveAir does:
+/// the body set at the collision box's centre, then the unit put back under it.
 void air_control(Unit& unit, const Vector3& force, f32 lift, f32 damping, const AirAxes& axes,
                  bool winged, f32 turn_mult, f32 turn_add, SimState* sim,
                  const map::Terrain* terrain, f32 dt) {
     const AirCombatRules& r = unit.air_combat_rules();
-    const Vector3 lever = unit.air_body_offset();
-    const AirMoveStep step = air_move_step(unit.air_velocity(), force, r.k_move, damping, dt);
-    unit.set_air_velocity(step.velocity);
-    Vector3 next = unit.pending_position();
-    next.x += step.move.x;
-    next.z += step.move.z;
-    const f32 floor_here = unit.air_floor(terrain, next.x, next.z);
     const EntityRegistry* registry = sim ? &sim->entity_registry() : nullptr;
-    next.y = unit.lift_toward(lift, winged, floor_here, terrain, registry, dt);
-    steer_attitude(unit, attitude_of(axes), registry, turn_mult, turn_add, dt);
+    const f32 inv_load = 1.0f / (registry ? unit.transport_load_factor(*registry) : 1.0f);
+    const Vector3 pos = unit.pending_position();
+    const Vector3 lever = unit.air_body_offset();
+    PhysBody body;
+    body.mass = unit.body_mass();
+    body.centre = {lever.x + pos.x, lever.y + pos.y, lever.z + pos.z};
+    body.orientation = unit.pending_orientation();
+    body.velocity = {unit.air_velocity().x, unit.lift_velocity(), unit.air_velocity().z};
+    body.impulse = unit.air_spin();
+    AirGains gains;
+    gains.k_move = r.k_move;
+    gains.k_lift_damping = r.k_lift_damping;
+    gains.lift = r.k_lift * inv_load;
+    gains.turn = r.k_turn * inv_load * turn_mult + turn_add;
+    gains.roll = r.k_roll * inv_load;
+    gains.k_turn_damping = r.k_turn_damping;
+    gains.k_roll_damping = r.k_roll_damping;
+    gains.damping = damping;
+    const Vector3 steer{force.x, unit.lift_steer(lift, winged, terrain), force.z};
+    const AirControl control = air_control_of(body, attitude_of(axes), steer, gains);
+    const Vector3 was = body.velocity;
+    integrate_freefall(body, control.force, control.torque, dt);
+
+    const f32 half = dt * 0.5f;
+    const f32 floor_here = unit.air_floor(terrain, pos.x + (body.velocity.x + was.x) * half,
+                                          pos.z + (body.velocity.z + was.z) * half);
+    unit.set_air_velocity({body.velocity.x, 0.0f, body.velocity.z});
+    unit.set_air_spin(body.impulse);
+    unit.set_flight_orientation(body.orientation);
     const Vector3 turned = unit.air_body_offset();
-    next = {next.x + (lever.x - turned.x), next.y + (lever.y - turned.y),
-            next.z + (lever.z - turned.z)};
+    Vector3 next{body.centre.x - turned.x, body.centre.y - turned.y, body.centre.z - turned.z};
+    f32 lift_velocity = body.velocity.y;
+    if (pos.y + (body.velocity.y + was.y) * half < floor_here) {
+        lift_velocity = std::max(lift_velocity, 0.0f);
+        next.y = floor_here + (lever.y - turned.y);
+    }
+    unit.set_lift_velocity(lift_velocity);
     unit.set_current_altitude(next.y - floor_here);
     if (sim) {
         next = sim->clamp_to_playable(next, unit.army());
     }
     unit.set_position(next);
     unit.set_current_airspeed(
-        std::sqrt(step.velocity.x * step.velocity.x + step.velocity.z * step.velocity.z));
+        std::sqrt(body.velocity.x * body.velocity.x + body.velocity.z * body.velocity.z));
 }
 
 Vector3 flat_nose(const Unit& unit) {
@@ -463,17 +470,14 @@ void fly_air_move(Unit& unit, const AirMove& move, SimState* sim, const map::Ter
 void circling_draws(AirCombatState& st, const AirCombatRules& r, f32 attack_elevation, u32 tick,
                     SimRandom& rng) {
     if (tick <= st.timeout_tick) return;
-    // Moho's ScaleRandomUInt32ToRange, (draw x n) >> 32, and a draw scaled
-    // into [0, 1) by 2^-32.
+    // Moho's ScaleRandomUInt32ToRange, (draw x n) >> 32; the others CRandomStream::FRand's.
     const auto scaled = [&](u32 n) {
         return static_cast<u32>((static_cast<u64>(rng.next_u32()) * n) >> 32);
     };
-    const auto fraction = [&] { return static_cast<f64>(rng.next_u32()) * 2.3283064e-10; };
     if (r.circling_dir_change) st.circle_reverse = scaled(100) > 50;
     const f32 most = r.circling_elevation_ratio * attack_elevation;
-    st.circle_elevation = static_cast<f32>(-most + (most + most) * fraction());
-    st.circle_radius_ratio = static_cast<f32>(
-        r.circling_radius_min + (r.circling_radius_max - r.circling_radius_min) * fraction());
+    st.circle_elevation = rng.range(-most, most);
+    st.circle_radius_ratio = rng.range(r.circling_radius_min, r.circling_radius_max);
     // Floored, as Moho's conversions are (not rounded).
     const auto longest = static_cast<i32>(std::floor(r.circling_change_frequency * 2.0f * 10.0f));
     const auto shortest = static_cast<i32>(std::floor(r.circling_change_frequency * 10.0f));
@@ -481,33 +485,38 @@ void circling_draws(AirCombatState& st, const AirCombatRules& r, f32 attack_elev
                       scaled(static_cast<u32>(std::max(longest - shortest, 0)));
 }
 
+namespace {
+
+/// VecSetLength: `v` scaled to `length`, unless it has none.
+void set_length(Vector3& v, f32 length) {
+    const f32 len_sq = (v.x * v.x + v.y * v.y) + v.z * v.z;
+    if (len_sq > 0.0f) {
+        const f32 scale = length / std::sqrt(len_sq);
+        v = {v.x * scale, v.y * scale, v.z * scale};
+    }
+}
+
+} // namespace
+
 CirclingSteer circling_steer(const CirclingInput& in, const map::Terrain* terrain) {
     // The way to the centre, flat; due east when it is overhead.
-    f32 tx = in.center.x - in.position.x;
-    f32 tz = in.center.z - in.position.z;
-    if (tz * tz + tx * tx < 0.000001f) {
-        tx = 1.0f;
-        tz = 0.0f;
+    Vector3 toward{in.center.x - in.position.x, 0.0f, in.center.z - in.position.z};
+    if (toward.z * toward.z + toward.x * toward.x < 0.000001f) {
+        toward = {1.0f, 0.0f, 0.0f};
     }
-    const f32 tlen = std::sqrt(tx * tx + tz * tz);
-    tx /= tlen;
-    tz /= tlen;
-    // A quarter turn of it, the way round. FAF's exe turns it by Moho's
-    // +90 degree yaw (the quaternion at 0x010B6178, cos and sin of +pi/4, made
-    // by 0x00BD7390), or the -90 one (0x010B6158) when the draw says so,
-    // through its row-major QuatToMatrix: (x, z) goes to (z, -x).
-    const f32 gx = in.reverse ? -tz : tz;
-    const f32 gz = in.reverse ? tx : -tx;
+    wm3_normalize(toward);
+    // A quarter turn of it, the way round, by Moho's +-90 degree yaw quaternions (their lanes
+    // from fcos and fsin) through MultQuadVec.
+    constexpr f32 kHalfRoot2 = 0.70710677f;
+    const f32 s = in.reverse ? -kHalfRoot2 : kHalfRoot2;
+    const Vector3 g = mult_quad_vec({s * 0.0f, s, s * 0.0f, kHalfRoot2}, toward);
     // A MinAirspeed's step that way, put out on the circle.
-    f32 ox = gx * in.min_airspeed + in.position.x - in.center.x;
-    f32 oz = gz * in.min_airspeed + in.position.z - in.center.z;
-    const f32 olen = std::sqrt(ox * ox + oz * oz);
-    if (olen > 0.0f) {
-        ox *= in.radius / olen;
-        oz *= in.radius / olen;
-    }
+    Vector3 off{g.x * in.min_airspeed + in.position.x - in.center.x,
+                g.y * in.min_airspeed + in.position.y - in.position.y,
+                g.z * in.min_airspeed + in.position.z - in.center.z};
+    set_length(off, in.radius);
     CirclingSteer out;
-    out.aim = {in.center.x + ox, 0.0f, in.center.z + oz};
+    out.aim = {off.x + in.center.x, 0.0f, off.z + in.center.z};
     // faf-re STIMap::GetElevation(int, int): the water's surface over a seabed.
     const f32 ax = std::nearbyint(out.aim.x);
     const f32 az = std::nearbyint(out.aim.z);
@@ -518,12 +527,11 @@ CirclingSteer circling_steer(const CirclingInput& in, const map::Terrain* terrai
     }
     out.aim.y = in.height + ground;
     Vector3 v{out.aim.x - in.position.x, out.aim.y - in.position.y, out.aim.z - in.position.z};
-    const f32 len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-    const f32 speed = std::min(len, in.max_airspeed);
-    if (len > 0.0f) v = {v.x * speed / len, v.y * speed / len, v.z * speed / len};
+    const f32 len = std::sqrt((v.z * v.z + v.y * v.y) + v.x * v.x);
+    set_length(v, in.max_airspeed > len ? len : in.max_airspeed);
     out.velocity = v;
-    out.toward = {tx, 0.0f, tz};
-    out.facing = osc::dmath::atan2(tx, tz);
+    out.toward = toward;
+    out.facing = osc::dmath::atan2(toward.x, toward.z);
     return out;
 }
 

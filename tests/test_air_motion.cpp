@@ -187,11 +187,86 @@ TEST_CASE("CalcAirMovementDampingFactor: KMove at top speed, more toward KMoveDa
 }
 
 TEST_CASE("ComputeAirControl's level step: KMove x the move against the damping", "[air_motion]") {
-    const osc::sim::AirMoveStep step =
-        osc::sim::air_move_step({12.0f, 0.0f, 0.0f}, {4.0f, 0.0f, 0.0f}, 0.8f, 2.0f, 0.1f);
-    CHECK(step.velocity.x == Approx(9.92f));
-    CHECK(step.move.x == Approx(1.096f));
-    CHECK(step.velocity.z == Approx(0.0f));
+    osc::sim::PhysBody body;
+    body.velocity = {12.0f, 0.0f, 0.0f};
+    osc::sim::AirGains gains;
+    gains.k_move = 0.8f;
+    gains.damping = 2.0f;
+    const osc::sim::AirControl control =
+        osc::sim::air_control_of(body, {}, {4.0f, 0.0f, 0.0f}, gains);
+    osc::sim::integrate_freefall(body, control.force, control.torque, 0.1f);
+    CHECK(body.velocity.x == Approx(9.92f));
+    CHECK(body.centre.x == Approx(1.096f));
+    CHECK(body.velocity.z == Approx(0.0f));
+}
+
+TEST_CASE("ComputeAirControl's wanted attitude and its error, in Moho's float order",
+          "[air_motion]") {
+    osc::sim::AirAxes axes;
+    axes.up = {-0x1.0f0586p-4f, 0x1.c502d6p-2f, -0x1.b988bp-4f};
+    axes.nose = {0x1.124e5ep-1f, 0.0f, -0x1.b051cap-1f};
+    const osc::sim::Quaternion wanted = osc::sim::attitude_of(axes);
+    CHECK(wanted.x == -0x1.a7a66ap-4f);
+    CHECK(wanted.y == 0x1.e5d20ap-1f);
+    CHECK(wanted.z == -0x1.7b11fp-4f);
+    CHECK(wanted.w == 0x1.225488p-2f);
+    const osc::sim::Vector3 error = osc::sim::attitude_error(
+        {-0x1.cac1aep-5f, 0x1.c08a12p-1f, 0x1.c48dap-9f, 0x1.ea6ef8p-2f}, wanted);
+    CHECK(error.x == 0x1.a31e8cp-4f);
+    CHECK(error.y == 0x1.b561e6p-2f);
+    CHECK(error.z == -0x1.5630eep-3f);
+}
+
+TEST_CASE("A drone's step is Moho's to the bit, MoveTo's normalizing included", "[air_motion]") {
+    using osc::sim::Vector3;
+    // Retail's Close_Call (GameReplays): a drone circling its factory, from its tick 48 to 49.
+    const Vector3 pos{0x1.67f96ap+8f, 0x1.858356p+4f, 0x1.3bcf2ap+7f};
+    const Vector3 offset{0.0f, 0.125f, 0.0f};
+    osc::sim::PhysBody body;
+    body.mass = osc::sim::body_mass(0.49f, 0.25f, 0.25f, 0.25f, {});
+    body.orientation = {-0x1.cac1aep-5f, 0x1.c08a12p-1f, 0x1.c48dap-9f, 0x1.ea6ef8p-2f};
+    const Vector3 lever = osc::sim::mult_quad_vec(body.orientation, offset);
+    body.centre = {lever.x + pos.x, lever.y + pos.y, lever.z + pos.z};
+    body.velocity = {-0x1.47e31cp+2f, -0x1.2e5d1cp-2f, -0x1.a03c94p+1f};
+    body.impulse = {-0x1.58497ep-15f, 0x1.45ae2cp-11f, -0x1.d65b8p-18f};
+    osc::sim::AirGains gains;
+    gains.k_move = 4.0f;
+    gains.lift = 3.0f;
+    gains.turn = 12.0f;
+    gains.roll = 3.0f;
+    gains.k_turn_damping = 2.0f;
+    gains.k_roll_damping = 3.0f;
+    osc::sim::AirAxes axes;
+    axes.up = {-0x1.0f0586p-4f, 0x1.c502d6p-2f, -0x1.b988bp-4f};
+    axes.nose = {0x1.124e5ep-1f, 0.0f, -0x1.b051cap-1f};
+    const osc::sim::AirControl control = osc::sim::air_control_of(
+        body, osc::sim::attitude_of(axes), {-0x1.6b8bp+1f, -0x1.953b4p+0f, -0x1.b2c28p+1f}, gains);
+    osc::sim::integrate_freefall(body, control.force, control.torque, 0.1f);
+    const Vector3 turned = osc::sim::mult_quad_vec(body.orientation, offset);
+    CHECK(body.centre.x - turned.x == 359.432434f);
+    CHECK(body.centre.y - turned.y == 24.2928371f);
+    CHECK(body.centre.z - turned.z == 157.524597f);
+    const osc::sim::Quaternion q = osc::sim::quat_normalized_moho(body.orientation);
+    CHECK(q.x == -0.0584606342f);
+    CHECK(q.y == 0.989089012f);
+    CHECK(q.z == -0.00328460056f);
+    CHECK(q.w == 0.135183856f);
+}
+
+TEST_CASE("A landed aircraft's orientation is normalized every tick, as MoveTo does",
+          "[air_motion]") {
+    World w;
+    Unit& a = w.make("uea0102", 30.0f, 128.0f);
+    World::move(a, 60.0f, 128.0f);
+    tick_until([&] { w.sim.tick(); }, "the aircraft lands", 600,
+               [&] { return a.layer() != "Air"; });
+    REQUIRE(a.layer() == "Land");
+    a.set_orientation({-0x1.dee8d2p-5f, 0x1.fa69dcp-1f, -0x1.ae84e4p-9f, 0x1.14db44p-3f});
+    w.sim.tick();
+    CHECK(a.orientation().x == -0x1.dee8d6p-5f);
+    CHECK(a.orientation().y == 0x1.fa69ep-1f);
+    CHECK(a.orientation().z == -0x1.ae84e8p-9f);
+    CHECK(a.orientation().w == 0x1.14db46p-3f);
 }
 
 TEST_CASE("An aircraft brakes onto the end of its move rather than stopping in one tick",
