@@ -15,6 +15,7 @@
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/category_expr.hpp"
 #include "sim/occupancy.hpp"
 #include "sim/path_navigator.hpp"
 #include "sim/path_tables.hpp"
@@ -23,6 +24,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "sim/weapon.hpp"
 #include "support/tick_until.hpp"
 
 extern "C" {
@@ -255,6 +257,36 @@ TEST_CASE("With Moho pathing tanks go round a wall through its gap, never standi
         CHECK(tank.position().x > 95.0f);
         CHECK(std::abs(tank.position().z - 20.5f) < 4.0f);
     }
+}
+
+TEST_CASE("With Moho pathing an attack's first look ends at once on a unit whose footprint stands "
+          "in its weapon's square, and the unit heads for the target from where it stands",
+          "[moho_pathing]") {
+    World w(true);
+    Unit& big = *w.make("bigtank", 30.5f, 20.5f);
+    Unit& target = *w.make("tank", 20.5f, 20.5f);
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->target_priorities = {osc::sim::parse_category_list("ALLUNITS")};
+    gun->max_range = 20.0f;
+    gun->fire_target_layer_caps = 0x01 | 0x02 | 0x04;
+    gun->heading_arc_range = 30.0f;
+    gun->damage = 10.0f;
+    big.add_weapon(std::move(gun));
+    osc::sim::UnitCommand attack;
+    attack.type = osc::sim::CommandType::Attack;
+    attack.target_id = target.entity_id();
+    attack.target_pos = target.position();
+    big.push_command(attack, true);
+    w.sim.tick();
+    REQUIRE(big.navigator().goal().x == 30.0f);
+    tick_until(
+        [&] {
+            CHECK(big.position().x == 30.5f);
+            CHECK(big.position().z == 20.5f);
+            w.sim.tick();
+        },
+        "it heads for the target", 10,
+        [&] { return big.navigator().goal().x == target.position().x; });
 }
 
 TEST_CASE("With Moho pathing off, a tank moves by the grid pathfinder as before",

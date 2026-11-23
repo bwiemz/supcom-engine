@@ -1133,7 +1133,8 @@ public:
     /// Moho's CAiPathNavigator::RequestPath; an aircraft flies to
     /// air_target(goal), or with `chase` to `goal` itself, a mobile unit
     /// followed (CAiNavigatorAir::SetDestUnit).
-    void set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase = false);
+    void set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase = false,
+                       const OccupancyRect* square = nullptr);
     /// A goal Moho's SIM_TryToBuild hands its navigator, sending it off a
     /// build site (build_site_units.cpp): it walks there on no order, for as
     /// long as its navigator keeps that goal.

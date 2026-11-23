@@ -394,7 +394,8 @@ Vector3 Unit::air_target(const Vector3& goal, const map::Terrain* terrain) const
 // faf-re CAiPathNavigator's UpdateWaterFavorAltFootprintMode: the alt
 // footprint while it, and every FAVORSWATER unit given its order, are on
 // water and bound for water.
-void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase) {
+void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase,
+                         const OccupancyRect* square) {
     static const CategoryName kFavorsWater{"FAVORSWATER"};
     // CUnitMoveTask's constructor
     if (!is_air_unit()) {
@@ -445,7 +446,7 @@ void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase)
     }
     if (!uses_alt_footprint()) {
         navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+                            is_amphibious() || is_hover(), square);
         if (is_air_unit() && !chase) {
             navigator_.set_air_target(air_target(goal, ctx.terrain));
         }
@@ -455,7 +456,7 @@ void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase)
     const bool afloat =
         (fp.caps & (blueprints::occupancy::kLand | blueprints::occupancy::kSeabed)) == 0;
     navigator_.set_goal(goal, ctx.pathfinder, position(), afloat ? std::string("Water") : layer_,
-                        std::max(naval_draft_, fp.min_water_depth), false);
+                        std::max(naval_draft_, fp.min_water_depth), false, square);
 }
 
 bool Unit::ferry_fly(SimContext& ctx, const Vector3& to, bool through) {
@@ -474,7 +475,7 @@ bool Unit::ferry_fly(SimContext& ctx, const Vector3& to, bool through) {
 bool Unit::approach_update(SimContext& ctx) {
     if (navigator_.status() == Navigator::Status::WaitingForPath) {
         const Vector3 goal = navigator_.goal();
-        set_path_goal(goal, ctx);
+        set_path_goal(goal, ctx, false, navigator_.square());
     }
     return nav_update();
 }
@@ -1092,10 +1093,12 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
             goal.x += cmd.slot_offset.x;
             goal.z += cmd.slot_offset.z;
         }
+        const bool mobile =
+            target->is_unit() && static_cast<const Unit*>(target)->has_category("MOBILE");
         if (can_fly()) {
             if (!navigator_.is_moving() || navigator_.goal().x != goal.x ||
                 navigator_.goal().z != goal.z) {
-                set_path_goal(goal, ctx);
+                set_path_goal(goal, ctx, mobile && !cmd.has_slot);
             }
             nav_update();
             return;
@@ -1106,33 +1109,33 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
                                 ? static_cast<const Unit*>(target)->target_point(cmd.target_point)
                                 : target->position();
         if (cmd.approached && !look_again && navigator_.busy()) {
-            static const CategoryName kMobile{"MOBILE"};
             const f32 ax = cmd.goal_aim.x - aim.x;
             const f32 ay = cmd.goal_aim.y - aim.y;
             const f32 az = cmd.goal_aim.z - aim.z;
-            const bool moved = target->is_unit() &&
-                               static_cast<const Unit*>(target)->has_category(kMobile) &&
-                               std::sqrt(az * az + ay * ay + ax * ax) > 10.0f;
+            const bool moved = mobile && std::sqrt(az * az + ay * ay + ax * ax) > 10.0f;
             if (!moved || (ctx.sim && ctx.sim->footprint_fits_at(footprint(), aim.x, aim.z) == 0)) {
                 approach_update(ctx);
                 return;
             }
         }
         cmd.goal_aim = aim;
-        // Moho's Update: the task's first look sends its unit to the nearest part of its target
-        // weapon's square about the target (SetWeaponGoal, while mIsGrounded)
+        // Moho's Update: the task's first look sends its unit to its target weapon's square about
+        // the target (SetWeaponGoal, while mIsGrounded)
         if (!cmd.approached && weapon && !cmd.has_slot) {
+            cmd.approached = true;
             const i32 side = static_cast<i32>(weapon->max_range);
-            const f32 x0 = static_cast<f32>(std::lrint(goal.x - static_cast<f32>(side) * 0.5f));
-            const f32 z0 = static_cast<f32>(std::lrint(goal.z - static_cast<f32>(side) * 0.5f));
-            goal.x = std::clamp(position().x, x0, x0 + static_cast<f32>(side));
-            goal.z = std::clamp(position().z, z0, z0 + static_cast<f32>(side));
+            const auto x0 = static_cast<i32>(std::lrint(aim.x - static_cast<f32>(side) * 0.5f));
+            const auto z0 = static_cast<i32>(std::lrint(aim.z - static_cast<f32>(side) * 0.5f));
+            const OccupancyRect square{x0, z0, x0 + side, z0 + side};
+            goal.x = std::clamp(position().x, static_cast<f32>(x0), static_cast<f32>(x0 + side));
+            goal.z = std::clamp(position().z, static_cast<f32>(z0), static_cast<f32>(z0 + side));
+            set_path_goal(goal, ctx, false, &square);
+            nav_update();
+            return;
         }
         cmd.approached = true;
         if (!navigator_.is_moving() || navigator_.goal().x != goal.x ||
             navigator_.goal().z != goal.z) {
-            const bool mobile =
-                target->is_unit() && static_cast<const Unit*>(target)->has_category("MOBILE");
             set_path_goal(goal, ctx, mobile && !cmd.has_slot);
         }
         nav_update();

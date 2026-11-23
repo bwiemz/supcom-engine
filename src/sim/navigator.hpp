@@ -26,10 +26,12 @@ public:
     /// set_goal next tick (see is_moving()).
     enum class Status : u8 { Idle, Moving, WaitingForPath };
 
-    /// Set goal with A* pathfinding (preferred).
-    void set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
-                  const Vector3& current_pos, const std::string& layer,
-                  f32 draft = 0, bool amphibious = false);
+    /// Set goal with A* pathfinding (preferred). With Moho pathing, `square` is the goal itself,
+    /// the cells the move ends on (an attack task's SetWeaponGoal), and `pos` stands in for it
+    /// elsewhere.
+    void set_goal(const Vector3& pos, const map::Pathfinder* pathfinder, const Vector3& current_pos,
+                  const std::string& layer, f32 draft = 0, bool amphibious = false,
+                  const OccupancyRect* square = nullptr);
 
     /// Set goal with straight-line movement (legacy/fallback).
     void set_goal(const Vector3& pos);
@@ -44,6 +46,8 @@ public:
     /// CAiNavigatorLand::GetGoalPos, its x and z: the centre of the goal cell its move took
     /// for `unit`'s footprint, or where `unit` is while it has no move.
     Vector3 goal_pos(const Unit& unit) const;
+    /// The goal's cells when set_goal was given them (with Moho pathing), else null.
+    const OccupancyRect* square() const { return moho_square_set_ ? &moho_square_ : nullptr; }
     /// The waypoint it drives at now, while it has one.
     const Vector3* waypoint() const {
         return waypoint_index_ < waypoints_.size() ? &waypoints_[waypoint_index_] : nullptr;
@@ -278,6 +282,8 @@ private:
     std::string moho_layer_;
     f32 moho_draft_ = 0;
     bool moho_amphibious_ = false;
+    OccupancyRect moho_square_{};
+    bool moho_square_set_ = false;
 
     // Memo of the last outright path failure (see FAILED_PATH_RETRY_CALLS).
     bool has_failed_request_ = false;
