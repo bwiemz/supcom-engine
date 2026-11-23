@@ -148,7 +148,7 @@ TEST_CASE("CalcWingedLift: tilted past 60 degrees the wings give none", "[air_li
     CHECK(osc::sim::winged_lift(8.0f, 0.3f, 7.0f, 5.0f, 2.0f) == Approx(3.0f));
 }
 
-TEST_CASE("A transport's lift is KLift over its load", "[air_lift]") {
+TEST_CASE("A transport's load factor is its mass with its cargo's over its own", "[air_lift]") {
     osc::sim::EntityRegistry registry;
     auto make = [&](f32 size) {
         auto u = std::make_unique<Unit>();
@@ -167,11 +167,6 @@ TEST_CASE("A transport's lift is KLift over its load", "[air_lift]") {
     // (FA-Binary-Patches hooks/RemoveTransportLoadFactor.cpp)
     registry.set_faf_exe(true);
     CHECK(transport->transport_load_factor(registry) == Approx(1.0f));
-    registry.set_faf_exe(false);
-
-    const osc::sim::LiftStep light = osc::sim::lift_step(0.0f, 8.0f, 3.0f, 2.5f, 1.0f, 0.1f);
-    const osc::sim::LiftStep laden = osc::sim::lift_step(0.0f, 8.0f, 3.0f, 2.5f, 2.0f, 0.1f);
-    CHECK(laden.velocity == Approx(light.velocity * 0.5f));
 }
 
 TEST_CASE("The ground it flies over follows the highest ground ahead, by LiftFactor a second",

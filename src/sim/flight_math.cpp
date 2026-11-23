@@ -1,4 +1,5 @@
 #include "sim/flight_math.hpp"
+#include "sim/pose.hpp"
 #include "sim/projectile.hpp"
 
 #include <algorithm>
@@ -216,14 +217,6 @@ f32 winged_lift(f32 want, f32 up_y, f32 lift_factor, f32 half_elevation, f32 hei
     return std::min(want, lift);
 }
 
-LiftStep lift_step(f32 velocity, f32 steer, f32 k_lift, f32 k_lift_damping, f32 load, f32 dt) {
-    const f32 accel = k_lift_damping * -velocity + steer * (k_lift / load);
-    LiftStep out;
-    out.velocity = velocity + accel * dt;
-    out.rise = (out.velocity + velocity) * (dt * 0.5f);
-    return out;
-}
-
 f32 next_lift_ground(f32 ground, f32 look_ahead, f32 lift_factor, f32 dt, bool landing) {
     f32 band = lift_factor * dt;
     if (ground > look_ahead && !landing) {
@@ -246,21 +239,7 @@ f32 air_move_damping(f32 control, f32 top, f32 k_move, f32 k_move_damping) {
     return std::min(top / denominator, k_move_damping);
 }
 
-AirMoveStep air_move_step(const Vector3& velocity, const Vector3& force, f32 k_move, f32 damping,
-                          f32 dt) {
-    AirMoveStep out;
-    out.velocity.x = velocity.x + (force.x * k_move - velocity.x * damping) * dt;
-    out.velocity.z = velocity.z + (force.z * k_move - velocity.z * damping) * dt;
-    out.move.x = (out.velocity.x + velocity.x) * (dt * 0.5f);
-    out.move.z = (out.velocity.z + velocity.z) * (dt * 0.5f);
-    return out;
-}
-
 namespace {
-
-Vector3 cross(const Vector3& a, const Vector3& b) {
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
 
 f32 dot(const Vector3& a, const Vector3& b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
@@ -320,10 +299,10 @@ AirAxes winged_axes(const Vector3& nose, const Vector3& selected, f32 limited, f
 AirAxes hover_axes(const Quaternion& body, Vector3 dv, f32 bank_factor, bool bank_forward,
                    f32 elevation_ratio, const Vector3& facing) {
     if (!bank_forward) {
-        const Vector3 f = forward_of(body);
-        const f32 len_sq = dot(f, f);
+        const Vector3 f = forward_moho(body);
+        const f32 len_sq = (f.z * f.z + f.y * f.y) + f.x * f.x;
         if (len_sq > 0.0f) {
-            const f32 along = dot(f, dv) / len_sq;
+            const f32 along = ((f.z * dv.z + f.y * dv.y) + f.x * dv.x) / len_sq;
             dv.x -= f.x * along;
             dv.y -= f.y * along;
             dv.z -= f.z * along;
@@ -337,27 +316,52 @@ AirAxes hover_axes(const Quaternion& body, Vector3 dv, f32 bank_factor, bool ban
 }
 
 Quaternion attitude_of(const AirAxes& axes) {
-    Vector3 y = axes.up;
-    Vector3 x = cross(y, axes.nose);
-    normalize(x);
-    Vector3 z = cross(x, y);
-    normalize(z);
-    y = cross(z, x);
-    const f32 m[9] = {x.x, y.x, z.x, x.y, y.y, z.y, x.z, y.z, z.z};
-    return rot_matrix_to_quat(m);
+    const Vector3& y = axes.up;
+    const Vector3& z = axes.nose;
+    Vector3 vx{z.z * y.y - z.y * y.z, z.x * y.z - y.x * z.z, y.x * z.y - z.x * y.y};
+    wm3_normalize(vx);
+    Vector3 vz{vx.y * y.z - vx.z * y.y, y.x * vx.z - vx.x * y.z, vx.x * y.y - y.x * vx.y};
+    wm3_normalize(vz);
+    const Vector3 vy{vz.y * vx.z - vz.z * vx.y, vz.z * vx.x - vz.x * vx.z,
+                     vz.x * vx.y - vz.y * vx.x};
+    const f32 rows[3][3] = {{vx.x, vy.x, vz.x}, {vx.y, vy.y, vz.y}, {vx.z, vy.z, vz.z}};
+    return matrix_rows_to_quat_canonical(rows);
 }
 
+namespace {
+
+/// The MSVC8 CRT's x87 acos under the sim's 24-bit precision control: atan2 of
+/// sqrt((1 + x)(1 - x)) and x, the root's steps rounded to float.
+f32 acos_x87(f32 x) {
+    const f32 root = std::sqrt((1.0f + x) * (1.0f - x));
+    return static_cast<f32>(osc::dmath::atan2(static_cast<double>(root), static_cast<double>(x)));
+}
+
+} // namespace
+
 Vector3 attitude_error(const Quaternion& body, const Quaternion& wanted) {
-    Quaternion rel = quat_multiply(conjugate(body), wanted);
-    if (rel.w < 0.0f) {
+    const Quaternion c = conjugate(body);
+    const Quaternion& d = wanted;
+    Quaternion rel{((c.x * d.w + d.x * c.w) + d.z * c.y) - d.y * c.z,
+                   ((c.y * d.w + d.y * c.w) + d.x * c.z) - d.z * c.x,
+                   ((c.z * d.w + d.z * c.w) + d.y * c.x) - d.x * c.y,
+                   ((d.w * c.w - d.x * c.x) - d.y * c.y) - d.z * c.z};
+    if (0.0f > rel.w) {
         rel = {-rel.x, -rel.y, -rel.z, -rel.w};
     }
-    Vector3 axis{rel.x, rel.y, rel.z};
-    if (normalize(axis) <= 0.0f) {
+    const f32 len_sq = (rel.x * rel.x + rel.y * rel.y) + rel.z * rel.z;
+    if (!(len_sq > 1.0e-6f)) {
         return {};
     }
-    const f32 angle = 2.0f * osc::dmath::acos(std::min(rel.w, 1.0f));
-    return {axis.x * angle, axis.y * angle, axis.z * angle};
+    f32 half = 0.0f;
+    if (!(rel.w > -1.0f)) {
+        half = 3.1415927f;
+    } else if (rel.w < 1.0f) {
+        half = acos_x87(rel.w);
+    }
+    const f32 angle = half * 2.0f;
+    const f32 inv = 1.0f / std::sqrt(len_sq);
+    return {rel.x * inv * angle, rel.y * inv * angle, rel.z * inv * angle};
 }
 
 Vector3 to_body(const Quaternion& body, const Vector3& v) {
@@ -375,63 +379,98 @@ Vector3 box_inertia(f32 size_x, f32 size_y, f32 size_z) {
     return out;
 }
 
-Vector3 body_spin(const Quaternion& body, const Vector3& momentum, const Vector3& inertia) {
-    const Vector3 local = to_body(body, momentum);
-    return {local.x / inertia.x, local.y / inertia.y, local.z / inertia.z};
-}
-
-Vector3 momentum_of(const Quaternion& body, const Vector3& spin, const Vector3& inertia) {
-    const Vector3 local = to_body(body, spin);
-    return quat_rotate(body, {local.x * inertia.x, local.y * inertia.y, local.z * inertia.z});
-}
-
-SpinStep air_spin_step(const Quaternion& body, const Vector3& momentum, const Vector3& inertia,
-                       const Vector3& accel, f32 dt) {
-    return air_torque_step(
-        body, momentum, inertia,
-        quat_rotate(body, {accel.x * inertia.x, accel.y * inertia.y, accel.z * inertia.z}), dt);
-}
-
-SpinStep air_torque_step(const Quaternion& body, const Vector3& momentum, const Vector3& inertia,
-                         const Vector3& torque, f32 dt) {
-    SpinStep out;
-    out.momentum = {momentum.x + torque.x * dt, momentum.y + torque.y * dt,
-                    momentum.z + torque.z * dt};
-    const f32 half = dt * 0.5f;
-    const Vector3 avg{(out.momentum.x + momentum.x) * half, (out.momentum.y + momentum.y) * half,
-                      (out.momentum.z + momentum.z) * half};
-    Vector3 axis = body_spin(body, avg, inertia);
-    const f32 angle = normalize(axis);
-    Quaternion delta{};
-    if (angle > 0.0f) {
-        const f32 s = osc::dmath::sin(angle * 0.5f);
-        delta = {axis.x * s, axis.y * s, axis.z * s, osc::dmath::cos(angle * 0.5f)};
+BodyMass body_mass(f32 density, f32 size_x, f32 size_y, f32 size_z, const Vector3& inertia) {
+    Vector3 tensor = inertia;
+    if (tensor.x * tensor.y * tensor.z == 0.0f) {
+        tensor = box_inertia(size_x, size_y, size_z);
     }
-    const Quaternion q = quat_multiply(body, delta);
-    const f32 len = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
-    out.orientation = {q.x / len, q.y / len, q.z / len, q.w / len};
+    BodyMass out;
+    out.mass = density * size_z * size_x * size_y;
+    out.inv_inertia = {1.0f / (tensor.x * out.mass), 1.0f / (tensor.y * out.mass),
+                       1.0f / (tensor.z * out.mass)};
     return out;
 }
 
-Vector3 tumble_range(f32 mass, const Vector3& inertia) {
+Vector3 body_spin(const Quaternion& body, const Vector3& impulse, const Vector3& inv_inertia) {
+    const Vector3 local = mult_quad_vec(conjugate(body), impulse);
+    return {inv_inertia.x * local.x, inv_inertia.y * local.y, inv_inertia.z * local.z};
+}
+
+Vector3 momentum_of(const Quaternion& body, const Vector3& spin, const Vector3& inv_inertia) {
+    const Vector3 local = mult_quad_vec(conjugate(body), spin);
+    return mult_quad_vec(
+        body, {local.x / inv_inertia.x, local.y / inv_inertia.y, local.z / inv_inertia.z});
+}
+
+AirControl air_control_of(const PhysBody& body, const Quaternion& wanted, const Vector3& steer,
+                          const AirGains& g) {
+    const Quaternion& q = body.orientation;
+    const Vector3& inv = body.mass.inv_inertia;
+    const Vector3 rot = attitude_error(q, wanted);
+    const Vector3 local = mult_quad_vec(conjugate(q), body.impulse);
+    const Vector3 damp{-(inv.x * local.x), -(inv.y * local.y), -(inv.z * local.z)};
+    const Vector3 v{-body.velocity.x, -body.velocity.y, -body.velocity.z};
+    const f32 ax = steer.x * g.k_move + v.x * g.damping;
+    const f32 ay = g.k_lift_damping * v.y + steer.y * g.lift;
+    const f32 az = steer.z * g.k_move + v.z * g.damping;
+    const f32 m = body.mass.mass;
+    AirControl out;
+    out.force = {(ax - 0.0f) * m, (ay - -Projectile::GRAVITY) * m, (az - 0.0f) * m};
+    const Vector3 raw{damp.x * g.k_turn_damping + rot.x * g.turn,
+                      damp.y * g.k_turn_damping + rot.y * g.turn,
+                      g.k_roll_damping * damp.z + rot.z * g.roll};
+    out.torque = mult_quad_vec(q, {raw.x / inv.x, raw.y / inv.y, raw.z / inv.z});
+    return out;
+}
+
+void integrate_freefall(PhysBody& body, const Vector3& force, const Vector3& torque, f32 dt) {
+    const Vector3 was = body.velocity;
+    const f32 per_mass = dt / body.mass.mass;
+    const f32 fall = -Projectile::GRAVITY * dt;
+    body.velocity.x = was.x + (force.x * per_mass + 0.0f * dt);
+    body.velocity.y = was.y + (force.y * per_mass + fall);
+    body.velocity.z = was.z + (force.z * per_mass + 0.0f * dt);
+    const f32 half = dt * 0.5f;
+    body.centre.x += (body.velocity.x + was.x) * half;
+    body.centre.y += (body.velocity.y + was.y) * half;
+    body.centre.z += (body.velocity.z + was.z) * half;
+    const SpinStep spin = integrate_angular_impulse(body.orientation, body.impulse,
+                                                    body.mass.inv_inertia, torque, dt);
+    body.orientation = spin.orientation;
+    body.impulse = spin.momentum;
+}
+
+SpinStep integrate_angular_impulse(const Quaternion& body, const Vector3& impulse,
+                                   const Vector3& inv_inertia, const Vector3& torque, f32 dt) {
+    SpinStep out;
+    out.momentum = {torque.x * dt + impulse.x, torque.y * dt + impulse.y,
+                    torque.z * dt + impulse.z};
+    const f32 half = dt * 0.5f;
+    const Vector3 mean{(out.momentum.x + impulse.x) * half, (out.momentum.y + impulse.y) * half,
+                       (out.momentum.z + impulse.z) * half};
+    const Vector3 local = mult_quad_vec(conjugate(body), mean);
+    const Quaternion d = quat_from_axis_angle_moho(
+        {inv_inertia.x * local.x, inv_inertia.y * local.y, inv_inertia.z * local.z});
+    const Quaternion& o = body;
+    out.orientation = quat_normalized_moho({((o.y * d.z + o.w * d.x) + o.x * d.w) - o.z * d.y,
+                                            ((o.z * d.x + o.w * d.y) + o.y * d.w) - o.x * d.z,
+                                            ((o.x * d.y + o.w * d.z) + o.z * d.w) - o.y * d.x,
+                                            ((o.w * d.w - o.x * d.x) - o.y * d.y) - o.z * d.z});
+    return out;
+}
+
+Vector3 tumble_range(const Vector3& inv_inertia) {
     // comiss against 4 then 0.25: a NaN passes the cap and is floored.
     const auto clamp_axis = [](f32 inverse) {
         const f32 capped = inverse > 4.0f ? 4.0f : inverse;
         return capped > 0.25f ? capped : 0.25f;
     };
-    return {clamp_axis(1.0f / (mass * inertia.x)), clamp_axis(1.0f / (mass * inertia.y)),
-            clamp_axis(1.0f / (mass * inertia.z))};
+    return {clamp_axis(inv_inertia.x), clamp_axis(inv_inertia.y), clamp_axis(inv_inertia.z)};
 }
 
-Vector3 tumble_torque(const Quaternion& body, f32 mass, const Vector3& inertia,
-                      const Vector3& drawn) {
-    // Moho's draw over its inverse inertia, mass x inertia x draw, is a torque on the whole
-    // body; the engine's angular momentum is per unit mass. With no mass, Moho's inverse is
-    // infinite and the torque none.
-    if (!(mass > 0.0f)) {
-        return {};
-    }
-    return quat_rotate(body, {drawn.x * inertia.x, drawn.y * inertia.y, drawn.z * inertia.z});
+Vector3 tumble_torque(const Quaternion& body, const Vector3& inv_inertia, const Vector3& drawn) {
+    return mult_quad_vec(
+        body, {drawn.x / inv_inertia.x, drawn.y / inv_inertia.y, drawn.z / inv_inertia.z});
 }
 
 } // namespace osc::sim

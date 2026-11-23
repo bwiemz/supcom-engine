@@ -702,6 +702,8 @@ static void read_transport(lua_State* L, const BlueprintStore& store, const Blue
         unit.set_size_y(number("SizeY", 1.0f));
         unit.set_size_xz(number("SizeX", 1.0f), number("SizeZ", 1.0f));
         unit.set_average_density(number("AverageDensity", 0.49f));
+        unit.set_inertia_tensor({number("InertiaTensorX", 0.0f), number("InertiaTensorY", 0.0f),
+                                 number("InertiaTensorZ", 0.0f)});
         // A staging platform's refuelling and repair (M206r)
         lua_pushstring(L, "AI");
         lua_rawget(L, -2);

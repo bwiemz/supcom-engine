@@ -143,37 +143,40 @@ void lift_off(World& w, Unit& u) {
 
 TEST_CASE("The tumble's draws are within each axis' inverse inertia, clamped to [0.25, 4]",
           "[ballistic]") {
+    const auto inverse = [](f32 density) {
+        return osc::sim::body_mass(density, 1.0f, 1.0f, 1.0f, {}).inv_inertia;
+    };
     const Vector3 unit_box = osc::sim::box_inertia(1.0f, 1.0f, 1.0f);
     // 1 / (mass x inertia): a light body's is past 4, a heavy one's under 0.25
-    const Vector3 light = osc::sim::tumble_range(0.01f, unit_box);
+    const Vector3 light = osc::sim::tumble_range(inverse(0.01f));
     CHECK(light.x == 4.0f);
     CHECK(light.z == 4.0f);
-    const Vector3 heavy = osc::sim::tumble_range(1000.0f, unit_box);
+    const Vector3 heavy = osc::sim::tumble_range(inverse(1000.0f));
     CHECK(heavy.y == 0.25f);
-    const Vector3 between = osc::sim::tumble_range(3.0f, unit_box);
+    const Vector3 between = osc::sim::tumble_range(inverse(3.0f));
     CHECK(between.x == Approx(1.0f / (3.0f * unit_box.x)));
     // A NaN passes the cap and is floored
-    const Vector3 none = osc::sim::tumble_range(std::nanf(""), unit_box);
+    const Vector3 none = osc::sim::tumble_range(inverse(std::nanf("")));
     CHECK(none.x == 0.25f);
 
-    // The torque per unit mass: each draw times its axis' inertia, turned into the world
-    const Vector3 inertia{2.0f, 3.0f, 4.0f};
-    const Vector3 level = osc::sim::tumble_torque({0, 0, 0, 1}, 5.0f, inertia, {1.0f, -1.0f, 0.5f});
-    CHECK(level.x == Approx(2.0f));
-    CHECK(level.y == Approx(-3.0f));
-    CHECK(level.z == Approx(2.0f));
+    // The torque: each draw over its axis' inverse inertia, turned into the world
+    const Vector3 inv{1.0f / 10.0f, 1.0f / 15.0f, 1.0f / 20.0f};
+    const Vector3 level = osc::sim::tumble_torque({0, 0, 0, 1}, inv, {1.0f, -1.0f, 0.5f});
+    CHECK(level.x == Approx(10.0f));
+    CHECK(level.y == Approx(-15.0f));
+    CHECK(level.z == Approx(10.0f));
     // A quarter turn about Y takes the body's x axis to the world's -z
     const f32 s = std::sqrt(0.5f);
-    const Vector3 turned = osc::sim::tumble_torque({0, s, 0, s}, 5.0f, inertia, {1.0f, 0.0f, 0.0f});
-    CHECK(turned.x == Approx(0.0f).margin(1e-6));
-    CHECK(turned.z == Approx(-2.0f));
+    const Vector3 turned = osc::sim::tumble_torque({0, s, 0, s}, inv, {1.0f, 0.0f, 0.0f});
+    CHECK(turned.x == Approx(0.0f).margin(1e-5));
+    CHECK(turned.z == Approx(-10.0f));
     // A massless body has none
-    const Vector3 massless = osc::sim::tumble_torque({0, 0, 0, 1}, 0.0f, inertia, {1, 1, 1});
+    const Vector3 massless = osc::sim::tumble_torque({0, 0, 0, 1}, inverse(0.0f), {1, 1, 1});
     CHECK(massless.x == 0.0f);
 
     // The torque is kept up: the momentum gains it every step
     const osc::sim::SpinStep step =
-        osc::sim::air_torque_step({0, 0, 0, 1}, {0.5f, 0, 0}, inertia, {1.0f, 0, 0}, 0.1f);
+        osc::sim::integrate_angular_impulse({0, 0, 0, 1}, {0.5f, 0, 0}, inv, {1.0f, 0, 0}, 0.1f);
     CHECK(step.momentum.x == Approx(0.6f));
 }
 
@@ -271,18 +274,18 @@ TEST_CASE("A heavy aircraft's tumble turns it slower than a light one's", "[ball
     w.sim.tick();
     REQUIRE(light.is_crashing());
     REQUIRE(heavy.is_crashing());
-    // Its torque per unit mass is its draw (within its clamped inverse inertia) times its
-    // inertia: the heavy one's draws are within 0.25, the light one's within 4.
-    const Vector3 light_box = osc::sim::box_inertia(2.0f, 1.0f, 2.0f);
-    const Vector3 heavy_box = osc::sim::box_inertia(12.0f, 4.0f, 12.0f);
-    const Vector3 light_range = osc::sim::tumble_range(light.load_metric(), light_box);
-    const Vector3 heavy_range = osc::sim::tumble_range(heavy.load_metric(), heavy_box);
+    // Its torque is its draw (within its clamped inverse inertia) over its inverse inertia:
+    // the heavy one's draws are within 0.25, the light one's within 4.
+    const Vector3 light_inv = light.body_mass().inv_inertia;
+    const Vector3 heavy_inv = heavy.body_mass().inv_inertia;
+    const Vector3 light_range = osc::sim::tumble_range(light_inv);
+    const Vector3 heavy_range = osc::sim::tumble_range(heavy_inv);
     CHECK(heavy_range.x == 0.25f);
     CHECK(light_range.x > heavy_range.x);
     const Vector3 lt = osc::sim::to_body(light.pending_orientation(), light.tumble_torque());
     const Vector3 ht = osc::sim::to_body(heavy.pending_orientation(), heavy.tumble_torque());
-    CHECK(std::abs(ht.y) <= heavy_box.y * heavy_range.y + 1e-3f);
-    CHECK(std::abs(lt.y) <= light_box.y * light_range.y + 1e-3f);
+    CHECK(std::abs(ht.y * heavy_inv.y) <= heavy_range.y + 1e-3f);
+    CHECK(std::abs(lt.y * light_inv.y) <= light_range.y + 1e-3f);
 }
 
 TEST_CASE("A stunned aircraft killed in flight hangs until its stun runs out", "[ballistic]") {
