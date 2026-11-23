@@ -1,8 +1,11 @@
 #include "sim/build_placement.hpp"
 #include "core/dmath.hpp"
 
+#include "blueprints/blueprint_store.hpp"
+#include "blueprints/flag_enums.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
+#include "sim/collision.hpp"
 #include "sim/occupancy.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -10,6 +13,10 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+
+extern "C" {
+#include <lua.h>
+}
 
 namespace osc::sim {
 
@@ -19,7 +26,132 @@ namespace {
 /// big factories stay well under this).
 constexpr f32 MAX_STRUCTURE_HALF_EXTENT = 16.0f;
 
+u8 free_layers(const OccupancyGrid& grid, const PlacementRules& r, f32 x, f32 z, u8 layers) {
+    namespace layer = placement_layer;
+    const auto x0 = static_cast<i32>(std::lrint(x - r.size_x * 0.5f));
+    const auto z0 = static_cast<i32>(std::lrint(z - r.size_z * 0.5f));
+    const OccupancyRect cells{x0, z0, x0 + static_cast<i32>(std::lround(r.size_x)),
+                              z0 + static_cast<i32>(std::lround(r.size_z))};
+    if ((layers & (layer::Land | layer::Seabed)) != 0 && grid.ground_any(cells)) {
+        layers &= static_cast<u8>(~(layer::Land | layer::Seabed));
+    }
+    if ((layers & layer::Water) != 0 && grid.water_any(cells)) {
+        layers &= static_cast<u8>(~layer::Water);
+    }
+    return layers;
+}
+
+PlacementRules placement_rules_of(lua_State* L, const SimState& sim, const std::string& bp_id) {
+    PlacementRules r;
+    const int top = lua_gettop(L);
+    if (!blueprints::push_blueprint(L, bp_id)) {
+        return r;
+    }
+    const int bp = lua_gettop(L);
+
+    if (const auto [fx, fz] = blueprint_footprint(L, bp); fx > 0 && fz > 0) {
+        r.size_x = fx;
+        r.size_z = fz;
+    }
+    const auto cells = [](f32 size) {
+        return static_cast<u8>(std::clamp(std::lround(size), 0L, 255L));
+    };
+    blueprints::Footprint own;
+    own.size_x = cells(r.size_x);
+    own.size_z = cells(r.size_z);
+    std::string motion;
+    lua_pushstring(L, "Footprint");
+    lua_rawget(L, bp);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "MinWaterDepth");
+        lua_rawget(L, -2);
+        if (lua_isnumber(L, -1)) {
+            r.min_water_depth = static_cast<f32>(lua_tonumber(L, -1));
+        }
+        lua_pop(L, 1);
+        lua_pushstring(L, "MaxSlope");
+        lua_rawget(L, -2);
+        if (lua_isnumber(L, -1)) {
+            own.max_slope = static_cast<f32>(lua_tonumber(L, -1));
+        }
+        lua_pop(L, 1);
+        lua_pushstring(L, "MaxWaterDepth");
+        lua_rawget(L, -2);
+        if (lua_isnumber(L, -1)) {
+            own.max_water_depth = static_cast<f32>(lua_tonumber(L, -1));
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    own.min_water_depth = r.min_water_depth;
+
+    lua_pushstring(L, "Physics");
+    lua_rawget(L, bp);
+    if (lua_istable(L, -1)) {
+        const int phys = lua_gettop(L);
+        lua_pushstring(L, "BuildOnLayerCaps"); // absent: land only
+        lua_rawget(L, phys);
+        if (const auto layers = blueprints::read_flag_enum(L, -1, blueprints::kLayerEnum)) {
+            namespace oc = blueprints::occupancy;
+            r.on_land = (*layers & oc::kLand) != 0;
+            r.on_water = (*layers & oc::kWater) != 0;
+            r.on_seabed = (*layers & oc::kSeabed) != 0;
+            r.on_sub = (*layers & oc::kSub) != 0;
+        }
+        lua_pop(L, 1);
+        const auto number = [L, phys](const char* key) {
+            lua_pushstring(L, key);
+            lua_rawget(L, phys);
+            const f32 v = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+            lua_pop(L, 1);
+            return v;
+        };
+        r.skirt_x = number("SkirtSizeX");
+        r.skirt_z = number("SkirtSizeZ");
+        r.skirt_off_x = number("SkirtOffsetX");
+        r.skirt_off_z = number("SkirtOffsetZ");
+        lua_pushstring(L, "MaxGroundVariation");
+        lua_rawget(L, phys);
+        if (lua_isnumber(L, -1)) {
+            r.max_ground_variation = static_cast<f32>(lua_tonumber(L, -1));
+        }
+        lua_pop(L, 1);
+        lua_pushstring(L, "FlattenSkirt");
+        lua_rawget(L, phys);
+        r.flatten_skirt = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        lua_pushstring(L, "MotionType");
+        lua_rawget(L, phys);
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            motion = lua_tostring(L, -1);
+        }
+        lua_pop(L, 1);
+        lua_pushstring(L, "BuildRestriction");
+        lua_rawget(L, phys);
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            const std::string restriction = lua_tostring(L, -1);
+            if (restriction == "RULEUBR_OnMassDeposit") {
+                r.deposit = PlacementRules::Deposit::Mass;
+            } else if (restriction == "RULEUBR_OnHydrocarbonDeposit") {
+                r.deposit = PlacementRules::Deposit::Hydrocarbon;
+            }
+        }
+        lua_pop(L, 1);
+    }
+    lua_settop(L, top);
+    if (!motion.empty() && motion != "RULEUMT_None" && sim.blueprint_store()) {
+        r.mobile = blueprints::resolve_unit_footprints(sim.blueprint_store()->footprint_classes(),
+                                                       own, own, motion, {}, 0)
+                       .main;
+    }
+    return r;
+}
+
 } // namespace
+
+const PlacementRules& structure_rules(lua_State* L, const SimState& sim, const std::string& bp_id) {
+    return sim.placement_rules(bp_id, [&] { return placement_rules_of(L, sim, bp_id); });
+}
 
 std::vector<std::pair<f32, f32>> structure_line_sites(f32 x0, f32 z0, f32 x1, f32 z1, f32 size_x,
                                                       f32 size_z, f32 spacing) {
@@ -48,8 +180,8 @@ std::vector<std::pair<f32, f32>> structure_line_sites(f32 x0, f32 z0, f32 x1, f3
 
 StructureSite StructureSite::of(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x, f32 skirt_z,
                                 f32 off_x, f32 off_z) {
-    const f32 x0 = x - size_x * 0.5f + std::min(off_x, 0.0f);
-    const f32 z0 = z - size_z * 0.5f + std::min(off_z, 0.0f);
+    const f32 x0 = static_cast<f32>(std::lrint(x - size_x * 0.5f)) + std::min(off_x, 0.0f);
+    const f32 z0 = static_cast<f32>(std::lrint(z - size_z * 0.5f)) + std::min(off_z, 0.0f);
     return {x0, z0, x0 + std::max(skirt_x, size_x), z0 + std::max(skirt_z, size_z)};
 }
 
@@ -187,17 +319,7 @@ u8 occupy_layers(const map::Terrain& terrain, const PlacementRules& r, f32 x, f3
     }
     u8 caps = static_cast<u8>((r.on_land ? layer::Land : 0) | (r.on_seabed ? layer::Seabed : 0) |
                               (r.on_sub ? layer::Sub : 0) | (r.on_water ? layer::Water : 0));
-    // The skirt (RUnitBlueprint::GetSkirtRect): from the footprint's corner
-    // cell, the skirt's offset and size if it has one, else the footprint.
-    const auto corner = [](f32 at, f32 size) {
-        return static_cast<f32>(std::lrint(at - size * 0.5f));
-    };
-    const f32 cx = corner(x, r.size_x);
-    const f32 cz = corner(z, r.size_z);
-    const f32 x0 = r.skirt_x != 0.0f ? cx + r.skirt_off_x : cx;
-    const f32 x1 = x0 + (r.skirt_x != 0.0f ? r.skirt_x : r.size_x);
-    const f32 z0 = r.skirt_z != 0.0f ? cz + r.skirt_off_z : cz;
-    const f32 z1 = z0 + (r.skirt_z != 0.0f ? r.skirt_z : r.size_z);
+    const auto [x0, z0, x1, z1] = StructureSite::of(r, x, z);
 
     const map::Heightmap& field = terrain.heightmap();
     const auto w = static_cast<i32>(field.grid_width());
@@ -252,51 +374,61 @@ u8 occupy_layers(const map::Terrain& terrain, const PlacementRules& r, f32 x, f3
     return caps;
 }
 
-bool StructurePlacement::can_build(const std::string& bp_id, f32 x, f32 z) const {
-    return fits(bp_id, x, z, true);
+u8 StructurePlacement::free_site_layers(const PlacementRules& r, f32 x, f32 z) const {
+    u8 layers = static_cast<u8>(r.on_land ? placement_layer::Land : 0);
+    if (sim_.terrain()) {
+        layers = occupy_layers(*sim_.terrain(), r, x, z);
+        if (!r.mobile && !scheduled_) {
+            layers = free_layers(sim_.occupancy(), r, x, z, layers);
+        }
+    }
+    if (layers == 0) {
+        return 0;
+    }
+    if (r.mobile && sim_.terrain() && sim_.footprint_fits_at(*r.mobile, x, z) == 0) {
+        return 0;
+    }
+    const StructureSite site = StructureSite::of(r, x, z);
+    if (r.deposit != PlacementRules::Deposit::None && !on_deposit(r, x, z)) {
+        return 0;
+    }
+    // Moho's OCCUPY_Check: anything else keeps its skirt off every deposit.
+    if (r.deposit == PlacementRules::Deposit::None && !r.mobile && deposit_under(site)) {
+        return 0;
+    }
+    return structure_overlaps(sim_.entity_registry(), site) ? 0 : layers;
 }
 
 bool StructurePlacement::location_free(const std::string& bp_id, f32 x, f32 z) const {
-    return fits(bp_id, x, z, false);
+    return free_site_layers(rules(bp_id), x, z) != 0;
 }
 
-bool StructurePlacement::fits(const std::string& bp_id, f32 x, f32 z, bool pending_orders) const {
+bool StructurePlacement::can_build(const std::string& bp_id, f32 x, f32 z) const {
     const auto& r = rules(bp_id);
-    // Moho's OCCUPY_Check, then the cells under the footprint on the layers
-    // it leaves (func_LocationIsFree's occupancy narrowing).
-    const u8 layers = sim_.terrain() ? occupy_layers(*sim_.terrain(), r, x, z)
-                                     : static_cast<u8>(r.on_land ? placement_layer::Land : 0);
-    if (layers == 0) return false;
-    const StructureSite footprint = StructureSite::of(x, z, r.size_x, r.size_z);
-    if (r.mobile) {
-        if (sim_.terrain() && sim_.footprint_fits_at(*r.mobile, x, z) == 0) {
-            return false;
-        }
-        if (!in_playable(footprint)) {
-            return false;
-        }
-    } else if (!terrain_allows(footprint, layers)) {
+    const u8 layers = free_site_layers(r, x, z);
+    if (layers == 0) {
         return false;
     }
-    const StructureSite site = StructureSite::of(r, x, z);
-    if (r.deposit != PlacementRules::Deposit::None && !on_deposit(r, x, z)) return false;
-    // Moho's OCCUPY_Check: anything else keeps its skirt off every deposit.
-    if (r.deposit == PlacementRules::Deposit::None && !r.mobile && deposit_under(site))
-        return false;
-    if (pending_orders) {
-        for (const auto& pending : reserved()) {
-            if (pending.overlaps(site)) {
-                return false;
-            }
+    if (scheduled_) {
+        const StructureSite footprint = StructureSite::of(x, z, r.size_x, r.size_z);
+        if (r.mobile ? !in_playable(footprint) : !terrain_allows(footprint, layers)) {
+            return false;
         }
     }
-    return !structure_overlaps(sim_.entity_registry(), site);
+    return clear_of_reserved(bp_id, x, z);
 }
 
-namespace {
+bool StructurePlacement::clear_of_reserved(const std::string& bp_id, f32 x, f32 z) const {
+    const StructureSite site = StructureSite::of(rules(bp_id), x, z);
+    for (const auto& pending : reserved()) {
+        if (pending.overlaps(site)) {
+            return false;
+        }
+    }
+    return true;
+}
 
-// Moho's STIMap::IsWithin.
-bool within(const SimState& sim, f32 x, f32 z, f32 border, bool whole_map) {
+bool within_map(const SimState& sim, f32 x, f32 z, f32 border, bool whole_map) {
     const map::Terrain* terrain = sim.terrain();
     if (!terrain) {
         return true;
@@ -315,7 +447,14 @@ bool within(const SimState& sim, f32 x, f32 z, f32 border, bool whole_map) {
     return !(x0 > x - border) && !(z0 > z - border) && !(x + border > x1) && !(z + border > z1);
 }
 
-} // namespace
+u8 occupancy_caps(const PlacementRules& r) {
+    if (r.mobile) {
+        return r.mobile->caps;
+    }
+    namespace oc = blueprints::occupancy;
+    return static_cast<u8>((r.on_land ? oc::kLand : 0) | (r.on_seabed ? oc::kSeabed : 0) |
+                           (r.on_sub ? oc::kSub : 0) | (r.on_water ? oc::kWater : 0));
+}
 
 std::optional<std::pair<f32, f32>> try_build_structure_at(const SimState& sim,
                                                           const StructurePlacement& placement,
@@ -328,7 +467,7 @@ std::optional<std::pair<f32, f32>> try_build_structure_at(const SimState& sim,
         return std::pair<f32, f32>{at_x, at_z};
     };
     // Moho tests every ring's site against the asked one's bounds, so outside them none is free.
-    if (!within(sim, x, z, static_cast<f32>(border), whole_map)) {
+    if (!within_map(sim, x, z, static_cast<f32>(border), whole_map)) {
         return std::nullopt;
     }
     if (placement.location_free(bp_id, x, z)) {
@@ -414,7 +553,8 @@ bool StructurePlacement::in_playable(const StructureSite& site) const {
             site.z0 >= sim_.playable_z0() && site.z1 <= sim_.playable_z1());
 }
 
-bool structure_overlaps(const EntityRegistry& registry, const StructureSite& site) {
+bool structure_overlaps(const EntityRegistry& registry, const StructureSite& site,
+                        const std::function<bool(const Unit&)>& counts) {
     static const CategoryName kStructure{"STRUCTURE"};
     const f32 reach =
         0.5f * osc::dmath::hypot(site.x1 - site.x0, site.z1 - site.z0) + MAX_STRUCTURE_HALF_EXTENT;
@@ -422,7 +562,7 @@ bool structure_overlaps(const EntityRegistry& registry, const StructureSite& sit
          registry.units_in_radius((site.x0 + site.x1) * 0.5f, (site.z0 + site.z1) * 0.5f, reach)) {
         const auto& unit = static_cast<const Unit&>(*e);
         if (!unit.has_category(kStructure) || unit.footprint_size_x() <= 0 ||
-            unit.footprint_size_z() <= 0) {
+            unit.footprint_size_z() <= 0 || (counts && !counts(unit))) {
             continue;
         }
         const StructureSite other = StructureSite::of(
@@ -438,25 +578,21 @@ bool structure_overlaps(const EntityRegistry& registry, const StructureSite& sit
 bool StructurePlacement::on_deposit(const PlacementRules& r, f32 x, f32 z) const {
     const auto want = r.deposit == PlacementRules::Deposit::Mass
                           ? ResourceDeposit::Mass : ResourceDeposit::Hydrocarbon;
-    for (const auto& d : sim_.resource_deposits()) {
-        if (d.type == want && std::abs(d.x - x) < 0.5f && std::abs(d.z - z) < 0.5f) {
-            return true;
-        }
-    }
-    return false;
+    const auto x0 = static_cast<i32>(std::lrint(x - r.size_x * 0.5f));
+    const auto z0 = static_cast<i32>(std::lrint(z - r.size_z * 0.5f));
+    const DepositRect cells{x0, z0, x0 + static_cast<i32>(std::lround(r.size_x)),
+                            z0 + static_cast<i32>(std::lround(r.size_z))};
+    return deposit_in_area(sim_.resource_deposits(), want, cells);
 }
 
 bool StructurePlacement::deposit_under(const StructureSite& skirt) const {
     for (const auto& d : sim_.resource_deposits()) {
-        // Its cells as Moho keeps them (BuildRectFromPointAndSize).
-        const auto size = static_cast<i32>(d.size);
-        const auto gx0 = static_cast<i32>(std::nearbyint(d.x - static_cast<f32>(size) * 0.5f));
-        const auto gz0 = static_cast<i32>(std::nearbyint(d.z - static_cast<f32>(size) * 0.5f));
+        const DepositRect c = deposit_rect(d);
         const f32 pad = d.type == ResourceDeposit::Mass ? 0.5f : 1.5f;
-        const f32 x0 = static_cast<f32>(gx0) - pad;
-        const f32 z0 = static_cast<f32>(gz0) - pad;
-        const f32 x1 = static_cast<f32>(gx0 + size) + pad;
-        const f32 z1 = static_cast<f32>(gz0 + size) + pad;
+        const f32 x0 = static_cast<f32>(c.x0) - pad;
+        const f32 z0 = static_cast<f32>(c.z0) - pad;
+        const f32 x1 = static_cast<f32>(c.x1) + pad;
+        const f32 z1 = static_cast<f32>(c.z1) + pad;
         if (x1 > skirt.x0 && skirt.x1 > x0 && z1 > skirt.z0 && skirt.z1 > z0) return true;
     }
     return false;

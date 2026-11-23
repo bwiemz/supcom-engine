@@ -389,11 +389,15 @@ if(Python3_Interpreter_FOUND)
     if(NOT _osc_faf_data AND EXISTS "$ENV{HOME}/.faforever/bin/init_faf.lua")
         set(_osc_faf_data "$ENV{HOME}/.faforever")
     endif()
+    # FAForever/fa#7433: FAF's CommanderInitialBOAI reads location[3] of a {x, z} template entry.
+    set(_osc_faf_known_error
+        "/lua/ai/aiutilities.lua:3526: attempt to perform arithmetic on field `?' (a nil value)")
     add_test(NAME data.save_load_faf
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/save_load.py
                      $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
                      -- --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP} --ai-skirmish
-                     --ai-armies 4 --ticks 1200 --seed 4242 --scripted-orders)
+                     --ai-armies 4 --ticks 1200 --seed 4242 --scripted-orders
+                     --allow-lua-error "${_osc_faf_known_error}")
     set_tests_properties(data.save_load_faf PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
@@ -402,7 +406,8 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/save_load.py --by-replay
                      $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
                      -- --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP} --ai-skirmish
-                     --ai-armies 4 --ticks 1200 --seed 4242 --scripted-orders)
+                     --ai-armies 4 --ticks 1200 --seed 4242 --scripted-orders
+                     --allow-lua-error "${_osc_faf_known_error}")
     set_tests_properties(data.save_load_replay_faf PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77

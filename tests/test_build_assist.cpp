@@ -416,9 +416,9 @@ TEST_CASE("A repairer paused before it starts waits at its target until a retry 
     CHECK(eng->command_queue().size() == 1);
     CHECK(arm_of(*eng).has_target());
     // On target from the second tick, the order meets the pause there and
-    // retries each 10th tick: the 22nd, the 7th after the unpause.
+    // retries each 9th tick: the 20th, the 5th after the unpause.
     eng->set_paused(false);
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 4; ++i) {
         w.sim.tick();
         CHECK_FALSE(eng->is_building());
     }
@@ -439,9 +439,9 @@ TEST_CASE("A guard paused before it helps a build waits until a retry after unpa
         CHECK_FALSE(helper->is_building());
     }
     // The helper's arm is on the build from the fourth tick, where it meets
-    // the pause, then each 10th: the 24th, the 9th after the unpause.
+    // the pause, then each 9th: the 22nd, the 7th after the unpause.
     helper->set_paused(false);
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < 6; ++i) {
         w.sim.tick();
         CHECK_FALSE(helper->is_building());
     }
@@ -460,12 +460,10 @@ TEST_CASE("A guard paused before building its ward consumes its retry timer once
         CHECK_FALSE(eng->is_building());
     }
     // Its help starts 6 ticks on, the arm arriving on tick 8, then retries
-    // on ticks 18 and 28. Unpausing on tick 15 leaves three ticks to wait.
+    // on ticks 17 and 26. Unpausing on tick 15 leaves two ticks to wait.
     eng->set_paused(false);
-    for (int tick = 0; tick < 2; ++tick) {
-        w.sim.tick();
-        CHECK_FALSE(eng->is_building());
-    }
+    w.sim.tick();
+    CHECK_FALSE(eng->is_building());
     w.sim.tick();
     CHECK(eng->is_building());
 }

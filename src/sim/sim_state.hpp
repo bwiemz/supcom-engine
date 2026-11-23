@@ -241,11 +241,20 @@ public:
     /// Entity `id` stands on `occupant`'s rects (Moho's ExecuteOccupyGround,
     /// a prop's reclaim-area claim), in place of any claim it had.
     void occupy_ground(EntityId id, GroundOccupant occupant);
-    /// Its claim goes (Moho's ReleaseOccupyGround): its cells clear, but for
-    /// those another occupant also stands on. Moho's grid, bits alone,
-    /// clears those too; this keeps them, so a load can rebuild the grid
-    /// from its occupants.
+    /// Its claim's rects occupied again (Moho's ExecuteOccupyGround).
+    void occupy_ground_again(EntityId id);
+    /// Its claim goes, and `cells` (by default the claim's rects) clear for
+    /// its caps, whoever else stands there (Moho's COGrid::ReleaseOccupy).
     void release_ground(EntityId id);
+    void release_ground(EntityId id, const OccupancyRect& cells);
+    /// A unit's: its footprint where it stands (Moho's ReleaseOccupyGround).
+    void release_ground(const Unit& unit);
+    /// Its claim goes and its cells stay occupied (Moho's FootprintDown
+    /// cleared).
+    void drop_ground_claim(EntityId id) { ground_occupants_.erase(id); }
+    /// Set or clear `r`'s cells on the grids `caps` writes, held by no
+    /// occupant (Moho's COGrid::ExecuteOccupy and ReleaseOccupy of a rect).
+    void occupy_cells(u8 caps, const OccupancyRect& r, bool occupied);
     /// Reserve, or free, a place a unit will come to rest (Moho's
     /// Unit::ReserveOgridRect, an aircraft's landing place).
     void reserve_ground(const OccupancyRect& r, bool reserved) { occupancy_.reserve(r, reserved); }
@@ -262,7 +271,7 @@ public:
     void notify_script_destroy(Entity& entity);
     /// Moho's Unit::OnDestroy and Entity::OnDestroy, as the deletion queue reaches the entity.
     void on_destroy(Entity& entity);
-    /// OnNotAdjacentTo both ways with each neighbour, which forgets the unit.
+    /// Moho's Kill and OnDestroy: OnNotAdjacentTo with the structures it overlaps now.
     void drop_adjacency(Unit& unit);
     /// Moho's CAiTransportImpl::TransportDetachAllUnits (ai/CAiTransportImpl.cpp:1533).
     void detach_all_units(Unit& transport, bool destroy_some);
@@ -609,8 +618,9 @@ public:
     /// the transport can't carry the unit.
     bool takes_command(const Unit& unit, const UnitCommand& command, bool clear_existing,
                        const UnitCommand* last, bool* rejected = nullptr) const;
-    /// An Attack's target point, drawn as the order is made: one for all its
-    /// units (Moho's CAiTarget::UpdateTarget, Unit::PickTargetPoint).
+    /// The target point of an order's target unit, drawn as the order is made: one for all its
+    /// units, whatever the order (Moho's CUnitCommand decodes its target with
+    /// CAiTarget::UpdateTarget, which calls Unit::PickTargetPoint).
     void pick_target_point(UnitCommand& command);
     /// Whether a live unit still has the command in its queue (IsCommandDone
     /// is its negation: a command is done once no unit holds it).
@@ -628,8 +638,9 @@ public:
     };
     /// Sim::SetCommandTarget / CUnitCommand::SetTarget: the order moves for
     /// all its units, a formation keeping its shape.
+    /// `picks`: the stream a new target unit's target point is drawn from (null for a preview).
     void retarget_command(const SimCallbackEntry& cb, const std::vector<CommandToRetarget>& orders,
-                          std::optional<std::pair<f32, f32>> footprint) const;
+                          std::optional<std::pair<f32, f32>> footprint, SimRandom* picks) const;
     /// A player's order for the units they selected, as Moho's UI issues it
     /// (M206k): a move, patrol or transport call goes to the RALLYPOINT
     /// units among them (factories) as a factory command -- their rally

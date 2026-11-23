@@ -10,6 +10,7 @@ struct lua_State;
 namespace osc::sim {
 
 class EntityRegistry;
+class SimState;
 class Unit;
 
 struct BuildSiteProp {
@@ -30,9 +31,9 @@ BuildSiteProp find_build_site_prop(lua_State* L, const EntityRegistry& registry,
 const Unit* find_build_site_frame(const EntityRegistry& registry, const std::string& bp_id,
                                   const Vector3& site);
 
-/// Whether another structure takes part of the skirt `bp_id` would have at
-/// `site` (Moho's func_LocationIsFree)
-bool build_site_taken(lua_State* L, const EntityRegistry& registry, const std::string& bp_id,
+/// Whether `bp_id` may no longer go up at `site`, as Moho's build task asks
+/// before it makes the structure (func_LocationIsFree)
+bool build_site_taken(lua_State* L, const SimState& sim, i32 army, const std::string& bp_id,
                       const Vector3& site);
 
 } // namespace osc::sim

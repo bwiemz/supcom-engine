@@ -122,7 +122,7 @@ void register_test_helpers(lua_State* L, bool moho_pathing) {
     lua_pushcfunction(L, l_test_find_unit);
     lua_rawset(L, LUA_GLOBALSINDEX);
 
-    // __osc_test_find_place(brain, bp, near) -> {x, z, 0} or false: the free
+    // __osc_test_find_place(brain, bp, near) -> {x, z, 0} or nil: the free
     // site for `bp` nearest `near`, via FindPlaceToBuild over a 2-unit grid
     // template around it (the AI supplies real base templates; tests have none).
     static const char* kFindPlace =
@@ -1744,9 +1744,14 @@ void test_upgrade(TestContext& ctx) {
                 return
             end
 
-            -- Build a T1 mass extractor near ACU
             local pos = acu:GetPosition()
-            local build_pos = {pos[1] + 10, pos[2], pos[3]}
+            local build_pos, best
+            for _, m in import('/lua/sim/ScenarioUtilities.lua').GetMarkers() do
+                if m.type == 'Mass' then
+                    local d = VDist2(m.position[1], m.position[3], pos[1], pos[3])
+                    if not best or d < best then build_pos, best = m.position, d end
+                end
+            end
             LOG('Upgrade test: building ueb1103 (T1 mex)')
             IssueBuildMobile({acu}, build_pos, 'ueb1103', {})
 
@@ -4900,7 +4905,7 @@ void test_adjacency(TestContext& ctx) {
     // Test 1: Skirt data loaded from blueprint
     {
         auto r = ctx.lua_state.do_string(
-            "local fac = CreateUnitHPR('ueb0101', 1, 200, 25, 200, 0, 0, 0)\n"
+            "local fac = CreateUnitHPR('ueb0101', 1, 200.5, 25, 200.5, 0, 0, 0)\n"
             "if not fac then error('factory creation failed') end\n"
             "rawset(_G, '__adj_fac', fac)\n"
             "rawset(_G, '__adj_fac_id', fac:GetEntityId())\n"
@@ -4942,10 +4947,10 @@ void test_adjacency(TestContext& ctx) {
             "    end\n"
             "    LOG('Test OnNotAdjacentTo fired on #' .. self:GetEntityId())\n"
             "end\n"
-            "-- Place pgen adjacent (factory center=200, footprint=5, skirt to 204)\n"
-            "-- Pgen footprint 1x1 (from SizeX 0.6), skirt 2 at -0.5: at x=205 it\n"
-            "-- spans 204..206, touching the factory skirt\n"
-            "local pg1 = CreateUnitHPR('ueb1101', 1, 205, 25, 200, 0, 0, 0)\n"
+            "-- Place pgen adjacent (factory center=200.5, footprint=5, skirt to 204.5)\n"
+            "-- Pgen footprint 1x1 (from SizeX 0.6), skirt 2 at -0.5: at x=205.5 it\n"
+            "-- spans 204.5..206.5, touching the factory skirt\n"
+            "local pg1 = CreateUnitHPR('ueb1101', 1, 205.5, 25, 200.5, 0, 0, 0)\n"
             "if not pg1 then error('pgen1 creation failed') end\n"
             "rawset(_G, '__adj_pg1', pg1)\n"
             "-- Install callback on pgen too\n"
@@ -12548,9 +12553,9 @@ void test_range(TestContext& ctx) {
         __osc_prize:SetFireState(1)
         IssueCapture({__osc_taker}, __osc_prize)
 
-        __osc_shop = __osc_spawn('ueb0101', 'ARMY_1', 610.5, 160.5)
-        __osc_onsite = __osc_spawn('uel0001', 'ARMY_1', 610.5, 165.5)
-        IssueBuildMobile({__osc_onsite}, __osc_at(610.5, 165.5), 'ueb1101', {})
+        __osc_shop = __osc_spawn('ueb0101', 'ARMY_1', 646.5, 179.5)
+        __osc_onsite = __osc_spawn('uel0001', 'ARMY_1', 646.5, 184.5)
+        IssueBuildMobile({__osc_onsite}, __osc_at(646.5, 184.5), 'ueb1101', {})
         __osc_armed = __osc_spawn('uel0001', 'ARMY_1', 650.5, 130.5)
         __osc_arm_prep = 0
         __osc_arm_prep_tick = false
@@ -12702,7 +12707,7 @@ void test_range(TestContext& ctx) {
             end
             if not fired then return false end
             for _, u in GetArmyBrain('ARMY_1'):GetListOfUnits(categories.ueb1101, false) do
-                if __osc_from(u, 610.5, 165.5) < 1 then return true end
+                if __osc_from(u, 646.5, 184.5) < 1 then return true end
             end
             return false
         end)()
@@ -12724,7 +12729,7 @@ void test_range(TestContext& ctx) {
     lua_check("Test 12b: a builder on its site builds there once clear of it", R"(
         local built = false
         for _, u in GetArmyBrain('ARMY_1'):GetListOfUnits(categories.ueb1101, false) do
-            if __osc_from(u, 610.5, 165.5) < 1 then built = true end
+            if __osc_from(u, 646.5, 184.5) < 1 then built = true end
         end
         if not built then
             error('no power generator on the site; the ACU has ' ..
@@ -12755,9 +12760,9 @@ void test_range(TestContext& ctx) {
         local brain = GetArmyBrain('ARMY_1')
         brain:GiveResource('MASS', 10000)
         brain:GiveResource('ENERGY', 100000)
-        __osc_queued_acu = __osc_spawn('uel0001', 'ARMY_1', 600.5, 190.5)
-        IssueBuildMobile({__osc_queued_acu}, __osc_at(600.5, 182.5), 'ueb2101', {})
-        IssueBuildMobile({__osc_queued_acu}, __osc_at(608.5, 190.5), 'ueb2101', {})
+        __osc_queued_acu = __osc_spawn('uel0001', 'ARMY_1', 700.5, 188.5)
+        IssueBuildMobile({__osc_queued_acu}, __osc_at(700.5, 180.5), 'ueb2101', {})
+        IssueBuildMobile({__osc_queued_acu}, __osc_at(708.5, 188.5), 'ueb2101', {})
     )");
     tick_until(ctx, "the queued ACU builds its second, its torso turned to the site", 600, R"(
         (function()
@@ -12944,9 +12949,8 @@ void test_range(TestContext& ctx) {
     )");
 
     // A worker walking to its target whose target goes first: its order
-    // ends, and with it its move (Moho's task ends its move), so it isn't
-    // left Moving with nothing to do. Repair, reclaim and capture; an
-    // attack's chase and a guard's walk the same.
+    // ends, and with it its move, so it isn't left Moving with nothing to
+    // do. An attack's chase and a guard's walk.
     lua_check("setup: three workers walk to targets 30 off", R"(
         __osc_far = {}
         __osc_far.mender = __osc_spawn('uel0105', 'ARMY_1', 595.5, 140.5)
@@ -12985,11 +12989,21 @@ void test_range(TestContext& ctx) {
     tick_for(ctx, 2);
     lua_check("Test 12j: a worker whose target goes on its way is left neither ordered nor Moving",
               R"(
-        for _, name in {'mender', 'reclaimer', 'taker', 'attacker', 'guard'} do
+        for _, name in {'attacker', 'guard'} do
             local u = __osc_far[name]
             local n = table.getn(u:GetCommandQueue())
             if n ~= 0 then error('the ' .. name .. ' has ' .. n .. ' orders') end
             if u:IsUnitState('Moving') then error('the ' .. name .. ' is still Moving') end
+        end
+    )");
+    lua_check("Test 12j: a reclaimer, mender or taker whose target goes on its way walks on with "
+              "its order",
+              R"(
+        for _, name in {'reclaimer', 'mender', 'taker'} do
+            local u = __osc_far[name]
+            local n = table.getn(u:GetCommandQueue())
+            if n ~= 1 then error('the ' .. name .. ' has ' .. n .. ' orders') end
+            if not u:IsUnitState('Moving') then error('the ' .. name .. ' stopped') end
         end
     )");
     // A launcher backing off from a target too close (MinRadius 5) whose
@@ -13565,8 +13579,11 @@ void test_factory_rally(TestContext& ctx) {
                         }
                     end
                     if p[1] > __osc_let_go[1] - 30 then
+                        local dx, dz = 626.5 - __osc_let_go[1], 176.5 - __osc_let_go[3]
+                        local ax, az = p[1] - __osc_let_go[1], p[3] - __osc_let_go[3]
                         __osc_climb = math.max(__osc_climb, p[2] - __osc_was[2])
-                        __osc_aside = math.max(__osc_aside, math.abs(p[3] - __osc_let_go[3]))
+                        __osc_aside = math.max(__osc_aside,
+                                               math.abs(ax * dz - az * dx) / math.sqrt(dx * dx + dz * dz))
                     end
                 end
             )");
@@ -13576,10 +13593,13 @@ void test_factory_rally(TestContext& ctx) {
             return lua_true(ctx.lua_state, "__osc_let_go ~= false and "
                                            "__osc_scout:GetPosition()[1] <= __osc_let_go[1] - 30");
         });
-    lua_check("the scout climbs from the factory and flies straight west", R"(
-        if __osc_climb > 1 or __osc_aside > 1 then
+    // Its rally move settles: its landing footprint fits neither at (620, 180)
+    // nor two rings round it, and the third's nearest place is (626.5, 176.5),
+    // the line the original game's scout flies.
+    lua_check("the scout climbs from the factory and flies straight to its settled rally point", R"(
+        if __osc_climb > 1 or __osc_aside > 0.5 then
             error('climbed ' .. __osc_climb .. ' in a tick, flew ' .. __osc_aside ..
-                  ' aside of its line west')
+                  ' aside of its line to (626.5, 176.5)')
         end
     )");
     lua_check("the scout is let go facing the roll-off point nearest the rally", R"(
@@ -17333,21 +17353,23 @@ void test_prebuilt(TestContext& ctx) {
 
     // A factory and four power generators by the start: off the start spot
     // (+-5), clear of each other, and close.
-    const osc::sim::StructureSite start_box{static_cast<osc::f32>(static_cast<int>(start.x)),
-                                            static_cast<osc::f32>(static_cast<int>(start.z)), 10,
-                                            10};
+    const auto sx = static_cast<osc::f32>(std::lrint(start.x));
+    const auto sz = static_cast<osc::f32>(std::lrint(start.z));
+    const osc::sim::StructureSite start_box{sx - 5, sz - 5, sx + 5, sz + 5};
+    const auto site_of = [](const osc::sim::Unit* u) {
+        return osc::sim::StructureSite::of(u->position().x, u->position().z, u->footprint_size_x(),
+                                           u->footprint_size_z());
+    };
     bool clear_of_start = true, clear_of_each_other = true;
     osc::f32 farthest_other = 0;
     for (size_t i = 0; i < others.size(); ++i) {
         const auto* a = others[i];
-        const osc::sim::StructureSite sa{a->position().x, a->position().z, a->footprint_size_x(),
-                                         a->footprint_size_z()};
+        const osc::sim::StructureSite sa = site_of(a);
         if (start_box.overlaps(sa)) clear_of_start = false;
         for (size_t j = i + 1; j < others.size(); ++j) {
-            const auto* b = others[j];
-            if (sa.overlaps({b->position().x, b->position().z, b->footprint_size_x(),
-                             b->footprint_size_z()}))
+            if (sa.overlaps(site_of(others[j]))) {
                 clear_of_each_other = false;
+            }
         }
         farthest_other =
             std::max(farthest_other, std::sqrt(dist2(a->position().x, a->position().z)));
@@ -25430,7 +25452,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest2', 'no_entity'); return end
-            local fx = CreateEmitterAtEntity(acu, 1, '/effects/emitters/test.bp')
+            local fx = CreateEmitterAtEntity(acu, 1, '/effects/emitters/destruction_explosion_fire_01_emit.bp')
             local chained = fx:ScaleEmitter(2.0)
             rawset(_G, '_emtest2', (chained == fx) and 'ok' or 'chain_broken')
         )");
@@ -25444,7 +25466,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest3', 'no_entity'); return end
-            local fx = CreateEmitterOnEntity(acu, 1, '/effects/emitters/test.bp')
+            local fx = CreateEmitterOnEntity(acu, 1, '/effects/emitters/destruction_explosion_fire_01_emit.bp')
                 :ScaleEmitter(1.5)
                 :OffsetEmitter(0, 0.5, 0)
                 :SetEmitterParam('LIFETIME', 9999)
@@ -25467,7 +25489,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest4', 'no_entity'); return end
-            local fx = CreateEmitterAtBone(acu, 0, 1, '/effects/emitters/test.bp')
+            local fx = CreateEmitterAtBone(acu, 0, 1, '/effects/emitters/destruction_explosion_fire_01_emit.bp')
             rawset(_G, '_emtest4', (fx and type(fx) == 'table') and 'ok' or 'nil')
         )");
         auto v = check_result("_emtest4");
@@ -25480,7 +25502,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest5', 'no_entity'); return end
-            local fx = CreateAttachedEmitter(acu, -1, 1, '/effects/emitters/test.bp')
+            local fx = CreateAttachedEmitter(acu, -1, 1, '/effects/emitters/destruction_explosion_fire_01_emit.bp')
             rawset(_G, '_emtest5', (fx and type(fx) == 'table') and 'ok' or 'nil')
         )");
         auto v = check_result("_emtest5");
@@ -25491,7 +25513,7 @@ void test_emitter(TestContext& ctx) {
     // Test 6: CreateBeamEmitter returns table (no entity needed)
     {
         run_lua(R"(
-            local fx = CreateBeamEmitter('/effects/emitters/beam_test.bp', 1)
+            local fx = CreateBeamEmitter('/effects/emitters/transport_thruster_beam_01_emit.bp', 1)
             rawset(_G, '_emtest6', (fx and type(fx) == 'table') and 'ok' or 'nil')
         )");
         auto v = check_result("_emtest6");
@@ -25504,7 +25526,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest7', 'no_entity'); return end
-            local fx = AttachBeamEntityToEntity(acu, 0, acu, 1, 1, '/effects/emitters/beam.bp')
+            local fx = AttachBeamEntityToEntity(acu, 0, acu, 1, 1, '/effects/emitters/transport_thruster_beam_01_emit.bp')
             rawset(_G, '_emtest7', (fx and type(fx) == 'table') and 'ok' or 'nil')
         )");
         auto v = check_result("_emtest7");
@@ -25517,7 +25539,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest8', 'no_entity'); return end
-            local fx = CreateEmitterAtEntity(acu, 1, '/effects/emitters/test.bp')
+            local fx = CreateEmitterAtEntity(acu, 1, '/effects/emitters/destruction_explosion_fire_01_emit.bp')
             local before = fx:BeenDestroyed()
             fx:Destroy()
             local after = fx:BeenDestroyed()
@@ -25576,7 +25598,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest12', 'no_entity'); return end
-            local fx = CreateBeamEmitterOnEntity(acu, -1, 1, '/effects/emitters/beam.bp')
+            local fx = CreateBeamEmitterOnEntity(acu, -1, 1, '/effects/emitters/transport_thruster_beam_01_emit.bp')
             rawset(_G, '_emtest12', (fx and type(fx) == 'table') and 'ok' or 'nil')
         )");
         auto v = check_result("_emtest12");
@@ -25603,7 +25625,7 @@ void test_emitter(TestContext& ctx) {
         run_lua(R"(
             local acu = rawget(_G, '_emtest_entity')
             if not acu then rawset(_G, '_emtest14', 'no_entity'); return end
-            local beam = CreateBeamEmitter('/effects/emitters/beam.bp', 1)
+            local beam = CreateBeamEmitter('/effects/emitters/transport_thruster_beam_01_emit.bp', 1)
             local result = AttachBeamToEntity(beam, acu, 0, 1)
             rawset(_G, '_emtest14', (result == beam) and 'ok' or 'not_same')
         )");
@@ -25631,12 +25653,11 @@ void test_emitter(TestContext& ctx) {
     // Test 15: an emitter ends when its blueprint's Lifetime (ticks, rounded
     // up) runs out, however long its Repeattime: Lifetime 20 after 20 ticks,
     // a muzzle flash's 0.1 after one, and Lifetime 2 with Repeattime 6 after
-    // two. A negative Lifetime (a trail) or a blueprint the store doesn't
-    // know emits on. A LIFETIME param (ticks from when the emitter was made)
-    // retimes it: 0 ends it now, negative lets it emit on. A beam made by
-    // CreateBeamEmitterOnEntity has no emitter blueprint, so neither its
-    // Lifetime nor a LIFETIME param ends it: it goes with its entity. (A tick
-    // first, so the emitters aren't made on tick 0.)
+    // two. A negative Lifetime (a trail) emits on. A LIFETIME param (ticks
+    // from when the emitter was made) retimes it: 0 ends it now, negative lets
+    // it emit on. A beam made by CreateBeamEmitterOnEntity has no emitter
+    // blueprint, so neither its Lifetime nor a LIFETIME param ends it: it goes
+    // with its entity. (A tick first, so the emitters aren't made on tick 0.)
     {
         ctx.sim.tick();
         run_lua(R"(
@@ -25648,7 +25669,6 @@ void test_emitter(TestContext& ctx) {
             rawset(_G, '_emtest15_plume', at('water_splash_plume_02_emit.bp'))
             rawset(_G, '_emtest15_trail', CreateAttachedEmitter(acu, -1, 1,
                 '/effects/emitters/plasma_cannon_trail_01_emit.bp'))
-            rawset(_G, '_emtest15_unknown', at('test.bp'))
             rawset(_G, '_emtest15_retimed',
                 at('plasma_cannon_trail_01_emit.bp'):SetEmitterParam('LIFETIME', 30))
             rawset(_G, '_emtest15_now', at('weapon_mist_01_emit.bp'):SetEmitterParam('LIFETIME', 0))
@@ -25668,7 +25688,6 @@ void test_emitter(TestContext& ctx) {
         ok = ends("_emtest15_flash", 1) && ok;
         ok = ends("_emtest15_plume", 2) && ok;
         ok = ends("_emtest15_trail", -1) && ok;
-        ok = ends("_emtest15_unknown", -1) && ok;
         ok = ends("_emtest15_retimed", 30) && ok;
         ok = ends("_emtest15_now", 0) && ok;
         ok = ends("_emtest15_on", -1) && ok;
@@ -25745,6 +25764,49 @@ void test_emitter(TestContext& ctx) {
         } else {
             fail++;
             osc::test_status::fail("[FAIL] Test 17: kept={} after={}", kept, after);
+        }
+    }
+
+    // Test 18: teleport_sparks_01 is in retail's EffectTemplates, and no file has it.
+    {
+        run_lua(R"(
+            local acu = rawget(_G, '_emtest_entity')
+            local bad = '/effects/emitters/teleport_sparks_01_emit.bp'
+            local fire = '/effects/emitters/destruction_explosion_fire_01_emit.bp'
+            local beam = '/effects/emitters/transport_thruster_beam_01_emit.bp'
+            local wrong = {}
+            local function none(what, fx) if fx ~= nil then table.insert(wrong, what) end end
+            none('at', CreateEmitterAtEntity(acu, 1, bad))
+            none('on', CreateEmitterOnEntity(acu, 1, bad))
+            none('bone', CreateEmitterAtBone(acu, -1, 1, bad))
+            none('attached', CreateAttachedEmitter(acu, -1, 1, bad))
+            none('trail', CreateTrail(acu, -1, 1, bad))
+            none('trail of an emitter', CreateTrail(acu, -1, 1, fire))
+            none('emitter of a beam', CreateEmitterAtEntity(acu, 1, beam))
+            if CreateEmitterAtEntity(acu, 1, nil) == nil then table.insert(wrong, 'no name') end
+            if CreateEmitterAtEntity(acu, 1, '\\EFFECTS\\Emitters\\Destruction_Explosion_Fire_01_emit.bp') == nil then
+                table.insert(wrong, 'case')
+            end
+            local function raises(what, f, ...)
+                local ok, err = pcall(f, unpack(arg))
+                if ok or not string.find(tostring(err), 'Unknown beam kind: ' .. bad, 1, true) then
+                    table.insert(wrong, what .. '=' .. tostring(err))
+                end
+            end
+            raises('beam', CreateBeamEmitter, bad, 1)
+            raises('beam on', CreateBeamEmitterOnEntity, acu, -1, 1, bad)
+            raises('attach', AttachBeamEntityToEntity, acu, -1, acu, -1, 1, bad)
+            raises('entity to entity', CreateBeamEntityToEntity, acu, -1, acu, -1, 1, bad)
+            if pcall(CreateBeamEmitter, fire, 1) then table.insert(wrong, 'beam of an emitter') end
+            rawset(_G, '_emtest18', table.getn(wrong) == 0 and 'ok' or table.concat(wrong, ', '))
+        )");
+        const std::string v = check_result("_emtest18");
+        if (v == "ok") {
+            pass++;
+            spdlog::info("[PASS] Test 18: an unregistered effect name makes nothing or raises");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 18: {}", v);
         }
     }
 
@@ -25898,7 +25960,7 @@ void test_collision_beam(TestContext& ctx) {
             local beam = rawget(_G, '_cbtest_beam')
             local unit = rawget(_G, '_cbtest_unit')
             if not beam or not unit then rawset(_G, '_cbtest7', 'no_beam'); return end
-            local fx = CreateBeamEmitter('/effects/emitters/beam.bp', 1)
+            local fx = CreateBeamEmitter('/effects/emitters/transport_thruster_beam_01_emit.bp', 1)
             moho.CollisionBeamEntity.SetBeamFx(beam, fx, false)
             rawset(_G, '_cbtest7', 'ok')
         )");
@@ -25918,7 +25980,7 @@ void test_collision_beam(TestContext& ctx) {
             beam.OnImpact = function(self, impactType, target)
                 rawset(_G, '_cbtest8_impact', impactType)
             end
-            local fx = CreateBeamEmitter('/effects/emitters/beam.bp', 1)
+            local fx = CreateBeamEmitter('/effects/emitters/transport_thruster_beam_01_emit.bp', 1)
             moho.CollisionBeamEntity.SetBeamFx(beam, fx, true)
             local hit = rawget(_G, '_cbtest8_impact')
             local enabled = moho.CollisionBeamEntity.IsEnabled(beam)

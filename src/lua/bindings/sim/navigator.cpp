@@ -128,6 +128,9 @@ static int nav_SetGoal(lua_State* L) {
     pos.z = static_cast<f32>(lua_tonumber(L, -1));
     lua_pop(L, 1);
     nav->set_goal(pos);
+    if (unit->is_air_unit()) {
+        nav->set_air_target(unit->air_target(pos, get_sim(L)->terrain()));
+    }
     return 0;
 }
 

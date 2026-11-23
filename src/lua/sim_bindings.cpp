@@ -269,22 +269,47 @@ static f32 blueprint_cap_cost(lua_State* L, const blueprints::BlueprintStore& st
     return cost;
 }
 
-/// A blueprint's AI.InitialAutoMode: whether the unit starts in auto mode
-/// (silos building missiles, Cybran hives assisting); false when unset.
-static bool blueprint_initial_auto_mode(lua_State* L, const blueprints::BlueprintStore& store,
-                                        const blueprints::BlueprintEntry& entry) {
+/// A blueprint's flag at section.key, a number or a boolean; false when unset.
+static bool blueprint_flag(lua_State* L, const blueprints::BlueprintStore& store,
+                           const blueprints::BlueprintEntry& entry, const char* section,
+                           const char* key) {
     bool on = false;
     const int top = lua_gettop(L);
     store.push_lua_table(entry, L);
-    lua_pushstring(L, "AI");
+    lua_pushstring(L, section);
     lua_gettable(L, -2);
     if (lua_istable(L, -1)) {
-        lua_pushstring(L, "InitialAutoMode");
+        lua_pushstring(L, key);
         lua_gettable(L, -2);
         on = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) != 0 : lua_toboolean(L, -1) != 0;
     }
     lua_settop(L, top);
     return on;
+}
+
+/// A blueprint's AI.InitialAutoMode: whether the unit starts in auto mode
+/// (silos building missiles, Cybran hives assisting).
+static bool blueprint_initial_auto_mode(lua_State* L, const blueprints::BlueprintStore& store,
+                                        const blueprints::BlueprintEntry& entry) {
+    return blueprint_flag(L, store, entry, "AI", "InitialAutoMode");
+}
+
+/// Moho's Unit made from a position alone (faf-re unit/core/UnitGuard.inl): a mobile unit whose
+/// blueprint sets Display.SpawnRandomRotation faces a draw in [-pi/6, pi/6) about Y.
+static void spawn_random_rotation(lua_State* L, sim::SimState& sim, sim::EntityId id) {
+    auto* e = sim.entity_registry().find(id);
+    auto* store = sim.blueprint_store();
+    if (!e || !e->is_unit() || !store || !static_cast<sim::Unit*>(e)->is_mobile()) {
+        return;
+    }
+    const auto* entry = store->find(e->blueprint_id());
+    if (!entry || !blueprint_flag(L, *store, *entry, "Display", "SpawnRandomRotation")) {
+        return;
+    }
+    const f32 half = sim.random().range(-0.52359879f, 0.52359879f) * 0.5f;
+    const f32 s = osc::dmath::sin(half);
+    e->set_orientation({0.0f * s, s, 0.0f * s, osc::dmath::cos(half)});
+    e->place_now();
 }
 
 /// Moho's Unit, made: its army's unit stats (faf-re unit/core/Unit.cpp:13160-13195)
@@ -473,6 +498,9 @@ static sim::EntityId create_unit_core(lua_State* L, const char* bp_id, int army,
         if (ground.rects.empty())
             ground.rects.push_back(sim::footprint_rect(unit_ptr->footprint(), at.x, at.z));
         sim->occupy_ground(id, std::move(ground));
+    }
+    if (unit_ptr->reserves_skirt()) {
+        sim->reserve_ground(unit_ptr->skirt_cells(), true);
     }
 
     // Set weapon owner back-pointers now that entity ID is assigned
@@ -748,12 +776,16 @@ static sim::EntityId spawn_complete_unit(lua_State* L, sim::SimState& sim, const
         lua_pop(L, 1);
     }
 
-    // OnStopBeingBuilt (only for pre-placed units)
     auto* unit_ptr = static_cast<sim::Unit*>(sim.entity_registry().find(id));
     if (unit_ptr && !unit_ptr->is_being_built()) {
         // A structure created complete (map-placed, scripted) blocks paths
         // like a freshly built one; released when it leaves the registry.
         sim.occupy_footprint(*unit_ptr);
+        unit_ptr->fire_adjacency_callbacks(sim, L);
+        unit_ptr = static_cast<sim::Unit*>(sim.entity_registry().find(id));
+    }
+    // OnStopBeingBuilt (only for pre-placed units), after its adjacency, as Moho's Unit ctor.
+    if (unit_ptr && !unit_ptr->destroyed() && !unit_ptr->is_being_built()) {
         lua_pushstring(L, "OnStopBeingBuilt");
         lua_gettable(L, tbl);
         if (lua_isfunction(L, -1)) {
@@ -766,12 +798,6 @@ static sim::EntityId spawn_complete_unit(lua_State* L, sim::SimState& sim, const
             }
         } else {
             lua_pop(L, 1);
-        }
-
-        // Fire adjacency callbacks for pre-placed structures
-        unit_ptr = static_cast<sim::Unit*>(sim.entity_registry().find(id));
-        if (unit_ptr && !unit_ptr->destroyed()) {
-            unit_ptr->fire_adjacency_callbacks(sim.entity_registry(), L);
         }
     }
     count_made(sim, id);
@@ -833,9 +859,10 @@ static int l_create_building_unit(lua_State* L) {
     f32 x = static_cast<f32>(lua_tonumber(L, 3));
     f32 z = static_cast<f32>(lua_tonumber(L, 5));
     f32 y = static_cast<f32>(lua_tonumber(L, 4));
-    if (lua_isnil(L, 4)) {
+    const bool in_place = !lua_isnil(L, 4);
+    if (!in_place) {
         auto* sim = get_sim(L);
-        y = sim ? sim::structure_elevation(*sim, structure_rules(L, *sim, bp_id), x, z) : 0.0f;
+        y = sim ? sim::structure_elevation(*sim, sim::structure_rules(L, *sim, bp_id), x, z) : 0.0f;
     }
 
     const bool capped = lua_gettop(L) < 6 || lua_isnil(L, 6) || lua_toboolean(L, 6) != 0;
@@ -856,7 +883,9 @@ static int l_create_building_unit(lua_State* L) {
         if (lua_isnumber(L, 8) && built) {
             // func_OrderBuildStructure's build orientation from its angle in degrees.
             const f32 half = static_cast<f32>(lua_tonumber(L, 8)) * 0.017453292f * -0.5f;
-            built->set_orientation({0.0f, osc::dmath::sin(half), 0.0f, osc::dmath::cos(half)});
+            const f32 s = osc::dmath::sin(half);
+            built->set_orientation({s * 0.0f, s, s * 0.0f, osc::dmath::cos(half)});
+            built->place_now();
         }
         if (lua_isnumber(L, 7) && built && built->is_unit()) {
             static_cast<sim::Unit*>(built)->set_creator_id(sim::to_entity_key(L, 7));
@@ -877,6 +906,9 @@ static int l_create_building_unit(lua_State* L) {
         lua_pop(L, 1);
     }
     if (auto* sim = get_sim(L)) {
+        if (in_place) {
+            spawn_random_rotation(L, *sim, id);
+        }
         tell_starting_layer(L, *sim, id);
         tell_terrain_type(L, *sim, id);
     }
@@ -940,7 +972,7 @@ static int l_CreateUnit2(lua_State* L) {
 
     // Rewrite stack for l_CreateUnit: bp, army, x, y, z -- y where the unit
     // stands at (x, z), as for a structure built there
-    const f32 y = sim::structure_elevation(*sim, structure_rules(L, *sim, bp_id_str), x, z);
+    const f32 y = sim::structure_elevation(*sim, sim::structure_rules(L, *sim, bp_id_str), x, z);
     lua_settop(L, 0);
     lua_pushstring(L, bp_id_str.c_str());
     lua_pushnumber(L, army + 1);
@@ -2334,6 +2366,30 @@ static void time_emitter(lua_State* L, sim::SimState& sim, sim::IEffect& fx) {
     fx.end_after(lifetime.value_or(-1.0), sim::SimState::SECONDS_PER_TICK);
 }
 
+static bool effect_blueprint_registered(const sim::SimState& sim, const char* name,
+                                        blueprints::BlueprintType type) {
+    const auto* store = sim.blueprint_store();
+    return store && store->find_effect(name, type);
+}
+
+/// Moho: CEffectManagerImpl::CreateEmitter and CreateTrail warn; cfunc_CreateBeamEmitterL errors.
+static bool unknown_effect(lua_State* L, const sim::SimState& sim, int idx,
+                           blueprints::BlueprintType type, const char* kind) {
+    const char* name = lua_tostring(L, idx);
+    if (!name || effect_blueprint_registered(sim, name, type)) {
+        return false;
+    }
+    spdlog::warn("Failed to create {} as you passed in an invalid blueprint name {}.", kind, name);
+    return true;
+}
+
+static void check_beam_name(lua_State* L, const sim::SimState& sim, int idx) {
+    const char* name = luaL_checkstring(L, idx);
+    if (!effect_blueprint_registered(sim, name, blueprints::BlueprintType::Beam)) {
+        luaL_error(L, "Unknown beam kind: %s", name);
+    }
+}
+
 // CreateEmitterAtEntity(entity, army, blueprintPath): an emitter where the
 // entity is, not attached to it.
 // Where an At-emitter is made: its entity's bone as it is now (M214c; the
@@ -2354,6 +2410,9 @@ static int l_CreateEmitterAtEntity(lua_State* L) {
     if (!sim) { lua_pushnil(L); return 1; }
     auto* entity = effect_check_entity(L, 1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 2, 0));
+    if (unknown_effect(L, *sim, 3, blueprints::BlueprintType::Emitter, "emitter")) {
+        return 0;
+    }
     const char* bp = luaL_optstring(L, 3, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::EMITTER_AT_ENTITY);
@@ -2378,6 +2437,9 @@ static int l_CreateEmitterOnEntity(lua_State* L) {
     }
     auto* entity = effect_check_entity(L, 1);
     const i32 army = static_cast<i32>(luaL_optnumber(L, 2, 0));
+    if (unknown_effect(L, *sim, 3, blueprints::BlueprintType::Emitter, "emitter")) {
+        return 0;
+    }
     const char* bp = luaL_optstring(L, 3, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::ATTACHED_EMITTER);
@@ -2396,6 +2458,9 @@ static int l_CreateEmitterAtBone(lua_State* L) {
     auto* entity = effect_check_entity(L, 1);
     i32 bone = effect_bone_arg(L, 2, entity, -1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    if (unknown_effect(L, *sim, 4, blueprints::BlueprintType::Emitter, "emitter")) {
+        return 0;
+    }
     const char* bp = luaL_optstring(L, 4, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::EMITTER_AT_BONE);
@@ -2409,13 +2474,18 @@ static int l_CreateEmitterAtBone(lua_State* L) {
     return 1;
 }
 
-// CreateAttachedEmitter(entity, boneIndex, army, blueprintPath)
-static int l_CreateAttachedEmitter(lua_State* L) {
+// CreateAttachedEmitter / CreateBeamEmitterOnEntity(entity, boneIndex, army, blueprintPath)
+static int create_attached_emitter(lua_State* L, bool beam) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
     auto* entity = effect_check_entity(L, 1);
     i32 bone = effect_bone_arg(L, 2, entity, -1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    if (beam) {
+        check_beam_name(L, *sim, 4);
+    } else if (unknown_effect(L, *sim, 4, blueprints::BlueprintType::Emitter, "emitter")) {
+        return 0;
+    }
     const char* bp = luaL_optstring(L, 4, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::ATTACHED_EMITTER);
@@ -2426,6 +2496,14 @@ static int l_CreateAttachedEmitter(lua_State* L) {
     time_emitter(L, *sim, *fx);
     push_ieffect_table(L, fx);
     return 1;
+}
+
+static int l_CreateAttachedEmitter(lua_State* L) {
+    return create_attached_emitter(L, false);
+}
+
+static int l_CreateBeamEmitterOnEntity(lua_State* L) {
+    return create_attached_emitter(L, true);
 }
 
 // CreateTrail(entity, bone, army, blueprintPath) -> IEffect: a polytrail
@@ -2440,6 +2518,9 @@ static int l_CreateTrail(lua_State* L) {
     auto* entity = effect_check_entity(L, 1);
     i32 bone = effect_bone_arg(L, 2, entity, -1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    if (unknown_effect(L, *sim, 4, blueprints::BlueprintType::TrailEmitter, "trail")) {
+        return 0;
+    }
     const char* bp = luaL_optstring(L, 4, "");
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::TRAIL_EMITTER);
@@ -2455,7 +2536,8 @@ static int l_CreateTrail(lua_State* L) {
 static int l_CreateBeamEmitter(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
-    const char* bp = luaL_optstring(L, 1, "");
+    check_beam_name(L, *sim, 1);
+    const char* bp = lua_tostring(L, 1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 2, 0));
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::BEAM_EMITTER);
@@ -2518,7 +2600,8 @@ static int l_AttachBeamEntityToEntity(lua_State* L) {
     auto* end_ent = effect_check_entity(L, 3);
     i32 end_bone = effect_bone_arg(L, 4, end_ent, -1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 5, 0));
-    const char* bp = luaL_optstring(L, 6, "");
+    check_beam_name(L, *sim, 6);
+    const char* bp = lua_tostring(L, 6);
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::BEAM_ENTITY_TO_ENTITY);
     fx->set_entity_id(start_ent ? start_ent->entity_id() : sim::EntityId());
@@ -4375,6 +4458,27 @@ static int l_SetArmyShowScore(lua_State* L) {
     return 0;
 }
 
+/// SetAlliedVictory(army, bool): Moho's cfunc_SetAlliedVictoryL sets the army
+/// brain's RequestingAlliedVictory, which retail's victory.lua reads.
+static int l_SetAlliedVictory(lua_State* L) {
+    if (lua_gettop(L) != 2) {
+        return arg_count_error(L, "SetAlliedVictory(army,bool)", 2, lua_gettop(L));
+    }
+    auto* sim = get_sim(L);
+    const i32 army = resolve_army(L, 1, sim);
+    const bool requesting = arg_boolean(L, 2);
+    auto* brain = sim ? sim->get_army(army) : nullptr;
+    if (!brain || brain->lua_table_ref() < 0) {
+        return 0;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, brain->lua_table_ref());
+    lua_pushstring(L, "RequestingAlliedVictory");
+    lua_pushboolean(L, requesting ? 1 : 0);
+    lua_settable(L, -3);
+    lua_pop(L, 1);
+    return 0;
+}
+
 // Moho's cfunc_SetArmyColorIndexL: GameColors.PlayerColors[index + 1].
 static int l_SetArmyColorIndex(lua_State* L) {
     auto* sim = get_sim(L);
@@ -4815,22 +4919,49 @@ static std::vector<sim::EntityId> units_with_command_cap(lua_State* L, const std
     return ids;
 }
 
-static u32 route_capable_command(lua_State* L, const std::string& cap, const sim::UnitCommand& cmd,
-                                 bool factories_only = false) {
+// The target point an Issue* picks as it reads its target into a CAiTarget (Moho's SetTarget or
+// UpdateTarget), before its command picks its own.
+static void read_target(lua_State* L, const sim::Entity& target) {
     auto* sim = get_sim(L);
-    const auto ids = units_with_command_cap(L, cap, factories_only);
-    return !sim || ids.empty() ? 0 : sim->route_command(ids, cmd, false);
+    if (sim && target.is_unit() && !target.destroyed()) {
+        (void)static_cast<const sim::Unit&>(target).pick_target_point(sim->random());
+    }
 }
 
-// faf-re cfunc_IssueRepairL and its siblings: the target never takes its own order.
+static u32 route_capable_command(lua_State* L, const std::string& cap, const sim::UnitCommand& cmd,
+                                 bool factories_only = false, const sim::Entity* read = nullptr) {
+    auto* sim = get_sim(L);
+    const auto ids = units_with_command_cap(L, cap, factories_only);
+    if (!sim || ids.empty()) {
+        return 0;
+    }
+    if (read) {
+        read_target(L, *read);
+    }
+    return sim->route_command(ids, cmd, false);
+}
+
+// faf-re cfunc_IssueRepairL and its siblings: the target never takes its own order. Reclaim and
+// Capture read their target before they drop it from the units, Repair and Sacrifice after.
 static void route_capable_command_but_target(lua_State* L, const std::string& cap,
-                                             const sim::UnitCommand& cmd) {
+                                             const sim::UnitCommand& cmd, const sim::Entity& target,
+                                             bool read_first) {
     auto* sim = get_sim(L);
     auto ids = units_with_command_cap(L, cap);
-    std::erase(ids, cmd.target_id);
-    if (sim && !ids.empty()) {
-        sim->route_command(ids, cmd, false);
+    if (!sim || ids.empty()) {
+        return;
     }
+    if (read_first) {
+        read_target(L, target);
+    }
+    std::erase(ids, cmd.target_id);
+    if (ids.empty()) {
+        return;
+    }
+    if (!read_first) {
+        read_target(L, target);
+    }
+    sim->route_command(ids, cmd, false);
 }
 
 /// What IssueMove and the other Issue* that return their command return: the
@@ -4954,6 +5085,10 @@ static int l_IssueClearCommands(lua_State* L) {
         if (e && !e->destroyed() && e->is_unit()) {
             static_cast<sim::Unit*>(e)->clear_commands(ctx);
         }
+        e = sim->entity_registry().find(id);
+        if (e && !e->destroyed() && e->is_unit()) {
+            static_cast<sim::Unit*>(e)->stop_attacker(L);
+        }
     }
     return 0;
 }
@@ -5033,6 +5168,7 @@ static int l_IssueAttack(lua_State* L) {
     } else {
         auto* target = extract_entity(L, 2);
         if (!target || target->destroyed()) return 0;
+        read_target(L, *target);
         cmd.target_id = target->entity_id();
         cmd.target_pos = target->position();
     }
@@ -5051,6 +5187,7 @@ static int l_IssueFormAttack(lua_State* L) {
     } else {
         auto* target = extract_entity(L, 2);
         if (!target || target->destroyed()) return 0;
+        read_target(L, *target);
         cmd.target_id = target->entity_id();
         cmd.target_pos = target->position();
     }
@@ -5078,6 +5215,7 @@ static int l_IssueGuard(lua_State* L) {
     } else {
         auto* target = extract_entity(L, 2);
         if (!target || target->destroyed() || !target->is_unit()) return 0;
+        read_target(L, *target);
         cmd.target_id = target->entity_id();
         cmd.target_pos = target->position();
     }
@@ -5094,7 +5232,7 @@ static int l_IssueFactoryAssist(lua_State* L) {
     cmd.type = sim::CommandType::Guard;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_capable_command(L, "RULEUCC_Guard", cmd, true);
+    route_capable_command(L, "RULEUCC_Guard", cmd, true, target);
     return 0;
 }
 
@@ -5110,7 +5248,7 @@ static int l_IssueRepair(lua_State* L) {
     cmd.type = sim::CommandType::Repair;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_capable_command_but_target(L, "RULEUCC_Repair", cmd);
+    route_capable_command_but_target(L, "RULEUCC_Repair", cmd, *target, false);
     return 0;
 }
 
@@ -5126,7 +5264,7 @@ static int l_IssueCapture(lua_State* L) {
     cmd.type = sim::CommandType::Capture;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_capable_command_but_target(L, "RULEUCC_Capture", cmd);
+    route_capable_command_but_target(L, "RULEUCC_Capture", cmd, *target, true);
     return 0;
 }
 
@@ -5241,9 +5379,12 @@ static sim::EntityId transfer_unit(lua_State* L, sim::SimState& sim, sim::Entity
     }
 
     // The old one is destroyed: a hand-over, not a loss. A structure's
-    // footprint stays blocked by its replacement's own claim (the grid
-    // counts claims per cell), where Moho has to tell the old one not to
-    // lift it.
+    // ground stays occupied by its replacement: the old one's claim goes
+    // without clearing it.
+    fresh = transferable_unit(sim, new_id);
+    if (fresh && !fresh->is_mobile()) {
+        sim.drop_ground_claim(unit_id);
+    }
     unit = transferable_unit(sim, unit_id);
     if (unit && unit->lua_table_ref() >= 0) {
         unit->set_transferred();
@@ -5498,6 +5639,7 @@ static int l_IssueMoveOffFactory(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
+    cmd.from_factory = true;
     return push_command_handle(L, route_capable_command(L, "RULEUCC_Move", cmd));
 }
 
@@ -5552,7 +5694,7 @@ static int l_IssueReclaim(lua_State* L) {
     cmd.type = sim::CommandType::Reclaim;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_capable_command_but_target(L, "RULEUCC_Reclaim", cmd);
+    route_capable_command_but_target(L, "RULEUCC_Reclaim", cmd, *target, true);
     return 0;
 }
 
@@ -5822,7 +5964,12 @@ static int l_IssueTransportLoad(lua_State* L) {
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
 
-    route_units_command(L, 1, cmd, false);
+    auto* sim = get_sim(L);
+    const auto ids = collect_unit_ids(L, 1);
+    if (sim && !ids.empty()) {
+        read_target(L, *target);
+        sim->route_command(ids, cmd, false);
+    }
     return 0;
 }
 
@@ -5885,6 +6032,7 @@ static int l_IssueTactical(lua_State* L) {
     // Target can be entity or position
     auto* target = extract_entity(L, 2);
     if (target && !target->destroyed()) {
+        read_target(L, *target);
         cmd.target_id = target->entity_id();
         cmd.target_pos = target->position();
     } else {
@@ -5919,7 +6067,7 @@ static int l_IssueOvercharge(lua_State* L) {
     cmd.type = sim::CommandType::Overcharge;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_capable_command(L, "RULEUCC_Overcharge", cmd);
+    route_capable_command(L, "RULEUCC_Overcharge", cmd, false, target);
     return 0;
 }
 
@@ -5932,7 +6080,7 @@ static int l_IssueSacrifice(lua_State* L) {
     cmd.type = sim::CommandType::Sacrifice;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_capable_command_but_target(L, "RULEUCC_Sacrifice", cmd);
+    route_capable_command_but_target(L, "RULEUCC_Sacrifice", cmd, *target, false);
     return 0;
 }
 
@@ -6215,7 +6363,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("AttachBeamEntityToEntity", l_AttachBeamEntityToEntity);
     state.register_function("CreateBeamEntityToEntity", l_AttachBeamEntityToEntity); // same
     state.register_function("CreateBeamEmitter", l_CreateBeamEmitter);
-    state.register_function("CreateBeamEmitterOnEntity", l_CreateAttachedEmitter); // same sig as attached
+    state.register_function("CreateBeamEmitterOnEntity", l_CreateBeamEmitterOnEntity);
     state.register_function("CreateLightParticle", l_CreateLightParticle);
     state.register_function("CreateLightParticleIntel", l_CreateLightParticleIntel);
     state.register_function("CreateDecal", l_CreateDecal);
@@ -6288,6 +6436,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
         return 0;
     });
     state.register_function("SetArmyShowScore", l_SetArmyShowScore);
+    state.register_function("SetAlliedVictory", l_SetAlliedVictory);
 
     // Damage
     state.register_function("Damage", l_Damage);

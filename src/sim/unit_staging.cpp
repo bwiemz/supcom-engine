@@ -118,7 +118,7 @@ bool Unit::settle_over(const Vector3& at, f32 heading, bool& glided, SimContext&
             const Vector3 goal = navigator_.goal();
             if ((!navigator_.is_moving() && !navigator_.ended()) ||
                 std::abs(goal.x - at.x) > 1.0f || std::abs(goal.z - at.z) > 1.0f) {
-                navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_, false);
+                set_path_goal(at, ctx);
             }
             if (nav_update()) {
                 return false;
@@ -195,7 +195,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, SimContext& ctx) {
         if (!navigator_.is_moving() || std::abs(goal.x - at.x) > 1.0f ||
             std::abs(goal.z - at.z) > 1.0f) {
             navigator_.set_speed_through_goal(true);
-            navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_, false);
+            set_path_goal(at, ctx);
         }
         nav_update();
     };
@@ -334,7 +334,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, SimContext& ctx) {
         const Vector3 goal = navigator_.goal();
         if (!navigator_.is_moving() || std::abs(goal.x - at.x) > 1.0f ||
             std::abs(goal.z - at.z) > 1.0f)
-            navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_, false);
+            set_path_goal(at, ctx);
         nav_update();
         return OrderStep::Hold;
     }

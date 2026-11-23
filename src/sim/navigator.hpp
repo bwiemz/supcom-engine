@@ -33,12 +33,17 @@ public:
 
     /// Set goal with straight-line movement (legacy/fallback).
     void set_goal(const Vector3& pos);
+    /// Where an aircraft flies for its goal (CAiNavigatorAir's mCurrentTargetPos).
+    void set_air_target(const Vector3& at);
 
     /// `keep_spline`: a spline it is on stays, for its steering to brake along
     /// (steer_no_waypoints).
     void abort_move(bool keep_spline = false);
 
     const Vector3& goal() const { return goal_; }
+    /// CAiNavigatorLand::GetGoalPos, its x and z: the centre of the goal cell its move took
+    /// for `unit`'s footprint, or where `unit` is while it has no move.
+    Vector3 goal_pos(const Unit& unit) const;
     /// The waypoint it drives at now, while it has one.
     const Vector3* waypoint() const {
         return waypoint_index_ < waypoints_.size() ? &waypoints_[waypoint_index_] : nullptr;

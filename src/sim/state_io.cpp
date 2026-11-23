@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 120; // 2: entities' wanted loops (M216b);
+constexpr u32 kVersion = 123; // 2: entities' wanted loops (M216b);
                               // 3: emitter overrides (M214d);
                               // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                               // 6: weapons' lead physics;
@@ -165,6 +165,9 @@ constexpr u32 kVersion = 120; // 2: entities' wanted loops (M216b);
                               // 119: a mobile build's tries at a site units stand on, and
                               //      units' walks off one (step_aside)
                               // 120: a reclaim's wait for its Processing tick
+                              // 121: a mobile build's range and turn, looked at once
+                              // 122: factory-issued orders, a factory move's settled goal
+                              // 123: path navigators' PathFinding and ProblemGettingToGoal
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -713,14 +716,17 @@ void StateIO::load(StateReader& r, SimState& sim) {
         }
         sim.occupy_ground(id, std::move(g));
     }
-    // The places aircraft reserved to land on, and guarding engineers to walk
-    // up to, from the units.
+    // The places aircraft reserved to land on, and orders to walk to, from the
+    // units.
     sim.entity_registry_.for_each_unit([&](Entity& e) {
         const auto& u = static_cast<Unit&>(e);
-        for (const OccupancyRect& rr : {u.idle_landing_.reserved, u.guard_anchor_.reserved}) {
+        for (const OccupancyRect& rr : {u.idle_landing_.reserved, u.order_reservation_.reserved}) {
             if (rr.x1 > rr.x0 && rr.z1 > rr.z0) {
                 sim.occupancy_.reserve(rr, true);
             }
+        }
+        if (u.reserves_skirt()) {
+            sim.occupancy_.reserve(u.skirt_cells(), true);
         }
     });
     // path_tables_ is derived (roadmap item 4c): made again over the loaded

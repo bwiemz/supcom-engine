@@ -1,8 +1,11 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "blueprints/footprint.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
+#include "map/heightmap.hpp"
+#include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
@@ -21,6 +24,7 @@ extern "C" {
 #include <cmath>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using osc::sim::CommandType;
@@ -531,4 +535,88 @@ TEST_CASE("A guard helping reclaim a unit under construction takes its health do
         "the frame is reclaimed to 20%", 200, [&] { return frame->fraction_complete() <= 0.2f; });
     CHECK(ticks < 55); // alone, 0.4 at 1/150 a tick is 60 steps
     CHECK(apart < 0.01f);
+}
+
+namespace {
+
+std::pair<Prop*, Unit*> walk_to_tree(ReclaimSim& w) {
+    std::vector<osc::u16> heights(65 * 65, 0);
+    osc::map::Heightmap hm(64, 64, 1.0f / 128.0f, std::move(heights));
+    w.sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
+    w.sim.build_pathfinding_grid();
+    w.sim.build_spatial_grid();
+    w.sim.add_army("ARMY_1", "ARMY_1");
+
+    auto p = std::make_unique<Prop>();
+    p->set_position({16.7535f, 0.0f, 20.8718f});
+    p->set_footprint_size(1.0f, 1.0f);
+    p->reclaimable_category = true;
+    Prop* tree = p.get();
+    w.sim.entity_registry().register_entity(std::move(p));
+    w.bind(*tree, nullptr, nullptr);
+
+    Unit* eng = w.engineer(26.5f);
+    eng->set_position({26.5f, 0.0f, 13.5f});
+    eng->set_motion_type("RULEUMT_Land");
+    eng->set_max_speed(1.7f);
+    Unit::Drive drive;
+    drive.max_accel = 50.0f;
+    eng->set_drive(drive);
+    eng->set_footprint_size(1.0f, 1.0f);
+    osc::blueprints::UnitFootprints footprints;
+    footprints.main.size_x = 1;
+    footprints.main.size_z = 1;
+    footprints.main.caps = osc::blueprints::occupancy::kLand;
+    eng->set_footprints(footprints);
+    eng->push_command(order(CommandType::Reclaim, tree->entity_id()), true);
+    return {tree, eng};
+}
+
+} // namespace
+
+TEST_CASE("A reclaimer out of reach walks to the cell nearest it a cell clear of the prop's, and "
+          "reclaims from there",
+          "[reclaim][approach]") {
+    ReclaimSim w;
+    auto [tree, eng] = walk_to_tree(w);
+    w.sim.tick();
+    REQUIRE(eng->navigator().busy());
+    CHECK(eng->navigator().goal().x == 18.5f);
+    CHECK(eng->navigator().goal().z == 18.5f);
+    tick_until([&] { w.sim.tick(); }, "it reclaims the tree", 200,
+               [&] { return eng->reclaim_target_id() == tree->entity_id(); });
+    const osc::f32 dx = eng->position().x - tree->position().x;
+    const osc::f32 dz = eng->position().z - tree->position().z;
+    CHECK(dx * dx + dz * dz > 2.0f * 2.0f);
+}
+
+TEST_CASE("A reclaimer walks on to its place when its target goes on the way, and the order ends "
+          "there",
+          "[reclaim][approach]") {
+    for (const bool gone : {false, true}) {
+        DYNAMIC_SECTION((gone ? "the tree gone on the way" : "the tree standing")) {
+            ReclaimSim w;
+            auto [tree, eng] = walk_to_tree(w);
+            const osc::sim::EntityId tree_id = tree->entity_id();
+            w.sim.tick();
+            w.sim.tick();
+            REQUIRE(eng->navigator().busy());
+            if (gone) {
+                w.sim.entity_registry().destroy(*tree);
+            }
+            w.sim.tick();
+            CHECK(eng->navigator().busy());
+            CHECK(eng->navigator().goal().x == 18.5f);
+            CHECK(eng->navigator().goal().z == 18.5f);
+            CHECK(eng->command_queue().size() == 1);
+            tick_until([&] { w.sim.tick(); }, "the walk ends", 200,
+                       [&] { return !eng->navigator().busy(); });
+            const osc::f32 dx = eng->position().x - 18.5f;
+            const osc::f32 dz = eng->position().z - 18.5f;
+            CHECK(dx * dx + dz * dz < 1.0f);
+            w.sim.tick();
+            CHECK(eng->command_queue().empty() == gone);
+            CHECK((eng->reclaim_target_id() == tree_id) == !gone);
+        }
+    }
 }

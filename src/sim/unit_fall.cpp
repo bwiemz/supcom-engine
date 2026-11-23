@@ -65,6 +65,10 @@ void Unit::set_flight_orientation(const Quaternion& q) {
     pitch_ = osc::dmath::asin(std::clamp(-fwd.y, -1.0f, 1.0f));
 }
 
+Vector3 Unit::air_body_offset() const {
+    return mult_quad_vec(pending_orientation(), bone_local_transform(-1).position);
+}
+
 bool Unit::hovers_instead_of_landing() const {
     return transport_hover_height_ > 0.0f &&
            (has_unit_state("TransportLoading") || !cargo_ids_.empty());
@@ -138,6 +142,7 @@ void Unit::start_fall(SimRandom& random, lua_State* L) {
 
     // No control this beat: SPhysBody::IntegrateFreefallStep with no force and no torque, its
     // flight body's velocity (the level axes', and the lift's) gaining gravity's pull.
+    const Vector3 lever = air_body_offset();
     const f32 was_lift = lift_velocity_;
     lift_velocity_ = was_lift + -Projectile::GRAVITY * kBodyStep;
     const f32 half = kBodyStep * 0.5f;
@@ -149,7 +154,9 @@ void Unit::start_fall(SimRandom& random, lua_State* L) {
         air_torque_step(pending_orientation(), air_spin_, inertia, Vector3{}, kBodyStep);
     air_spin_ = spin.momentum;
     set_flight_orientation(spin.orientation);
-    set_position(to);
+    const Vector3 turned = air_body_offset();
+    set_position(
+        {to.x + (lever.x - turned.x), to.y + (lever.y - turned.y), to.z + (lever.z - turned.z)});
 }
 
 void Unit::fall(const map::Terrain* terrain, lua_State* L, SimState* sim) {

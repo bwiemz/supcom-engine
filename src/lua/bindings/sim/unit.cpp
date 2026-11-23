@@ -258,6 +258,10 @@ static int unit_IsUnitState(lua_State* L) {
             result = u->is_paused();
         else if (std::strcmp(state, "Attached") == 0)
             result = u->is_loaded();
+        else if (std::strcmp(state, "PathFinding") == 0)
+            result = u->navigator().moho_path().pathfinding();
+        else if (std::strcmp(state, "ProblemGettingToGoal") == 0)
+            result = u->navigator().moho_path().goal_problem();
         // Moho keeps one set of states, which its tasks and scripts'
         // SetUnitState both write: retail's EnhanceTask sets Enhancing and
         // Upgrading, and its AI waits on Upgrading.

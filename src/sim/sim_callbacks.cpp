@@ -236,6 +236,8 @@ void forget_target(UnitCommand& c) {
     c.approached = false;
     c.site_cleared = false;
     c.prepared = false; // Moho's build task rewinds to TASKSTATE_Preparing
+    c.reached = false;
+    c.faced = false;
     c.clearing_prop_id = EntityId();
     c.clearing_approached = false;
     c.engaged = false;
@@ -262,7 +264,7 @@ void set_command_target(SimState& sim, lua_State* L, const SimCallbackEntry& cb)
     if (!orders.empty() && orders.front().command->type == CommandType::BuildMobile) {
         footprint = blueprint_footprint_cells(L, orders.front().command->blueprint_id);
     }
-    sim.retarget_command(cb, orders, footprint);
+    sim.retarget_command(cb, orders, footprint, &sim.random());
 }
 
 void remove_command(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
@@ -498,7 +500,8 @@ void post_load(SimState& sim, lua_State* L) {
 
 void SimState::retarget_command(const SimCallbackEntry& cb,
                                 const std::vector<CommandToRetarget>& orders,
-                                std::optional<std::pair<f32, f32>> footprint) const {
+                                std::optional<std::pair<f32, f32>> footprint,
+                                SimRandom* picks) const {
     if (orders.empty() || !retargetable(orders.front().command->type)) {
         return;
     }
@@ -517,9 +520,12 @@ void SimState::retarget_command(const SimCallbackEntry& cb,
             to->is_unit() != old->is_unit()) {
             return;
         }
+        const i32 point =
+            picks && to->is_unit() ? static_cast<const Unit*>(to)->pick_target_point(*picks) : -1;
         for (const auto& o : orders) {
             o.command->target_id = to->entity_id();
             o.command->target_pos = to->position();
+            o.command->target_point = point;
             forget_target(*o.command);
         }
         return;

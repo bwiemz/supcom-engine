@@ -105,13 +105,25 @@ void SimState::occupy_footprint(Unit& unit) {
 }
 
 void SimState::occupy_ground(EntityId id, GroundOccupant occupant) {
-    release_ground(id);
-    for (const OccupancyRect& r : occupant.rects) {
-        occupancy_.fill(occupant.caps, r, true);
+    ground_occupants_[id] = std::move(occupant);
+    occupy_ground_again(id);
+}
+
+void SimState::occupy_ground_again(EntityId id) {
+    const auto it = ground_occupants_.find(id);
+    if (it == ground_occupants_.end()) return;
+    for (const OccupancyRect& r : it->second.rects) {
+        occupancy_.fill(it->second.caps, r, true);
         // Moho's ExecuteOccupy dirties the clusters even for no caps.
         if (path_tables_) path_tables_->dirty(r);
     }
-    ground_occupants_[id] = std::move(occupant);
+}
+
+void SimState::occupy_cells(u8 caps, const OccupancyRect& r, bool occupied) {
+    occupancy_.fill(caps, r, occupied);
+    if (path_tables_) {
+        path_tables_->dirty(r);
+    }
 }
 
 void SimState::release_ground(EntityId id) {
@@ -123,25 +135,20 @@ void SimState::release_ground(EntityId id) {
         occupancy_.fill(gone.caps, r, false);
         if (path_tables_) path_tables_->dirty(r);
     }
-    // What still stands on any of those cells claims them again, on the
-    // grids the release cleared. Only occupy_ground and release_ground write
-    // the grids (a new map or a load starts them empty, with no claims), and
-    // each leaves every claim's cells set, so a claim on no cleared grid
-    // would only set bits already set. A tree, a rock or a wreck claims no
-    // caps: its release cleared nothing.
-    const u8 cleared = OccupancyGrid::grids_of(gone.caps);
-    if (cleared == 0) return;
-    const auto overlaps = [](const OccupancyRect& a, const OccupancyRect& b) {
-        return a.x0 < b.x1 && b.x0 < a.x1 && a.z0 < b.z1 && b.z0 < a.z1;
-    };
-    for (const auto& [other_id, other] : ground_occupants_) {
-        if ((OccupancyGrid::grids_of(other.caps) & cleared) == 0) continue;
-        for (const OccupancyRect& r : other.rects) {
-            const bool shared = std::any_of(gone.rects.begin(), gone.rects.end(),
-                                            [&](const OccupancyRect& g) { return overlaps(g, r); });
-            if (shared) occupancy_.fill(other.caps, r, true);
-        }
-    }
+}
+
+void SimState::release_ground(const Unit& unit) {
+    release_ground(unit.entity_id(),
+                   footprint_rect(unit.footprint(), unit.position().x, unit.position().z));
+}
+
+void SimState::release_ground(EntityId id, const OccupancyRect& cells) {
+    const auto it = ground_occupants_.find(id);
+    if (it == ground_occupants_.end()) return;
+    const u8 caps = it->second.caps;
+    ground_occupants_.erase(it);
+    occupancy_.fill(caps, cells, false);
+    if (path_tables_) path_tables_->dirty(cells);
 }
 
 OccupancyRect SimState::move_bounds(i32 army, bool whole_map_if_allowed) {
@@ -250,15 +257,20 @@ void SimState::on_destroy(Entity& entity) {
 }
 
 void SimState::drop_adjacency(Unit& unit) {
-    const std::vector<EntityId> neighbours(unit.adjacent_unit_ids().begin(),
-                                           unit.adjacent_unit_ids().end());
+    for (const EntityId id : unit.adjacent_unit_ids()) {
+        if (Entity* e = entity_registry_.find(id); e && e->is_unit()) {
+            static_cast<Unit*>(e)->remove_adjacent(unit.entity_id());
+        }
+    }
     unit.clear_adjacents();
-    for (const EntityId id : neighbours) {
+    if (unit.is_mobile() || unit.is_being_built()) {
+        return;
+    }
+    for (const EntityId id : unit.overlapping_structures(*this)) {
         Entity* e = entity_registry_.find(id);
-        if (!e || !e->is_unit()) {
+        if (!e || e->destroyed()) {
             continue;
         }
-        static_cast<Unit*>(e)->remove_adjacent(unit.entity_id());
         call_with(L_, unit, "OnNotAdjacentTo", *e);
         call_with(L_, *e, "OnNotAdjacentTo", unit);
     }
@@ -395,25 +407,48 @@ void SimState::on_entity_unregistered(Entity& entity) {
     entity.clear_ambient_sounds();
 
     // Its ground is free (Moho's ReleaseOccupyGround, a prop's destructor),
-    // and any place it reserved. A prop frees its footprint where it stands
-    // now (~Prop works it out afresh from its transform): a fallen tree's may be a cell
-    // off the one it took.
-    if (entity.is_prop()) {
-        if (auto it = ground_occupants_.find(entity.entity_id());
-            it != ground_occupants_.end() && it->second.rects.size() == 1) {
-            OccupancyRect& r = it->second.rects.front();
-            const i32 w = r.x1 - r.x0;
-            const i32 h = r.z1 - r.z0;
-            r.x0 = static_cast<i32>(std::lrint(entity.position().x - static_cast<f32>(w) * 0.5f));
-            r.z0 = static_cast<i32>(std::lrint(entity.position().z - static_cast<f32>(h) * 0.5f));
-            r.x1 = r.x0 + w;
-            r.z1 = r.z0 + h;
-        }
+    // and any place it reserved. Each frees its blueprint's footprint where
+    // it stands now: a fallen tree's may be a cell off the one it took, and
+    // a structure with OccupyRects frees its whole footprint.
+    const bool on_ground = ground_occupants_.count(entity.entity_id()) != 0;
+    if (entity.is_unit()) {
+        release_ground(static_cast<const Unit&>(entity));
+    } else if (auto it = ground_occupants_.find(entity.entity_id());
+               it != ground_occupants_.end() && it->second.rects.size() == 1) {
+        const OccupancyRect& r = it->second.rects.front();
+        const i32 w = r.x1 - r.x0;
+        const i32 h = r.z1 - r.z0;
+        const auto x0 =
+            static_cast<i32>(std::lrint(entity.position().x - static_cast<f32>(w) * 0.5f));
+        const auto z0 =
+            static_cast<i32>(std::lrint(entity.position().z - static_cast<f32>(h) * 0.5f));
+        release_ground(entity.entity_id(), {x0, z0, x0 + w, z0 + h});
     }
     release_ground(entity.entity_id());
     if (entity.is_unit()) {
         static_cast<Unit&>(entity).free_landing_reservation(*this);
-        static_cast<Unit&>(entity).free_guard_anchor(this);
+        static_cast<Unit&>(entity).free_order_reservation(this);
+    }
+    if (entity.is_unit()) {
+        auto& unit = static_cast<Unit&>(entity);
+        // Moho's Unit::OnDestroy: a structure on the ground gives its reserved
+        // cells back; unless it died, the structures they overlap take theirs again.
+        if (unit.reserves_skirt() && on_ground) {
+            const OccupancyRect gone = unit.skirt_cells();
+            reserve_ground(gone, false);
+            if (!unit.is_dying() && !unit.is_being_built()) {
+                entity_registry_.for_each_unit([&](Entity& e) {
+                    auto& other = static_cast<Unit&>(e);
+                    if (&other == &unit || other.destroyed() || !other.reserves_skirt()) {
+                        return;
+                    }
+                    const OccupancyRect r = other.skirt_cells();
+                    if (r.x0 < gone.x1 && gone.x0 < r.x1 && r.z0 < gone.z1 && gone.z0 < r.z1) {
+                        reserve_ground(r, true);
+                    }
+                });
+            }
+        }
     }
 
     // A dead structure stops blocking paths (it used to block forever).
@@ -1303,7 +1338,7 @@ bool has_transport_ai(const Unit& unit) {
 } // namespace
 
 void SimState::pick_target_point(UnitCommand& command) {
-    if (command.type != CommandType::Attack || !command.target_id) {
+    if (!command.target_id) {
         return;
     }
     const Entity* target = entity_registry_.find(command.target_id);
@@ -1734,7 +1769,7 @@ std::map<EntityId, SimState::QueueWithPending> SimState::queues_with_pending() c
                 }
             }
             if (!remove) {
-                retarget_command(cb, orders, std::nullopt);
+                retarget_command(cb, orders, std::nullopt, nullptr);
             }
             continue;
         }

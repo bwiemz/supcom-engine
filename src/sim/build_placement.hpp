@@ -18,6 +18,8 @@
 #include <utility>
 #include <vector>
 
+struct lua_State;
+
 namespace osc::map {
 class Terrain;
 }
@@ -28,6 +30,7 @@ class ArmyBrain;
 struct BuildReservation;
 class EntityRegistry;
 class SimState;
+class Unit;
 struct ResourceDeposit;
 struct UnitCommand;
 
@@ -109,7 +112,8 @@ using PlacementRulesLookup = std::function<PlacementRules(const std::string& bp_
 struct StructureSite {
     f32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
 
-    /// The skirt of a footprint `size_x` by `size_z` centred at (x, z)
+    /// The skirt of a footprint `size_x` by `size_z` centred at (x, z), as Moho's
+    /// RUnitBlueprint::GetSkirtRect: from the footprint's corner rounded to a cell
     static StructureSite of(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x = 0, f32 skirt_z = 0,
                             f32 off_x = 0, f32 off_z = 0);
     static StructureSite of(const PlacementRules& r, f32 x, f32 z);
@@ -121,8 +125,9 @@ struct StructureSite {
 };
 
 /// Whether a structure of any army, finished or under construction, takes
-/// part of `site`
-bool structure_overlaps(const EntityRegistry& registry, const StructureSite& site);
+/// part of `site`; with `counts`, only one it holds true for
+bool structure_overlaps(const EntityRegistry& registry, const StructureSite& site,
+                        const std::function<bool(const Unit&)>& counts = {});
 
 /// Placement checks for one army at one moment. Collects the army's pending
 /// build orders once, the first time a site passes the terrain checks, so a
@@ -136,19 +141,23 @@ public:
     StructurePlacement(const SimState& sim, i32 army, PlacementRulesLookup rules,
                        bool scheduled = false, u32 moving = 0);
 
-    /// Can `bp_id` be built centered at (x, z)? Requires the footprint inside
-    /// the playable area, over cells of a layer the blueprint builds on, clear
-    /// of every structure (finished or under construction) and of reserved()
-    /// sites, and -- for extractors -- over a deposit.
-    bool can_build(const std::string& bp_id, f32 x, f32 z) const;
-    /// can_build without reserved() sites (Moho's func_LocationIsFree).
+    /// Moho's func_LocationIsFree: OCCUPY_Check (the map, the ground's
+    /// flatness, the water, the deposit rule), no other structure's skirt
+    /// across the site's, and the footprint's cells free in the occupancy grid.
     bool location_free(const std::string& bp_id, f32 x, f32 z) const;
+    /// location_free, clear of reserved() sites (Moho's CanBuildStructureAt).
+    /// The UI's, `scheduled`, asks no occupancy grid, and keeps the footprint
+    /// within the playable area over pathfinding cells of its layers.
+    bool can_build(const std::string& bp_id, f32 x, f32 z) const;
+    /// No reserved() site across the skirt `bp_id` would have at (x, z).
+    bool clear_of_reserved(const std::string& bp_id, f32 x, f32 z) const;
 
     /// The rules for `bp_id` (cached per query object).
     const PlacementRules& rules(const std::string& bp_id) const;
 
 private:
-    bool fits(const std::string& bp_id, f32 x, f32 z, bool pending_orders) const;
+    /// The layers location_free leaves the structure, 0 for none.
+    u8 free_site_layers(const PlacementRules& r, f32 x, f32 z) const;
     /// `layers`: the placement_layer bits occupy_layers allows there.
     bool terrain_allows(const StructureSite& site, u8 layers) const;
     bool in_playable(const StructureSite& site) const;
@@ -174,12 +183,24 @@ private:
 const UnitCommand* reserved_order(const SimState& sim, const BuildReservation& r);
 void drop_stale_build_reservations(const SimState& sim, ArmyBrain& brain);
 
+/// A structure blueprint's placement rules, as its Physics give them (the
+/// sim keeps them once read)
+const PlacementRules& structure_rules(lua_State* L, const SimState& sim, const std::string& bp_id);
+
 /// Moho's TryBuildStructureAt (faf-re unit/tasks/CUnitCallTeleport.cpp) for a script's build
 /// order: the centre `bp_id` is built at for one asked at (x, z), or none.
 std::optional<std::pair<f32, f32>> try_build_structure_at(const SimState& sim,
                                                           const StructurePlacement& placement,
                                                           const std::string& bp_id, f32 x, f32 z,
                                                           bool whole_map);
+
+/// Moho's STIMap::IsWithin: (x, z) at least `border` inside the map, or
+/// with `whole_map` false, inside the playable area
+bool within_map(const SimState& sim, f32 x, f32 z, f32 border, bool whole_map);
+
+/// The occupancy caps of a blueprint's footprint: a structure's
+/// BuildOnLayerCaps, a mobile unit's own
+u8 occupancy_caps(const PlacementRules& r);
 
 /// Where a structure stands at (x, z): on the ground for one that can sit
 /// on the seabed, else on the water's surface where there is water

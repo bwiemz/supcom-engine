@@ -606,13 +606,13 @@ void test_particle_render(TestContext& ctx) {
     }
 
     // Test 11: a drawn emitter needs no overlay dot, from the first frame it
-    // is in (an unreadable one keeps its dot); a retail emitter
+    // is in (one with no blueprint keeps its dot); a retail emitter
     // (aeon_build_01) draws.
     {
         look_at((q0.x + a0.x) / 2, q0.z, 60.0f);
         const u32 retail = make("__osc_pt_retail", "AtEntity", "__osc_pt_q",
                                 "/effects/emitters/aeon_build_01_emit.bp");
-        (void)make("__osc_pt_none", "AtEntity", "__osc_pt_a", bp("no_such.bp"));
+        run_lua(ctx, "__osc_pt_none = CreateEmitterAtEntity(__osc_pt_a, 1, nil)\n");
         step();
         const Frame first = drawn(r);
         for (int i = 0; i < 2; ++i) step();
@@ -634,7 +634,7 @@ void test_particle_render(TestContext& ctx) {
         const bool retail_drawn = !particles_of(r, retail).empty();
         t.check(no_dot && dot && retail_drawn,
                 fmt::format("Test 11: no dot on a drawn emitter, its first frame on {}, a dot on "
-                            "an unreadable one {}; retail's aeon_build_01 draws {}",
+                            "one with no blueprint {}; retail's aeon_build_01 draws {}",
                             no_dot, dot, retail_drawn));
     }
 

@@ -29,6 +29,7 @@ add_executable(osc_tests
     test_navigation_throttle.cpp
     test_build_placement.cpp
     test_build_structure.cpp
+    test_moho_sort.cpp
     test_manipulators.cpp
     test_patrol.cpp
     test_guard.cpp
@@ -42,6 +43,7 @@ add_executable(osc_tests
     test_weapon_candidates.cpp
     test_weapon_intel.cpp
     test_projectile_targeting.cpp
+    test_adjacency.cpp
     test_command_feedback.cpp
     test_map_border.cpp
     test_minimap_meshes.cpp
@@ -75,6 +77,7 @@ add_executable(osc_tests
     test_bounded_props.cpp
     test_build_on_wreck.cpp
     test_build_site_units.cpp
+    test_build_restriction.cpp
     test_entity_health.cpp
     test_entity_position.cpp
     test_entity_lifetime.cpp
@@ -106,6 +109,7 @@ add_executable(osc_tests
     test_sim_console.cpp
     test_cheat_commands.cpp
     test_external_factory.cpp
+    test_factory_move.cpp
     test_damage_callbacks.cpp
     test_profiler_self_time.cpp
     test_game_state_setup_ui.cpp

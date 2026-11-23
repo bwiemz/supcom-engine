@@ -53,7 +53,7 @@ set(OSC_DATA_TESTS_GATE
     specular-test stall-test stats-test shore-test steer-test strategic-icon-test stress-test stub-test stun-test targeting-test
     teamcolor-test
     terrain-normal-test terrain-tex-test text-test threat-test trail-render-test
-    tiled-render-test toggle-test transport-drop-test transport-assist-move-test transport-pickup-test transport-silo-test transport-slots-test transport-test ui-test
+    tiled-render-test toggle-test transport-drop-test transport-assist-move-pickups-test transport-assist-move-test transport-pickup-test transport-silo-test transport-slots-test transport-test ui-test
     uiboot-test uirender-test unit-cap-test unit-hooks-test unit-intel-test unitsound-test upgrade-orders-test upgrade-test vet-adj-render-test
     vet-test vfx-render-test victory-test viz-render-test water-reflection-test water-render-test weapon-retarget-test weapon-test world-views-test wreck-test
 

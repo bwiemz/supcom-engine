@@ -328,7 +328,7 @@ TEST_CASE("A plain attack on the ground with no weapon for it ends; a FormAttack
     }
 }
 
-TEST_CASE("A structure takes the point at once, and fires only within its range",
+TEST_CASE("A structure gives up an attack on a point out of its range, and fires at one within it",
           "[ground-attack]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
@@ -336,13 +336,14 @@ TEST_CASE("A structure takes the point at once, and fires only within its range"
     Unit* pd = tank(sim, 100.0f, 64.0f, 10.0f, 0.0f);
     pd->push_command(ground_attack({120.0f, 7.8f, 64.0f}), true);
     ticks(sim, *pd, 5);
-    REQUIRE(pd->command_queue().size() == 1);
-    CHECK(pd->command_queue().front().engaged);
+    CHECK(pd->command_queue().empty());
     CHECK(pd->position().x == 100.0f);
-    CHECK_FALSE(gun(*pd).has_ground_target); // 20 away, its range 10
+    CHECK_FALSE(gun(*pd).has_ground_target);
 
     pd->push_command(ground_attack({106.0f, 7.8f, 64.0f}), true);
     ticks(sim, *pd, 2);
+    REQUIRE(pd->command_queue().size() == 1);
+    CHECK(pd->command_queue().front().engaged);
     CHECK(gun(*pd).has_ground_target);
 }
 

@@ -213,6 +213,9 @@ struct UnitCommand {
     /// units' rally orders, not their queues, and a fresh one clears those.
     /// A player's move, patrol or transport call to a selected factory.
     bool factory = false;
+    /// Moho's factory-issued command: a rally order a unit took from its
+    /// factory, or IssueMoveOffFactory's move.
+    bool from_factory = false;
     /// A launch order's weapon has fired for it (runtime state: not sent
     /// with the order). The order then ends.
     bool launched = false;
@@ -245,6 +248,11 @@ struct UnitCommand {
     /// walk is sent, cleared when it ends, so a later move is not taken for
     /// it. Runtime state.
     bool prepared = false;
+    /// A mobile build's task has found its site in range (Moho's
+    /// TASKSTATE_Waiting) and turned to it (TASKSTATE_Starting): it looks at
+    /// neither again. Runtime state.
+    bool reached = false;
+    bool faced = false;
     EntityId rebuild_wreck_id{};
     f32 rebuild_bonus = 0;
     EntityId clearing_prop_id{};
@@ -332,6 +340,12 @@ struct UnitCommand {
     /// broke off). Runtime state.
     EntityId leash_anchor_id{};
     Vector3 leash_anchor_pos;
+    /// A factory-issued move that was the unit's last order as it started:
+    /// the goal it settled on, and the target it settled it for (runtime
+    /// state; see Unit::begin_order).
+    bool goal_prepared = false;
+    Vector3 prepared_goal;
+    Vector3 prepared_for;
 };
 
 /// Moho's UNITCOMMAND number of order `c` (see the CommandType overload): an

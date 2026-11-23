@@ -8,6 +8,7 @@
 #include "lua/arg_count.hpp"
 #include "lua/lua_stubs.hpp"
 #include "core/dmath.hpp"
+#include "core/moho_sort.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
 #include "lua/enum_args.hpp"
@@ -18,8 +19,10 @@
 #include "lua/lua_state.hpp"
 #include "lua/sim_bindings.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/resource_deposit.hpp"
 #include "sim/lua_keys.hpp"
 #include "sim/build_placement.hpp"
+#include "sim/build_site_units.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
 #include "sim/entity.hpp"
@@ -473,6 +476,48 @@ std::vector<const sim::Unit*> units_around_centre(const sim::SimState& sim, f32 
         }
     }
     return out;
+}
+
+// Moho's CAiBrain::CanBuildStructureAt with an alliance asked.
+bool can_build_ignoring(const sim::SimState& sim, const sim::StructurePlacement& placement,
+                        i32 army, const std::string& bp, f32 x, f32 z,
+                        std::optional<Alliance> ignore) {
+    if (!ignore) {
+        return placement.can_build(bp, x, z);
+    }
+    if (!placement.location_free(bp, x, z)) {
+        const sim::StructureSite skirt = sim::StructureSite::of(placement.rules(bp), x, z);
+        const f32 extent = std::max(skirt.x1 - skirt.x0, skirt.z1 - skirt.z0);
+        const Alliance mirrored = *ignore == Alliance::Enemy ? Alliance::Ally : Alliance::Enemy;
+        for (const sim::Unit* u : units_around_centre(sim, x, z, extent)) {
+            if (!u->has_category("STRUCTURE")) {
+                continue;
+            }
+            if (around_point(sim, army, *u, mirrored) ||
+                (*ignore != Alliance::Enemy && around_point(sim, army, *u, Alliance::Neutral))) {
+                return false;
+            }
+        }
+        if (sim::structure_overlaps(sim.entity_registry(), skirt, [&](const sim::Unit& u) {
+                return alliance_with(sim, army, u.army()) != *ignore;
+            })) {
+            return false;
+        }
+    }
+    return placement.clear_of_reserved(bp, x, z);
+}
+
+// FindPlaceToBuild's own test of a template site: its skirt across a deposit's cells.
+bool skirt_on_deposit(const sim::SimState& sim, const sim::PlacementRules& rules, f32 x, f32 z) {
+    const sim::StructureSite skirt = sim::StructureSite::of(rules, x, z);
+    for (const auto& d : sim.resource_deposits()) {
+        const sim::DepositRect r = sim::deposit_rect(d);
+        if (skirt.x1 > static_cast<f32>(r.x0) && static_cast<f32>(r.x1) > skirt.x0 &&
+            skirt.z1 > static_cast<f32>(r.z0) && static_cast<f32>(r.z1) > skirt.z0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::optional<Alliance> alliance_arg(lua_State* L, int i) {
@@ -1105,116 +1150,11 @@ static int brain_GetPlatoonsList(lua_State* L) {
     return 1;
 }
 
-// Placement rules for a structure blueprint, read from __blueprints.
-static sim::PlacementRules placement_rules_of(lua_State* L, const sim::SimState& sim,
-                                              const std::string& bp_id) {
-    sim::PlacementRules r;
-    const int top = lua_gettop(L);
-    if (!blueprints::push_blueprint(L, bp_id)) return r;
-    const int bp = lua_gettop(L);
-
-    if (const auto [fx, fz] = sim::blueprint_footprint(L, bp); fx > 0 && fz > 0) {
-        r.size_x = fx;
-        r.size_z = fz;
-    }
-    const auto cells = [](f32 size) {
-        return static_cast<u8>(std::clamp(std::lround(size), 0L, 255L));
-    };
-    blueprints::Footprint own;
-    own.size_x = cells(r.size_x);
-    own.size_z = cells(r.size_z);
-    std::string motion;
-    lua_pushstring(L, "Footprint");
-    lua_rawget(L, bp);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, "MinWaterDepth");
-        lua_rawget(L, -2);
-        if (lua_isnumber(L, -1)) r.min_water_depth = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_pushstring(L, "MaxSlope");
-        lua_rawget(L, -2);
-        if (lua_isnumber(L, -1)) {
-            own.max_slope = static_cast<f32>(lua_tonumber(L, -1));
-        }
-        lua_pop(L, 1);
-        lua_pushstring(L, "MaxWaterDepth");
-        lua_rawget(L, -2);
-        if (lua_isnumber(L, -1)) {
-            own.max_water_depth = static_cast<f32>(lua_tonumber(L, -1));
-        }
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
-    own.min_water_depth = r.min_water_depth;
-
-    lua_pushstring(L, "Physics");
-    lua_rawget(L, bp);
-    if (lua_istable(L, -1)) {
-        const int phys = lua_gettop(L);
-        lua_pushstring(L, "BuildOnLayerCaps"); // absent: land only
-        lua_rawget(L, phys);
-        if (const auto layers = blueprints::read_flag_enum(L, -1, blueprints::kLayerEnum)) {
-            namespace oc = blueprints::occupancy;
-            r.on_land = (*layers & oc::kLand) != 0;
-            r.on_water = (*layers & oc::kWater) != 0;
-            r.on_seabed = (*layers & oc::kSeabed) != 0;
-            r.on_sub = (*layers & oc::kSub) != 0;
-        }
-        lua_pop(L, 1);
-        const auto number = [L, phys](const char* key) {
-            lua_pushstring(L, key);
-            lua_rawget(L, phys);
-            const f32 v = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
-            lua_pop(L, 1);
-            return v;
-        };
-        r.skirt_x = number("SkirtSizeX");
-        r.skirt_z = number("SkirtSizeZ");
-        r.skirt_off_x = number("SkirtOffsetX");
-        r.skirt_off_z = number("SkirtOffsetZ");
-        lua_pushstring(L, "MaxGroundVariation");
-        lua_rawget(L, phys);
-        if (lua_isnumber(L, -1)) r.max_ground_variation = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_pushstring(L, "FlattenSkirt");
-        lua_rawget(L, phys);
-        r.flatten_skirt = lua_toboolean(L, -1) != 0;
-        lua_pop(L, 1);
-        lua_pushstring(L, "MotionType");
-        lua_rawget(L, phys);
-        if (lua_type(L, -1) == LUA_TSTRING) {
-            motion = lua_tostring(L, -1);
-        }
-        lua_pop(L, 1);
-        lua_pushstring(L, "BuildRestriction");
-        lua_rawget(L, phys);
-        if (lua_type(L, -1) == LUA_TSTRING) {
-            const std::string restriction = lua_tostring(L, -1);
-            if (restriction == "RULEUBR_OnMassDeposit")
-                r.deposit = sim::PlacementRules::Deposit::Mass;
-            else if (restriction == "RULEUBR_OnHydrocarbonDeposit")
-                r.deposit = sim::PlacementRules::Deposit::Hydrocarbon;
-        }
-        lua_pop(L, 1);
-    }
-    lua_settop(L, top);
-    if (!motion.empty() && motion != "RULEUMT_None" && sim.blueprint_store()) {
-        r.mobile = blueprints::resolve_unit_footprints(sim.blueprint_store()->footprint_classes(),
-                                                       own, own, motion, {}, 0)
-                       .main;
-    }
-    return r;
-}
-
-const sim::PlacementRules& structure_rules(lua_State* L, const sim::SimState& sim,
-                                           const std::string& bp_id) {
-    return sim.placement_rules(bp_id, [&] { return placement_rules_of(L, sim, bp_id); });
-}
-
 static sim::StructurePlacement placement_for(lua_State* L, const sim::SimState& sim, i32 army,
                                              bool scheduled = false, u32 moving = 0) {
     return sim::StructurePlacement(
-        sim, army, [L, &sim](const std::string& bp_id) { return structure_rules(L, sim, bp_id); },
+        sim, army,
+        [L, &sim](const std::string& bp_id) { return sim::structure_rules(L, sim, bp_id); },
         scheduled, moving);
 }
 
@@ -1227,53 +1167,86 @@ static bool is_resource_builder_type(const std::string& type) {
 
 // brain:FindPlaceToBuild(type, structureName, buildingTypes, relative, builder,
 //     optIgnoreAlliance, optOverridePosX, optOverridePosZ, optIgnoreThreatOver)
-//   -> {x, z, 0} or false
+//   -> {x, z, 0}, the template's own entry, or nil
 // Moho's semantics (FAF engine notes, engine/Sim/CAiBrain.lua): the start
-// location is the override if given (X alone is ignored), else the army
+// location is the override if both coordinates are given, else the army
 // start; the target is the override, else the builder's position.
-// - Resource types: the buildable deposit nearest the start location (mass,
-//   or hydrocarbon for a hydrocarbon structure).
+// - Resource types: the middle of the cells of the buildable deposit nearest
+//   the start location (mass, or hydrocarbon for a hydrocarbon structure).
 // - Others: among the template points listed for `type` in buildingTypes
 //   ({{types...}, {x, z, 0}, ...} groups) where the structure fits -- offset
-//   by the start location when `relative` -- the one nearest the target.
+//   by the start location when `relative` -- the one nearest the target, its
+//   skirt off every deposit's cells.
 // The answer is relative to the start location when `relative`: callers add
 // their own reference point. With optIgnoreThreatOver above 0, a site whose
 // cell of the army's influence map holds that much AntiSurface threat or more
-// is passed over (M207b).
+// is passed over (M207b). Each site is asked of CanBuildStructureAt with
+// optIgnoreAlliance.
 static int brain_FindPlaceToBuild(lua_State* L) {
+    const int args = lua_gettop(L);
+    if (args < 6 || args > 10) {
+        return arg_range_error(L,
+                               "brain:FindPlaceToBuild(type, structureName, buildingTypes, "
+                               "relative, builder, optIgnoreAlliance, optOverridePosX, "
+                               "optOverridePosZ, optIgnoreThreatOver)",
+                               6, 10, args);
+    }
+    if (lua_type(L, 2) != LUA_TSTRING) {
+        return luaL_error(L, "Invalid Type name passed in");
+    }
+    if (lua_type(L, 3) != LUA_TSTRING) {
+        return luaL_error(L, "Invalid Structure name passed in");
+    }
+    if (!lua_istable(L, 4)) {
+        return luaL_error(L, "Invalid buildingTypes passed in. Not a lua table!");
+    }
     auto* brain = check_brain(L);
     auto* sim = get_sim(L);
-    if (!brain || !sim || lua_type(L, 2) != LUA_TSTRING || lua_type(L, 3) != LUA_TSTRING) {
-        lua_pushboolean(L, 0);
+    if (!brain || !sim) {
+        lua_pushnil(L);
         return 1;
     }
     const std::string type = lua_tostring(L, 2);
     const std::string structure = lua_tostring(L, 3);
-    const bool relative = lua_toboolean(L, 5) != 0;
+    const bool relative = arg_boolean(L, 5);
 
     f32 start_x = brain->start_position().x;
     f32 start_z = brain->start_position().z;
-    f32 target_x = start_x, target_z = start_z;
-    if (lua_isnumber(L, 9)) {
-        start_x = lua_isnumber(L, 8) ? static_cast<f32>(lua_tonumber(L, 8)) : 0.0f;
+    f32 target_x = start_x, target_z = start_z, target_y2 = 0;
+    if (!lua_isnil(L, 6)) {
+        const sim::Entity* builder = check_entity(L, 6);
+        if (!builder) {
+            return luaL_error(L, "Expected a game object. (Did you call with '.' instead of ':'?)");
+        }
+        if (!builder->destroyed()) {
+            target_x = builder->position().x;
+            target_z = builder->position().z;
+            target_y2 = builder->position().y * builder->position().y;
+        }
+    }
+    const std::optional<Alliance> ignore = alliance_arg(L, 7);
+    if (args >= 9 && !lua_isnil(L, 8) && !lua_isnil(L, 9)) {
+        for (int i = 8; i <= 9; ++i) {
+            if (lua_type(L, i) != LUA_TNUMBER) {
+                return arg_type_error(L, i, "number");
+            }
+        }
+        start_x = static_cast<f32>(lua_tonumber(L, 8));
         start_z = static_cast<f32>(lua_tonumber(L, 9));
         target_x = start_x;
         target_z = start_z;
-    } else if (lua_istable(L, 6)) {
-        lua_pushstring(L, "_c_object");
-        lua_rawget(L, 6);
-        auto* builder = lua_isuserdata(L, -1)
-                            ? static_cast<sim::Entity*>(lua_touserdata(L, -1)) : nullptr;
-        lua_pop(L, 1);
-        if (builder && !builder->destroyed()) {
-            target_x = builder->position().x;
-            target_z = builder->position().z;
+        target_y2 = 0;
+    }
+    i32 threat_over = 0;
+    if (args >= 10 && !lua_isnil(L, 10)) {
+        if (lua_type(L, 10) != LUA_TNUMBER) {
+            return arg_type_error(L, 10, "integer");
         }
+        threat_over = static_cast<i32>(lua_tonumber(L, 10));
     }
 
     sim::drop_stale_build_reservations(*sim, *brain);
     const auto placement = placement_for(L, *sim, brain->index());
-    const i32 threat_over = lua_isnumber(L, 10) ? static_cast<i32>(lua_tonumber(L, 10)) : 0;
     const sim::InfluenceMap* threat_map =
         threat_over > 0 ? sim->influence_map(brain->index()) : nullptr;
     const sim::CellRect playable = threat_map ? sim->playable_cells(*threat_map) : sim::CellRect{};
@@ -1284,19 +1257,9 @@ static int brain_FindPlaceToBuild(lua_State* L) {
                                        &playable, sim::ThreatType::AntiSurface,
                                        -1) >= static_cast<f32>(threat_over);
     };
-    bool found = false;
-    f32 best_x = 0, best_z = 0, best_d2 = 0;
-    auto consider = [&](f32 answer_x, f32 answer_z, f32 world_x, f32 world_z, f32 from_x,
-                        f32 from_z) {
-        if (threatened(world_x, world_z)) return;
-        if (!placement.can_build(structure, world_x, world_z)) return;
-        const f32 d2 = (world_x - from_x) * (world_x - from_x) +
-                       (world_z - from_z) * (world_z - from_z);
-        if (found && d2 >= best_d2) return; // first of equals wins: deterministic
-        found = true;
-        best_d2 = d2;
-        best_x = answer_x;
-        best_z = answer_z;
+    const auto free = [&](f32 world_x, f32 world_z) {
+        return can_build_ignoring(*sim, placement, brain->index(), structure, world_x, world_z,
+                                  ignore);
     };
 
     if (is_resource_builder_type(type)) {
@@ -1304,58 +1267,117 @@ static int brain_FindPlaceToBuild(lua_State* L) {
                                   sim::PlacementRules::Deposit::Hydrocarbon
                               ? sim::ResourceDeposit::Hydrocarbon
                               : sim::ResourceDeposit::Mass;
+        struct Candidate {
+            f32 x, z, distance_sq;
+        };
+        std::vector<Candidate> candidates;
         for (const auto& d : sim->resource_deposits()) {
-            if (d.type != want) continue;
-            consider(relative ? d.x - start_x : d.x, relative ? d.z - start_z : d.z,
-                     d.x, d.z, start_x, start_z);
-        }
-    } else if (lua_istable(L, 4)) {
-        for (int g = 1;; ++g) {
-            lua_rawgeti(L, 4, g);
-            if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
-            const int group = lua_gettop(L);
-            bool listed = false;
-            if (lua_istable(L, group)) {
-                lua_rawgeti(L, group, 1);
-                if (lua_istable(L, -1)) {
-                    for (int t = 1; !listed; ++t) {
-                        lua_rawgeti(L, -1, t);
-                        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
-                        listed = lua_type(L, -1) == LUA_TSTRING && type == lua_tostring(L, -1);
-                        lua_pop(L, 1);
-                    }
-                }
-                lua_pop(L, 1);
+            if (d.type != want) {
+                continue;
             }
-            for (int i = 2; listed; ++i) {
-                lua_rawgeti(L, group, i);
-                if (!lua_istable(L, -1)) { lua_pop(L, 1); break; }
-                lua_rawgeti(L, -1, 1);
-                lua_rawgeti(L, -2, 2);
-                const bool numeric = lua_isnumber(L, -2) && lua_isnumber(L, -1);
-                const f32 px = static_cast<f32>(lua_tonumber(L, -2));
-                const f32 pz = static_cast<f32>(lua_tonumber(L, -1));
-                lua_pop(L, 3);
-                if (!numeric) continue;
-                const f32 wx = relative ? px + start_x : px;
-                const f32 wz = relative ? pz + start_z : pz;
-                consider(px, pz, wx, wz, target_x, target_z);
-            }
-            lua_settop(L, group - 1);
+            const sim::DepositRect r = sim::deposit_rect(d);
+            const f32 cx = static_cast<f32>(r.x0 + r.x1) * 0.5f;
+            const f32 cz = static_cast<f32>(r.z0 + r.z1) * 0.5f;
+            const f32 dx = start_x - cx;
+            const f32 dz = start_z - cz;
+            candidates.push_back({cx, cz, dx * dx + dz * dz});
         }
-    }
-
-    if (!found) {
-        lua_pushboolean(L, 0);
+        moho_sort::sort(
+            candidates.data(), candidates.data() + candidates.size(),
+            [](const Candidate& a, const Candidate& b) { return a.distance_sq < b.distance_sq; });
+        for (const auto& c : candidates) {
+            if (threatened(c.x, c.z) || !free(c.x, c.z)) {
+                continue;
+            }
+            lua_newtable(L);
+            lua_pushnumber(L, relative ? c.x - start_x : c.x);
+            lua_rawseti(L, -2, 1);
+            lua_pushnumber(L, relative ? c.z - start_z : c.z);
+            lua_rawseti(L, -2, 2);
+            lua_pushnumber(L, 0);
+            lua_rawseti(L, -2, 3);
+            return 1;
+        }
+        lua_pushnil(L);
         return 1;
     }
-    lua_newtable(L);
-    lua_pushnumber(L, best_x);
-    lua_rawseti(L, -2, 1);
-    lua_pushnumber(L, best_z);
-    lua_rawseti(L, -2, 2);
-    lua_pushnumber(L, 0);
-    lua_rawseti(L, -2, 3);
+
+    const auto same_name = [](std::string_view a, std::string_view b) {
+        return a.size() == b.size() &&
+               std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+                   return std::tolower(static_cast<unsigned char>(x)) ==
+                          std::tolower(static_cast<unsigned char>(y));
+               });
+    };
+    const auto not_indexable = [L](int idx) {
+        return luaL_error(L, "attempt to index a %s value", lua_typename(L, lua_type(L, idx)));
+    };
+    const auto number_at = [L](int idx) {
+        if (lua_type(L, idx) != LUA_TNUMBER) {
+            luaL_error(L, "attempt to get as number a %s value", lua_typename(L, lua_type(L, idx)));
+        }
+        return static_cast<f32>(lua_tonumber(L, idx));
+    };
+    int best_group = 0;
+    int best_entry = 0;
+    f32 best_d2 = std::numeric_limits<f32>::infinity();
+    const int groups = luaL_getn(L, 4);
+    for (int g = 1; g <= groups; ++g) {
+        lua_rawgeti(L, 4, g);
+        const int group = lua_gettop(L);
+        if (!lua_istable(L, group)) {
+            return not_indexable(group);
+        }
+        lua_rawgeti(L, group, 1);
+        if (!lua_istable(L, -1)) {
+            return luaL_error(L, "Error parsing building types. Missing type match lua table!");
+        }
+        bool listed = false;
+        const int names = luaL_getn(L, -1);
+        for (int t = 1; t <= names && !listed; ++t) {
+            lua_rawgeti(L, -1, t);
+            if (lua_type(L, -1) != LUA_TSTRING) {
+                return luaL_error(L, "attempt to get as string a %s value",
+                                  lua_typename(L, lua_type(L, -1)));
+            }
+            listed = same_name(lua_tostring(L, -1), type);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        const int entries = listed ? luaL_getn(L, group) : 0;
+        for (int i = 2; i <= entries; ++i) {
+            lua_rawgeti(L, group, i);
+            if (!lua_istable(L, -1)) {
+                return not_indexable(-1);
+            }
+            lua_rawgeti(L, -1, 1);
+            const f32 px = number_at(-1);
+            lua_rawgeti(L, -2, 2);
+            const f32 pz = number_at(-1);
+            lua_pop(L, 3);
+            const f32 wx = relative ? px + start_x : px;
+            const f32 wz = relative ? pz + start_z : pz;
+            const f32 d2 =
+                (wx - target_x) * (wx - target_x) + (wz - target_z) * (wz - target_z) + target_y2;
+            if (!(best_d2 > d2)) {
+                continue;
+            }
+            if (!free(wx, wz) || skirt_on_deposit(*sim, placement.rules(structure), wx, wz) ||
+                threatened(wx, wz)) {
+                continue;
+            }
+            best_group = g;
+            best_entry = i;
+            best_d2 = d2;
+        }
+        lua_settop(L, group - 1);
+    }
+    if (best_group == 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_rawgeti(L, 4, best_group);
+    lua_rawgeti(L, -1, best_entry);
     return 1;
 }
 
@@ -1414,10 +1436,8 @@ static int brain_BuildStructure(lua_State* L) {
         cmd.type = sim::CommandType::BuildMobile;
         cmd.target_pos = {site->first, 0.0f, site->second};
         cmd.blueprint_id = bp_id;
-        if (angle != 0.0f) {
-            cmd.has_facing = true;
-            cmd.facing = angle;
-        }
+        cmd.has_facing = true;
+        cmd.facing = angle;
         if (sim) {
             cmd.command_id = sim->next_command_id();
             ordered = cmd.command_id;
@@ -2047,13 +2067,18 @@ static int brain_CreateResourceBuildingNearest(lua_State* L) {
     };
     std::vector<Candidate> candidates;
     for (const auto& d : sim->resource_deposits()) {
-        if (d.type != wanted) continue;
-        const f32 dx = x - d.x, dz = z - d.z;
-        candidates.push_back({d.x, d.z, dx * dx + dz * dz});
+        if (d.type != wanted) {
+            continue;
+        }
+        const sim::DepositRect r = sim::deposit_rect(d);
+        const f32 cx = static_cast<f32>(r.x0 + r.x1) * 0.5f;
+        const f32 cz = static_cast<f32>(r.z0 + r.z1) * 0.5f;
+        const f32 dx = x - cx;
+        const f32 dz = z - cz;
+        candidates.push_back({cx, cz, dx * dx + dz * dz});
     }
-    // Nearest first; ties in deposit order (stable, as lockstep needs).
-    std::stable_sort(
-        candidates.begin(), candidates.end(),
+    moho_sort::sort(
+        candidates.data(), candidates.data() + candidates.size(),
         [](const Candidate& a, const Candidate& b) { return a.distance_sq < b.distance_sq; });
     for (const auto& c : candidates) {
         if (!placement.can_build(bp, c.x, c.z)) continue;
@@ -2066,11 +2091,7 @@ static int brain_CreateResourceBuildingNearest(lua_State* L) {
     return 1;
 }
 
-// brain:CreateUnitNearSpot(bp, x, z) -> unit or nil: the unit at the first
-// free site found about (x, z), keeping clear of the army's start spot
-// (Moho's CAiBrain::CreateUnitNearSpot occupies the start +-5 while it
-// looks). The search is Moho's TryBuildStructureAt: the spot itself, then
-// square rings one cell further out each time, up to 900 tries.
+// brain:CreateUnitNearSpot(bp, x, z) -> unit or nil: Moho's CAiBrain::CreateUnitNearSpot.
 static int brain_CreateUnitNearSpot(lua_State* L) {
     auto* brain = check_brain(L);
     auto* sim = get_sim(L);
@@ -2084,13 +2105,24 @@ static int brain_CreateUnitNearSpot(lua_State* L) {
     const f32 z = static_cast<f32>(lua_tonumber(L, 4));
     const auto placement = placement_for(L, *sim, brain->index());
     const auto& rules = placement.rules(bp);
+    const u8 caps = sim::occupancy_caps(rules);
     const sim::Vector3& start = brain->start_position();
-    const sim::StructureSite start_box{static_cast<f32>(static_cast<i32>(start.x)),
-                                       static_cast<f32>(static_cast<i32>(start.z)), 10.0f, 10.0f};
+    const auto sx = static_cast<i32>(std::lrint(start.x));
+    const auto sz = static_cast<i32>(std::lrint(start.z));
+    const sim::OccupancyRect start_cells{sx - 5, sz - 5, sx + 5, sz + 5};
+    sim->occupy_cells(caps, start_cells, true);
+
+    // TryBuildStructureAt's coerced skirt: the skirt one cell bigger all round, clear of units.
+    const auto skirt_clear = [&](f32 cx, f32 cz) {
+        const auto [x0, z0, x1, z1] = sim::StructureSite::of(rules, cx, cz);
+        const sim::OccupancyRect around{
+            static_cast<i32>(std::floor(x0 - 1.0f)), static_cast<i32>(std::floor(z0 - 1.0f)),
+            static_cast<i32>(std::ceil(x1 + 1.0f)), static_cast<i32>(std::ceil(z1 + 1.0f))};
+        return sim::location_is_free(*sim, nullptr, around, false);
+    };
     const auto free_at = [&](f32 cx, f32 cz, f32& out_x, f32& out_z) {
         sim::snap_structure_center(cx, cz, rules.size_x, rules.size_z);
-        if (start_box.overlaps({cx, cz, rules.size_x, rules.size_z})) return false;
-        if (!placement.location_free(bp, cx, cz)) {
+        if (!placement.location_free(bp, cx, cz) || !skirt_clear(cx, cz)) {
             return false;
         }
         out_x = cx;
@@ -2098,24 +2130,25 @@ static int brain_CreateUnitNearSpot(lua_State* L) {
         return true;
     };
     f32 at_x = 0, at_z = 0;
-    bool found = free_at(x, z, at_x, at_z);
-    constexpr i32 kBorder = 1; // the cell step (Moho passes `true` for its border)
-    for (i32 ring = 1, attempts = 0; !found && attempts < 900; ++ring) {
+    const bool inside = sim::within_map(*sim, x, z, 1.0f, true);
+    bool found = inside && free_at(x, z, at_x, at_z);
+    for (i32 ring = 1, attempts = 0; inside && !found && attempts < 900; ++ring) {
         const i32 lower = -ring, upper = ring;
         for (i32 i = lower; i <= upper && !found; ++i) {
             const i32 dj = (i == lower || i == upper) ? 1 : 2 * upper;
             for (i32 j = lower; j <= upper && !found; j += dj) {
                 ++attempts;
-                found = free_at(x + static_cast<f32>(kBorder * i),
-                                z + static_cast<f32>(kBorder * j), at_x, at_z);
+                found = free_at(x + static_cast<f32>(i), z + static_cast<f32>(j), at_x, at_z);
             }
         }
     }
-    if (!found) {
+    if (found) {
+        create_brain_unit(L, *brain, bp, at_x, sim::structure_elevation(*sim, rules, at_x, at_z),
+                          at_z);
+    } else {
         lua_pushnil(L);
-        return 1;
     }
-    create_brain_unit(L, *brain, bp, at_x, sim::structure_elevation(*sim, rules, at_x, at_z), at_z);
+    sim->occupy_cells(caps, start_cells, false);
     return 1;
 }
 

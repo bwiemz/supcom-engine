@@ -359,6 +359,11 @@ public:
     /// roll-off move its script gives it. Only an immobile FACTORY keeps
     /// them.
     bool keeps_rally_orders() const { return !is_mobile() && has_category("FACTORY"); }
+    /// Moho's Unit constructor: a factory with no motion reserves the cells
+    /// under its skirt (skirt_cells) for as long as it stands.
+    bool reserves_skirt() const { return !has_motion() && has_category("FACTORY"); }
+    /// RUnitBlueprint::GetSkirtRect where it stands, out to whole cells.
+    OccupancyRect skirt_cells() const;
     // FAF's CQUEMOV: FA-Binary-Patches hooks/BuildUnit.cpp, section/SelectUnit.cpp
     bool takes_orders_unfinished() const {
         return has_category("FACTORY") || has_category("CQUEMOV");
@@ -856,9 +861,13 @@ public:
     /// ordered are dropped.
     void stop_silo_build();
     /// What a Stop order does as it reaches the head (faf-re
-    /// IAiCommandDispatchImpl::Stop): a silo's auto mode goes off and its
-    /// missile under way is dropped, with the builds ordered.
+    /// IAiCommandDispatchImpl::Stop): the attacker stops, then a silo's auto
+    /// mode goes off and its missile under way is dropped, with the builds ordered.
     void run_stop(lua_State* L);
+    /// Moho's CAiAttackerImpl::Stop, SetDesiredTarget with no target: every
+    /// weapon drops its target, its script told, and looks again two ticks on
+    /// with AutoInitiateAttackCommand, else a TargetCheckInterval on.
+    void stop_attacker(lua_State* L);
     /// GiveNukeSiloAmmo(blocks, true), FAF's: the missile under way, else the
     /// next one, has `blocks` of its 10 * BuildTime / build rate done.
     void set_silo_blocks(i32 blocks);
@@ -903,6 +912,8 @@ public:
     /// attack (a FormAttack too) whose target is dying or gone -- may take an
     /// attack order of its weapons' own choosing.
     bool auto_initiate_allowed(const EntityRegistry& registry) const;
+    /// Moho's UNITSTATE_Attacking: an attack order's task runs.
+    bool attacking() const { return attack_task_; }
     /// Whether Moho's FindBestEnemy skips `enemy` whatever the weapon.
     bool passes_over(const Unit& enemy, const SimState* sim, const EntityRegistry& registry) const;
     /// A weapon with AutoInitiateAttackCommand picked `target`: the unit
@@ -981,6 +992,8 @@ public:
     void set_bank_angle(f32 b) { bank_angle_ = b; }
     /// An aircraft's orientation, and its heading, bank and pitch as read from it.
     void set_flight_orientation(const Quaternion& q);
+    /// Where Moho's SPhysBody holds it: its collision box's centre, turned with it.
+    Vector3 air_body_offset() const;
     f32 current_airspeed() const { return current_airspeed_; }
     void set_current_airspeed(f32 s) { current_airspeed_ = s; }
     f32 current_altitude() const { return current_altitude_; }
@@ -1113,8 +1126,14 @@ public:
     void set_footprints(const blueprints::UnitFootprints& f) { footprints_ = f; }
     bool uses_alt_footprint() const { return using_alt_footprint_ || force_alt_footprint_; }
     void set_force_alt_footprint(bool on) { force_alt_footprint_ = on; }
-    /// Moho's CAiPathNavigator::RequestPath.
-    void set_path_goal(const Vector3& goal, const SimContext& ctx);
+    /// Where an aircraft flies for `goal`: the centre of the cells its
+    /// footprint takes there, on the ground or the water (Moho's
+    /// CAiNavigatorAir::SetGoal, COORDS_ToWorldPos).
+    Vector3 air_target(const Vector3& goal, const map::Terrain* terrain) const;
+    /// Moho's CAiPathNavigator::RequestPath; an aircraft flies to
+    /// air_target(goal), or with `chase` to `goal` itself, a mobile unit
+    /// followed (CAiNavigatorAir::SetDestUnit).
+    void set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase = false);
     /// A goal Moho's SIM_TryToBuild hands its navigator, sending it off a
     /// build site (build_site_units.cpp): it walks there on no order, for as
     /// long as its navigator keeps that goal.
@@ -1426,20 +1445,23 @@ public:
     void set_idle_landing(const IdleLanding& l) { idle_landing_ = l; }
     /// Its reservation goes (landed, taken off, or gone).
     void free_landing_reservation(SimState& sim);
-    /// An engineer walking up to the factory it guards: the place it reserved
-    /// there (Moho's guard task's move anchor) and the guard order's id.
-    struct GuardAnchor {
+    /// The place an order reserved to walk to (Moho's guard task's move
+    /// anchor, a repair's or a capture's place, a factory move's goal) and
+    /// the order's id.
+    struct OrderReservation {
         bool held = false;
         u32 order = 0;
         OccupancyRect reserved{};
     };
-    const GuardAnchor& guard_anchor() const { return guard_anchor_; }
-    /// For tests: its anchor as given (no reservation taken or freed).
-    void set_guard_anchor(const GuardAnchor& a) { guard_anchor_ = a; }
+    const OrderReservation& order_reservation() const { return order_reservation_; }
+    /// For tests: its reservation as given (none taken or freed).
+    void set_order_reservation(const OrderReservation& a) { order_reservation_ = a; }
+    /// Unit::ReserveOgridRect: its footprint's cells at `place`, for `order`.
+    void reserve_for_order(u32 order, const Vector3& place, SimState* sim);
     /// Its reservation goes; with no sim, only its record.
-    void free_guard_anchor(SimState* sim);
+    void free_order_reservation(SimState* sim);
     /// What the unit has reserved of the ground (Moho's Unit::ReserveOgridRect):
-    /// its guard's move anchor, else its landing place; empty when nothing.
+    /// its order's place, else its landing place; empty when nothing.
     const OccupancyRect& reserved_ground() const;
     /// A transport's pickup (M206m): the units given slots, not yet aboard;
     /// whether it is at their centre; the ticks it has waited there.
@@ -1685,7 +1707,9 @@ public:
         skirt_offset_x_ = ox; skirt_offset_z_ = oz;
     }
 
-    void fire_adjacency_callbacks(EntityRegistry& registry, lua_State* L);
+    /// Moho's Unit::CollectAllOverlapping.
+    std::vector<EntityId> overlapping_structures(SimState& sim) const;
+    void fire_adjacency_callbacks(SimState& sim, lua_State* L);
 
     /// Whether this unit's place has been taken by a replacement of another
     /// army (ChangeUnitArmy, M206v): its Destroy is a hand-over, not a loss.
@@ -1739,6 +1763,16 @@ private:
     /// place nearest the site clear of its skirt grown by a cell, else the
     /// point toward the unit where its own cell clears it.
     Vector3 build_place(const Vector3& site, f32 skirt_x, f32 skirt_z, SimContext& ctx) const;
+    /// Where a reclaim of `target` is done from: Moho's CUnitReclaimTask
+    /// takes the place nearest the unit whose cell doesn't touch the
+    /// target's cells (PrepareMove(1)), else the target's position.
+    Vector3 reclaim_place(const Entity& target, SimContext& ctx) const;
+    /// CUnitRepairTask's place: nearest the unit clear of `target`'s skirt
+    /// grown by a cell (PrepareMove(1)).
+    Vector3 repair_place(const Unit& target, SimContext& ctx) const;
+    /// CUnitCaptureTask's place: nearest the unit clear of `target`'s skirt
+    /// (PrepareMove(1)); an AIR unit's is the target's position.
+    Vector3 capture_place(const Unit& target, SimContext& ctx) const;
     /// Moho's EnsureReservedGuardMoveAnchorPosition: the place nearest `guarded`
     /// clear of its skirt (PrepareMove(0)), else its position.
     Vector3 guard_anchor_place(const Unit& guarded, SimContext& ctx) const;
@@ -1763,7 +1797,11 @@ private:
     /// does as it is made. A Move, Patrol, Guard or Attack drops the weapons'
     /// targets of an immobile NeedUnpack unit, so its weapon packs up and
     /// the unit can go.
-    void begin_order(UnitCommand& cmd, lua_State* L);
+    void begin_order(UnitCommand& cmd, SimContext& ctx);
+    /// Moho's move task's goal for a factory-issued move (see begin_order):
+    /// `dest` moved to a place the unit fits that no unit stands on or has
+    /// reserved, which the order then reserves.
+    void settle_factory_move(UnitCommand& cmd, Vector3 dest, SimContext& ctx);
     /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
     /// target, and one that needs prep (NeedPrep) hears OnGotTarget. False
     /// when a script took the unit or the order.
@@ -1771,10 +1809,6 @@ private:
     /// SetDesiredTarget's notice: each NeedPrep weapon hears OnGotTarget.
     /// False when a script took the unit.
     bool ready_prep_weapons(lua_State* L);
-    /// Moho's CAiAttackerImpl::Stop, SetDesiredTarget with no target: every
-    /// weapon drops its target, its script told, and looks again two ticks on
-    /// with AutoInitiateAttackCommand, else a TargetCheckInterval on.
-    void stop_attacker(lua_State* L);
     /// Moho's ~CUnitAttackTargetTask: once the attack order whose task ran
     /// is gone from the head of the queue (done, cleared or replaced), the
     /// attacker stops. False when a script took the unit.
@@ -2314,7 +2348,7 @@ private:
     f32 auto_land_time_ = 0.0f;         // Air.AutoLandTime
     f32 start_turn_distance_ = 0.0f;    // Air.StartTurnDistance
     IdleLanding idle_landing_;
-    GuardAnchor guard_anchor_;
+    OrderReservation order_reservation_;
     // A unit beaming up into its transport (M206m): ticks left of the 10,
     // and where it started.
     i32 beam_up_ticks_ = 0;

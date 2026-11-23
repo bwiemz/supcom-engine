@@ -114,6 +114,12 @@ void Navigator::set_goal(const Vector3& pos) {
     status_ = Status::Moving;
 }
 
+void Navigator::set_air_target(const Vector3& at) {
+    if (!waypoints_.empty()) {
+        waypoints_.back() = at;
+    }
+}
+
 void Navigator::abort_move(bool keep_spline) {
     ended_ = false;
     air_hold_set_ = false;
@@ -122,6 +128,19 @@ void Navigator::abort_move(bool keep_spline) {
     waypoints_.clear();
     waypoint_index_ = 0;
     reset_steering();
+}
+
+Vector3 Navigator::goal_pos(const Unit& unit) const {
+    if (status_ == Status::Idle) {
+        return unit.position();
+    }
+    if (!moho_active_) {
+        return goal_;
+    }
+    const blueprints::Footprint& fp = unit.footprint();
+    const OccupancyRect& at = moho_.goal().outer;
+    return {static_cast<f32>(at.x0) + static_cast<f32>(fp.size_x) * 0.5f, goal_.y,
+            static_cast<f32>(at.z0) + static_cast<f32>(fp.size_z) * 0.5f};
 }
 
 void Navigator::reset_steering() {
@@ -258,10 +277,12 @@ void Navigator::navigate(Unit& unit) {
             return;
         }
         // Moho's move goal: the cell the footprint would stand on there, the
-        // destination first moved to a place it fits (Unit::PrepareMove).
+        // destination first moved to a place it fits. Reservations aside: a
+        // Moho task that minds them settles its goal itself (Unit::PrepareMove).
         const blueprints::Footprint& fp = unit.footprint();
         Vector3 dest = goal_;
-        prepare_move(unit, *map, sim_->occupancy(), sim_->move_bounds(unit.army()), dest);
+        prepare_move(unit, *map, sim_->occupancy(), sim_->move_bounds(unit.army()), dest, 0,
+                     nullptr, {false});
         const OccupancyRect at = footprint_rect(fp, dest.x, dest.z);
         const path::NavGoal goal{{at.x0, at.z0, at.x0 + 1, at.z0 + 1}, {}};
         // The move it is on, asked again (an order re-asserts its goal while
@@ -970,16 +991,8 @@ bool Navigator::update_air(Unit& unit, f64 dt,
         return false;
     }
 
-    Vector3 wp = waypoints_[waypoint_index_];
+    const Vector3 wp = waypoints_[waypoint_index_];
     const bool is_final = (waypoint_index_ == waypoints_.size() - 1);
-    // CAiNavigatorAir::BuildGoalWorldPos: the centre of the goal's cell.
-    const auto& fp = unit.footprint();
-    if (fp.size_x > 0 && fp.size_z > 0) {
-        const f32 hx = static_cast<f32>(fp.size_x) * 0.5f;
-        const f32 hz = static_cast<f32>(fp.size_z) * 0.5f;
-        wp.x = static_cast<f32>(std::lrint(wp.x - hx)) + hx;
-        wp.z = static_cast<f32>(std::lrint(wp.z - hz)) + hz;
-    }
     AirMove move;
     move.target = wp;
     move.elevation = unit.elevation_target();

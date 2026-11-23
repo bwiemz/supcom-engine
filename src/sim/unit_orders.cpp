@@ -90,10 +90,43 @@ Vector3 build_aim_point(lua_State* L, const map::Terrain* terrain, const std::st
     return {site.x, y + size_y * 0.5f + offset_y, site.z};
 }
 
+/// Moho's CheckBuildRestriction (CBuildTaskHelper).
+bool meets_build_restriction(lua_State* L, const SimState* sim, const std::string& bp_id,
+                             const Vector3& site) {
+    if (!L || !sim) {
+        return true;
+    }
+    std::string restriction;
+    const int top = lua_gettop(L);
+    if (blueprints::push_blueprint(L, bp_id)) {
+        lua_pushstring(L, "Physics");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "BuildRestriction");
+            lua_rawget(L, -2);
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                restriction = lua_tostring(L, -1);
+            }
+        }
+    }
+    lua_settop(L, top);
+    ResourceDeposit::Type type = ResourceDeposit::Mass;
+    if (restriction == "RULEUBR_OnHydrocarbonDeposit") {
+        type = ResourceDeposit::Hydrocarbon;
+    } else if (restriction != "RULEUBR_OnMassDeposit") {
+        return true;
+    }
+    const auto [size_x, size_z] = blueprint_footprint_cells(L, bp_id);
+    const auto x0 = static_cast<i32>(std::lrint(site.x - size_x * 0.5f));
+    const auto z0 = static_cast<i32>(std::lrint(site.z - size_z * 0.5f));
+    const DepositRect cells{x0, z0, x0 + static_cast<i32>(size_x), z0 + static_cast<i32>(size_z)};
+    return deposit_in_area(sim->resource_deposits(), type, cells);
+}
+
 /// Ticks a build or repair waits at its army's unit cap, or paused, before
-/// trying again: Moho's tasks return 10 there (a task waits 9 ticks and runs
-/// on the 10th), the brain hearing OnUnitCapLimitReached at each try at the cap.
-constexpr i32 kTaskRetryTicks = 10;
+/// trying again: Moho's tasks return 10 there, which runs them again 9 ticks
+/// on, the brain hearing OnUnitCapLimitReached at each try at the cap.
+constexpr i32 kTaskRetryTicks = 9;
 
 /// FAF's StopReclaimWhenPaused: on FAF's data a paused unit's reclaim of a
 /// prop holds. Retail's paused reclaimer goes on, and a unit target (a wreck
@@ -118,6 +151,61 @@ bool build_blocked_by_lobby_rules(const Unit& builder, const UnitCommand& cmd,
     }
 
     return false;
+}
+
+/// Moho's Unit::CanBuild.
+bool unit_can_build(lua_State* L, const Unit& builder, const UnitCommand& cmd,
+                    const SimContext& ctx) {
+    if (!blueprint_can_build(L, builder.blueprint_id(), cmd.blueprint_id) ||
+        build_blocked_by_lobby_rules(builder, cmd, ctx)) {
+        return false;
+    }
+    if (builder.build_restriction().empty()) {
+        return true;
+    }
+    std::unordered_set<std::string> categories;
+    const int top = lua_gettop(L);
+    if (blueprints::push_blueprint(L, cmd.blueprint_id)) {
+        collect_blueprint_categories(L, lua_gettop(L), categories);
+    }
+    lua_settop(L, top);
+    return !builder.build_restriction().matches(categories);
+}
+
+/// Moho's IAiCommandDispatchImpl::DispatchTask for a build.
+bool dispatch_makes_build_task(lua_State* L, const Unit& builder, const UnitCommand& cmd,
+                               const SimContext& ctx) {
+    if (!L) {
+        return true;
+    }
+    const int top = lua_gettop(L);
+    if (!blueprints::push_blueprint(L, cmd.blueprint_id)) {
+        return false;
+    }
+    lua_settop(L, top);
+    if ((cmd.type == CommandType::BuildMobile && !unit_can_build(L, builder, cmd, ctx)) ||
+        builder.lua_table_ref() < 0) {
+        return false;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, builder.lua_table_ref());
+    const int self = lua_gettop(L);
+    lua_pushstring(L, "CheckBuildRestriction");
+    lua_gettable(L, self);
+    if (!lua_isfunction(L, -1)) {
+        lua_settop(L, top);
+        return false;
+    }
+    lua_pushvalue(L, self);
+    blueprints::push_blueprint(L, cmd.blueprint_id);
+    bool allowed = false;
+    if (lua_pcall(L, 2, 1, 0) == 0) {
+        allowed = lua_toboolean(L, -1) != 0;
+    } else {
+        spdlog::warn("Error running CheckBuildRestriction script in {}: {}", builder.blueprint_id(),
+                     lua_isstring(L, -1) ? lua_tostring(L, -1) : "?");
+    }
+    lua_settop(L, top);
+    return allowed;
 }
 
 /// What reclaiming `target` takes and yields, as Moho asks the reclaimer's
@@ -287,10 +375,25 @@ EntityId Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
     return made;
 }
 
+Vector3 Unit::air_target(const Vector3& goal, const map::Terrain* terrain) const {
+    const blueprints::Footprint& fp = footprint();
+    if (fp.size_x == 0 || fp.size_z == 0) {
+        return goal;
+    }
+    const OccupancyRect cell = footprint_rect(fp, goal.x, goal.z);
+    Vector3 at{static_cast<f32>(cell.x0 + cell.x1) * 0.5f, goal.y,
+               static_cast<f32>(cell.z0 + cell.z1) * 0.5f};
+    if (terrain) {
+        at.y = terrain->has_water() ? terrain->get_surface_height(at.x, at.z)
+                                    : terrain->get_terrain_height(at.x, at.z);
+    }
+    return at;
+}
+
 // faf-re CAiPathNavigator's UpdateWaterFavorAltFootprintMode: the alt
 // footprint while it, and every FAVORSWATER unit given its order, are on
 // water and bound for water.
-void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx) {
+void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase) {
     static const CategoryName kFavorsWater{"FAVORSWATER"};
     // CUnitMoveTask's constructor
     if (!is_air_unit()) {
@@ -342,6 +445,9 @@ void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx) {
     if (!uses_alt_footprint()) {
         navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
                             is_amphibious() || is_hover());
+        if (is_air_unit() && !chase) {
+            navigator_.set_air_target(air_target(goal, ctx.terrain));
+        }
         return;
     }
     const blueprints::Footprint& fp = footprint();
@@ -392,15 +498,69 @@ Vector3 Unit::build_place(const Vector3& site, f32 skirt_x, f32 skirt_z, SimCont
     return goal;
 }
 
+Vector3 Unit::reclaim_place(const Entity& target, SimContext& ctx) const {
+    if (!ctx.sim || !ctx.terrain) {
+        return approach_point(*this, target.position(), target.footprint_size_x() * 0.5f,
+                              target.footprint_size_z() * 0.5f);
+    }
+    // Its footprint's cells (COORDS_ToGridRect)
+    const f32 size_x = std::floor(target.footprint_size_x());
+    const f32 size_z = std::floor(target.footprint_size_z());
+    Vector3 place = target.position();
+    const auto x0 = static_cast<f32>(std::lrint(place.x - size_x * 0.5f));
+    const auto z0 = static_cast<f32>(std::lrint(place.z - size_z * 0.5f));
+    const MoveExclusion cells{x0, z0, x0 + size_x, z0 + size_z};
+    prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()), place, 1,
+                 &cells);
+    return place;
+}
+
+namespace {
+// RUnitBlueprint::GetSkirtRect
+MoveExclusion skirt_rect(const Unit& u) {
+    const auto x0 = static_cast<f32>(std::lrint(u.position().x - u.footprint_size_x() * 0.5f)) +
+                    u.skirt_offset_x();
+    const auto z0 = static_cast<f32>(std::lrint(u.position().z - u.footprint_size_z() * 0.5f)) +
+                    u.skirt_offset_z();
+    return {x0, z0, x0 + u.skirt_size_x(), z0 + u.skirt_size_z()};
+}
+} // namespace
+
+Vector3 Unit::repair_place(const Unit& target, SimContext& ctx) const {
+    if (!ctx.sim || !ctx.terrain) {
+        return approach_point(*this, target.position(), target.skirt_size_x() * 0.5f + 1,
+                              target.skirt_size_z() * 0.5f + 1);
+    }
+    MoveExclusion skirt = skirt_rect(target);
+    skirt.x0 -= 1;
+    skirt.z0 -= 1;
+    skirt.x1 += 1;
+    skirt.z1 += 1;
+    Vector3 place = target.position();
+    prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()), place, 1,
+                 &skirt);
+    return place;
+}
+
+Vector3 Unit::capture_place(const Unit& target, SimContext& ctx) const {
+    if (has_category("AIR")) {
+        return target.position();
+    }
+    if (!ctx.sim || !ctx.terrain) {
+        return approach_point(*this, target.position(), target.skirt_size_x() * 0.5f,
+                              target.skirt_size_z() * 0.5f);
+    }
+    const MoveExclusion skirt = skirt_rect(target);
+    Vector3 place = target.position();
+    prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()), place, 1,
+                 &skirt);
+    return place;
+}
+
 Vector3 Unit::guard_anchor_place(const Unit& guarded, SimContext& ctx) const {
     Vector3 place = guarded.position();
     if (ctx.sim && ctx.terrain) {
-        // RUnitBlueprint::GetSkirtRect
-        const auto x0 = static_cast<f32>(std::lrint(place.x - guarded.footprint_size_x() * 0.5f)) +
-                        guarded.skirt_offset_x();
-        const auto z0 = static_cast<f32>(std::lrint(place.z - guarded.footprint_size_z() * 0.5f)) +
-                        guarded.skirt_offset_z();
-        const MoveExclusion skirt{x0, z0, x0 + guarded.skirt_size_x(), z0 + guarded.skirt_size_z()};
+        const MoveExclusion skirt = skirt_rect(guarded);
         prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()), place,
                      0, &skirt);
     }
@@ -408,9 +568,9 @@ Vector3 Unit::guard_anchor_place(const Unit& guarded, SimContext& ctx) const {
 }
 
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
-    if (guard_anchor_.held &&
-        (command_queue_.empty() || command_queue_.front().command_id != guard_anchor_.order)) {
-        free_guard_anchor(ctx.sim);
+    if (order_reservation_.held &&
+        (command_queue_.empty() || command_queue_.front().command_id != order_reservation_.order)) {
+        free_order_reservation(ctx.sim);
     }
     const bool awaited = std::exchange(arm_awaited_, false);
     if (!awaited && !is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
@@ -445,8 +605,23 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
             if ((parent_entity_id() && is_mobile()) || block_command_queue_) {
                 return true;
             }
+            // Moho's dispatch makes no task for a build the unit may not make: the order goes.
+            if (command_queue_.front().type == CommandType::BuildMobile ||
+                command_queue_.front().type == CommandType::BuildFactory) {
+                const u32 order = command_queue_.front().command_id;
+                const bool makes =
+                    dispatch_makes_build_task(ctx.L, *this, command_queue_.front(), ctx);
+                if (destroyed() || !in_registry()) return false;
+                if (command_queue_.empty() || command_queue_.front().command_id != order) {
+                    continue;
+                }
+                if (!makes) {
+                    command_queue_.pop_front();
+                    continue;
+                }
+            }
             // Its scripts may change the queue, or kill the unit: look again.
-            begin_order(command_queue_.front(), ctx.L);
+            begin_order(command_queue_.front(), ctx);
             continue;
         }
         UnitCommand& front = command_queue_.front();
@@ -461,8 +636,20 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
     return end_gone_attack(ctx.L);
 }
 
-void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
+void Unit::begin_order(UnitCommand& cmd, SimContext& ctx) {
+    lua_State* L = ctx.L;
     cmd.begun = true;
+    // Moho's CUnitMoveTask constructor (ShouldUseCurrentCommandTargetPosition):
+    // a factory-issued move that is the unit's last order settles its goal.
+    if (cmd.type == CommandType::Move && cmd.from_factory && command_queue_.size() == 1 &&
+        !has_unit_state("TransportLoading") && !has_unit_state("Teleporting") &&
+        !has_unit_state("Guarding")) {
+        const Vector3 dest{static_cast<f32>(std::lrint(cmd.target_pos.x)), cmd.target_pos.y,
+                           static_cast<f32>(std::lrint(cmd.target_pos.z))};
+        if (dest.x != 0 || dest.y != 0 || dest.z != 0) {
+            settle_factory_move(cmd, dest, ctx);
+        }
+    }
     // Moho's command dispatch makes an attack order's task as the order comes up
     // (CUnitAttackTargetTask); its end stops the attacker (end_gone_attack).
     if (cmd.type == CommandType::Attack) {
@@ -693,10 +880,25 @@ OrderStep Unit::order_stop(lua_State* L) {
     return OrderStep::Next;
 }
 
+void Unit::settle_factory_move(UnitCommand& cmd, Vector3 dest, SimContext& ctx) {
+    if (!ctx.sim || !ctx.terrain) {
+        return;
+    }
+    prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()), dest, 0,
+                 nullptr, {true, ctx.sim});
+    cmd.goal_prepared = true;
+    cmd.prepared_goal = dest;
+    cmd.prepared_for = cmd.target_pos;
+    reserve_for_order(cmd.command_id, dest, ctx.sim);
+}
+
 OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
     // Moho's move task hears AINAVEVENT_Aborted as a failure: the order ends.
     if (aborted_command_ != 0 && cmd.command_id == aborted_command_) {
         aborted_command_ = 0;
+        if (cmd.goal_prepared) {
+            free_order_reservation(ctx.sim);
+        }
         command_queue_.pop_front();
         if (is_air_unit() &&
             (command_queue_.empty() || instant_order(command_queue_.front().type))) {
@@ -704,11 +906,27 @@ OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
         }
         return OrderStep::Next;
     }
-    if ((!navigator_.is_moving() && !navigator_.ended()) ||
-        navigator_.goal().x != cmd.target_pos.x || navigator_.goal().z != cmd.target_pos.z) {
-        set_path_goal(cmd.target_pos, ctx);
+    // A settled goal whose order was moved (Moho's move task hears the
+    // command's event): its new cell's centre, settled again.
+    if (cmd.goal_prepared &&
+        (cmd.target_pos.x != cmd.prepared_for.x || cmd.target_pos.z != cmd.prepared_for.z)) {
+        const OccupancyRect cell = footprint_rect(footprint(), cmd.target_pos.x, cmd.target_pos.z);
+        Vector3 centre{static_cast<f32>(cell.x0 + cell.x1) * 0.5f, cmd.target_pos.y,
+                       static_cast<f32>(cell.z0 + cell.z1) * 0.5f};
+        if (ctx.terrain) {
+            centre.y = ctx.terrain->get_terrain_height(centre.x, centre.z);
+        }
+        settle_factory_move(cmd, centre, ctx);
+    }
+    const Vector3& goal = cmd.goal_prepared ? cmd.prepared_goal : cmd.target_pos;
+    if ((!navigator_.is_moving() && !navigator_.ended()) || navigator_.goal().x != goal.x ||
+        navigator_.goal().z != goal.z) {
+        set_path_goal(goal, ctx);
     }
     if (!nav_update(cmd.speed_cap)) {
+        if (cmd.goal_prepared) {
+            free_order_reservation(ctx.sim);
+        }
         command_queue_.pop_front();
         if (is_air_unit() &&
             (command_queue_.empty() || instant_order(command_queue_.front().type))) {
@@ -833,6 +1051,13 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
             return OrderStep::Next;
         }
     }
+    // An immobile unit's attacker has the target from the start, and the attack fails once its
+    // target weapon has no solution for it (CUnitAttackTargetTask::HandleAiAttackerEvent).
+    if (!is_mobile() && cmd.engaged && weapon &&
+        weapon->solution_status(*this, target->position(), dist2) != Weapon::Solution::Available) {
+        command_queue_.pop_front();
+        return OrderStep::Next;
+    }
     // A winged aircraft flies at its target and, once within a weapon's
     // reach or its EngageDistance, makes its runs: Moho's attack task hands
     // the target to the attacker and CalcMoveAir flies the combat tactics
@@ -885,11 +1110,13 @@ OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
         }
         if (!navigator_.is_moving() || navigator_.goal().x != goal.x ||
             navigator_.goal().z != goal.z) {
-            set_path_goal(goal, ctx);
+            const bool mobile =
+                target->is_unit() && static_cast<const Unit*>(target)->has_category("MOBILE");
+            set_path_goal(goal, ctx, mobile && !cmd.has_slot);
         }
         nav_update();
     };
-    if (!in_reach) {
+    if (!in_reach && is_mobile()) {
         close_in();
     } else {
         // In reach, the formation is dropped: from now on the unit attacks
@@ -1028,9 +1255,14 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, SimContext& ctx) {
             return OrderStep::Hold;
         }
     }
-    // A structure's attacker takes the point at once; its weapons fire when
-    // it is in their range.
+    // A structure's attacker takes the point at once, and gives the attack up as an attack on a
+    // unit, once its weapon has no solution for the point.
     if (!is_mobile()) {
+        if (cmd.engaged && weapon &&
+            weapon->solution_status(*this, at, dist2) != Weapon::Solution::Available) {
+            command_queue_.pop_front();
+            return OrderStep::Next;
+        }
         if (!cmd.engaged && !engage(cmd, ctx.L)) {
             return destroyed() ? OrderStep::Gone : OrderStep::Hold;
         }
@@ -1129,6 +1361,12 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             // the UI comes snapped already; a script's may not.
             const auto [fx, fz] = blueprint_footprint_cells(L, cmd.blueprint_id);
             snap_structure_center(cmd.target_pos.x, cmd.target_pos.z, fx, fz);
+            // Moho's Waiting and Processing ask it again; a deposit, once made, stays.
+            if (!meets_build_restriction(L, ctx.sim, cmd.blueprint_id, cmd.target_pos)) {
+                command_queue_.pop_front();
+                call_lua_method(L, "OnFailedToBuild");
+                return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+            }
             const BuildSiteProp site =
                 find_build_site_prop(L, registry, *this, cmd.blueprint_id, cmd.target_pos);
             if (destroyed() || !in_registry()) {
@@ -1149,54 +1387,62 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         // is within MaxBuildDistance and the builder is off the
         // skirt (Moho's CUnitMobileBuildTask); else it walks just
         // clear of the skirt, one cell out, and builds from there if
-        // in range, or gives up.
-        if (cmd.site_skirt_x <= 0) {
-            const auto [sx, sz] = blueprint_skirt(L, cmd.blueprint_id);
-            cmd.site_skirt_x = sx;
-            cmd.site_skirt_z = sz;
-        }
-        const f32 half_x = cmd.site_skirt_x * 0.5f;
-        const f32 half_z = cmd.site_skirt_z * 0.5f;
-        const auto reachable = [&] {
-            const f32 skirt = std::max(cmd.site_skirt_x, cmd.site_skirt_z);
-            const f32 room = footprint_extent(*this) * 0.5f;
-            const bool on_site = std::abs(position().x - cmd.target_pos.x) <= half_x + room &&
-                                 std::abs(position().z - cmd.target_pos.z) <= half_z + room;
-            return !on_site && work_gap(*this, cmd.target_pos, skirt) <= max_build_distance_;
-        };
-        if (!cmd.approached && !reachable()) {
-            if (effective_speed() <= 0) {
-                command_queue_.pop_front();
-                return OrderStep::Next;
+        // in range, or gives up. Range is looked at once (Moho's
+        // TASKSTATE_Waiting).
+        if (!cmd.reached) {
+            if (cmd.site_skirt_x <= 0) {
+                const auto [sx, sz] = blueprint_skirt(L, cmd.blueprint_id);
+                cmd.site_skirt_x = sx;
+                cmd.site_skirt_z = sz;
             }
-            cmd.approached = true;
-            set_path_goal(build_place(cmd.target_pos, cmd.site_skirt_x, cmd.site_skirt_z, ctx),
-                          ctx);
+            const f32 half_x = cmd.site_skirt_x * 0.5f;
+            const f32 half_z = cmd.site_skirt_z * 0.5f;
+            const auto reachable = [&] {
+                const f32 skirt = std::max(cmd.site_skirt_x, cmd.site_skirt_z);
+                const f32 room = footprint_extent(*this) * 0.5f;
+                const bool on_site = std::abs(position().x - cmd.target_pos.x) <= half_x + room &&
+                                     std::abs(position().z - cmd.target_pos.z) <= half_z + room;
+                return !on_site && work_gap(*this, cmd.target_pos, skirt) <= max_build_distance_;
+            };
+            if (!cmd.approached && !reachable() && effective_speed() > 0) {
+                cmd.approached = true;
+                set_path_goal(build_place(cmd.target_pos, cmd.site_skirt_x, cmd.site_skirt_z, ctx),
+                              ctx);
+            }
+            // The task's first tick checks the site and sends the builder; it
+            // aims from the next (Moho's TASKSTATE_Preparing returns 1).
+            if (!cmd.prepared) {
+                cmd.prepared = true;
+                return OrderStep::Hold;
+            }
+            if (cmd.approached && approach_update(ctx)) {
+                return OrderStep::Hold;
+            }
+            // After the walk only range decides: the pathfinder may have moved
+            // its goal onto the site
+            const f32 skirt = std::max(cmd.site_skirt_x, cmd.site_skirt_z);
+            const bool in_range = work_gap(*this, cmd.target_pos, skirt) <= max_build_distance_;
+            if (!reachable() && !(cmd.approached && in_range)) {
+                command_queue_.pop_front();
+                call_lua_method(L, "OnFailedToBuild");
+                return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+            }
+            abort_move();
+            cmd.reached = true;
         }
-        // The task's first tick checks the site and sends the builder; it
-        // aims from the next (Moho's TASKSTATE_Preparing returns 1).
-        if (!cmd.prepared) {
-            cmd.prepared = true;
-            return OrderStep::Hold;
-        }
-        if (cmd.approached && approach_update(ctx)) {
-            return OrderStep::Hold;
-        }
-        // After the walk only range decides: the pathfinder may have moved
-        // its goal onto the site
-        const f32 skirt = std::max(cmd.site_skirt_x, cmd.site_skirt_z);
-        const bool in_range = work_gap(*this, cmd.target_pos, skirt) <= max_build_distance_;
-        if (!reachable() && !(cmd.approached && in_range)) {
-            command_queue_.pop_front();
-            return OrderStep::Next;
-        }
-        abort_move();
         {
             const Vector3 site = build_aim_point(L, ctx.terrain, cmd.blueprint_id, cmd.target_pos);
             aim_builder_arms(&site, L);
             if (destroyed() || !in_registry()) {
                 return OrderStep::Gone;
             }
+        }
+        // Moho's TASKSTATE_Starting turns it to the site once.
+        if (!cmd.faced) {
+            if (turns_to_face(cmd.target_pos)) {
+                return OrderStep::Hold;
+            }
+            cmd.faced = true;
         }
 
         // Phase 2: Spawn skeleton unit
@@ -1210,15 +1456,8 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             call_lua_method(L, "OnFailedToBuild");
             return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
         }
-        if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
-            command_queue_.pop_front();
-            return OrderStep::Next;
-        }
-        if (turns_to_face(cmd.target_pos)) {
-            return OrderStep::Hold;
-        }
         if (!find_build_site_frame(registry, cmd.blueprint_id, cmd.target_pos)) {
-            if (build_site_taken(L, registry, cmd.blueprint_id, cmd.target_pos)) {
+            if (build_site_taken(L, *ctx.sim, army(), cmd.blueprint_id, cmd.target_pos)) {
                 command_queue_.pop_front();
                 call_lua_method(L, "OnFailedToBuild");
                 return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
@@ -1293,7 +1532,8 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
         if (waits_out_task(cmd)) {
             return OrderStep::Hold;
         }
-        if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
+        if (cmd.type == CommandType::BuildFactory ? L && !unit_can_build(L, *this, cmd, ctx)
+                                                  : build_blocked_by_lobby_rules(*this, cmd, ctx)) {
             command_queue_.pop_front();
             return OrderStep::Next;
         }
@@ -1330,7 +1570,7 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
             command_queue_.front().command_id != order_id)
             return OrderStep::Next;
         if (built && factory_build) {
-            cmd.rolloff_wait = 2; // the roll-off, above
+            cmd.rolloff_wait = 1; // the roll-off, above
             return OrderStep::Hold;
         }
         // A failed build (or a finished upgrade) goes at once.
@@ -1363,14 +1603,14 @@ OrderStep Unit::hold_for_unit_cap(u32 command_id) {
 }
 
 bool Unit::holds_for_rolloff(i32& wait) const {
-    // Moho's CFactoryBuildTask, its unit built: two steps (Starting, then
-    // Processing), then 10 ticks at a time while the factory is busy -- its
-    // FinishBuildThread and RolloffBody keep it so until the new unit's
-    // roll-off move is done.
+    // Moho's CFactoryBuildTask, its unit built: Starting at once, Processing
+    // the next tick, then again every kTaskRetryTicks while the factory is
+    // busy -- its FinishBuildThread and RolloffBody keep it so until the new
+    // unit's roll-off move is done.
     if (wait <= 0) return false;
     if (--wait > 0) return true;
     if (busy_) {
-        wait = 10;
+        wait = kTaskRetryTicks;
         return true;
     }
     return false;
@@ -1531,6 +1771,11 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
 OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
+    // Moho's CUnitReclaimTask waits out the move task it sent before it
+    // looks at its target again.
+    if (cmd.approached && reclaim_target_id_ != cmd.target_id && approach_update(ctx)) {
+        return OrderStep::Hold;
+    }
     if (!cmd.target_id) {
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         end_approach(cmd);
@@ -1559,10 +1804,7 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
                     return OrderStep::Next;
                 }
                 cmd.approached = true;
-                set_path_goal(approach_point(*this, target->position(),
-                                             target->footprint_size_x() * 0.5f,
-                                             target->footprint_size_z() * 0.5f),
-                              ctx);
+                set_path_goal(reclaim_place(*target, ctx), ctx);
             }
             if (cmd.approached && approach_update(ctx)) {
                 return OrderStep::Hold;
@@ -1703,11 +1945,16 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
             stop_assisting(L, &registry);
         }
         end_approach(cmd);
+        free_order_reservation(ctx.sim);
     };
     if (!cmd.target_id) {
         let_go();
         command_queue_.pop_front();
         return OrderStep::Next;
+    }
+    const bool working = repair_target_id_ == cmd.target_id || build_target_id_ == cmd.target_id;
+    if (cmd.approached && !working && approach_update(ctx)) {
+        return OrderStep::Hold;
     }
     auto* rtarget = registry.find(cmd.target_id);
     if (!rtarget || rtarget->destroyed() || !rtarget->is_unit()) {
@@ -1726,29 +1973,30 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
     }
 
     // Reach: the gap to its skirt within MaxBuildDistance to begin,
-    // twice that to go on (Moho's CUnitRepairTask). Out of reach, the
-    // unit walks just clear of its skirt, and repairs from there or
+    // twice that to go on (Moho's CUnitRepairTask). Out of reach, or where
+    // it doesn't fit, the unit walks to its place, and repairs from there or
     // gives up.
     {
         const auto& runit = static_cast<const Unit&>(*rtarget);
         const f32 gap = work_gap(*this, rtarget->position(), skirt_extent(runit));
-        const bool working =
-            repair_target_id_ == cmd.target_id || build_target_id_ == cmd.target_id;
         if (!working) {
-            if (!cmd.approached && gap > max_build_distance_) {
+            if (!cmd.approached &&
+                (gap > max_build_distance_ ||
+                 (ctx.sim && ctx.terrain &&
+                  ctx.sim->footprint_fits_at(footprint(), position().x, position().z) == 0))) {
                 if (effective_speed() <= 0) {
                     command_queue_.pop_front();
                     return OrderStep::Next;
                 }
                 cmd.approached = true;
-                set_path_goal(approach_point(*this, rtarget->position(),
-                                             runit.skirt_size_x() * 0.5f + 1,
-                                             runit.skirt_size_z() * 0.5f + 1),
-                              ctx);
+                const Vector3 place = repair_place(runit, ctx);
+                reserve_for_order(cmd.command_id, place, ctx.sim);
+                set_path_goal(place, ctx);
+                if (approach_update(ctx)) {
+                    return OrderStep::Hold;
+                }
             }
-            if (cmd.approached && approach_update(ctx)) {
-                return OrderStep::Hold;
-            }
+            free_order_reservation(ctx.sim);
             if (gap > max_build_distance_) {
                 let_go();
                 command_queue_.pop_front();
@@ -1871,6 +2119,7 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 /*dt*/, SimContext& ctx) {
         if (destroyed() || !in_registry()) return OrderStep::Gone;
         if (still_head()) {
             end_approach(cmd);
+            free_order_reservation(ctx.sim);
             command_queue_.pop_front();
         }
         return OrderStep::Next;
@@ -1889,14 +2138,14 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 /*dt*/, SimContext& ctx) {
     };
     if (!cmd.target_id) return fail();
     const bool begun = capture_target_id_ == cmd.target_id;
+    // Its walk in runs under the task, which waits for it.
+    if (!begun && cmd.approached && approach_update(ctx)) return OrderStep::Hold;
     Entity* const target = registry.find(cmd.target_id);
     if (!target) {
         // None as the order came up: Moho's CUnitCaptureTask::Create made no
         // task, and its order fails with nothing heard.
         return begun || cmd.approached ? give_up() : fail();
     }
-    // Its walk in runs under the task, which waits for it.
-    if (!begun && cmd.approached && approach_update(ctx)) return OrderStep::Hold;
     if (!target->is_unit()) return fail();
     auto& tunit = static_cast<Unit&>(*target);
     // Each tick it runs, before anything else: a target no longer to be
@@ -1912,15 +2161,17 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 /*dt*/, SimContext& ctx) {
     const f32 gap = work_gap(*this, target->position(), footprint_extent(*target));
     if (tunit.is_being_captured() && gap > kCaptureHold) return fail();
     if (!begun) {
-        // TASKSTATE_Preparing: a gap over 5 sends the unit just clear of its
-        // target's skirt, once. TASKSTATE_Waiting: it captures from there
-        // within 10, a target still alive.
+        // TASKSTATE_Preparing: a gap over 5 sends the unit to its place,
+        // once. TASKSTATE_Waiting: it captures from there within 10, a target
+        // still alive.
         if (!cmd.approached && gap > kCaptureReach) {
             if (effective_speed() <= 0) return end();
             cmd.approached = true;
-            set_path_goal(approach_point(*this, target->position(), tunit.skirt_size_x() * 0.5f,
-                                         tunit.skirt_size_z() * 0.5f),
-                          ctx);
+            const Vector3 place = capture_place(tunit, ctx);
+            if (!has_category("AIR")) {
+                reserve_for_order(cmd.command_id, place, ctx.sim);
+            }
+            set_path_goal(place, ctx);
             if (approach_update(ctx)) return OrderStep::Hold;
         }
         if (gap > kCaptureHold) return fail();
@@ -2008,6 +2259,7 @@ void Unit::hand_over_rally_orders(EntityId built_id, EntityId rally_id, SimConte
     for (const UnitCommand& order : rally.validated_rally_orders(ctx.L, ctx.sim)) {
         if (order.type == CommandType::TransportLoad && air_or_naval) continue;
         built.command_queue_.push_back(order);
+        built.command_queue_.back().from_factory = true;
     }
 }
 
@@ -2182,20 +2434,15 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (effective_speed() <= 0 || (flies_winged_on_guard(*this) && ctx.sim)) {
             cmd.guard_prepared = true;
         } else {
-            if (!guard_anchor_.held || guard_anchor_.order != cmd.command_id) {
+            if (!order_reservation_.held || order_reservation_.order != cmd.command_id) {
                 const Vector3 place = guard_anchor_place(*target_unit, ctx);
-                free_guard_anchor(ctx.sim);
-                guard_anchor_ = {true, cmd.command_id,
-                                 footprint_rect(footprint(), place.x, place.z)};
-                if (ctx.sim) {
-                    ctx.sim->reserve_ground(guard_anchor_.reserved, true);
-                }
+                reserve_for_order(cmd.command_id, place, ctx.sim);
                 set_path_goal(place, ctx);
             }
             if (approach_update(ctx)) {
                 return OrderStep::Hold;
             }
-            free_guard_anchor(ctx.sim);
+            free_order_reservation(ctx.sim);
             cmd.guard_prepared = true;
             cmd.handout_wait = 2;
             return OrderStep::Hold;
@@ -2568,7 +2815,7 @@ OrderStep Unit::guard_factory_queue(UnitCommand& cmd, Unit& target_unit, f64 dt,
             // orders: Moho's guard task hands the build task that
             // factory as the one whose orders the unit takes.
             if (built) hand_over_rally_orders(built_id, guarded_id, ctx);
-            if (built) assist_rolloff_wait_ = 2;
+            if (built) assist_rolloff_wait_ = 1;
             else factory_assist_build_ = false; // failed: free again
         }
         return OrderStep::Hold;
@@ -2628,10 +2875,10 @@ OrderStep Unit::guard_factory_queue(UnitCommand& cmd, Unit& target_unit, f64 dt,
         // is taken.
         if (spare) --queue[i].count;
         else queue.erase(queue.begin() + static_cast<std::ptrdiff_t>(i));
-        // Taken even if the lobby's rules forbid it, as Moho's build task
+        // Taken even if the factory may not build it, as Moho's build task
         // fails after the take; such an order is dropped, repeating or
         // not, as the guarded factory drops it when it comes to it.
-        if (build_blocked_by_lobby_rules(*this, build, ctx)) break;
+        if (!unit_can_build(L, *this, build, ctx)) break;
         // A repeating guarded factory has the order sent round, its count
         // back at its most (Moho's MoveCommandToBackOfQueue)
         if (repeats && !spare) {
@@ -3569,10 +3816,11 @@ OrderStep Unit::order_sacrifice(UnitCommand& cmd, SimContext& ctx) {
         // Moho's sacrifice task: the recipient's place, clear of its skirt (PrepareMove(1)).
         if (ctx.sim && ctx.terrain) {
             Vector3 place = go_to->position();
-            const f32 x0 = place.x - go_to->footprint_size_x() * 0.5f + go_to->skirt_offset_x();
-            const f32 z0 = place.z - go_to->footprint_size_z() * 0.5f + go_to->skirt_offset_z();
-            const MoveExclusion skirt{x0, z0, x0 + go_to->skirt_size_x(),
-                                      z0 + go_to->skirt_size_z()};
+            const StructureSite site = StructureSite::of(
+                place.x, place.z, go_to->footprint_size_x(), go_to->footprint_size_z(),
+                go_to->skirt_size_x(), go_to->skirt_size_z(), go_to->skirt_offset_x(),
+                go_to->skirt_offset_z());
+            const MoveExclusion skirt{site.x0, site.z0, site.x1, site.z1};
             if (prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(),
                              ctx.sim->move_bounds(army()), place, 1, &skirt)) {
                 goal = place;

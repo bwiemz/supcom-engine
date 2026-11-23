@@ -265,6 +265,12 @@ void register_test_unit_blueprint(osc::lua::LuaState& state,
     lua_pop(L, 1);
 }
 
+/// A unit's script, as the game's Unit class answers a build order's dispatch.
+constexpr const char* kAllowBuilds =
+    "moho.unit_methods.CheckBuildRestriction = function() return true end\n"
+    "__unit_class = setmetatable({}, {__index = moho.unit_methods})\n"
+    "__unit_class.__index = __unit_class\n";
+
 struct BuildRuleHarness {
     osc::lua::LuaState state;
     osc::blueprints::BlueprintStore store;
@@ -284,7 +290,9 @@ struct BuildRuleHarness {
             {"MOBILE", "LAND", "EXPERIMENTAL"}, 1);
         store.expose_to_lua(state.raw());
         REQUIRE(state.do_string(
-            "__blueprints.test_factory.General = {CommandCaps = {RULEUCC_Pause = true}}\n"));
+            "__blueprints.test_factory.General = {CommandCaps = {RULEUCC_Pause = true}}\n"
+            "__blueprints.test_factory.Economy.BuildableCategory = {'MOBILE'}\n"));
+        REQUIRE(state.do_string(kAllowBuilds));
         // What the factory makes has no shape: the harness has no scripts to roll
         // a finished unit off the factory, and a unit left on its footprint would
         // hold the next build up (CFactoryBuildTask asks Sim::LocationIsFree).
@@ -426,6 +434,30 @@ TEST_CASE("A factory not repeating its queue builds each order once", "[session]
     CHECK(finished_units(h) == 1);
     for (int i = 0; i < 20; ++i) h.sim.tick();
     CHECK(finished_units(h) == 1);
+}
+
+TEST_CASE("A factory starts its next unit the tick after one is built, or 9 ticks on at a time "
+          "while the roll-off keeps it busy",
+          "[session][rules]") {
+    const auto [busy, starts] = GENERATE(table<int, int>({{0, 1}, {5, 10}, {12, 19}, {25, 28}}));
+    CAPTURE(busy);
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 2)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    tick_until([&] { h.sim.tick(); }, "the first tank is built", 50,
+               [&] { return finished_units(h) == 1; });
+    f->set_busy(busy > 0);
+    int ticks = 0;
+    while (!f->is_building() && ticks < 60) {
+        if (ticks == busy) {
+            f->set_busy(false);
+        }
+        h.sim.tick();
+        ++ticks;
+    }
+    CHECK(ticks == starts);
 }
 
 TEST_CASE("A repeating factory drops a build that fails", "[session][rules]") {
@@ -1297,7 +1329,7 @@ TEST_CASE("A factory paused before it starts makes its unit only on a retry afte
     }
     CHECK(h.sim.entity_registry().count() == 1);
     f->set_paused(false);
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 3; ++i) {
         h.sim.tick();
         CHECK(h.sim.entity_registry().count() == 1);
     }
@@ -1469,6 +1501,7 @@ struct UpgradeHarness {
             lua_pop(L, 1);
         }
         store.expose_to_lua(L);
+        REQUIRE(state.do_string(kAllowBuilds).ok());
         REQUIRE(state.do_string("CreateUnit('f1', 1, 0, 0, 0)").ok());
         sim.entity_registry().for_each_unit(
             [&](osc::sim::Entity& e) { factory = static_cast<osc::sim::Unit*>(&e); });
@@ -1618,7 +1651,7 @@ TEST_CASE("Every way of clearing the queue cancels the build or upgrade under wa
                            "            tostring(u == __frame)\n"
                            "end")
                 .ok());
-    h.queue(type, type == osc::sim::CommandType::Upgrade ? "f2" : "t2");
+    h.queue(type, type == osc::sim::CommandType::Upgrade ? "f2" : "t1");
     h.sim.tick();
     h.sim.tick();
     REQUIRE(h.factory->is_building());
@@ -1888,7 +1921,7 @@ TEST_CASE("IssueStop queues a Stop behind the build under way, which finishes",
     lua_pushstring(L, "__f");
     lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
     lua_settable(L, LUA_GLOBALSINDEX);
-    h.queue(osc::sim::CommandType::BuildFactory, "t2");
+    h.queue(osc::sim::CommandType::BuildFactory, "t1");
     h.sim.tick();
     h.sim.tick();
     REQUIRE(h.factory->is_building());

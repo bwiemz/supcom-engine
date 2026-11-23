@@ -6,10 +6,12 @@
 // failing once it has found the site taken 11 times.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "blueprints/footprint.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
+#include "sim/build_placement.hpp"
 #include "sim/build_site_units.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/occupancy.hpp"
@@ -53,16 +55,24 @@ struct Site {
         lua_settop(L, 0);
         const std::string code = R"(
             __blueprints = {
+                uel0105 = {
+                    BlueprintId = 'uel0105',
+                    Economy = { BuildableCategory = { 'ueb0101' } },
+                },
                 ueb0101 = {
                     BlueprintId = 'ueb0101',
                     Footprint = { SizeX = 5, SizeZ = 5 },
                     Physics = { SkirtSizeX = 8, SkirtSizeZ = 8, SkirtOffsetX = -1.5,
                                 SkirtOffsetZ = -1.5 },
-                    Economy = { BuildTime = 100, BuildCostMass = 1, BuildCostEnergy = 1 },
+                    Economy = { BuildTime = 100, BuildCostMass = 1, BuildCostEnergy = 1,
+                                BuildableCategory = { 'ueb0101' } },
                 },
             }
             __failed = 0
-            Engineer = { OnFailedToBuild = function(self) __failed = __failed + 1 end }
+            Engineer = {
+                OnFailedToBuild = function(self) __failed = __failed + 1 end,
+                CheckBuildRestriction = function(self, bp) return true end,
+            }
             Engineer.__index = Engineer
         )";
         REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "stub") == 0);
@@ -83,6 +93,7 @@ struct Site {
         sim.set_victory_condition("sandbox");
 
         engineer = walker(0, 50.5f, 62.5f, 1.9f);
+        engineer->set_blueprint_id("uel0105");
         engineer->set_build_rate(5.0f);
         engineer->set_max_build_distance(5.0f);
         bind(*engineer, "Engineer");
@@ -153,6 +164,7 @@ struct Site {
     /// cells round (x, z) 5 by 5, its box 4.2 by 0.6 by 4.4.
     Unit* factory(f32 x, f32 z) {
         auto u = std::make_unique<Unit>();
+        u->set_blueprint_id("ueb0101");
         u->set_army(0);
         u->set_position({x, 0.0f, z});
         u->set_max_health(100.0f);
@@ -180,6 +192,9 @@ struct Site {
 
     bool built() const { return static_cast<bool>(built_id); }
     bool ordered() const { return !engineer->command_queue().empty(); }
+    bool held_by_units() const {
+        return ordered() && engineer->command_queue().front().site_tries > 0;
+    }
     int failed() {
         lua_getglobal(L, "__failed");
         const int n = static_cast<int>(lua_tonumber(L, -1));
@@ -254,6 +269,105 @@ TEST_CASE("A build whose site never clears fails at its 12th look, 11 waits of 4
     CHECK(ticks == 11 * 49);
     CHECK_FALSE(s.built());
     CHECK(s.failed() == 1);
+}
+
+TEST_CASE("A builder pushed out of reach while units hold up its site builds from there once "
+          "they are gone",
+          "[build][build_site]") {
+    for (const bool walked : {false, true}) {
+        DYNAMIC_SECTION((walked ? "after its walk to the site" : "from where it stood")) {
+            Site s;
+            Unit* foe = s.walker(1, 50.5f, 50.5f);
+            if (walked) {
+                s.engineer->set_position({50.5f, 0.0f, 80.5f});
+            }
+            s.sim.tick();
+            s.build();
+            tick_until([&] { s.sim.tick(); }, "the builder finds a unit on its site", 300,
+                       [&] { return s.held_by_units(); });
+            s.engineer->set_position({50.5f, 0.0f, 70.5f});
+            foe->set_position({50.5f, 0.0f, 30.5f});
+            tick_until([&] { s.sim.tick(); }, "the frame stands", 49, [&] { return s.built(); });
+            CHECK(s.ordered());
+            CHECK(s.failed() == 0);
+            CHECK(s.engineer->position().z == 70.5f);
+        }
+    }
+}
+
+TEST_CASE("A builder that must face its site turns to it once, not again after a wait for units "
+          "on it",
+          "[build][build_site][face]") {
+    Site s;
+    Unit::Drive drive;
+    drive.max_accel = 50.0f;
+    drive.turn_rate = 1.5f;
+    s.engineer->set_drive(drive);
+    s.engineer->set_need_to_face_target_to_build(true);
+    Unit* foe = s.walker(1, 50.5f, 50.5f);
+    s.sim.tick();
+    s.build();
+    tick_until([&] { s.sim.tick(); }, "the builder turns and finds a unit on its site", 60,
+               [&] { return s.held_by_units(); });
+    s.engineer->set_orientation(osc::sim::euler_to_quat(0.0f, 0.0f, 0.0f));
+    foe->set_position({50.5f, 0.0f, 30.5f});
+    tick_until([&] { s.sim.tick(); }, "the frame stands", 49, [&] { return s.built(); });
+    CHECK(osc::sim::quat_yaw(s.engineer->orientation()) == 0.0f);
+}
+
+TEST_CASE("A builder out of reach that cannot move fails its build the tick after it takes it, "
+          "with OnFailedToBuild",
+          "[build][build_site]") {
+    Site s;
+    s.engineer->set_position({50.5f, 0.0f, 80.5f});
+    s.engineer->set_max_speed(0.0f);
+    s.sim.tick();
+    s.build();
+    s.sim.tick();
+    CHECK(s.ordered());
+    CHECK(s.failed() == 0);
+    s.sim.tick();
+    CHECK_FALSE(s.ordered());
+    CHECK_FALSE(s.built());
+    CHECK(s.failed() == 1);
+}
+
+TEST_CASE("A mobile build fails on cells the occupancy grid holds for the ground, as Moho's task",
+          "[build][build_site]") {
+    namespace occupancy = osc::blueprints::occupancy;
+    const bool ground = GENERATE(true, false);
+    Site s;
+    s.sim.occupy_cells(ground ? occupancy::kLand : occupancy::kWater, {52, 52, 53, 53}, true);
+    s.sim.tick();
+    s.build();
+    tick_until([&] { s.sim.tick(); }, "the build fails or its frame stands", 100,
+               [&] { return s.built() || !s.ordered(); });
+    CHECK(s.built() == !ground);
+    CHECK(s.failed() == (ground ? 1 : 0));
+}
+
+TEST_CASE("The sim's placement queries take a site across or beyond the playable area's edge, the "
+          "UI's not, and a build across it goes up",
+          "[build][build_site]") {
+    Site s;
+    s.sim.set_playable_rect(0.0f, 0.0f, 52.0f, 128.0f);
+    const auto rules = [&s](const std::string& bp) {
+        return osc::sim::structure_rules(s.L, s.sim, bp);
+    };
+    const osc::sim::StructurePlacement sim_queries(s.sim, 0, rules);
+    const osc::sim::StructurePlacement ui(s.sim, 0, rules, true);
+    for (const f32 x : {50.5f, 57.5f}) {
+        CAPTURE(x);
+        CHECK(sim_queries.location_free("ueb0101", x, 50.5f));
+        CHECK(sim_queries.can_build("ueb0101", x, 50.5f));
+        CHECK_FALSE(ui.can_build("ueb0101", x, 50.5f));
+    }
+    s.sim.tick();
+    s.build();
+    tick_until([&] { s.sim.tick(); }, "the build fails or its frame stands", 100,
+               [&] { return s.built() || !s.ordered(); });
+    CHECK(s.built());
+    CHECK(s.failed() == 0);
 }
 
 TEST_CASE("Sim::LocationIsFree counts a unit whose shape meets the cells, not the builder, a "
