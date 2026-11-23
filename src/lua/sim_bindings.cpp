@@ -3065,6 +3065,7 @@ static int l_CreateBuilderArmController(lua_State* L) {
     }
 
     auto* raw = unit->add_manipulator(std::move(manip));
+    static_cast<sim::AimManipulator*>(raw)->note_pose();
 
     lua_newtable(L);
     int tbl = lua_gettop(L);

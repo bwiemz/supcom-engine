@@ -942,6 +942,8 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         w.b(x.on_target_);
         w.b(x.builder_arm_);
         w.b(x.tracking_);
+        // was_tracking_: set and read within a tick
+        w.vec3(x.aim_from_);
         w.b(x.yaw_only_on_target_);
         w.b(x.aims_straight_on_disable_);
         break;
@@ -1096,6 +1098,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         x->on_target_ = r.b();
         x->builder_arm_ = r.b();
         x->tracking_ = r.b();
+        x->aim_from_ = r.vec3();
         x->yaw_only_on_target_ = r.b();
         x->aims_straight_on_disable_ = r.b();
         m = std::move(x);
