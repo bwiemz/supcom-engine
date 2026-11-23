@@ -1452,6 +1452,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.overcharge_armed_);
     enum8(w, u.pickup_phase_);
     w.ids(u.pickup_ids_);
+    w.ids(u.pickup_called_);
+    w.ids(u.load_requested_);
     w.vec3(u.pickup_center_);
     w.quat(u.pickup_facing_);
     w.i32v(u.pickup_ticks_);
@@ -1900,6 +1902,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.overcharge_armed_ = r.b();
     u.pickup_phase_ = enum8<Unit::PickupPhase>(r);
     u.pickup_ids_ = r.ids();
+    u.pickup_called_ = r.ids();
+    u.load_requested_ = r.ids();
     u.pickup_center_ = r.vec3();
     u.pickup_facing_ = r.quat();
     u.pickup_ticks_ = r.i32v();

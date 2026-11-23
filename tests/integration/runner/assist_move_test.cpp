@@ -209,12 +209,13 @@ void test_assist_move(TestContext& ctx) {
     spdlog::info("Assist move test: {} passed, {} failed", t.pass, t.fail);
 }
 
-// --transport-assist-move-pickups-test: three Transport orders on the west bank
+// --transport-assist-move-pickups-test: five Transport orders on the west bank
 // of Seton's Clutch's strait, 60 ticks apart once the transports have settled.
 // A tank bound for the islet off the shore, which no land path reaches; two
-// tanks, each farther from its transport than its GuardScanRadius, whose goal
-// cell's centre and the point clicked in it lie either side of the distance at
-// which a lift pays.
+// tanks bound across the strait; a tank with an idle one beside it, which the
+// radius gather takes in; two tanks, each farther from its transport than
+// its GuardScanRadius, whose goal cell's centre and the point clicked in it
+// lie either side of the distance at which a lift pays.
 void test_assist_move_pickups(TestContext& ctx) {
     spdlog::info("=== ASSIST MOVE PICKUPS TEST: the Transport order's pickups, as Moho's ===");
     Tally t;
@@ -240,18 +241,24 @@ void test_assist_move_pickups(TestContext& ctx) {
         end
         spawn('islet-t', 'uea0107', 175, 620)
         spawn('islet-a', 'uel0201', 190, 612)
+        spawn('time-t', 'uea0107', 146, 596)
+        spawn('time-a', 'uel0201', 158, 596)
+        spawn('time-b', 'uel0201', 162, 596)
+        spawn('idle-t', 'uea0107', 146, 556)
+        spawn('idle-a', 'uel0201', 158, 556)
+        spawn('idle-i', 'uel0201', 164, 556)
         spawn('centre-t', 'uea0107', 102, 612)
         spawn('centre-a', 'uel0201', 72.5, 612.5)
         spawn('point-t', 'uea0107', 102, 640)
         spawn('point-a', 'uel0201', 72.5, 640.5)
         function __osc_wait_sample()
-            for _, scene in {'islet', 'centre', 'point'} do
+            for _, scene in {'islet', 'time', 'idle', 'centre', 'point'} do
                 if not __osc_wait.ordered[scene] and
                    table.getn(__osc_wait[scene .. '-t']:GetCommandQueue()) > 0 then
                     __osc_wait.ordered[scene] = GetGameTick()
                 end
             end
-            for _, label in {'islet-a'} do
+            for _, label in {'islet-a', 'idle-i'} do
                 local u = __osc_wait[label]
                 for _, st in {'ProblemGettingToGoal', 'Attached'} do
                     if u:IsUnitState(st) then __osc_wait.states[label .. ' ' .. st] = true end
@@ -344,6 +351,8 @@ void test_assist_move_pickups(TestContext& ctx) {
         float sign;
     };
     const std::vector<Scene> scenes = {{{"islet-t", "islet-a"}, 216.5f, 611.5f, 0.0f},
+                                       {{"time-t", "time-a", "time-b"}, 392.0f, 596.0f, 0.0f},
+                                       {{"idle-t", "idle-a"}, 392.0f, 556.0f, 0.0f},
                                        {{"centre-t", "centre-a"}, 0.0f, 0.0f, -1.0f},
                                        {{"point-t", "point-a"}, 0.0f, 0.0f, 1.0f}};
     renderer::CommandMode mode;
@@ -387,19 +396,31 @@ void test_assist_move_pickups(TestContext& ctx) {
     const int islet_load = heard("islet-t", "OnStartTransportLoading");
     t.check(lua_true(ctx.lua_state, "__osc_wait.states['islet-a ProblemGettingToGoal'] == true") &&
                 lua_true(ctx.lua_state, "__osc_wait.states['islet-a Attached'] == true") &&
-                islet_load == 5,
+                islet_load == 5 && heard("islet-t", "OnTransportOrdered") == 6,
             fmt::format("1: the tank no land path takes to the islet has a problem getting to "
-                        "its goal and is picked up (load at T+{})",
-                        islet_load));
+                        "its goal and is picked up (load at T+{}, ordered at T+{})",
+                        islet_load, heard("islet-t", "OnTransportOrdered")));
+    t.check(heard("time-t", "OnStartTransportLoading") == 2 &&
+                heard("time-t", "OnTransportOrdered") == 3,
+            fmt::format("2: the load is made at T+2 and does its work at T+3 ({}, {})",
+                        heard("time-t", "OnStartTransportLoading"),
+                        heard("time-t", "OnTransportOrdered")));
+    const int boarded = heard("idle-t", "OnTransportAttach");
+    const int aborted = heard("idle-t", "OnTransportAborted");
+    t.check(boarded > 0 && aborted - boarded >= 280 &&
+                !lua_true(ctx.lua_state, "__osc_wait.states['idle-i Attached'] == true"),
+            fmt::format("3: the transport holds the idle tank's slot till its wait runs out "
+                        "(its tank aboard at T+{}, the load aborted at T+{})",
+                        boarded, aborted));
     const int centre_load = heard("centre-t", "OnStartTransportLoading");
     const int point_load = heard("point-t", "OnStartTransportLoading");
     t.check(margins.size() == 2 && margins[0] > 0.1f && margins[1] > 0.1f && centre_load >= 0 &&
                 point_load < 0,
-            fmt::format("2: a tank needs a lift by its goal cell's centre, not by the point "
+            fmt::format("4: a tank needs a lift by its goal cell's centre, not by the point "
                         "clicked in it (picked up where the centre is the farther: load at "
                         "T+{}; where the point is: {}; margins {})",
                         centre_load, point_load, fmt::join(margins, ", ")));
-    t.check(osc::test_status::failure_count() - t.fail == failures_before, "3: no script errors");
+    t.check(osc::test_status::failure_count() - t.fail == failures_before, "5: no script errors");
     spdlog::info("Assist move pickups test: {} passed, {} failed", t.pass, t.fail);
 }
 
