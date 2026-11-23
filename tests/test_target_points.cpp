@@ -20,6 +20,7 @@
 #include "sim/sim_random.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
+#include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
 
 extern "C" {
@@ -279,6 +280,52 @@ TEST_CASE("A unit on the seabed is in reach above the water only where a target 
         torpedo.set_target_entity(wading);
         torpedo.pick_aim_spot(sim.entity_registry(), &sim);
         CHECK(torpedo.current_aim_spot() == 0);
+    }
+}
+
+TEST_CASE("An attack on a unit on the seabed draws for a target point each time it asks whether "
+          "a weapon can hit the unit",
+          "[targetpoints][attack]") {
+    struct Case {
+        bool bones;
+        const char* layer;
+        int first;
+        int second;
+    };
+    for (const Case c : {Case{true, "Seabed", 7, 3}, Case{false, "Seabed", 0, 0},
+                         Case{true, "Land", 0, 0}}) {
+        CAPTURE(c.bones, c.layer);
+        LuaGuard g;
+        SimState sim(g.L, nullptr);
+        sim.set_terrain(sea());
+        two_armies(sim);
+        const BoneData wader = walker_bones(3.0f, 8.0f);
+        auto shooter = std::make_unique<Unit>();
+        shooter->set_army(0);
+        shooter->set_motion_type("RULEUMT_Land");
+        shooter->set_max_speed(5.0f);
+        shooter->set_position({10, 5, 10});
+        auto gun = std::make_unique<Weapon>();
+        gun->above_water_targets_only = true;
+        gun->max_range = 10.0f;
+        shooter->add_weapon(std::move(gun));
+        Unit* u = shooter.get();
+        sim.entity_registry().register_entity(std::move(shooter));
+        const EntityId target = add_unit(sim, 1, {50, 0, 50}, c.bones ? &wader : nullptr);
+        unit(sim, target).set_layer(c.layer);
+        osc::sim::UnitCommand attack;
+        attack.type = osc::sim::CommandType::Attack;
+        attack.target_id = target;
+        attack.target_pos = unit(sim, target).position();
+        u->push_command(attack, true);
+        int draws = 0;
+        sim.entity_registry().sim_random().set_draw_hook(
+            +[](void* n, osc::u64) { ++*static_cast<int*>(n); }, &draws);
+        sim.tick();
+        CHECK(draws == c.first);
+        draws = 0;
+        sim.tick();
+        CHECK(draws == c.second);
     }
 }
 

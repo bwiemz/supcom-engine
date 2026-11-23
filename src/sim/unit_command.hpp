@@ -253,7 +253,7 @@ struct UnitCommand {
     /// CUnitMobileBuildTask leaves TASKSTATE_Preparing returning 1. A guard's
     /// helper is walking to a structure factory's build place: set when the
     /// walk is sent, cleared when it ends, so a later move is not taken for
-    /// it. Runtime state.
+    /// it. An attack's task has passed Preparing and Waiting. Runtime state.
     bool prepared = false;
     /// A mobile build's task has found its site in range (Moho's
     /// TASKSTATE_Waiting) and turned to it (TASKSTATE_Starting): it looks at

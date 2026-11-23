@@ -693,7 +693,7 @@ bool Weapon::can_pick(const Unit& owner, const Entity& target, const SimState* s
     return can_attack(target, sim);
 }
 
-bool Weapon::can_attack(const Entity& target, const SimState* sim) const {
+bool Weapon::can_attack(const Entity& target, const SimState* sim, SimRandom* rng) const {
     if (target.is_unit()) {
         const auto& unit = static_cast<const Unit&>(target);
         if (fire_target_layer_caps != 0xFF &&
@@ -705,8 +705,8 @@ bool Weapon::can_attack(const Entity& target, const SimState* sim) const {
         // layers are the layer caps' alone.
         if (unit.layer() == "Seabed" && (above_water_targets_only || below_water_targets_only)) {
             i32 unused = -1;
-            if (!unit.pick_target_point_by_water(nullptr, water_surface(sim),
-                                                 above_water_targets_only, unused))
+            if (!unit.pick_target_point_by_water(rng, water_surface(sim), above_water_targets_only,
+                                                 unused))
                 return false;
         }
     } else if (target.is_projectile()) {

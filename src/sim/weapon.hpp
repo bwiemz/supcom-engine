@@ -339,8 +339,9 @@ public:
     /// can_target, wherever the target is.
     bool can_pick(const Unit& owner, const Entity& target, const SimState* sim) const;
     /// Moho's CanWeaponAttackEntityTarget (layer caps, side of the water, restrictions):
-    /// SetTargetEntity's gate and, for the automatic fire step, CFireWeaponTask's.
-    bool can_attack(const Entity& target, const SimState* sim) const;
+    /// SetTargetEntity's gate and, for the automatic fire step, CFireWeaponTask's. With `rng`, a
+    /// target on the seabed draws for its target point, as Moho's does.
+    bool can_attack(const Entity& target, const SimState* sim, SimRandom* rng = nullptr) const;
     /// Moho's UnitWeapon::CanAttackTarget(holder's target, this).
     bool can_attack_target_of(const Unit& owner, const Weapon& holder,
                               const EntityRegistry& registry, const SimState* sim) const;

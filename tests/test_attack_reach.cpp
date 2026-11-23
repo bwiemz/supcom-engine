@@ -22,6 +22,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <initializer_list>
 #include <memory>
@@ -258,6 +259,40 @@ TEST_CASE("Closing in, a unit keeps its goal till a MOBILE target is more than 1
         CHECK(u->navigator().goal().x == (mobile ? 100.0f : first.x));
         CHECK(u->navigator().goal().z == (mobile ? 76.0f : first.z));
     }
+}
+
+TEST_CASE("A ManualFire weapon with the target inside its minimum range has its unit back off "
+          "while no weapon has a solution",
+          "[attack-reach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    land(sim);
+    Unit* u = attacker(sim, 20.0f, 64.0f, {{30.0f, kSurface}, {30.0f, kSurface}});
+    u->weapons()[0]->heading_arc_range = 30.0f;
+    u->weapons()[1]->manual_fire = true;
+    u->weapons()[1]->min_range = 6.0f;
+    Unit* target = foe(sim, 23.0f, 64.0f);
+    attack(*u, *target);
+    f32 farthest = 0.0f;
+    for (int t = 0; t < 30; ++t) {
+        tick(sim, *u);
+        farthest = std::max(farthest, apart(*u, *target));
+    }
+    CHECK(farthest > 4.0f);
+}
+
+TEST_CASE("An attack keeps when only a ManualFire weapon can hit the target", "[attack-reach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    land(sim);
+    Unit* u = attacker(sim, 20.0f, 64.0f, {{30.0f, kAir}, {30.0f, kSurface}});
+    u->weapons()[1]->manual_fire = true;
+    Unit* target = foe(sim, 60.0f, 64.0f);
+    attack(*u, *target);
+    for (int t = 0; t < 5; ++t) {
+        tick(sim, *u);
+    }
+    CHECK_FALSE(u->command_queue().empty());
 }
 
 TEST_CASE("An attack keeps while its unit's only weapon is switched off, and engages once it is on",
