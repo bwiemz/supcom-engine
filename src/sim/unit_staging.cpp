@@ -463,16 +463,17 @@ OrderStep Unit::order_carrier_landing(UnitCommand& cmd, SimContext& ctx) {
             command_queue_.pop_front();
         return OrderStep::Next;
     };
-    Unit* carrier = live_unit(ctx.registry, cmd.target_id);
+    const bool reverse = cmd.type == CommandType::TransportReverseLoad;
+    Unit* carrier = live_unit(ctx.registry, reverse ? cmd.assigned_id : cmd.target_id);
     if (!carrier || carrier->is_dying() || transport_id_) {
         return finish();
     }
     const EntityId cid = carrier->entity_id();
-    if (std::none_of(carrier->command_queue_.begin(), carrier->command_queue_.end(),
-                     [&](const UnitCommand& c) {
-                         return c.type == CommandType::TransportLoad && c.target_id == cid &&
-                                c.command_id == cmd.command_id;
-                     })) {
+    if (!reverse && std::none_of(carrier->command_queue_.begin(), carrier->command_queue_.end(),
+                                 [&](const UnitCommand& c) {
+                                     return c.type == CommandType::TransportLoad &&
+                                            c.target_id == cid && c.command_id == cmd.command_id;
+                                 })) {
         UnitCommand load;
         load.type = CommandType::TransportLoad;
         load.target_id = cid;
@@ -488,6 +489,179 @@ OrderStep Unit::order_carrier_landing(UnitCommand& cmd, SimContext& ctx) {
     if (step == LandStep::Landing) return OrderStep::Hold;
     command_queue_.pop_front(); // stored, or given up
     return OrderStep::Next;
+}
+
+OrderStep Unit::order_staging_load(UnitCommand& cmd, SimContext& ctx) {
+    const u32 order_id = cmd.command_id;
+    const auto gone = [&] { return destroyed() || !in_registry(); };
+    if (pickup_phase_ == PickupPhase::None) {
+        set_unit_state("TransportLoading", true);
+        call_lua_method(ctx.L, "OnStartTransportLoading");
+        if (gone()) {
+            return OrderStep::Gone;
+        }
+        pickup_phase_ = PickupPhase::Holding;
+        pickup_ticks_ = 0;
+    }
+    if (pickup_phase_ == PickupPhase::Holding) {
+        std::vector<Unit*> wanted;
+        if (Unit* target = live_unit(ctx.registry, cmd.target_id);
+            target && !target->is_dying() && !target->is_being_built() && !target->transport_id()) {
+            if (target->command_queue_.empty() ||
+                target->command_queue_.front().command_id != order_id) {
+                return OrderStep::Hold;
+            }
+            wanted.push_back(target);
+        }
+        if (!begin_pickup(wanted, false, ctx.L)) {
+            return OrderStep::Gone;
+        }
+        pickup_phase_ = PickupPhase::Waiting;
+        cmd.task_wait = 0;
+    }
+    if (still_waiting(cmd.task_wait)) {
+        return OrderStep::Hold;
+    }
+    const EntityId me = entity_id();
+    std::erase_if(pickup_ids_, [&](EntityId id) {
+        const Unit* u = live_unit(ctx.registry, id);
+        if (u && u->transport_id() == me) {
+            return true;
+        }
+        if (u && !u->is_dying() && !u->command_queue_.empty() &&
+            u->command_queue_.front().command_id == order_id) {
+            return false;
+        }
+        if (transport_slots_) {
+            transport_slots_->release(id);
+        }
+        return true;
+    });
+    if (!pickup_ids_.empty() || !cargo_ids_.empty()) {
+        cmd.task_wait = kRefuelPollTicks;
+        return OrderStep::Hold;
+    }
+    finish_pickup(true, ctx.L);
+    if (gone()) {
+        return OrderStep::Gone;
+    }
+    if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+        command_queue_.front().command_id == order_id) {
+        command_queue_.pop_front();
+    }
+    return OrderStep::Next;
+}
+
+OrderStep Unit::order_call_staging(UnitCommand& cmd, SimContext& ctx) {
+    auto& registry = ctx.registry;
+    const u32 order_id = cmd.command_id;
+    const auto gone = [&] { return destroyed() || !in_registry(); };
+    const auto finish = [&] {
+        set_unit_state("TransportLoading", false);
+        set_unit_state("LandingOnPlatform", false);
+        navigator_.set_speed_through_goal(false);
+        release_navigator();
+        if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+            command_queue_.front().command_id == order_id) {
+            command_queue_.pop_front();
+        }
+        return OrderStep::Next;
+    };
+    Unit* pad = live_unit(registry, cmd.assigned_id);
+    if (!pad || pad->is_dying() || pad->layer() == "Seabed") {
+        return finish();
+    }
+    const EntityId me = entity_id();
+    if (!cmd.prepared) {
+        set_unit_state("TransportLoading", true);
+        set_unit_state("LandingOnPlatform", true);
+        if (still_waiting(cmd.dock_wait)) {
+            return OrderStep::Hold;
+        }
+        if (!pad->has_unit_state("TransportLoading") || pad->command_queue_.empty() ||
+            pad->command_queue_.front().command_id != order_id) {
+            cmd.dock_wait = kRefuelPollTicks;
+            return OrderStep::Hold;
+        }
+        cmd.prepared = true;
+        cmd.dock_wait = 2;
+        return OrderStep::Hold;
+    }
+    if (!pad->has_unit_state("TransportLoading")) {
+        return finish();
+    }
+    if (cmd.dock_phase == DockPhase::Reserve) {
+        const bool assigned = std::find(pad->pickup_ids().begin(), pad->pickup_ids().end(), me) !=
+                              pad->pickup_ids().end();
+        if (assigned) {
+            navigator_.set_speed_through_goal(false);
+            if (still_waiting(cmd.dock_wait)) {
+                return OrderStep::Hold;
+            }
+            if (pad->pickup_ready()) {
+                navigator_.abort_move();
+                cmd.dock_phase = DockPhase::Approach;
+            }
+            return OrderStep::Hold;
+        }
+        const Vector3 at = pad->position();
+        const Vector3 goal = navigator_.goal();
+        if (!navigator_.is_moving() || std::abs(goal.x - at.x) > 1.0f ||
+            std::abs(goal.z - at.z) > 1.0f) {
+            navigator_.set_speed_through_goal(true);
+            set_path_goal(at, ctx);
+        }
+        nav_update();
+        if (!still_waiting(cmd.dock_wait)) {
+            cmd.dock_wait = kRefuelPollTicks;
+        }
+        return OrderStep::Hold;
+    }
+    if (cmd.dock_phase == DockPhase::Approach) {
+        const TransportSlots* slots = pad->built_transport_slots();
+        const TransportSlots::Slot* slot = slots ? slots->slot_of(me) : nullptr;
+        if (!slot) {
+            return finish();
+        }
+        if (!settle_over(pad->bone_world_position(slot->bone), bone_heading(*pad, slot->bone),
+                         cmd.started, ctx, kAttachAlignment)) {
+            return OrderStep::Hold;
+        }
+        attach_to_transport(pad, registry, ctx.L);
+        if (gone()) {
+            return OrderStep::Gone;
+        }
+        if (command_queue_.empty() || &command_queue_.front() != &cmd ||
+            command_queue_.front().command_id != order_id) {
+            return OrderStep::Next;
+        }
+        if (transport_id_ != pad->entity_id()) {
+            return finish();
+        }
+        set_unit_state("LandingOnPlatform", false);
+        cmd.dock_phase = DockPhase::Docked;
+        cmd.dock_wait = 0;
+    }
+    if (command_queue_.size() > 1) {
+        if (still_waiting(cmd.dock_wait)) {
+            return OrderStep::Hold;
+        }
+        bool others_landing = false;
+        registry.for_each_unit([&](Entity& e) {
+            if (others_landing || e.destroyed() || !e.is_unit() || &e == this) {
+                return;
+            }
+            const auto& other = static_cast<const Unit&>(e);
+            others_landing = !other.command_queue_.empty() &&
+                             other.command_queue_.front().command_id == order_id &&
+                             other.has_unit_state("LandingOnPlatform");
+        });
+        if (others_landing) {
+            cmd.dock_wait = kRefuelPollTicks;
+            return OrderStep::Hold;
+        }
+    }
+    return finish();
 }
 
 Unit* Unit::find_platform(SimContext& ctx) {

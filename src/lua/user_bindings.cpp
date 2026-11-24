@@ -1685,6 +1685,62 @@ static renderer::InputHandler* get_input_handler(lua_State* L) {
     return ih;
 }
 
+/// Moho's CWldSession::AddToExtraSelectList, RemoveFromExtraSelectList and
+/// ClearExtraSelectList; a dead entry doesn't count (WeakSet::Empty).
+static bool extra_select_held(lua_State* L, const renderer::InputHandler& input) {
+    const auto* state = get_sim(L);
+    return state && std::any_of(input.extra_select().begin(), input.extra_select().end(),
+                                [&](sim::EntityId id) {
+                                    const sim::Entity* e = state->entity_registry().find(id);
+                                    return e && !e->destroyed();
+                                });
+}
+
+static void end_command_mode(lua_State* L) {
+    core::call_imported_ui_callback(L, "/lua/ui/game/commandmode.lua", "EndCommandMode", 0);
+}
+
+static int l_AddToSessionExtraSelectList(lua_State* L) {
+    const sim::Entity* e = check_entity(L, 1);
+    if (!e) {
+        return 0;
+    }
+    const sim::EntityId id = e->entity_id();
+    lua_pushstring(L, "order");
+    lua_newtable(L);
+    lua_pushstring(L, "name");
+    lua_pushstring(L, "RULEUCC_Transport");
+    lua_rawset(L, -3);
+    core::call_imported_ui_callback(L, "/lua/ui/game/commandmode.lua", "StartCommandMode", 2);
+    if (auto* input = get_input_handler(L)) {
+        input->extra_select().insert(id);
+    }
+    return 0;
+}
+
+static int l_RemoveFromSessionExtraSelectList(lua_State* L) {
+    const sim::Entity* e = check_entity(L, 1);
+    auto* input = get_input_handler(L);
+    if (!e || !input) {
+        return 0;
+    }
+    input->extra_select().erase(e->entity_id());
+    if (!extra_select_held(L, *input)) {
+        end_command_mode(L);
+    }
+    return 0;
+}
+
+static int l_ClearSessionExtraSelectList(lua_State* L) {
+    auto* input = get_input_handler(L);
+    if (!input || !extra_select_held(L, *input)) {
+        return 0;
+    }
+    input->extra_select().clear();
+    end_command_mode(L);
+    return 0;
+}
+
 /// GetHighlightCommand(): the order whose command graph waypoint is under
 /// the cursor (FAF's patch, Moho's highlightCommandId), as {commandType, x,
 /// y, z, commandId, targetId, blueprintId}; nothing without one. Its place is
@@ -2623,6 +2679,9 @@ void register_user_bindings(LuaState& state) {
     state.register_function("CreateUnitAtMouse", l_CreateUnitAtMouse);
     state.register_function("GetAntiAliasingOptions", l_GetAntiAliasingOptions);
     state.register_function("GetHighlightCommand", l_GetHighlightCommand);
+    state.register_function("AddToSessionExtraSelectList", l_AddToSessionExtraSelectList);
+    state.register_function("RemoveFromSessionExtraSelectList", l_RemoveFromSessionExtraSelectList);
+    state.register_function("ClearSessionExtraSelectList", l_ClearSessionExtraSelectList);
     state.register_function("GetDepositsAroundPoint", l_UiGetDepositsAroundPoint);
     state.register_function("CopyToClipboard", l_CopyToClipboard);
     state.register_function("UI_DrawLine", l_UI_DrawLine);

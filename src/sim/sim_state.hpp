@@ -1111,6 +1111,14 @@ private:
     /// OnTransportReject, and past 500 orders a queued one is not taken.
     bool issue_takes(Unit& unit, const UnitCommand& order, bool clear_existing,
                      const std::vector<EntityId>& unit_ids);
+    /// Moho's RetargetReverseLoadUnits: the transport of `unit_ids` a reverse
+    /// load goes to (`order`'s assigned_id), and its target.
+    std::vector<EntityId> reverse_load_units(const std::vector<EntityId>& unit_ids,
+                                             UnitCommand& order);
+    /// ProcessIssuedUnitCommand's TransportReverseLoadUnits arm over the
+    /// order's units.
+    bool reverse_load_taken(Unit& unit, const UnitCommand& order,
+                            const std::vector<EntityId>& unit_ids);
     /// `pos` kept to the playable area (clamp_to_playable(pos, army)'s
     /// case for an army that keeps to it).
     Vector3 clamp_to_playable(const Vector3& pos) const {

@@ -68,6 +68,9 @@ enum class CommandType : u8 {
     // (CUnitAssistMoveTask); the land units drive there, or board the
     // transport that comes for them.
     AssistMove = 85,
+    // Moho's UNITCOMMAND_TransportReverseLoadUnits: a transport's Transport
+    // order on a unit that calls transports. target_id = that unit.
+    TransportReverseLoad = 86,
 };
 
 /// Moho's CommandIsInstant: an order that takes no move of its own.
@@ -113,6 +116,7 @@ inline int moho_command_number(CommandType type, bool formed) {
     // A wait at a ferry beacon is Moho's TransportLoadUnits at the beacon
     case CommandType::TransportLoad:
     case CommandType::WaitForFerry: return 22;
+    case CommandType::TransportReverseLoad: return 23;
     case CommandType::TransportUnload: return 24;
     case CommandType::Upgrade: return 27;
     // retail issues an enhancement as a Script order (EnhanceTask)
@@ -359,7 +363,7 @@ struct UnitCommand {
 /// Moho's UNITCOMMAND number of order `c` (see the CommandType overload): an
 /// unload of chosen cargo is TransportUnloadSpecificUnits. The engine has no
 /// order Moho numbers 9 (BuildAssist: a build helped is a Repair here), 18
-/// (FormPatrol: a Patrol), 23, 26, 29 (AssistCommander: a Guard), 30, 31,
+/// (FormPatrol: a Patrol), 26, 29 (AssistCommander: a Guard), 30, 31,
 /// 33, 37 or 38.
 inline int moho_command_number(const UnitCommand& c) {
     if (c.type == CommandType::TransportUnload && !c.unload_ids.empty()) return 25;

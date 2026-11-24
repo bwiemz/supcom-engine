@@ -366,6 +366,7 @@ const char* command_lexical(sim::CommandType type) {
     case sim::CommandType::Dive: return "Dive";
     case sim::CommandType::Enhance: return "Script";
     case sim::CommandType::TransportLoad: return "TransportLoadUnits";
+    case sim::CommandType::TransportReverseLoad: return "TransportReverseLoadUnits";
     case sim::CommandType::TransportUnload: return "TransportUnloadUnits";
     case sim::CommandType::Nuke: return "Nuke";
     case sim::CommandType::Tactical: return "Tactical";

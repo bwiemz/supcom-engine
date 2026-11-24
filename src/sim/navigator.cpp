@@ -332,6 +332,8 @@ void Navigator::navigate(Unit& unit) {
     nav.waiting_for_transport =
         !queue.empty() &&
         (queue.front().type == CommandType::TransportLoad ||
+         (queue.front().type == CommandType::TransportReverseLoad &&
+          queue.front().target_id == unit.entity_id()) ||
          (queue.front().type == CommandType::AssistMove && queue.front().assigned_id));
     nav.tick = sim_->tick_count();
     nav.probe_bucket = EntityRegistry::moho_id(unit.entity_id()) % 7;
