@@ -112,7 +112,7 @@ CommandGraphStyle fallback_style() {
     return s;
 }
 
-constexpr std::array<sim::CommandType, 19> kDrawnTypes = {
+constexpr std::array<sim::CommandType, 20> kDrawnTypes = {
     sim::CommandType::Move,           sim::CommandType::Attack,
     sim::CommandType::Guard,          sim::CommandType::Patrol,
     sim::CommandType::BuildMobile,    sim::CommandType::Reclaim,
@@ -122,7 +122,7 @@ constexpr std::array<sim::CommandType, 19> kDrawnTypes = {
     sim::CommandType::Overcharge,     sim::CommandType::Sacrifice,
     sim::CommandType::Teleport,       sim::CommandType::Ferry,
     sim::CommandType::Dock,           sim::CommandType::Script,
-    sim::CommandType::AggressiveMove,
+    sim::CommandType::AggressiveMove, sim::CommandType::TransportReverseLoad,
 };
 
 } // namespace
@@ -474,6 +474,7 @@ std::string command_graph_key(sim::CommandType type) {
     case sim::CommandType::Capture: return "UNITCOMMAND_Capture";
     case sim::CommandType::TransportLoad: return "UNITCOMMAND_TransportLoadUnits";
     case sim::CommandType::TransportUnload: return "UNITCOMMAND_TransportUnloadUnits";
+    case sim::CommandType::TransportReverseLoad: return "UNITCOMMAND_TransportReverseLoadUnits";
     case sim::CommandType::Nuke: return "UNITCOMMAND_Nuke";
     case sim::CommandType::Tactical: return "UNITCOMMAND_Tactical";
     case sim::CommandType::Overcharge: return "UNITCOMMAND_OverCharge";

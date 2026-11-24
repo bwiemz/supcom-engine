@@ -14,6 +14,7 @@
 
 #include <array>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -223,6 +224,10 @@ public:
 
     /// Currently selected unit IDs.
     const std::unordered_set<sim::EntityId>& selected() const { return selected_; }
+    /// The session's extra select list (Moho's CWldSession mExtraSelection):
+    /// the cargo the construction panel picks out of a selected transport.
+    std::set<sim::EntityId>& extra_select() { return extra_select_; }
+    const std::set<sim::EntityId>& extra_select() const { return extra_select_; }
     /// The session's active build template (Moho's CWldSession one), empty
     /// when none: GenerateBuildTemplateFromSelection, Set/Get and
     /// ClearBuildTemplates keep it.
@@ -480,6 +485,7 @@ private:
     /// Whether the player's intel shows `e` (anything, without a view).
     bool shown(const sim::Entity& e) const;
     std::unordered_set<sim::EntityId> selected_;
+    std::set<sim::EntityId> extra_select_;
     std::unordered_map<sim::EntityId, u32> refresh_requests_;
     BuildTemplate build_template_;
     bool selection_event_ = false;
@@ -565,11 +571,10 @@ private:
     /// What an order of `type` clicked at (wx, wz) targets: the unit under the
     /// cursor if the order takes it, else for Reclaim a prop there. 0 for none.
     sim::EntityId target_under(sim::SimState& sim, f32 wx, f32 wz, sim::CommandType type) const;
-    /// The Transport order on the ground (`hovered`: the unit under it, if
-    /// any) as an AssistMove: true, with `ids` its units, when the selection
-    /// holds both air transports and land units for it.
-    bool assist_move_selection(sim::SimState& sim, sim::EntityId hovered,
-                               std::vector<sim::EntityId>& ids) const;
+    /// The Transport order clicked with `cmd.target_id` under the cursor
+    /// (Moho's IssueTransportOrderForDrag): its type, target and units.
+    void transport_order(sim::SimState& sim, sim::UnitCommand& cmd, IssuedCommand& out,
+                         std::vector<sim::EntityId>& ids);
     /// The reclaimable prop (tree, rock, wreck) whose footprint holds (wx, wz), or 0;
     /// none past zoom 150, where Moho's UpdateSelection collects only units.
     sim::EntityId prop_under(sim::SimState& sim, f32 wx, f32 wz) const;

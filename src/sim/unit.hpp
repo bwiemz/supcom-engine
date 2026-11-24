@@ -2001,6 +2001,16 @@ private:
     /// load order calls its target; an AssistMove, the transport that took
     /// the unit.
     OrderStep order_call_transport(UnitCommand& cmd, SimContext& ctx);
+    /// A reverse load: its transport loads it, its target calls the transport.
+    OrderStep order_reverse_load(UnitCommand& cmd, SimContext& ctx);
+    /// An air staging platform's side of a reverse load (Moho's CUnitLoadUnits).
+    OrderStep order_staging_load(UnitCommand& cmd, SimContext& ctx);
+    /// An aircraft's side of a reverse load onto an air staging platform (Moho's
+    /// CUnitCallAirStagingPlatform).
+    OrderStep order_call_staging(UnitCommand& cmd, SimContext& ctx);
+    /// Whether Moho's command dispatch (IAiCommandDispatchImpl) makes a task
+    /// for this unit's share of a reverse load.
+    bool reverse_load_makes_task(const UnitCommand& cmd, EntityRegistry& registry) const;
     /// A pickup's start (CUnitLoadUnits::DoTask): slots for `wanted`, the
     /// largest first, and the flight to their centre (or, on the ground,
     /// the wait where it is). `announce_full`: the script hears

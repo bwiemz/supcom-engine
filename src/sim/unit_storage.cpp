@@ -201,11 +201,13 @@ OrderStep Unit::order_carrier_retrieve(UnitCommand& cmd, SimContext& ctx) {
             if (u.transport_id()) {
                 return;
             }
-            if (std::any_of(u.command_queue_.begin(), u.command_queue_.end(),
-                            [&](const UnitCommand& c) {
-                                return c.type == CommandType::TransportLoad && c.target_id == me &&
-                                       c.command_id == order_id;
-                            }))
+            if (std::any_of(
+                    u.command_queue_.begin(), u.command_queue_.end(), [&](const UnitCommand& c) {
+                        return c.command_id == order_id &&
+                               ((c.type == CommandType::TransportLoad && c.target_id == me) ||
+                                (c.type == CommandType::TransportReverseLoad &&
+                                 c.target_id == u.entity_id()));
+                    }))
                 retrieve_ids_.push_back(u.entity_id());
         });
         call_lua_method(ctx.L, "OnStartTransportLoading");

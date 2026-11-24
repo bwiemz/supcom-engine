@@ -238,6 +238,7 @@ constexpr Mode kModesBefore[] = {
     {"--transport-drop-test", test_transport_drop, false},
     {"--transport-assist-move-test", test_assist_move, false},
     {"--transport-assist-move-pickups-test", test_assist_move_pickups, false},
+    {"--transport-reverse-load-test", test_reverse_load, false},
     {"--carrier-test", test_carrier, false},
     {"--right-click-test", test_right_click, false},
     {"--carrier-land-test", test_carrier_land, false},
@@ -498,6 +499,8 @@ void IntegrationModes::print_usage() const {
               << "  --transport-assist-move-pickups-test The Transport order's pickups: a goal\n"
               << "                     no land path reaches, the load's first tick, the wait for\n"
               << "                     a unit that never comes, the goal cell a lift is timed to\n"
+              << "  --transport-reverse-load-test The Transport order on a unit that calls\n"
+              << "                     transports: the transport the sim picks loads it\n"
               << "  --factory-assist-test A factory guarding a factory builds from its queue\n"
               << "  --factory-rally-test What a factory builds takes its rally orders\n"
               << "  --influence-test   The AI's threat is what its intel has seen (influence map)\n"

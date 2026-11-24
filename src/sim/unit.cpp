@@ -110,6 +110,7 @@ void Unit::note_queue_head() {
     case CommandType::Repair:
     case CommandType::Capture:
     case CommandType::TransportLoad:
+    case CommandType::TransportReverseLoad:
     case CommandType::TransportUnload:
     case CommandType::WaitForFerry:
     case CommandType::Upgrade:
@@ -784,10 +785,12 @@ bool Unit::end_gone_attack(lua_State* L) {
 bool Unit::end_gone_loading(SimContext& ctx) {
     const UnitCommand* head = command_queue_.empty() ? nullptr : &command_queue_.front();
     const bool loading_head = head && head->type == CommandType::TransportLoad;
+    const bool reverse = head && head->type == CommandType::TransportReverseLoad;
     // An AssistMove's transport picks up under it (its CUnitLoadUnits), and
     // a land unit it took boards under it.
     const bool assist = head && head->type == CommandType::AssistMove;
     if (pickup_phase_ != PickupPhase::None && !(loading_head && head->target_id == entity_id()) &&
+        !(reverse && head->target_id != entity_id()) &&
         !(assist && head->assist_phase == AssistPhase::Loading)) {
         finish_pickup(false, ctx.L);
         if (destroyed() || !in_registry()) {
@@ -797,6 +800,8 @@ bool Unit::end_gone_loading(SimContext& ctx) {
     }
     if (beam_up_ticks_ > 0 &&
         !(head && head->type == CommandType::TransportLoad && head->target_id != entity_id()) &&
+        !(head && head->type == CommandType::TransportReverseLoad &&
+          head->target_id == entity_id()) &&
         !(head && head->type == CommandType::AssistMove && head->assigned_id)) {
         abandon_beam_up(ctx.terrain, ctx.L);
         if (destroyed() || !in_registry()) {
@@ -860,7 +865,9 @@ bool Unit::end_gone_tasks(SimContext& ctx) {
     // A carrier's retrieve, or a landing on one (M206s), whose order is
     // gone.
     if (retrieve_phase_ != RetrievePhase::None &&
-        !(head && head->type == CommandType::TransportLoad && head->target_id == entity_id())) {
+        !(head && head->type == CommandType::TransportLoad && head->target_id == entity_id()) &&
+        !(head && head->type == CommandType::TransportReverseLoad &&
+          head->target_id != entity_id())) {
         end_retrieve(false, ctx);
         if (destroyed() || !in_registry()) {
             return false;
@@ -869,8 +876,17 @@ bool Unit::end_gone_tasks(SimContext& ctx) {
     }
     if (landing_.phase != LandPhase::None &&
         !(head && (head->type == CommandType::TransportLoad || head->type == CommandType::Dock) &&
-          head->target_id == landing_.carrier)) {
+          head->target_id == landing_.carrier) &&
+        !(head && head->type == CommandType::TransportReverseLoad &&
+          head->assigned_id == landing_.carrier)) {
         abandon_landing(ctx.registry);
+    }
+    if (has_unit_state("LandingOnPlatform") &&
+        !(head && head->type == CommandType::TransportReverseLoad &&
+          head->target_id == entity_id())) {
+        set_unit_state("TransportLoading", false);
+        set_unit_state("LandingOnPlatform", false);
+        navigator_.set_speed_through_goal(false);
     }
     // A refuel (M206r) whose order is gone.
     if (has_unit_state("Refueling") &&
