@@ -594,6 +594,12 @@ i32 AimManipulator::hold_ticks(const Unit& unit) const {
 
 void AimManipulator::tick(f32 dt) {
     const Unit* unit = owner_;
+    if (builder_arm_) {
+        if (!unit || !unit->bone_data()) {
+            on_target_ = has_target_;
+        }
+        return;
+    }
     const bool bones = unit && unit->bone_data() && unit->bone_data()->is_valid(yaw_bone_);
     const bool pitches = bones && unit->bone_data()->is_valid(pitch_bone_);
     const bool full_circle = yaw_max_ - yaw_min_ >= 2.0f * kPi - 1e-4f;
@@ -622,13 +628,7 @@ void AimManipulator::tick(f32 dt) {
         // from its forward (+Z); pitch from the pitch bone, once turned.
         const BonePose yaw = rest_frame_world(*unit, yaw_bone_);
         const Quaternion to_local = quat_conjugate(yaw.rotation);
-        // A build arm aims along the line from its reference bone (the aim
-        // bone CreateBuilderArmController was given), heading and pitch alike
-        // (Moho's CBuilderArmManipulator::ComputeDirectionToReferenceBone);
-        // a weapon's controller from its yaw and pitch bones.
-        const bool from_reference = builder_arm_ && unit->bone_data()->is_valid(muzzle_bone_);
-        const Vector3 reference =
-            from_reference ? unit->bone_world_position(muzzle_bone_) : yaw.position;
+        const Vector3& reference = yaw.position;
         const auto elevated = [&](const Vector3& d) {
             const f32 flat = std::sqrt(d.x * d.x + d.z * d.z);
             if (!elevation_ || flat <= 0.0f) {
@@ -639,14 +639,11 @@ void AimManipulator::tick(f32 dt) {
         };
         const Vector3 v = quat_rotate(to_local, elevated(sub(target_, reference)));
         want_heading = osc::dmath::atan2(v.x, v.z);
-        const Vector3 from =
-            from_reference ? reference
-                           : (pitches ? unit->bone_world_position(pitch_bone_) : yaw.position);
+        const Vector3 from = pitches ? unit->bone_world_position(pitch_bone_) : yaw.position;
         // Moho's CAimManipulator::CheckTracking: the pitch in the pitch bone's
         // frame as the animation left it.
         Quaternion barrel{};
-        if (pitches && !from_reference &&
-            descends_from(*unit->bone_data(), pitch_bone_, yaw_bone_)) {
+        if (pitches && descends_from(*unit->bone_data(), pitch_bone_, yaw_bone_)) {
             const Quaternion yaw_posed = unit->bone_pose(yaw_bone_).rotation;
             const Quaternion pitch_posed = unit->bone_pose(pitch_bone_).rotation;
             barrel = quat_multiply(quat_multiply(quat_conjugate(yaw_posed), pitch_posed),
@@ -675,7 +672,7 @@ void AimManipulator::tick(f32 dt) {
     } else {
         // Hold the pose for the reset time, then return to rest.
         on_target_ = false;
-        if (!builder_arm_ && reset_ticks_ > 0) {
+        if (reset_ticks_ > 0) {
             --reset_ticks_;
             return;
         }
@@ -683,17 +680,15 @@ void AimManipulator::tick(f32 dt) {
         want_pitch = std::clamp(0.0f, pitch_min_, pitch_max_);
     }
 
-    const f32 slew = builder_arm_ && !tracks ? 0.25f * dt : dt;
     const f32 heading_left =
         full_circle ? wrap_angle(want_heading - heading_) : want_heading - heading_;
-    tracking_ = builder_arm_ && std::fabs(heading_left) > 1e-5f;
     if (full_circle) {
-        heading_ = wrap_angle(heading_ + approach(0.0f, heading_left, yaw_speed_ * slew));
+        heading_ = wrap_angle(heading_ + approach(0.0f, heading_left, yaw_speed_ * dt));
     } else {
-        heading_ = approach(heading_, want_heading, yaw_speed_ * slew);
+        heading_ = approach(heading_, want_heading, yaw_speed_ * dt);
     }
     if (pitches) {
-        pitch_ = approach(pitch_, want_pitch, pitch_speed_ * slew);
+        pitch_ = approach(pitch_, want_pitch, pitch_speed_ * dt);
     }
 
     if (!tracks) return;
@@ -704,11 +699,162 @@ void AimManipulator::tick(f32 dt) {
 }
 
 void AimManipulator::apply_pose(PoseLocals& pose) {
+    if (builder_arm_) {
+        track_build_aim(pose);
+        return;
+    }
     if (yaw_bone_ < 0) return;
     pose.rotate(yaw_bone_, quat_axis_angle('y', heading_));
     // Pitch turns the barrel's forward (+Z) up: about local X, negated. On
     // a single-bone turret it follows the yaw on the same bone.
     if (pitch_bone_ >= 0) pose.rotate(pitch_bone_, quat_axis_angle('x', -pitch_));
+}
+
+namespace {
+
+constexpr u32 kOffTarget = 1;
+constexpr u32 kHeadingMoves = 2;
+
+/// Moho's NormalizeAngleSignedRadians: the CRT's fmod maps a zero to +0.
+f32 signed_angle_moho(f64 a) {
+    constexpr f32 kPiF = 3.1415927f;
+    constexpr f32 kTwoPiF = 6.2831855f;
+    const f64 r = a == 0.0 ? 0.0 : std::fmod(a, static_cast<f64>(kTwoPiF));
+    const f32 wrapped = static_cast<f32>(r);
+    if (r < -kPiF) {
+        return wrapped + kTwoPiF;
+    }
+    if (wrapped > kPiF) {
+        return wrapped - kTwoPiF;
+    }
+    return wrapped;
+}
+
+/// Moho's COORDS_Pitch(Vector3): the arc cosine by its fast polynomial, less pi/2.
+f32 coords_pitch(const Vector3& v) {
+    const f32 length = std::sqrt((v.x * v.x + v.y * v.y) + v.z * v.z);
+    const f32 y = v.y / length;
+    const f32 root = std::sqrt(1.0f - y);
+    const f32 poly = y * (((y * -0.018729299f) + 0.074261002f) * y - 0.21211439f) + 1.5707288f;
+    return root * poly - 1.5707964f;
+}
+
+/// A bone's composite turn in the pose being built, composed as VTransform::Compose.
+Quaternion composite_turn(const Unit& unit, const PoseLocals& pose, i32 bone) {
+    const auto i = static_cast<size_t>(bone);
+    const i32 parent = unit.bone_data()->bones[i].parent_index;
+    const bool model = i < pose.model_space.size() && pose.model_space[i] != 0;
+    const Quaternion up = model || parent < 0 || static_cast<size_t>(parent) >= i
+                              ? unit.pending_orientation()
+                              : composite_turn(unit, pose, parent);
+    return compose_moho({{}, pose.local[i].rotation}, {{}, up}).rotation;
+}
+
+void turn_bone(PoseLocals& pose, i32 bone, const Quaternion& q) {
+    if (q.x == 0 && q.y == 0 && q.z == 0 && q.w == 1) {
+        return;
+    }
+    auto& b = pose.local[static_cast<size_t>(bone)];
+    b.rotation = quat_multiply_moho(b.rotation, q);
+    pose.changed = true;
+}
+
+} // namespace
+
+u32 AimManipulator::track_lane(PoseLocals& pose, const Vector3& dir, bool heading, bool world,
+                               f32 slew_scale) {
+    Vector3 t = dir;
+    if (!world) {
+        const Quaternion o = composite_turn(*owner_, pose, heading ? yaw_bone_ : pitch_bone_);
+        t = mult_quad_vec({-o.x, -o.y, -o.z, o.w}, dir);
+    }
+    const f32 lo = heading ? yaw_min_ : pitch_min_;
+    const f32 hi = heading ? yaw_max_ : pitch_max_;
+    const f32 centre = signed_angle_moho(static_cast<f32>((static_cast<f64>(lo) + hi) * 0.5));
+    const f32 half_arc = static_cast<f32>(std::fabs(static_cast<f64>(hi) - lo) * 0.5);
+    f32 desired;
+    if (heading) {
+        desired = osc::dmath::atan2(t.x, t.z);
+    } else {
+        const f32 half = centre * 0.5f;
+        const Vector3 p =
+            mult_quad_vec({osc::dmath::sin(half), 0.0f, 0.0f, osc::dmath::cos(half)}, t);
+        desired = centre - coords_pitch(p);
+    }
+    f32& angle = heading ? heading_ : pitch_;
+    f32 step;
+    if (!(half_arc >= 3.1405928f)) {
+        f32 c = signed_angle_moho(desired - centre);
+        if (!(half_arc > c)) {
+            c = half_arc;
+        }
+        if (-half_arc > c) {
+            c = -half_arc;
+        }
+        step = (c + centre) - angle;
+    } else {
+        step = signed_angle_moho(desired - angle);
+    }
+    const f32 slew = (heading ? yaw_speed_ : pitch_speed_) * 0.1f * slew_scale;
+    if (std::fabs(step) > slew) {
+        step = std::copysign(slew, step);
+    }
+    angle = signed_angle_moho(step + angle);
+    u32 bits = 0;
+    if (heading) {
+        if (std::fabs(step) > 9.99999975e-06f) {
+            bits |= kHeadingMoves;
+        }
+        if (std::fabs(signed_angle_moho(angle - desired)) > 0.261799395f) {
+            bits |= kOffTarget;
+        }
+    }
+    return bits;
+}
+
+void AimManipulator::note_pose() {
+    if (const Unit* unit = owner_) {
+        aim_from_ = unit->bone_world_position(
+            muzzle_bone_ >= 0 ? muzzle_bone_ : (pitch_bone_ >= 0 ? pitch_bone_ : yaw_bone_));
+    }
+}
+
+void AimManipulator::track_build_aim(PoseLocals& pose) {
+    was_tracking_ = tracking_;
+    const Unit* unit = owner_;
+    if (!unit || !unit->bone_data()) {
+        return;
+    }
+    const BoneData& bd = *unit->bone_data();
+    Vector3 dir{0.0f, 0.0f, 1.0f};
+    if (has_target_) {
+        const f32 dx = target_.x - aim_from_.x;
+        const f32 dy = target_.y - aim_from_.y;
+        const f32 dz = target_.z - aim_from_.z;
+        const f32 length = std::sqrt((dz * dz + dx * dx) + dy * dy);
+        dir = {0.0f, 0.0f, 0.0f};
+        if (length > 0.0f) {
+            const f32 inv = 1.0f / length;
+            dir = {dx * inv, dy * inv, dz * inv};
+        }
+    }
+    const bool world = !has_target_;
+    const f32 slew_scale = has_target_ ? 1.0f : 0.25f;
+    u32 bits = 0;
+    if (bd.is_valid(yaw_bone_)) {
+        bits = track_lane(pose, dir, true, world, slew_scale);
+        const f32 half = heading_ * 0.5f;
+        turn_bone(pose, yaw_bone_, {0.0f, osc::dmath::sin(half), 0.0f, osc::dmath::cos(half)});
+    }
+    if (bd.is_valid(pitch_bone_)) {
+        bits |= track_lane(pose, dir, false, world, slew_scale);
+        const f32 half = -pitch_ * 0.5f;
+        turn_bone(pose, pitch_bone_, {osc::dmath::sin(half), 0.0f, 0.0f, osc::dmath::cos(half)});
+    }
+    tracking_ = (bits & kHeadingMoves) != 0;
+    if (has_target_) {
+        on_target_ = (bits & kOffTarget) == 0;
+    }
 }
 
 // ---------------------------------------------------------------------------

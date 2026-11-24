@@ -28,7 +28,8 @@ static const char* command_name(sim::CommandType type) {
     case sim::CommandType::Upgrade: return "Upgrading";
     case sim::CommandType::Capture: return "Capturing";
     case sim::CommandType::Enhance: return "Enhancing";
-    case sim::CommandType::TransportLoad: return "Loading";
+    case sim::CommandType::TransportLoad:
+    case sim::CommandType::TransportReverseLoad: return "Loading";
     case sim::CommandType::TransportUnload: return "Unloading";
     case sim::CommandType::Nuke: return "Nuke";
     case sim::CommandType::Tactical: return "Tactical";

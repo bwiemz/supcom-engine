@@ -110,6 +110,7 @@ void Unit::note_queue_head() {
     case CommandType::Repair:
     case CommandType::Capture:
     case CommandType::TransportLoad:
+    case CommandType::TransportReverseLoad:
     case CommandType::TransportUnload:
     case CommandType::WaitForFerry:
     case CommandType::Upgrade:
@@ -784,10 +785,12 @@ bool Unit::end_gone_attack(lua_State* L) {
 bool Unit::end_gone_loading(SimContext& ctx) {
     const UnitCommand* head = command_queue_.empty() ? nullptr : &command_queue_.front();
     const bool loading_head = head && head->type == CommandType::TransportLoad;
+    const bool reverse = head && head->type == CommandType::TransportReverseLoad;
     // An AssistMove's transport picks up under it (its CUnitLoadUnits), and
     // a land unit it took boards under it.
     const bool assist = head && head->type == CommandType::AssistMove;
     if (pickup_phase_ != PickupPhase::None && !(loading_head && head->target_id == entity_id()) &&
+        !(reverse && head->target_id != entity_id()) &&
         !(assist && head->assist_phase == AssistPhase::Loading)) {
         finish_pickup(false, ctx.L);
         if (destroyed() || !in_registry()) {
@@ -797,6 +800,8 @@ bool Unit::end_gone_loading(SimContext& ctx) {
     }
     if (beam_up_ticks_ > 0 &&
         !(head && head->type == CommandType::TransportLoad && head->target_id != entity_id()) &&
+        !(head && head->type == CommandType::TransportReverseLoad &&
+          head->target_id == entity_id()) &&
         !(head && head->type == CommandType::AssistMove && head->assigned_id)) {
         abandon_beam_up(ctx.terrain, ctx.L);
         if (destroyed() || !in_registry()) {
@@ -860,7 +865,9 @@ bool Unit::end_gone_tasks(SimContext& ctx) {
     // A carrier's retrieve, or a landing on one (M206s), whose order is
     // gone.
     if (retrieve_phase_ != RetrievePhase::None &&
-        !(head && head->type == CommandType::TransportLoad && head->target_id == entity_id())) {
+        !(head && head->type == CommandType::TransportLoad && head->target_id == entity_id()) &&
+        !(head && head->type == CommandType::TransportReverseLoad &&
+          head->target_id != entity_id())) {
         end_retrieve(false, ctx);
         if (destroyed() || !in_registry()) {
             return false;
@@ -869,8 +876,17 @@ bool Unit::end_gone_tasks(SimContext& ctx) {
     }
     if (landing_.phase != LandPhase::None &&
         !(head && (head->type == CommandType::TransportLoad || head->type == CommandType::Dock) &&
-          head->target_id == landing_.carrier)) {
+          head->target_id == landing_.carrier) &&
+        !(head && head->type == CommandType::TransportReverseLoad &&
+          head->assigned_id == landing_.carrier)) {
         abandon_landing(ctx.registry);
+    }
+    if (has_unit_state("LandingOnPlatform") &&
+        !(head && head->type == CommandType::TransportReverseLoad &&
+          head->target_id == entity_id())) {
+        set_unit_state("TransportLoading", false);
+        set_unit_state("LandingOnPlatform", false);
+        navigator_.set_speed_through_goal(false);
     }
     // A refuel (M206r) whose order is gone.
     if (has_unit_state("Refueling") &&
@@ -4765,6 +4781,30 @@ bool aims_straight_while_disabled(const Manipulator& m) {
     return aim && aim->aims_straight_on_disable();
 }
 
+bool is_builder_arm(const Manipulator& m) {
+    const auto* aim = dynamic_cast<const AimManipulator*>(&m);
+    return aim && aim->builder_arm();
+}
+
+/// A thread waiting for `m` goes on once it is at its goal -- reached in this
+/// tick, or set so between ticks (an animator a script sets to rate 0, say).
+void wake_waiting_thread(Manipulator& m, lua_State* L) {
+    if (!m.is_at_goal() || !m.has_waiting_thread()) {
+        return;
+    }
+    lua_pushstring(L, "osc_thread_mgr");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* tmgr = static_cast<ThreadManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (tmgr) {
+        auto* sim = get_sim(L);
+        if (sim) {
+            tmgr->wake(m, sim->tick_count());
+        }
+    }
+    m.clear_waiting_thread();
+}
+
 } // namespace
 
 void Unit::tick_manipulators(f32 dt, lua_State* L) {
@@ -4782,31 +4822,9 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
     for (size_t i = 0; i < manipulators_.size(); ++i) {
         Manipulator* m = manipulators_[i].get();
         if (m->is_destroyed() || !(m->enabled() || aims_straight_while_disabled(*m))) continue;
-        const auto* arm = dynamic_cast<const AimManipulator*>(m);
-        const bool was_tracking = arm && arm->tracking();
         m->tick(dt);
-        if (arm && arm->builder_arm()) {
-            builder_on_target_ = arm->has_target() && arm->on_target();
-            if (arm->tracking() != was_tracking && L) {
-                call_lua_method(L, arm->tracking() ? "OnStartBuilderTracking"
-                                                   : "OnStopBuilderTracking");
-            }
-        }
-        // A thread waiting for it goes on once it is at its goal -- reached
-        // in this tick, or set so between ticks (an animator a script sets
-        // to rate 0, say).
-        if (m->is_at_goal() && m->has_waiting_thread()) {
-            // Look up ThreadManager from Lua registry
-            lua_pushstring(L, "osc_thread_mgr");
-            lua_rawget(L, LUA_REGISTRYINDEX);
-            auto* tmgr = static_cast<ThreadManager*>(lua_touserdata(L, -1));
-            lua_pop(L, 1);
-            if (tmgr) {
-                // Look up current tick from SimState in registry
-                auto* sim = get_sim(L);
-                if (sim) tmgr->wake(*m, sim->tick_count());
-            }
-            m->clear_waiting_thread();
+        if (!is_builder_arm(*m)) {
+            wake_waiting_thread(*m, L);
         }
     }
     // Free destroyed manipulators, detaching their Lua tables first.
@@ -4818,6 +4836,26 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
                         [](const auto& m) { return m->is_destroyed(); }),
         manipulators_.end());
     update_pose();
+    // Moho's CBuilderArmManipulator turns in the pose being built, and tells
+    // the builder and the scripts from there.
+    for (size_t i = 0; i < manipulators_.size(); ++i) {
+        auto* arm = dynamic_cast<AimManipulator*>(manipulators_[i].get());
+        if (!arm || !arm->builder_arm() || arm->is_destroyed()) {
+            continue;
+        }
+        arm->note_pose();
+        if (!arm->enabled()) {
+            continue;
+        }
+        builder_on_target_ = arm->has_target() && arm->on_target();
+        if (arm->tracking() != arm->was_tracking() && L) {
+            call_lua_method(L,
+                            arm->tracking() ? "OnStartBuilderTracking" : "OnStopBuilderTracking");
+        }
+        if (i < manipulators_.size() && manipulators_[i].get() == arm) {
+            wake_waiting_thread(*arm, L);
+        }
+    }
     check_collision_detectors(L);
 }
 

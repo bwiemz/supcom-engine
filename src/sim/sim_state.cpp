@@ -46,6 +46,7 @@ extern "C" {
 #include <ostream>
 #include <string>
 #include <cmath>
+#include <limits>
 #include <cctype>
 #include <cstring>
 #include <map>
@@ -1270,15 +1271,18 @@ u32 SimState::route_command(const std::vector<EntityId>& unit_ids, const UnitCom
     if (issued.type != CommandType::Stop && issued.command_id == 0)
         issued.command_id = next_command_id();
     pick_target_point(issued);
+    const std::vector<EntityId> issue_ids = issued.type == CommandType::TransportReverseLoad
+                                                ? reverse_load_units(unit_ids, issued)
+                                                : unit_ids;
     bool queued = false;
-    for (const auto& [uid, cmd] : expand_group_command(unit_ids, issued)) {
+    for (const auto& [uid, cmd] : expand_group_command(issue_ids, issued)) {
         auto* e = entity_registry_.find(uid);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<Unit*>(e);
         if (cmd.type == CommandType::Stop && clear_existing) {
             stop_unit(*unit);
         } else if (!apply_silo_build(*unit, cmd) &&
-                   issue_takes(*unit, issued, clear_existing, unit_ids)) {
+                   issue_takes(*unit, issued, clear_existing, issue_ids)) {
             if (clear_existing) {
                 SimContext ctx = sim_context();
                 unit->clear_commands(ctx);
@@ -1469,6 +1473,7 @@ bool SimState::repeats_only_order(const Unit& unit, const UnitCommand& order,
     case CommandType::Capture:
     case CommandType::TransportLoad:
     case CommandType::WaitForFerry:
+    case CommandType::TransportReverseLoad:
     case CommandType::Upgrade:
     case CommandType::Sacrifice:
     case CommandType::AggressiveMove:
@@ -1525,7 +1530,85 @@ bool SimState::issue_takes(Unit& unit, const UnitCommand& order, bool clear_exis
         }
         return false;
     }
+    if (order.type == CommandType::TransportReverseLoad &&
+        !reverse_load_taken(unit, order, unit_ids)) {
+        return false;
+    }
     return clear_existing || queue.size() <= 500;
+}
+
+std::vector<EntityId> SimState::reverse_load_units(const std::vector<EntityId>& unit_ids,
+                                                   UnitCommand& order) {
+    Entity* e = order.target_id ? entity_registry_.find(order.target_id) : nullptr;
+    auto* target = e && !e->destroyed() && e->is_unit() ? static_cast<Unit*>(e) : nullptr;
+    if (!target || target->is_dying() || !target->is_mobile()) {
+        return {};
+    }
+    static const CategoryName kTransportation{"TRANSPORTATION"};
+    static const CategoryName kStaging{"AIRSTAGINGPLATFORM"};
+    static const CategoryName kTeleportation{"TELEPORTATION"};
+    std::vector<EntityId> ids = unit_ids;
+    std::sort(ids.begin(), ids.end());
+    Unit* best = nullptr;
+    f32 best_score = std::numeric_limits<f32>::infinity();
+    for (const EntityId id : ids) {
+        Entity* c = entity_registry_.find(id);
+        if (!c || c->destroyed() || !c->is_unit()) {
+            continue;
+        }
+        auto* transport = static_cast<Unit*>(c);
+        if (transport->is_dying() || transport->is_being_built() ||
+            (!transport->has_category(kTransportation) && !transport->has_category(kStaging) &&
+             !transport->has_category(kTeleportation)) ||
+            !transport->has_transport_ai() || !transport->transport_has_space_for(*target)) {
+            continue;
+        }
+        const f32 dx = transport->position().x - target->position().x;
+        const f32 dz = transport->position().z - target->position().z;
+        f32 score = std::sqrt(dx * dx + dz * dz);
+        if (transport->command_queue().empty()) {
+            score *= 0.5f;
+        }
+        if (score < best_score) {
+            best_score = score;
+            best = transport;
+        }
+    }
+    if (!best) {
+        return {};
+    }
+    order.assigned_id = best->entity_id();
+    return {best->entity_id(), target->entity_id()};
+}
+
+bool SimState::reverse_load_taken(Unit& unit, const UnitCommand& order,
+                                  const std::vector<EntityId>& unit_ids) {
+    Entity* e = order.target_id ? entity_registry_.find(order.target_id) : nullptr;
+    Unit* target = e && e->is_unit() ? static_cast<Unit*>(e) : nullptr;
+    Unit* candidate = nullptr;
+    for (const EntityId id : unit_ids) {
+        Entity* c = entity_registry_.find(id);
+        if (!c || c->destroyed() || !c->is_unit()) {
+            continue;
+        }
+        auto* transport = static_cast<Unit*>(c);
+        if (transport->is_dying() || transport->is_being_built() ||
+            !transport->has_transport_ai()) {
+            continue;
+        }
+        candidate = transport;
+        if (!target) {
+            break;
+        }
+        if (!transport->transport_can_carry(*target)) {
+            continue;
+        }
+        return transport->layer() != "Seabed";
+    }
+    if (candidate && candidate != &unit) {
+        candidate->call_lua_method(L_, "OnTransportReject");
+    }
+    return false;
 }
 
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
@@ -1579,6 +1662,10 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command, bool 
     }
     if (command.type == CommandType::Ferry) {
         return !carrier && unit.has_category("TRANSPORTATION") && has_transport_ai(unit);
+    }
+    if (command.type == CommandType::TransportReverseLoad) {
+        return (unit.is_mobile() || unit.has_category("AIRSTAGINGPLATFORM")) && !carrier &&
+               !unit.has_category("PODS");
     }
     if (command.type == CommandType::TransportUnload) {
         return unit.layer() != "Seabed" && (carrier || has_transport_ai(unit));
@@ -2214,7 +2301,10 @@ void SimState::dispatch_due_commands() {
             return;
         }
         pick_target_point(base);
-        for (auto& [uid, expanded] : expand_group_command(sc.unit_ids, base)) {
+        const std::vector<EntityId> issue_ids = base.type == CommandType::TransportReverseLoad
+                                                    ? reverse_load_units(sc.unit_ids, base)
+                                                    : sc.unit_ids;
+        for (auto& [uid, expanded] : expand_group_command(issue_ids, base)) {
             auto* e = entity_registry_.find(uid);
             if (!e || e->destroyed() || !e->is_unit()) continue;
             auto* unit = static_cast<Unit*>(e);
@@ -2231,7 +2321,7 @@ void SimState::dispatch_due_commands() {
             }
             // Each selected unit independently replaces (fresh order) or
             // appends (queued/shift) — matching the Issue* bindings.
-            if (!issue_takes(*unit, base, sc.clear_existing, sc.unit_ids)) {
+            if (!issue_takes(*unit, base, sc.clear_existing, issue_ids)) {
                 continue;
             }
             if (sc.clear_existing) {

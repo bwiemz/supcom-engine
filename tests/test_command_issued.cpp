@@ -433,3 +433,96 @@ TEST_CASE("The Transport order given to air transports and land units is one Ass
     osc::lua::report_command_issued(w.ui.raw(), *issued);
     CHECK(w.check("assert(seen[1].CommandType == 'AssistMove', seen[1].CommandType)"));
 }
+
+TEST_CASE("The Transport order with cargo in the extra select list unloads that cargo, and moves "
+          "it when it is all pods",
+          "[ui][command_issued][extra-select]") {
+    IssueWorld w;
+    const osc::sim::EntityId transport = w.add_unit("uea0107", "TRANSPORTATION", "T");
+    const osc::sim::EntityId first = w.add_unit("uel0201", "LAND", "A");
+    const osc::sim::EntityId second = w.add_unit("uel0201", "LAND", "B");
+    const auto unit = [&](osc::sim::EntityId id) {
+        return static_cast<osc::sim::Unit*>(w.sim.entity_registry().find(id));
+    };
+    unit(transport)->add_category("AIR");
+    unit(transport)->add_command_cap("RULEUCC_Transport");
+    for (const osc::sim::EntityId id : {transport, first, second}) {
+        unit(id)->set_motion_type(id == transport ? "RULEUMT_Air" : "RULEUMT_Land");
+    }
+    osc::lua::push_units_for_ui(w.ui.raw(), {first, second});
+    lua_setglobal(w.ui.raw(), "cargo");
+    w.input.set_selected({transport});
+    osc::renderer::CommandMode mode;
+    mode.mode = "order";
+    mode.name = "RULEUCC_Transport";
+
+    REQUIRE(w.check("AddToSessionExtraSelectList(cargo[1])"));
+    auto issued = w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, false);
+    REQUIRE(issued);
+    CHECK(issued->type == "TransportUnloadSpecificUnits");
+    std::vector<osc::sim::EntityId> both{transport, first};
+    std::sort(both.begin(), both.end());
+    CHECK(issued->units == both);
+    auto pending = w.sim.command_scheduler().pending();
+    REQUIRE(pending.size() == 1);
+    CHECK(osc::sim::moho_command_number(pending[0].command) == 25);
+    CHECK(pending[0].command.unload_ids == std::vector<osc::sim::EntityId>{first});
+    CHECK(pending[0].unit_ids == both);
+
+    REQUIRE(w.check("RemoveFromSessionExtraSelectList(cargo[1])"));
+    issued = w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, false);
+    REQUIRE(issued);
+    CHECK(issued->type == "TransportUnloadUnits");
+
+    unit(second)->add_category("POD");
+    REQUIRE(w.check("AddToSessionExtraSelectList(cargo[2])"));
+    issued = w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, false);
+    REQUIRE(issued);
+    CHECK(issued->type == "Move");
+    both = {transport, second};
+    std::sort(both.begin(), both.end());
+    CHECK(issued->units == both);
+    pending = w.sim.command_scheduler().pending();
+    REQUIRE(pending.size() == 3);
+    CHECK(pending[2].command.type == osc::sim::CommandType::Move);
+
+    REQUIRE(w.check("ClearSessionExtraSelectList()"));
+    issued = w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, false);
+    REQUIRE(issued);
+    CHECK(issued->type == "TransportUnloadUnits");
+}
+
+TEST_CASE("The Transport and Ferry orders' transports are air transports that aren't air staging "
+          "platforms",
+          "[ui][command_issued][assist-move]") {
+    IssueWorld w;
+    const osc::sim::EntityId carrier = w.add_unit("uas0303", "TRANSPORTATION", "C");
+    const osc::sim::EntityId tank = w.add_unit("uel0201", "LAND", "L");
+    const auto unit = [&](osc::sim::EntityId id) {
+        return static_cast<osc::sim::Unit*>(w.sim.entity_registry().find(id));
+    };
+    unit(carrier)->add_category("AIRSTAGINGPLATFORM");
+    unit(carrier)->add_command_cap("RULEUCC_Transport");
+    unit(carrier)->add_command_cap("RULEUCC_Ferry");
+    unit(carrier)->set_motion_type("RULEUMT_Water");
+    unit(tank)->set_motion_type("RULEUMT_Land");
+    w.input.set_selected({carrier, tank});
+    osc::renderer::CommandMode mode;
+    mode.mode = "order";
+
+    mode.name = "RULEUCC_Transport";
+    auto issued = w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, false);
+    REQUIRE(issued);
+    CHECK(issued->type == "TransportUnloadUnits");
+    CHECK(issued->units == std::vector<osc::sim::EntityId>{carrier});
+    mode.name = "RULEUCC_Ferry";
+    CHECK_FALSE(w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, false));
+
+    unit(carrier)->add_category("AIR");
+    mode.name = "RULEUCC_Ferry";
+    CHECK_FALSE(w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, false));
+    mode.name = "RULEUCC_Transport";
+    issued = w.input.click_in_command_mode(w.sim, mode, 40.0f, 60.0f, false);
+    REQUIRE(issued);
+    CHECK(issued->type == "TransportUnloadUnits");
+}

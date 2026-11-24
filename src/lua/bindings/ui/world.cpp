@@ -384,6 +384,7 @@ static int worldview_GetRightMouseButtonOrder(lua_State* L) {
     case sim::CommandType::Reclaim: name = "RULEUCC_Reclaim"; break;
     case sim::CommandType::TransportLoad:
     case sim::CommandType::WaitForFerry: name = "RULEUCC_CallTransport"; break;
+    case sim::CommandType::TransportReverseLoad: name = "RULEUCC_Transport"; break;
     default: break;
     }
     if (!order && at && sim && input->right_click_invalid(*sim, (*at)[0], (*at)[1])) {

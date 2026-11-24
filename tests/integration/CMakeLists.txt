@@ -83,6 +83,7 @@ add_executable(osc_integration
     runner/build_site_blocked_test.cpp
     runner/drown_test.cpp
     runner/assist_move_test.cpp
+    runner/reverse_load_test.cpp
     runner/layer_transition_test.cpp
     runner/spawn_layer_test.cpp
     runner/warp_test.cpp

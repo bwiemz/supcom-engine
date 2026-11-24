@@ -34,6 +34,15 @@ extern "C" {
 namespace osc::sim {
 
 namespace {
+
+Unit* live_unit(EntityRegistry& registry, EntityId id) {
+    Entity* e = id ? registry.find(id) : nullptr;
+    if (!e || e->destroyed() || !e->is_unit()) {
+        return nullptr;
+    }
+    return static_cast<Unit*>(e);
+}
+
 /// A number in unit blueprint `bp_id`'s Economy table, or `fallback`.
 f32 blueprint_economy_number(lua_State* L, const std::string& bp_id, const char* field,
                              f32 fallback) {
@@ -624,6 +633,11 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
                     continue;
                 }
             }
+            if (command_queue_.front().type == CommandType::TransportReverseLoad &&
+                !reverse_load_makes_task(command_queue_.front(), ctx.registry)) {
+                command_queue_.pop_front();
+                continue;
+            }
             // Its scripts may change the queue, or kill the unit: look again.
             begin_order(command_queue_.front(), ctx);
             continue;
@@ -737,6 +751,7 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     case CommandType::TransportLoad:
     case CommandType::Dock: return order_transport_load(cmd, ctx);
     case CommandType::TransportUnload: return order_transport_unload(cmd, ctx);
+    case CommandType::TransportReverseLoad: return order_reverse_load(cmd, ctx);
     case CommandType::Nuke:
     case CommandType::Tactical:
     case CommandType::Overcharge: return order_launch(cmd, ctx);
@@ -3205,7 +3220,46 @@ EntityId Unit::awaited_transport() const {
     if (command_queue_.empty()) return {};
     const UnitCommand& head = command_queue_.front();
     if (head.type == CommandType::TransportLoad) return head.target_id;
+    if (head.type == CommandType::TransportReverseLoad && head.target_id == entity_id()) {
+        return head.assigned_id;
+    }
     return head.type == CommandType::AssistMove ? head.assigned_id : EntityId{};
+}
+
+bool Unit::reverse_load_makes_task(const UnitCommand& cmd, EntityRegistry& registry) const {
+    static const CategoryName kCarrier{"CARRIER"};
+    if (cmd.target_id != entity_id()) {
+        return has_transport_ai() && live_unit(registry, cmd.target_id);
+    }
+    const Unit* transport = live_unit(registry, cmd.assigned_id);
+    if (!transport ||
+        std::none_of(transport->command_queue_.begin(), transport->command_queue_.end(),
+                     [&](const UnitCommand& c) { return c.command_id == cmd.command_id; })) {
+        return false;
+    }
+    if (transport->has_category(kCarrier) || transport->is_staging_platform()) {
+        return true;
+    }
+    return !transport->has_category("TELEPORTATION") && transport->can_fly();
+}
+
+OrderStep Unit::order_reverse_load(UnitCommand& cmd, SimContext& ctx) {
+    static const CategoryName kCarrier{"CARRIER"};
+    if (cmd.target_id != entity_id()) {
+        if (has_category(kCarrier)) {
+            return order_carrier_retrieve(cmd, ctx);
+        }
+        return is_staging_platform() ? order_staging_load(cmd, ctx)
+                                     : order_transport_pickup(cmd, ctx);
+    }
+    const Unit* transport = live_unit(ctx.registry, cmd.assigned_id);
+    if (transport && transport->has_category(kCarrier)) {
+        return order_carrier_landing(cmd, ctx);
+    }
+    if (transport && transport->is_staging_platform()) {
+        return order_call_staging(cmd, ctx);
+    }
+    return order_call_transport(cmd, ctx);
 }
 
 OrderStep Unit::order_transport_load(UnitCommand& cmd, SimContext& ctx) {
@@ -3260,6 +3314,27 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
         if (destroyed() || !in_registry()) return OrderStep::Gone;
         pickup_phase_ = PickupPhase::Holding;
         pickup_ticks_ = 0;
+    }
+    if (pickup_phase_ == PickupPhase::Holding && cmd.type == CommandType::TransportReverseLoad) {
+        std::vector<Unit*> wanted;
+        if (Unit* target = live_unit(registry, cmd.target_id);
+            target && !target->is_dying() && !target->is_being_built() && !target->transport_id()) {
+            if (target->command_queue_.empty() ||
+                target->command_queue_.front().command_id != cmd.command_id) {
+                return OrderStep::Hold;
+            }
+            wanted.push_back(target);
+        }
+        if (!begin_pickup(wanted, true, L)) {
+            return OrderStep::Gone;
+        }
+        if (pickup_ids_.empty()) {
+            finish_pickup(false, L);
+            if (destroyed() || !in_registry()) {
+                return OrderStep::Gone;
+            }
+            return finish_order();
+        }
     }
     if (pickup_phase_ == PickupPhase::Holding) {
         // The units ordered aboard: the army's with a load order onto us in
@@ -3507,7 +3582,8 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, SimContext& ctx) {
         return finish_order();
     };
     const bool assist = cmd.type == CommandType::AssistMove;
-    const EntityId called = assist ? cmd.assigned_id : cmd.target_id;
+    const bool reverse = cmd.type == CommandType::TransportReverseLoad;
+    const EntityId called = assist || reverse ? cmd.assigned_id : cmd.target_id;
     if (!called || transport_id_) {
         return end();
     }
@@ -3523,12 +3599,18 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, SimContext& ctx) {
     // given it (Moho's command is the transport's too). Once the unit has a
     // slot, a transport no longer loading ends its order; an AssistMove's,
     // whose transport took it, ends with that transport's pickup.
-    const bool running = !transport->command_queue_.empty() &&
-                         (loads_itself(transport->command_queue_.front(), tid) ||
-                          transport->command_queue_.front().type == CommandType::AssistMove) &&
-                         transport->pickup_phase_ != PickupPhase::None &&
-                         transport->pickup_phase_ != PickupPhase::Holding;
+    const bool running =
+        !transport->command_queue_.empty() &&
+        (loads_itself(transport->command_queue_.front(), tid) ||
+         transport->command_queue_.front().type == CommandType::AssistMove ||
+         (reverse && transport->command_queue_.front().command_id == cmd.command_id)) &&
+        transport->pickup_phase_ != PickupPhase::None &&
+        transport->pickup_phase_ != PickupPhase::Holding;
     if (!running && (cmd.started || assist)) return end();
+    if (!running && reverse) {
+        navigator_.abort_move();
+        return OrderStep::Hold;
+    }
     if (!running) {
         if (std::none_of(transport->command_queue_.begin(), transport->command_queue_.end(),
                          [&](const UnitCommand& c) { return loads_itself(c, tid); })) {
@@ -3897,14 +3979,6 @@ namespace {
 bool sacrifice_upgrading(const Unit& u) {
     return u.has_unit_state("Upgrading") || u.is_enhancing() ||
            (!u.command_queue().empty() && u.command_queue().front().type == CommandType::Upgrade);
-}
-
-Unit* live_unit(EntityRegistry& registry, EntityId id) {
-    Entity* e = id ? registry.find(id) : nullptr;
-    if (!e || e->destroyed() || !e->is_unit()) {
-        return nullptr;
-    }
-    return static_cast<Unit*>(e);
 }
 
 } // namespace
