@@ -1606,8 +1606,9 @@ TEST_CASE("A FormAttack's unit drops its slot once its weapon reaches the target
     CHECK_FALSE(a->command_queue().front().has_slot);
 }
 
-TEST_CASE("A TARGETCHASER in a FormAttack heads for the target itself",
-          "[attack][lua][formation]") {
+TEST_CASE(
+    "A TARGETCHASER in a FormAttack heads for its gun's square about the target, not its slot",
+    "[attack][lua][formation]") {
     // CUnitAttackTargetTask's constructor drops the formation for a
     // TARGETCHASER (and for a unit that can't move).
     FormAttackWorld w;
@@ -1622,8 +1623,10 @@ TEST_CASE("A TARGETCHASER in a FormAttack heads for the target itself",
     REQUIRE(chaser->command_queue().front().has_slot);
     for (int i = 0; i < 3; ++i) w.sim.tick();
     CHECK_FALSE(chaser->command_queue().front().has_slot);
-    CHECK(chaser->navigator().goal().x == enemy->position().x);
-    CHECK(chaser->navigator().goal().z == enemy->position().z);
+    // the square's nearest part (Moho's SetWeaponGoal): side 5 about the target, from (10, 14)
+    CHECK(chaser->navigator().goal().x ==
+          static_cast<osc::f32>(std::lrint(enemy->position().x - 2.5f)));
+    CHECK(chaser->navigator().goal().z == 14.0f);
     CHECK(a->command_queue().front().has_slot);
 }
 

@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 124; // 2: entities' wanted loops (M216b);
+constexpr u32 kVersion = 127; // 2: entities' wanted loops (M216b);
                               // 3: emitter overrides (M214d);
                               // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                               // 6: weapons' lead physics;
@@ -170,6 +170,10 @@ constexpr u32 kVersion = 124; // 2: entities' wanted loops (M216b);
                               // 123: path navigators' PathFinding and ProblemGettingToGoal
                               // 124: a transport's load till its first tick, and the units
                               //      of its pickup that have called it
+                              // 125: a unit's deck and the units it may stand on
+                              // 126: an aircraft's goal on the land layer, settled and reserved
+                              // 127: an attack's back-off wait and its target's point at its
+                              //      last goal; a navigator's goal of cells
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a

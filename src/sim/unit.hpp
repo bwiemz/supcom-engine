@@ -1133,7 +1133,8 @@ public:
     /// Moho's CAiPathNavigator::RequestPath; an aircraft flies to
     /// air_target(goal), or with `chase` to `goal` itself, a mobile unit
     /// followed (CAiNavigatorAir::SetDestUnit).
-    void set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase = false);
+    void set_path_goal(const Vector3& goal, const SimContext& ctx, bool chase = false,
+                       const OccupancyRect* square = nullptr);
     /// A goal Moho's SIM_TryToBuild hands its navigator, sending it off a
     /// build site (build_site_units.cpp): it walks there on no order, for as
     /// long as its navigator keeps that goal.
@@ -1193,7 +1194,14 @@ public:
     void set_raised_platforms(std::vector<f32> quads) { raised_platforms_ = std::move(quads); }
     /// Moho's Unit::DistanceToOccupiedRect: its deck's height at (x, z), 0 off it.
     f32 raised_platform_height(f32 x, f32 z) const;
+    /// The deck it stands on (Moho's mRaisedPlatformUnit), as last found.
     const Unit* raised_platform() const;
+    /// Moho's mRaisedPlatformCandidates: the units its box met as its motion ticked.
+    void set_raised_platform_candidates(std::vector<EntityId> ids) {
+        raised_platform_candidates_ = std::move(ids);
+    }
+    /// Moho's CUnitMotion::FindIntersectingRaisedPlatform, from where it stood before its move.
+    void find_raised_platform();
     /// Physics.LayerChangeOffsetHeight: how far above (+) or below (-) the
     /// water's surface the ground must lie for it to count as under water.
     f32 layer_change_offset() const { return layer_change_offset_; }
@@ -1804,13 +1812,18 @@ private:
     /// `dest` moved to a place the unit fits that no unit stands on or has
     /// reserved, which the order then reserves.
     void settle_factory_move(UnitCommand& cmd, Vector3 dest, SimContext& ctx);
+    /// Moho's move task's goal for an aircraft's move onto the land layer
+    /// (ShouldRecentreOnGoalCell): `goal`'s cell centre, settled as a factory
+    /// move's and reserved for the order until end_land_goal.
+    Vector3 land_goal(const Vector3& goal, SimContext& ctx);
+    /// ~CUnitMoveTask: the reservation goes; with `forget`, the goal too.
+    void end_land_goal(SimState* sim, bool forget);
+    /// Flies to land_goal(goal); true once there.
+    bool reach_land_goal(const Vector3& goal, SimContext& ctx);
     /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
-    /// target, and one that needs prep (NeedPrep) hears OnGotTarget. False
-    /// when a script took the unit or the order.
+    /// target and looks again at once, and one that needs prep (NeedPrep)
+    /// hears OnGotTarget. False when a script took the unit or the order.
     bool engage(UnitCommand& cmd, lua_State* L);
-    /// SetDesiredTarget's notice: each NeedPrep weapon hears OnGotTarget.
-    /// False when a script took the unit.
-    bool ready_prep_weapons(lua_State* L);
     /// Moho's ~CUnitAttackTargetTask: once the attack order whose task ran
     /// is gone from the head of the queue (done, cleared or replaced), the
     /// attacker stops. False when a script took the unit.
@@ -2131,6 +2144,8 @@ private:
     Vector3 layer_transition_step_;
     u8 terrain_type_ = 0; // Moho's CurrentTerrainType
     std::vector<f32> raised_platforms_;
+    std::vector<EntityId> raised_platform_candidates_;
+    EntityId raised_platform_id_{};
     bool stand_upright_ = false;
     bool sink_lower_ = false;
     HoverPhysics hover_physics_;
@@ -2353,6 +2368,14 @@ private:
     f32 start_turn_distance_ = 0.0f;    // Air.StartTurnDistance
     IdleLanding idle_landing_;
     OrderReservation order_reservation_;
+    struct LandGoal {
+        bool held = false;
+        u32 order = 0;
+        Vector3 asked{};
+        Vector3 at{};
+        bool arrived = false;
+    };
+    LandGoal land_goal_;
     // A unit beaming up into its transport (M206m): ticks left of the 10,
     // and where it started.
     i32 beam_up_ticks_ = 0;

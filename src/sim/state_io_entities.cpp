@@ -385,6 +385,8 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.b(c.approached);
     w.b(c.engaged);
     w.i32v(c.facing_clock);
+    w.i32v(c.backoff_wait);
+    w.vec3(c.goal_aim);
     w.f32v(c.site_skirt_x);
     w.f32v(c.site_skirt_z);
     w.b(c.site_cleared);
@@ -454,6 +456,8 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.approached = r.b();
     c.engaged = r.b();
     c.facing_clock = r.i32v();
+    c.backoff_wait = r.i32v();
+    c.goal_aim = r.vec3();
     c.site_skirt_x = r.f32v();
     c.site_skirt_z = r.f32v();
     c.site_cleared = r.b();
@@ -543,6 +547,11 @@ void StateIO::save(StateWriter& w, const Navigator& n) {
     w.str(n.moho_layer_);
     w.f32v(n.moho_draft_);
     w.b(n.moho_amphibious_);
+    w.i32v(n.moho_square_.x0);
+    w.i32v(n.moho_square_.z0);
+    w.i32v(n.moho_square_.x1);
+    w.i32v(n.moho_square_.z1);
+    w.b(n.moho_square_set_);
     save(w, n.spline_);
     w.b(n.has_spline_);
     w.b(n.waypoint_refresh_);
@@ -595,6 +604,11 @@ void StateIO::load(StateReader& r, Navigator& n, SimState& sim, i32 army) {
     n.moho_layer_ = r.str();
     n.moho_draft_ = r.f32v();
     n.moho_amphibious_ = r.b();
+    n.moho_square_.x0 = r.i32v();
+    n.moho_square_.z0 = r.i32v();
+    n.moho_square_.x1 = r.i32v();
+    n.moho_square_.z1 = r.i32v();
+    n.moho_square_set_ = r.b();
     load(r, n.spline_);
     n.has_spline_ = r.b();
     n.waypoint_refresh_ = r.b();
@@ -1320,6 +1334,11 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.pushed_);
     w.b(u.in_state_transition_);
     w.b(u.surface_collision_);
+    w.size(u.raised_platform_candidates_.size());
+    for (const EntityId id : u.raised_platform_candidates_) {
+        w.id(id);
+    }
+    w.id(u.raised_platform_id_);
     w.id(u.shield_entity_id_);
     w.b(u.busy_);
     w.i32v(u.stun_ticks_);
@@ -1475,6 +1494,11 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.i32v(u.order_reservation_.reserved.z0);
     w.i32v(u.order_reservation_.reserved.x1);
     w.i32v(u.order_reservation_.reserved.z1);
+    w.b(u.land_goal_.held);
+    w.u32v(u.land_goal_.order);
+    w.vec3(u.land_goal_.asked);
+    w.vec3(u.land_goal_.at);
+    w.b(u.land_goal_.arrived);
     w.b(u.stepping_aside_);
     w.vec3(u.aside_goal_);
     w.i32v(u.beam_up_ticks_);
@@ -1765,6 +1789,11 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.pushed_ = r.b();
     u.in_state_transition_ = r.b();
     u.surface_collision_ = r.b();
+    u.raised_platform_candidates_.resize(r.size(4));
+    for (EntityId& id : u.raised_platform_candidates_) {
+        id = r.id();
+    }
+    u.raised_platform_id_ = r.id();
     u.shield_entity_id_ = r.id();
     u.busy_ = r.b();
     u.stun_ticks_ = r.i32v();
@@ -1924,6 +1953,11 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.order_reservation_.reserved.z0 = r.i32v();
     u.order_reservation_.reserved.x1 = r.i32v();
     u.order_reservation_.reserved.z1 = r.i32v();
+    u.land_goal_.held = r.b();
+    u.land_goal_.order = r.u32v();
+    u.land_goal_.asked = r.vec3();
+    u.land_goal_.at = r.vec3();
+    u.land_goal_.arrived = r.b();
     u.stepping_aside_ = r.b();
     u.aside_goal_ = r.vec3();
     u.beam_up_ticks_ = r.i32v();

@@ -47,13 +47,14 @@ constexpr u32 kMap = 128;
 /// engineer's size, 'builder', one that builds 'pgen' (a 2x2 footprint),
 /// 'yard', a land factory's (a 5x5 footprint, an 8x8 skirt 1.5 out from it),
 /// two aircraft, 'lifter' (1x4, as a T1 transport) and 'fighter' (1x1,
-/// winged), and 'beacon', the lifter's ferry beacon.
+/// winged), and 'beacon', the lifter's ferry beacon. With `sea`, the map is
+/// under water east of x = 34 but for an islet, 40-42 by 50-52.
 struct World {
     osc::lua::LuaState state;
     osc::blueprints::BlueprintStore store{state.raw()};
     osc::sim::SimState sim{state.raw(), &store};
 
-    World() {
+    explicit World(bool sea = false) {
         osc::sim::GameSetup game;
         game.scenario = "/maps/test/test_scenario.lua";
         game.seed = 3;
@@ -68,8 +69,17 @@ struct World {
         osc::lua::register_moho_bindings(state, sim);
         osc::lua::register_sim_bindings(state, sim);
         std::vector<osc::u16> heights(static_cast<size_t>(kMap + 1) * (kMap + 1), 1280);
+        if (sea) {
+            for (u32 z = 0; z <= kMap; ++z) {
+                for (u32 x = 35; x <= kMap; ++x) {
+                    if (x < 40 || x > 42 || z < 50 || z > 52) {
+                        heights[static_cast<size_t>(z) * (kMap + 1) + x] = 0;
+                    }
+                }
+            }
+        }
         osc::map::Heightmap hm(kMap, kMap, 1.0f / 128.0f, std::move(heights));
-        sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
+        sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), sea ? 5.0f : 0.0f, sea));
         sim.build_pathfinding_grid();
         sim.add_army("ARMY_1", "ARMY_1");
         sim.set_game_setup(game);
@@ -157,6 +167,13 @@ struct World {
         return sim.occupancy().reserved_any(OccupancyRect{x, z, x + 1, z + 1});
     }
 };
+
+/// The lifter as a transport, room for four.
+void make_transport(Unit& u) {
+    u.add_category("TRANSPORTATION");
+    u.add_command_cap("RULEUCC_Transport");
+    u.set_transport_capacity(4);
+}
 
 UnitCommand move_to(f32 x, f32 z, bool from_factory) {
     UnitCommand cmd;
@@ -301,10 +318,10 @@ TEST_CASE("A structure next to a factory is placed and built as before, from off
     CHECK(stands_at(b, 40, 67));
 }
 
-TEST_CASE("An aircraft flies each goal at its cell's centre: a move's, a patrol leg's, a guard's, "
-          "a ferry's and one set from Lua",
+TEST_CASE("An aircraft flies each goal at its cell's centre: a move's, a patrol leg's, a guard's "
+          "and one set from Lua",
           "[factory_move]") {
-    const std::string kind = GENERATE("move", "patrol", "guard", "ferry", "navigator");
+    const std::string kind = GENERATE("move", "patrol", "guard", "navigator");
     CAPTURE(kind);
     World w;
     // A hovering aircraft guards flying winged, with no navigator goal (the
@@ -320,8 +337,6 @@ TEST_CASE("An aircraft flies each goal at its cell's centre: a move's, a patrol 
         } else if (kind == "guard") {
             cmd.type = osc::sim::CommandType::Guard;
             cmd.target_id = w.make("walker", 60.31f, 50.77f, "a")->entity_id();
-        } else if (kind == "ferry") {
-            cmd.type = osc::sim::CommandType::Ferry;
         }
         l.push_command(cmd, true);
         tick_until([&] { w.sim.tick(); }, "it sets out", 30,
@@ -362,4 +377,77 @@ TEST_CASE("An aircraft's factory-issued move settles its goal with a landing foo
     REQUIRE(l.navigator().waypoint());
     CHECK(l.navigator().waypoint()->x == 40.5f);
     CHECK(l.navigator().waypoint()->z == 59.0f);
+}
+
+// The point (40.31, 50.77) takes the cells 38-41 by 49-52 for the lifter's 4x4
+// landing footprint; the nearest place of the ring 8 cells out is 8 west.
+TEST_CASE("A transport's unload settles its goal where it can come down: off a unit standing at "
+          "the point, or an islet too small for it",
+          "[factory_move]") {
+    const std::string there = GENERATE("nothing", "unit", "islet");
+    CAPTURE(there);
+    World w(there == "islet");
+    Unit& l = *w.make("lifter", 20.5f, 50.5f, "l");
+    make_transport(l);
+    Unit& cargo = *w.make("walker", 20.5f, 56.5f, "c");
+    cargo.attach_to_transport(&l, w.sim.entity_registry(), w.state.raw());
+    REQUIRE(cargo.transport_id() == l.entity_id());
+    if (there == "unit") {
+        w.make("walker", 40.5f, 50.5f, "a");
+    }
+    UnitCommand cmd;
+    cmd.type = osc::sim::CommandType::TransportUnload;
+    cmd.target_pos = {40.31f, 10.0f, 50.77f};
+    l.push_command(cmd, true);
+    tick_until([&] { w.sim.tick(); }, "it sets out", 30, [&] { return l.navigator().is_moving(); });
+    const f32 x = there == "nothing" ? 40.5f : 32.5f;
+    REQUIRE(l.navigator().waypoint());
+    CHECK(l.navigator().waypoint()->x == x);
+    CHECK(l.navigator().waypoint()->z == 51.0f);
+    CHECK(l.order_reservation().held);
+    tick_until([&] { w.sim.tick(); }, "it sets its cargo down", 400,
+               [&] { return !cargo.transport_id(); });
+    CHECK(std::abs(cargo.position().x - x) < 2.0f);
+    CHECK(std::abs(cargo.position().z - 51.0f) < 2.0f);
+}
+
+TEST_CASE("A transport's pickup settles off ground a structure holds, not off a unit standing "
+          "there",
+          "[factory_move]") {
+    const std::string there = GENERATE("structure", "unit");
+    CAPTURE(there);
+    World w;
+    Unit& l = *w.make("lifter", 20.5f, 50.5f, "l");
+    make_transport(l);
+    if (there == "structure") {
+        w.make("pgen", 40.0f, 50.0f, "p");
+    } else {
+        w.make("walker", 40.5f, 50.5f, "a");
+    }
+    for (const f32 x : {36.5f, 44.5f}) {
+        UnitCommand load;
+        load.type = osc::sim::CommandType::TransportLoad;
+        load.target_id = l.entity_id();
+        w.make("walker", x, 50.5f, x < 40.0f ? "c1" : "c2")->push_command(load, true);
+    }
+    tick_until([&] { w.sim.tick(); }, "it sets out", 30, [&] { return l.navigator().is_moving(); });
+    // Their centre, (40.5, 50.5), is the lifter's at (40.5, 50.0).
+    REQUIRE(l.navigator().waypoint());
+    CHECK(l.navigator().waypoint()->x == (there == "structure" ? 32.5f : 40.5f));
+    CHECK(l.navigator().waypoint()->z == 50.0f);
+}
+
+TEST_CASE("An empty ferry's stop at its beacon settles off the beacon's own cell",
+          "[factory_move]") {
+    World w;
+    Unit& l = *w.make("lifter", 20.5f, 50.5f, "l");
+    make_transport(l);
+    UnitCommand cmd = move_to(40.31f, 50.77f, false);
+    cmd.type = osc::sim::CommandType::Ferry;
+    l.push_command(cmd, true);
+    tick_until([&] { w.sim.tick(); }, "it sets out", 30, [&] { return l.navigator().is_moving(); });
+    REQUIRE(l.navigator().waypoint());
+    CHECK(l.navigator().waypoint()->x == 32.5f);
+    CHECK(l.navigator().waypoint()->z == 51.0f);
+    CHECK(l.order_reservation().held);
 }

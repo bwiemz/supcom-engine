@@ -14448,7 +14448,9 @@ void test_transport_slots(TestContext& ctx) {
     {
         auto down = positions("__osc_small");
         down.pop_back();
-        check(spread(down) > 0.5f,
+        // Set down under their bones, the transport level and still: the
+        // engine has no cell for each as CUnitUnloadUnits places them.
+        check(spread(down) > 0.4f,
               fmt::format("unloaded tanks are spread out ({:.2f} apart at least)", spread(down)));
     }
     lua("__osc_room = __osc_xport:TransportHasSpaceFor(__osc_small[1]) and 1 or 0");
@@ -14558,6 +14560,8 @@ void test_transport_slots(TestContext& ctx) {
     lua(R"(
         __osc_xport.OnAttachedKilled = function(self, unit) end
         __osc_kept = __osc_aboard()
+        -- its death, on random draws, outlasts the transport's fall
+        __osc_kept.DeathThreadDestructionWaitTime = 10
         __osc_kept:Kill()
         __osc_kept_id = __osc_kept:GetEntityId()
     )");
@@ -17010,6 +17014,40 @@ void test_transport_drop(TestContext& ctx) {
                                 terrain->get_surface_height(one->position().x, one->position().z)
                           : -1.0f));
 
+    // A tank at the shore (190, 612), loaded and sent to an islet, as in a
+    // probe of the original game: there the transport comes down for it at
+    // (182.7, 603.7), where its landing footprint fits, and sets it down on
+    // the shore at (192.6, 611.6), the islet having no room for it.
+    if (!lua(R"(
+        for _, army in ListArmies() do
+            if army ~= 'ARMY_1' then SetAlliance('ARMY_1', army, 'Neutral') end
+        end
+        __osc_x3 = CreateUnitHPR('uea0107', 'ARMY_1', 175, GetTerrainHeight(175, 620), 620, 0, 0, 0)
+        __osc_three = CreateUnitHPR('uel0201', 'ARMY_1', 190, GetTerrainHeight(190, 612), 612, 0, 0,
+                                    0)
+        __osc_x3:SetCanTakeDamage(false)
+        __osc_three:SetCanTakeDamage(false)
+        IssueTransportLoad({__osc_three}, __osc_x3)
+    )"))
+        return;
+    auto* x3 = unit("__osc_x3");
+    auto* three = unit("__osc_three");
+    if (!x3 || !three) {
+        check(false, "the islet's transport and tank");
+        return;
+    }
+    tick_until(ctx, "the tank for the islet is loaded", 400,
+               [&] { return three->transport_id() == x3->entity_id(); });
+    const f32 picked_up = std::hypot(x3->position().x - 182.7f, x3->position().z - 603.7f);
+    lua("IssueTransportUnload({__osc_x3}, {216.5, GetSurfaceHeight(216.5, 611.5), 611.5})");
+    tick_until(ctx, "the tank sent to the islet is set down", 600,
+               [&] { return !three->transport_id(); });
+    const f32 set_down = std::hypot(three->position().x - 192.6f, three->position().z - 611.6f);
+    check(!three->transport_id() && picked_up < 1.5f && set_down < 1.5f,
+          fmt::format("a tank sent to an islet the transport can't come down on is set down on "
+                      "the shore ({:.1f} and {:.1f} from the original game's pickup and drop)",
+                      picked_up, set_down));
+
     spdlog::info("Transport drop test: {} passed, {} failed", pass, fail);
 }
 
@@ -17497,8 +17535,9 @@ void test_ferry(TestContext& ctx) {
             return n, found
         end
         __osc_groups = {}
-        function __osc_follow(name, tanks, drop, waypoint)
-            __osc_groups[name] = {tanks = tanks, drop = drop or {640, 115}, waypoint = waypoint or {625, 80}}
+        function __osc_follow(name, tanks, drop, waypoint, reach)
+            __osc_groups[name] = {tanks = tanks, drop = drop or {640, 115}, waypoint = waypoint or {625, 80},
+                                  reach = reach or 8}
         end
         function __osc_all(tanks, test)
             for _, t in tanks do
@@ -17526,7 +17565,7 @@ void test_ferry(TestContext& ctx) {
                     act(g)
                 end
                 if g.boarded and not g.dropped and __osc_all(g.tanks, function(t)
-                        return not t:IsUnitState('Attached') and __osc_from(t, g.drop[1], g.drop[2]) <= 8 end) then
+                        return not t:IsUnitState('Attached') and __osc_from(t, g.drop[1], g.drop[2]) <= g.reach end) then
                     g.dropped = GetGameTick()
                     g.home_by = nil
                 end
@@ -17580,11 +17619,12 @@ void test_ferry(TestContext& ctx) {
         end
     )");
 
-    // A tank that comes later goes on the next trip.
+    // A tank that comes later goes on the next trip: the first trip's tanks
+    // stand at the drop-off, so its unload settles a ring out from it.
     lua_check("setup: a latecomer", R"(
         __osc_late = {__osc_spawn('uel0201', 'ARMY_1', 585, 98)}
         IssueTransportLoad(__osc_late, __osc_beacon)
-        __osc_follow('late', __osc_late)
+        __osc_follow('late', __osc_late, nil, nil, 12)
     )");
     tick_until([&] { run(1); }, "the ferry sets the latecomer down", 800,
                [&] { return lua_true(ctx.lua_state, "__osc_groups.late.dropped"); });
@@ -17593,6 +17633,12 @@ void test_ferry(TestContext& ctx) {
         if not (g.waited and g.boarded and g.dropped) then
             error(string.format('waited %s, boarded %s, dropped %s', tostring(g.waited),
                                 tostring(g.boarded), tostring(g.dropped)))
+        end
+        for _, f in __osc_first do
+            local p = f:GetPosition()
+            if __osc_from(__osc_late[1], p[1], p[3]) < 1 then
+                error('set down on a tank of the first trip')
+            end
         end
     )");
 
