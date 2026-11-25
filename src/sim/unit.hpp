@@ -588,9 +588,11 @@ public:
     /// Sim::RemoveCommandFromUnitQueue: order `id` off the queue, or the rally
     /// orders; the work of a head order stops as Stop stops it.
     void remove_command(u32 id, SimContext& ctx);
-    /// IncreaseBuildCountInQueue: `count` more of the index-th group of its
-    /// factory queue (1-based, as factory_queue() groups it), after the
-    /// group's last order. An index past the queue changes nothing.
+    /// Where the index-th group of factory_queue() (1-based) has its last
+    /// factory build, which Moho's IncreaseBuildCountInQueue puts more before.
+    std::optional<size_t> group_factory_build(int index) const;
+    /// The engine's IncreaseBuildCountInQueue of recordings before inserts:
+    /// that order's count raised by `count`.
     void increase_build_count(int index, int count);
     /// A factory's build under way is cancelled, as Moho's ~CFactoryBuildTask ends it unfinished.
     void cancel_factory_build(EntityRegistry& registry, lua_State* L);
@@ -633,6 +635,10 @@ public:
         return &command_queue_[i];
     }
     void push_command(const UnitCommand& cmd, bool clear_existing);
+    /// Moho's InsertCommandToQueue at FindCommandIndex(cmd.insert_before), or
+    /// nothing. Ahead of a head under way its task runs on, and Moho's
+    /// dispatch then ends the head it finds.
+    void insert_command(UnitCommand cmd);
     /// `cmd` at the back of the queue as it is (NotifyUpgrade's copy of an
     /// old unit's orders, a patrol's points in their order).
     void append_command(const UnitCommand& cmd) { command_queue_.push_back(cmd); }
@@ -1880,6 +1886,9 @@ private:
     /// Whether a task the unit cap or a pause stopped still waits, counting
     /// its task_wait down (it tries again once that runs out).
     static bool waits_out_task(UnitCommand& cmd);
+    /// Moho's CFactoryBuildTask::Execute ends unfinished once its command is
+    /// gone, deleted in the Sync after it left every queue.
+    static bool lost_work(UnitCommand& cmd, SimContext& ctx);
     /// Whether the unit is paused, `cmd` then waiting kTaskRetryTicks.
     bool waits_paused(UnitCommand& cmd) const;
     /// A build its army's unit cap stopped: the order `command_id` (if

@@ -369,6 +369,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.id(c.target_id);
     w.str(c.blueprint_id);
     w.u32v(c.command_id);
+    w.u32v(c.insert_before);
     w.str(c.formation);
     w.b(c.has_facing);
     w.f32v(c.facing);
@@ -407,6 +408,8 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.i32v(c.sacrifice_wait);
     w.i32v(c.count);
     w.i32v(c.max_count);
+    w.u32v(c.work_order);
+    w.u32v(c.work_order_gone);
     w.ids(c.launch_queue);
     w.i32v(c.launch_wait);
     enum8(w, c.dock_phase);
@@ -440,6 +443,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.target_id = r.id();
     c.blueprint_id = r.str();
     c.command_id = r.u32v();
+    c.insert_before = r.u32v();
     c.formation = r.str();
     c.has_facing = r.b();
     c.facing = r.f32v();
@@ -478,6 +482,8 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.sacrifice_wait = r.i32v();
     c.count = r.i32v();
     c.max_count = r.i32v();
+    c.work_order = r.u32v();
+    c.work_order_gone = r.u32v();
     c.launch_queue = r.ids();
     c.launch_wait = r.i32v();
     c.dock_phase = enum8<DockPhase>(r);
