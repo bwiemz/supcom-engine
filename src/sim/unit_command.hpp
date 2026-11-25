@@ -161,6 +161,9 @@ struct UnitCommand {
     EntityId target_id{};       // entity ID for Attack/Guard
     std::string blueprint_id;   // for Build commands (empty for non-build)
     u32 command_id = 0;         // unique ID for IsCommandsActive tracking
+    /// Moho's mIndex: the id of the queued order this one goes in before;
+    /// with its top byte 0xFF, to the back.
+    u32 insert_before = 0xFFFFFFFFu;
     /// A group order's formation (a /lua/formations.lua function, e.g.
     /// AttackFormation): the sim lays its units out in slots about the target
     /// when it applies the order (M204). Empty: every unit to the target.
@@ -209,11 +212,17 @@ struct UnitCommand {
     u32 task_serial = 0;
     /// A factory build's units still to make, and the most it has been
     /// raised to (Moho's CUnitCommand mCount and mMaxCount; BuildFactory
-    /// only). An issued order is one unit; only IncreaseBuildCountInQueue
-    /// raises one, and a repeating factory's order goes round the queue
-    /// whole, its count back at the most.
+    /// only). An issued order is one unit; only an IncreaseBuildCountInQueue
+    /// recorded before inserts raises one, and a repeating factory's order
+    /// goes round the queue whole, its count back at the most.
     i32 count = 1;
     i32 max_count = 1;
+    /// The order a factory build under way was started for, once an order put
+    /// in ahead took its place (Moho's CFactoryBuildTask holds its own); 0:
+    /// this one. And the beat the sim first found that order in no queue.
+    /// Runtime state.
+    u32 work_order = 0;
+    u32 work_order_gone = 0;
     /// A factory command (Moho's IssueFactoryCommand, M206k): it goes to the
     /// units' rally orders, not their queues, and a fresh one clears those.
     /// A player's move, patrol or transport call to a selected factory.

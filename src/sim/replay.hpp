@@ -26,8 +26,8 @@ struct Replay {
     // 14: the game's random stream; 15: a formation's Move or FormMove;
     // 16: the game's pathing (--moho-pathing); 17: beats, not ticks, and
     // pauses held until a resume command; 18: entity keys; 19: the game's
-    // civilian armies
-    static constexpr u32 kVersion = 19;
+    // civilian armies; 20: an order's place in its queue (Moho's mIndex)
+    static constexpr u32 kVersion = 20;
 
     u32 version = kVersion;
     u32 final_beat = 0;               // last beat the recording covers

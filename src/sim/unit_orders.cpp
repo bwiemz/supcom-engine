@@ -1681,6 +1681,10 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
 OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
+    if (cmd.type == CommandType::BuildFactory && lost_work(cmd, ctx)) {
+        remove_command(cmd.command_id, ctx);
+        return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+    }
     // A factory whose unit is done keeps the order while it rolls the unit
     // off (holds_for_rolloff), and only then goes on to its next.
     if (cmd.rolloff_wait > 0) {
@@ -1740,6 +1744,18 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
     return OrderStep::Hold;
 }
 
+bool Unit::lost_work(UnitCommand& cmd, SimContext& ctx) {
+    if (cmd.work_order == 0 || !ctx.sim) {
+        return false;
+    }
+    const u32 now = ctx.sim->beat_count();
+    if (cmd.work_order_gone == 0 && !ctx.sim->command_queued(cmd.work_order)) {
+        cmd.work_order_gone = now;
+    }
+    const bool executes = cmd.rolloff_wait > 0 ? cmd.rolloff_wait == 1 : cmd.task_wait <= 1;
+    return cmd.work_order_gone != 0 && cmd.work_order_gone < now && executes;
+}
+
 bool Unit::waits_out_task(UnitCommand& cmd) {
     if (cmd.task_wait <= 0) {
         return false;
@@ -1786,11 +1802,15 @@ OrderStep Unit::end_factory_build_order(UnitCommand& cmd) {
         cmd.rolloff_wait = 0;
         cmd.task_wait = 0;
         cmd.begun = false;
+        cmd.work_order = 0;
+        cmd.work_order_gone = 0;
         return OrderStep::Next;
     }
     if (repeat_queue_) {
         auto finished = std::move(cmd); // cmd is the element pop_front destroys
         finished.rolloff_wait = 0;
+        finished.work_order = 0;
+        finished.work_order_gone = 0;
         finished.count = std::max(finished.max_count, 1);
         command_queue_.pop_front();
         command_queue_.push_back(std::move(finished));

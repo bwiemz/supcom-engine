@@ -129,6 +129,7 @@ void write_command(ByteWriter& w, const ScheduledCommand& c) {
     }
     w.u8v(c.command.factory ? 1 : 0);
     w.str(c.command.script_args);
+    w.u32v(c.command.insert_before);
     w.u32v(static_cast<u32>(c.unit_ids.size()));
     for (const EntityId id : c.unit_ids) {
         w.u64v(id.key());
@@ -157,7 +158,7 @@ void write_command(ByteWriter& w, const ScheduledCommand& c) {
 
 bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool with_formation,
                   bool with_unload, bool with_factory, bool with_value, bool with_script,
-                  bool with_lua_args, bool with_form_move, bool with_keys) {
+                  bool with_lua_args, bool with_form_move, bool with_keys, bool with_insert) {
     c = ScheduledCommand{};
     c.exec_beat = r.u32v();
     c.source = r.u32v();
@@ -185,6 +186,9 @@ bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool w
     }
     if (with_factory) c.command.factory = r.u8v() != 0;
     if (with_script) c.command.script_args = r.str();
+    if (with_insert) {
+        c.command.insert_before = r.u32v();
+    }
     const u32 n = r.u32v();
     for (u32 i = 0; i < n && r.ok(); ++i) {
         c.unit_ids.push_back(read_id(r, with_keys));
