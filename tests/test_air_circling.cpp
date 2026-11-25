@@ -298,6 +298,44 @@ TEST_CASE("circling_draws: Moho's re-pick, only past its timeout", "[air_circlin
     CHECK(a.next_u32() == b.next_u32());
 }
 
+TEST_CASE("circling_draws: the height and the radius are CRandomStream::FRand's",
+          "[air_circling]") {
+    AirCombatRules r;
+    AirCombatState st;
+    SimRandom rng;
+    rng.set_mt19937(true);
+    rng.seed(15);
+    circling_draws(st, r, 10.0f, 1, rng);
+    CHECK(st.circle_reverse);
+    CHECK(st.circle_elevation == 0x1.916208p+0f);
+    CHECK(st.circle_radius_ratio == 0x1.4eadacp-1f);
+    CHECK(st.timeout_tick == 32u);
+}
+
+TEST_CASE("circling_steer in Moho's float order: Wm3's normalizing, MultQuadVec by its yaw "
+          "quaternions, VecSetLength",
+          "[air_circling]") {
+    const auto flat = terrain(128, false);
+    CirclingInput in;
+    in.position = {50.3f, 31.7f, 40.2f};
+    in.center = {57.9f, 0.0f, 63.1f};
+    in.radius = 11.37f;
+    in.min_airspeed = 8.0f;
+    in.max_airspeed = 8.0f;
+    in.height = 3.2f;
+    const auto right = osc::sim::circling_steer(in, flat.get());
+    CHECK(right.toward.x == 0x1.428b3cp-2f);
+    CHECK(right.toward.z == 0x1.e5f008p-1f);
+    CHECK(right.velocity.x == 0x1.50fb18p+1f);
+    CHECK(right.velocity.y == -0x1.9a50dp+2f);
+    CHECK(right.velocity.z == 0x1.ff73fp+1f);
+    in.reverse = true;
+    const auto left = osc::sim::circling_steer(in, flat.get());
+    CHECK(left.velocity.x == 0x1.1d79fp-2f);
+    CHECK(left.velocity.y == -0x1.9a50dp+2f);
+    CHECK(left.velocity.z == 0x1.31b924p+2f);
+}
+
 TEST_CASE("circling_steer: a step round the circle, at its height over the terrain there",
           "[air_circling]") {
     const auto slope = terrain(128, true);

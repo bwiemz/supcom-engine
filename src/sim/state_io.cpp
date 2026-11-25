@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 129; // 2: entities' wanted loops (M216b);
+constexpr u32 kVersion = 130; // 2: entities' wanted loops (M216b);
                               // 3: emitter overrides (M214d);
                               // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                               // 6: weapons' lead physics;
@@ -175,6 +175,8 @@ constexpr u32 kVersion = 129; // 2: entities' wanted loops (M216b);
                               // 127: an attack's back-off wait and its target's point at its
                               //      last goal; a navigator's goal of cells
                               // 129: where a build arm's reference bone stood in the last pose
+                              // 130: fliers' inertia tensors; their angular momentum
+                              //      with their mass, as SPhysBody's
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a

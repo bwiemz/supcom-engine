@@ -64,14 +64,6 @@ Quaternion turned_toward(const Quaternion& q, const Vector3& toward, f32 angle);
 /// give, its up axis `up_y` high and `height` over its floor.
 f32 winged_lift(f32 want, f32 up_y, f32 lift_factor, f32 half_elevation, f32 height);
 
-/// One step of ComputeAirControl's vertical axis, integrated as
-/// SPhysBody::IntegrateFreefallStep: `velocity` and the rise it makes.
-struct LiftStep {
-    f32 velocity = 0.0f;
-    f32 rise = 0.0f;
-};
-LiftStep lift_step(f32 velocity, f32 steer, f32 k_lift, f32 k_lift_damping, f32 load, f32 dt);
-
 /// CalcMoveAir's ground to fly over: toward `look_ahead`, by at most
 /// LiftFactor a second up and half that down, or the whole of it landing.
 f32 next_lift_ground(f32 ground, f32 look_ahead, f32 lift_factor, f32 dt, bool landing = false);
@@ -82,14 +74,6 @@ f32 rising_ground_slowdown(f32 clearance, f32 half_speed);
 
 /// CalcAirMovementDampingFactor.
 f32 air_move_damping(f32 control, f32 top, f32 k_move, f32 k_move_damping);
-
-/// ComputeAirControl's level axes, integrated as SPhysBody::IntegrateFreefallStep.
-struct AirMoveStep {
-    Vector3 velocity{};
-    Vector3 move{};
-};
-AirMoveStep air_move_step(const Vector3& velocity, const Vector3& force, f32 k_move, f32 damping,
-                          f32 dt);
 
 /// The axes an aircraft's controller steers toward: its up and its nose.
 struct AirAxes {
@@ -109,11 +93,11 @@ AirAxes winged_axes(const Vector3& nose, const Vector3& selected, f32 limited, f
 AirAxes hover_axes(const Quaternion& body, Vector3 dv, f32 bank_factor, bool bank_forward,
                    f32 elevation_ratio, const Vector3& facing);
 
-/// VAxes3::OrthoNormalize of `axes`, as an orientation.
+/// VAxes3::OrthoNormalize of `axes` and MatrixColumnsToQuatCanonical.
 Quaternion attitude_of(const AirAxes& axes);
 
-/// ComputeAirControl's rotation error: the turn from `body` to `wanted`, as
-/// axis x angle in the body's axes.
+/// ComputeAirControl's rotation error from `body` to `wanted`, through QuatToAxisAndAngle:
+/// axis x angle.
 Vector3 attitude_error(const Quaternion& body, const Quaternion& wanted);
 
 /// `v` in the axes of `body`.
@@ -122,33 +106,72 @@ Vector3 to_body(const Quaternion& body, const Vector3& v);
 /// REntityBlueprint's inertia tensor for a box of these sizes, per unit mass.
 Vector3 box_inertia(f32 size_x, f32 size_y, f32 size_z);
 
-/// The angular velocity, in body axes, of a body of `inertia` turning with
-/// angular momentum `momentum` (world axes).
-Vector3 body_spin(const Quaternion& body, const Vector3& momentum, const Vector3& inertia);
+/// Entity::GetPhysBody's mass and inverse inertia, 1 / (`inertia` x mass); a box's inertia when
+/// the blueprint's has a zero.
+struct BodyMass {
+    f32 mass = 1.0f;
+    Vector3 inv_inertia{1.0f, 1.0f, 1.0f};
+};
+BodyMass body_mass(f32 density, f32 size_x, f32 size_y, f32 size_z, const Vector3& inertia);
 
-/// The angular momentum of a body of `inertia` turning at `spin` (world axes).
-Vector3 momentum_of(const Quaternion& body, const Vector3& spin, const Vector3& inertia);
+/// The angular velocity, in body axes, of a body turning with angular momentum `impulse`
+/// (world axes).
+Vector3 body_spin(const Quaternion& body, const Vector3& impulse, const Vector3& inv_inertia);
 
-/// SPhysBody::IntegrateAngularImpulse for a body-axes angular acceleration
-/// `accel`, its angular momentum per unit mass `momentum` in world axes.
+/// The angular momentum, in world axes, of a body turning at `spin` (world axes).
+Vector3 momentum_of(const Quaternion& body, const Vector3& spin, const Vector3& inv_inertia);
+
+/// Moho's SPhysBody for a flier: its centre (its collision box's), orientation, velocity and
+/// angular momentum in world axes.
+struct PhysBody {
+    BodyMass mass;
+    Vector3 centre{};
+    Quaternion orientation{};
+    Vector3 velocity{};
+    Vector3 impulse{};
+};
+
+/// ComputeAirControl's gains, the lift, turn and roll ones over the transport load; `damping` is
+/// CalcAirMovementDampingFactor's.
+struct AirGains {
+    f32 k_move = 1.0f;
+    f32 k_lift_damping = 1.0f;
+    f32 lift = 1.0f;
+    f32 turn = 1.0f;
+    f32 roll = 1.0f;
+    f32 k_turn_damping = 1.0f;
+    f32 k_roll_damping = 1.0f;
+    f32 damping = 1.0f;
+};
+
+/// ComputeAirControl's force and world-axes torque on `body`, steered by `steer` toward
+/// `wanted`.
+struct AirControl {
+    Vector3 force{};
+    Vector3 torque{};
+};
+AirControl air_control_of(const PhysBody& body, const Quaternion& wanted, const Vector3& steer,
+                          const AirGains& gains);
+
+/// SPhysBody::IntegrateFreefallStep: velocity and centre under `force` and gravity, then
+/// IntegrateAngularImpulse under `torque`.
+void integrate_freefall(PhysBody& body, const Vector3& force, const Vector3& torque, f32 dt);
+
+/// SPhysBody::IntegrateAngularImpulse: angular momentum `impulse` (world axes) under `torque`,
+/// and the orientation turned by its mean over the step.
 struct SpinStep {
     Quaternion orientation{};
     Vector3 momentum{};
 };
-SpinStep air_spin_step(const Quaternion& body, const Vector3& momentum, const Vector3& inertia,
-                       const Vector3& accel, f32 dt);
-
-/// SPhysBody::IntegrateAngularImpulse for a world-axes torque per unit mass `torque`.
-SpinStep air_torque_step(const Quaternion& body, const Vector3& momentum, const Vector3& inertia,
-                         const Vector3& torque, f32 dt);
+SpinStep integrate_angular_impulse(const Quaternion& body, const Vector3& impulse,
+                                   const Vector3& inv_inertia, const Vector3& torque, f32 dt);
 
 /// CalcMoveAir's tumble for an aircraft killed in flight: each axis' draw is in +-h, h the
-/// body's inverse inertia, 1 / (mass x `inertia`), clamped to [0.25, 4] (a NaN to 0.25).
-Vector3 tumble_range(f32 mass, const Vector3& inertia);
+/// axis' inverse inertia clamped to [0.25, 4] (a NaN to 0.25).
+Vector3 tumble_range(const Vector3& inv_inertia);
 
-/// The tumble's torque per unit mass in world axes for the draws `drawn`: each over its axis'
-/// inverse inertia, turned by `body`. A massless body's is none.
-Vector3 tumble_torque(const Quaternion& body, f32 mass, const Vector3& inertia,
-                      const Vector3& drawn);
+/// The tumble's torque in world axes for the draws `drawn`: each over its axis' inverse
+/// inertia, turned by `body`.
+Vector3 tumble_torque(const Quaternion& body, const Vector3& inv_inertia, const Vector3& drawn);
 
 } // namespace osc::sim

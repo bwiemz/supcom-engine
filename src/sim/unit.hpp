@@ -36,6 +36,7 @@ class Terrain;
 
 namespace osc::sim {
 
+struct BodyMass;
 struct SimContext;
 class ArmyBrain;
 class EntityRegistry;
@@ -1074,17 +1075,16 @@ public:
                           bool landing = false);
     f32 lift_ground() const { return lift_ground_; }
     u32 next_lift_tick() const { return lift_tick_ + 1; }
-    /// Its height after a step climbing toward `want` over it, under KLift
-    /// and KLiftDamping (ComputeAirControl), its wings' lift if winged; not
-    /// under `floor_after`.
-    f32 lift_toward(f32 want, bool winged, f32 floor_after, const map::Terrain* terrain,
-                    const EntityRegistry* registry, f32 dt);
+    /// The climb ComputeAirControl steers toward: `want`, or for a winged aircraft what its
+    /// wings give of it (CalcWingedLift).
+    f32 lift_steer(f32 want, bool winged, const map::Terrain* terrain) const;
     /// Moho's CalcTransportLoadFactor: its mass with its cargo's over its own
     /// (1 on FAF's data, as FAF's exe answers).
     f32 transport_load_factor(const EntityRegistry& registry) const;
     void reset_lift_ground() { lift_ground_set_ = false; }
     const Vector3& air_velocity() const { return air_velocity_; }
     f32 lift_velocity() const { return lift_velocity_; }
+    void set_lift_velocity(f32 v);
     void set_air_velocity(const Vector3& v) {
         air_dv_.x = v.x - air_velocity_.x;
         air_dv_.z = v.z - air_velocity_.z;
@@ -1092,7 +1092,7 @@ public:
     }
     /// Its last tick's change of velocity (CalcHoverOrientation's).
     const Vector3& air_dv() const { return air_dv_; }
-    /// Its angular momentum per unit mass, in world axes.
+    /// Its SPhysBody's angular momentum, in world axes.
     const Vector3& air_spin() const { return air_spin_; }
     void set_air_spin(const Vector3& w) { air_spin_ = w; }
     /// Its turn rate about the vertical, and its spin set to just that.
@@ -1413,6 +1413,9 @@ public:
     f32 size_x() const { return size_x_; }
     f32 size_z() const { return size_z_; }
     void set_average_density(f32 d) { average_density_ = d; }
+    void set_inertia_tensor(const Vector3& t) { inertia_tensor_ = t; }
+    /// Its SPhysBody's mass and inverse inertia.
+    BodyMass body_mass() const;
     /// Size x density: a transport picks up the largest first (M206m).
     f32 load_metric() const { return size_x_ * size_y_ * size_z_ * average_density_; }
 
@@ -2333,6 +2336,7 @@ private:
     // a transport picks up its largest units first.
     f32 size_x_ = 1.0f, size_y_ = 1.0f, size_z_ = 1.0f;
     f32 average_density_ = 0.49f;
+    Vector3 inertia_tensor_{};
     Vector3 motion_velocity_{}; ///< CUnitMotion's mVelocity, a tick's step
     /// CUnitMotion's mPos: the node it last stood on, or where it coasted to, before the
     /// ground snap; a node's velocity is the step from it.
