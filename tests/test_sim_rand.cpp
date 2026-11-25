@@ -214,7 +214,8 @@ TEST_CASE("Sim scripts' Random draws from the session's seeded stream", "[simran
     }
     SimRandom expect(7);
     SimLua c(7);
-    CHECK(c.number("return Random()") == expect.next_double());
+    CHECK(c.number("return Random()") ==
+          static_cast<double>(static_cast<float>(expect.next_double())));
     CHECK(c.number("return Random(1, 6)") == static_cast<double>(expect.next_int(1, 6)));
 
     for (int i = 0; i < 200; ++i) {
@@ -231,14 +232,16 @@ TEST_CASE("Sim scripts' Random draws from the session's seeded stream", "[simran
 TEST_CASE("Sim math.random is the session's stream; the UI's is its own", "[simrand][lua]") {
     SimLua sim(11);
     SimRandom expect(11);
-    CHECK(sim.number("return math.random()") == expect.next_double());
+    CHECK(sim.number("return math.random()") ==
+          static_cast<double>(static_cast<float>(expect.next_double())));
     CHECK(sim.number("return math.random(10)") == static_cast<double>(expect.next_int(1, 10)));
     CHECK(sim.number("return math.random(20, 30)") == static_cast<double>(expect.next_int(20, 30)));
 
     // math.randomseed reseeds it, as a script may to replay a sequence.
     sim.number("math.randomseed(123) return 0");
     SimRandom reseeded(123);
-    CHECK(sim.number("return math.random()") == reseeded.next_double());
+    CHECK(sim.number("return math.random()") ==
+          static_cast<double>(static_cast<float>(reseeded.next_double())));
 
     // The UI state's math.random never moves the sim's stream.
     const osc::u64 before = sim.sim.random().state();

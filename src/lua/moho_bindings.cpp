@@ -3935,12 +3935,13 @@ static int l_CurrentTime(lua_State* L) {
     return 1;
 }
 
-/// GetSystemTimeSeconds() → number (same as CurrentTime)
+/// GetSystemTimeSeconds() → seconds since the program started, as Moho's system timer
+/// (faf-re cfunc_GetSystemTimeSecondsL)
+static const auto kSystemTimerStart = std::chrono::steady_clock::now();
+
 static int l_GetSystemTimeSeconds(lua_State* L) {
     using namespace std::chrono;
-    auto now = high_resolution_clock::now().time_since_epoch();
-    double secs = duration<double>(now).count();
-    lua_pushnumber(L, secs);
+    lua_pushnumber(L, duration<double>(steady_clock::now() - kSystemTimerStart).count());
     return 1;
 }
 
