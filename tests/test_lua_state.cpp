@@ -300,7 +300,7 @@ TEST_CASE("LuaState bitwise operators (LuaPlus patch)", "[lua]") {
         prec2 = 1 | 1 << 2         -- 1 | 4 = 5
         prec3 = 1 << 1 + 1         -- 1 << 2 = 4
         cmp = (1 | 2) == 3
-        wide = 1 << 32             -- shifts of 32 or more give 0
+        wide = 1 << 32             -- the count wraps at 32, as x86's shift
         neg = -1 & 255             -- two's complement low byte
         str = "5" | 2              -- numeric strings convert, as in arithmetic
     )");
@@ -318,7 +318,7 @@ TEST_CASE("LuaState bitwise operators (LuaPlus patch)", "[lua]") {
     CHECK(num("prec1") == 3);
     CHECK(num("prec2") == 5);
     CHECK(num("prec3") == 4);
-    CHECK(num("wide") == 0);
+    CHECK(num("wide") == 1);
     CHECK(num("neg") == 255);
     CHECK(num("str") == 7);
 
@@ -351,6 +351,167 @@ TEST_CASE("LuaState hex literals (LuaPlus patch)", "[lua]") {
     lua_getglobal(state.raw(), "x");
     CHECK(lua_tonumber(state.raw(), -1) == 255);
     lua_pop(state.raw(), 1);
+}
+
+TEST_CASE("Lua arithmetic rounds each result to a float, as Moho's LuaPlus", "[lua]") {
+    LuaState state;
+    const auto result = state.do_string(R"(
+        local tenth, fifth, nine, one, three = 0.1, 0.2, 0.9, 1, 3
+        sum = tenth + fifth
+        difference = one - nine
+        product = tenth * three
+        quotient = one / three
+        past = 16777216 + one
+    )");
+    REQUIRE(result.ok());
+
+    CHECK(global_number(state.raw(), "sum") == 0.30000001192092896);
+    CHECK(global_number(state.raw(), "difference") == 0.10000002384185791);
+    CHECK(global_number(state.raw(), "product") == 0.30000001192092896);
+    CHECK(global_number(state.raw(), "quotient") == 0.3333333432674408);
+    CHECK(global_number(state.raw(), "past") == 16777216);
+}
+
+TEST_CASE("A numeric for loop steps its index as a float, as Moho's", "[lua]") {
+    LuaState state;
+    const auto result = state.do_string(R"(
+        steps, last = 0, nil
+        for i = 0.1, 1, 0.1 do
+            steps = steps + 1
+            last = i
+        end
+        big_steps, big_last = 0, nil
+        for i = 16777215, 16777220 do
+            big_steps = big_steps + 1
+            big_last = i
+            if big_steps > 10 then
+                break
+            end
+        end
+    )");
+    REQUIRE(result.ok());
+
+    CHECK(global_number(state.raw(), "steps") == 9);
+    CHECK(global_number(state.raw(), "last") == 0.90000009536743164);
+    CHECK(global_number(state.raw(), "big_steps") == 11);
+    CHECK(global_number(state.raw(), "big_last") == 16777216);
+}
+
+TEST_CASE("A number literal is the float nearest its text, as Moho's", "[lua]") {
+    LuaState state;
+    const auto result = state.do_string(R"(
+        tenth = 0.1
+        odd = 16777217
+        tiny = 4e-45
+        huge = 1e39
+        huge_doubles = huge == huge * 2
+    )");
+    REQUIRE(result.ok());
+
+    CHECK(global_number(state.raw(), "tenth") == static_cast<double>(0.1f));
+    CHECK(global_number(state.raw(), "odd") == 16777216);
+    CHECK(global_number(state.raw(), "tiny") == 4.2038953929744512e-45);
+    CHECK(global_bool(state.raw(), "huge_doubles"));
+}
+
+TEST_CASE("A hex literal is a lower-case 0x and up to eight digits, an int32, as Moho's", "[lua]") {
+    LuaState state;
+    const auto result = state.do_string(R"(
+        all = 0xffffffff
+        top = 0x7fffffff
+        sign = 0x80000000
+        mixed = 0xaB
+    )");
+    REQUIRE(result.ok());
+
+    CHECK(global_number(state.raw(), "all") == -1);
+    CHECK(global_number(state.raw(), "top") == 2147483648.0);
+    CHECK(global_number(state.raw(), "sign") == -2147483648.0);
+    CHECK(global_number(state.raw(), "mixed") == 171);
+    CHECK_FALSE(state.do_string("x = 0X10").ok());
+    CHECK_FALSE(state.do_string("x = 0x123456789").ok());
+}
+
+TEST_CASE("A numeric string reads as MSVC8's strtod into a float, as Moho's", "[lua]") {
+    LuaState state;
+    const auto result = state.do_string(R"(
+        tenth = tonumber("0.1")
+        odd = tonumber("16777217")
+        unread = tonumber("0x10") == nil and tonumber("inf") == nil and tonumber("nan") == nil
+        fortran = tonumber("1d2") + tonumber("1D2")
+        word = tonumber("ffffffff", 16)
+        negated = -"0.1"
+    )");
+    REQUIRE(result.ok());
+
+    CHECK(global_number(state.raw(), "tenth") == static_cast<double>(0.1f));
+    CHECK(global_number(state.raw(), "odd") == 16777216);
+    CHECK(global_bool(state.raw(), "unread"));
+    CHECK(global_number(state.raw(), "fortran") == 200);
+    CHECK(global_number(state.raw(), "word") == 4294967296.0);
+    CHECK(global_number(state.raw(), "negated") == -static_cast<double>(0.1f));
+
+    lua_pushstring(state.raw(), "0.1");
+    CHECK(lua_tonumber(state.raw(), -1) == static_cast<double>(0.1f));
+    lua_pop(state.raw(), 1);
+}
+
+TEST_CASE("lua_pushnumber hands Lua the float nearest a value, as Moho's; lua_pushdouble keeps it",
+          "[lua]") {
+    LuaState state;
+    lua_State* L = state.raw();
+    lua_pushnumber(L, 0.1);
+    CHECK(lua_tonumber(L, -1) == static_cast<double>(0.1f));
+    lua_pushnumber(L, 16777217.0);
+    CHECK(lua_tonumber(L, -1) == 16777216);
+    lua_pushdouble(L, 16777217.0);
+    CHECK(lua_tonumber(L, -1) == 16777217);
+    lua_pop(L, 3);
+}
+
+TEST_CASE("Bit operators wrap their shift count and give a float, as Moho's", "[lua]") {
+    LuaState state;
+    const auto result = state.do_string(R"(
+        all = 0xffffffff & 0xffffffff
+        low = 4294967040 | 0
+        wrapped = 1 << 32
+        wrapped_more = 1 << 33
+        right = 256 >> 33
+    )");
+    REQUIRE(result.ok());
+
+    CHECK(global_number(state.raw(), "all") == 4294967296.0);
+    CHECK(global_number(state.raw(), "low") == 4294967040.0);
+    CHECK(global_number(state.raw(), "wrapped") == 1);
+    CHECK(global_number(state.raw(), "wrapped_more") == 2);
+    CHECK(global_number(state.raw(), "right") == 128);
+}
+
+TEST_CASE("math.deg, math.rad and math.pi give Moho's floats", "[lua]") {
+    LuaState state;
+    const auto result = state.do_string(R"(
+        deg = math.deg(1)
+        rad = math.rad(1)
+        pi = math.pi
+    )");
+    REQUIRE(result.ok());
+
+    CHECK(global_number(state.raw(), "deg") == 57.295780181884766);
+    CHECK(global_number(state.raw(), "rad") == 0.01745329238474369);
+    CHECK(global_number(state.raw(), "pi") == 3.1415927410125732);
+}
+
+TEST_CASE("GetSystemTimeSeconds counts from the program's start, as Moho's system timer", "[lua]") {
+    LuaState state;
+    osc::sim::SimState sim(state.raw(), nullptr);
+    osc::ui::UIControlRegistry ui_registry;
+    register_moho_bindings(state, sim);
+    register_ui_bindings(state, ui_registry);
+
+    REQUIRE(state.do_string("t = GetSystemTimeSeconds()").ok());
+    const double t = global_number(state.raw(), "t");
+    CHECK(t >= 0.0);
+    CHECK(t < 86400.0);
 }
 
 TEST_CASE("LuaState per-type metatables (LuaPlus patch)", "[lua]") {

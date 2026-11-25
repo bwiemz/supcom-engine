@@ -477,7 +477,7 @@ TEST_CASE("FindPlaceToBuild adds the builder's height to every distance, as Moho
     w.engineer->place_now();
     CHECK(w.site("moho.aibrain_methods.FindPlaceToBuild(brain, 'OscSite', 'ueb1101', "
                  "{{{'OscSite'}, {41, 41, 0}, {41.41, 40, 0}}}, false, engineer)") ==
-          (high ? "41 41" : "41.41 40"));
+          (high ? "41 41" : "41.409999847412 40"));
 }
 
 TEST_CASE("FindPlaceToBuild raises Moho's errors for its arguments", "[brain][build]") {

@@ -206,11 +206,11 @@ int ThreadManager::fork_thread(lua_State* L) {
     int wrapper = lua_gettop(L);
 
     lua_pushstring(L, "_c_ref");
-    lua_pushnumber(L, ref);
+    lua_pushdouble(L, ref);
     lua_rawset(L, wrapper);
     // Which thread, not only which ref: refs are reused (see kill_thread).
     lua_pushstring(L, "_c_serial");
-    lua_pushnumber(L, static_cast<lua_Number>(entry.serial));
+    lua_pushdouble(L, static_cast<lua_Number>(entry.serial));
     lua_rawset(L, wrapper);
 
     // Get or create the shared "__osc_thread_mt" metatable

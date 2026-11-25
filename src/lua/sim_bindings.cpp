@@ -2294,7 +2294,7 @@ static void push_ieffect_table(lua_State* L, sim::IEffect* fx) {
     lua_newtable(L); // the effect table
 
     lua_pushstring(L, "_c_effect_id");
-    lua_pushnumber(L, fx->id());
+    lua_pushdouble(L, fx->id());
     lua_rawset(L, -3);
 
     // Set metatable: cached __osc_ieffect_mt in registry

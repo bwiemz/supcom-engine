@@ -89,7 +89,7 @@ void test_destroyed_handle(TestContext& ctx) {
         "end)\n",
         sx, y(sx, sz), sz, sz + 10));
     const std::string now = global_string(ctx, "__osc_dh_now");
-    t.check(now == "true ueb1101 0.6 true 1",
+    t.check(now == "true ueb1101 0.60000002384186 true 1",
             "destroyed, it still reads as itself: BeenDestroyed, blueprint, id, army (" + now +
                 ")");
     t.check(!handle_cut(ctx, "__osc_dh_nav") && !handle_cut(ctx, "__osc_dh_weapon") &&

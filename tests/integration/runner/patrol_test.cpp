@@ -74,12 +74,12 @@ void test_patrol(TestContext& ctx) {
                         "'/env/Crystalline/Props/Rocks/CrysCrystal01_prop.bp')\n"
                         "local r = CreateProp({{{3}, {4}, {5}}}, "
                         "'/env/RedRocks/Props/Rock_SM01_prop.bp')\n"
-                        "__osc_pt_crystal = tonumber(c:GetEntityId())\n"
-                        "__osc_pt_rock = tonumber(r:GetEntityId())\n"
+                        "__osc_pt_crystal = c:GetEntityId()\n"
+                        "__osc_pt_rock = r:GetEntityId()\n"
                         "__osc_pt_reclaims = {{}}\n"
                         "local start = __osc_pt_eng.OnStartReclaim\n"
                         "__osc_pt_eng.OnStartReclaim = function(self, target)\n"
-                        "    table.insert(__osc_pt_reclaims, tonumber(target:GetEntityId()))\n"
+                        "    table.insert(__osc_pt_reclaims, target:GetEntityId())\n"
                         "    return start(self, target)\n"
                         "end\n",
                         sx + 10, y(sx + 10, sz + 6), sz + 6, sx - 5, y(sx - 5, sz + 3), sz + 3));
@@ -101,13 +101,14 @@ void test_patrol(TestContext& ctx) {
         },
         "the patrolling engineer reclaims the crystal", 6000,
         [&] { return !prop_of(ctx, crystal); });
-    run_lua(ctx, fmt::format("__osc_pt_got = ''\n"
-                             "for _, id in __osc_pt_reclaims do\n"
-                             "    if id == {0} then __osc_pt_got = __osc_pt_got .. 'crystal ' end\n"
-                             "    if id == {1} then __osc_pt_got = __osc_pt_got .. 'rock ' end\n"
-                             "end\n",
-                             osc::sim::EntityRegistry::moho_id(crystal),
-                             osc::sim::EntityRegistry::moho_id(rock)));
+    run_lua(ctx,
+            fmt::format("__osc_pt_got = ''\n"
+                        "for _, id in __osc_pt_reclaims do\n"
+                        "    if id == '{0}' then __osc_pt_got = __osc_pt_got .. 'crystal ' end\n"
+                        "    if id == '{1}' then __osc_pt_got = __osc_pt_got .. 'rock ' end\n"
+                        "end\n",
+                        osc::sim::EntityRegistry::moho_id(crystal),
+                        osc::sim::EntityRegistry::moho_id(rock)));
     lua_pushstring(ctx.L, "__osc_pt_got");
     lua_rawget(ctx.L, LUA_GLOBALSINDEX);
     const std::string got = lua_isstring(ctx.L, -1) ? lua_tostring(ctx.L, -1) : "";
