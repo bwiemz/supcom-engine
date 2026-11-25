@@ -38,6 +38,7 @@ namespace osc::sim {
 
 struct BodyMass;
 struct SimContext;
+struct StructureSite;
 class ArmyBrain;
 class EntityRegistry;
 class SimRandom;
@@ -1776,6 +1777,7 @@ private:
     /// place nearest the site clear of its skirt grown by a cell, else the
     /// point toward the unit where its own cell clears it.
     Vector3 build_place(const Vector3& site, f32 skirt_x, f32 skirt_z, SimContext& ctx) const;
+    Vector3 build_place(const Vector3& site, const StructureSite& skirt, SimContext& ctx) const;
     /// Where a reclaim of `target` is done from: Moho's CUnitReclaimTask
     /// takes the place nearest the unit whose cell doesn't touch the
     /// target's cells (PrepareMove(1)), else the target's position.
