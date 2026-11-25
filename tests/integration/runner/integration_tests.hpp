@@ -250,6 +250,7 @@ void test_need_unpack(TestContext& ctx);
 void test_weapon_retarget(TestContext& ctx);
 void test_guard_engage(TestContext& ctx);
 void test_rebuilder_guard(TestContext& ctx);
+void test_guard_abort(TestContext& ctx);
 void test_mobile_build_start(TestContext& ctx);
 void test_assist_beam(TestContext& ctx);
 void test_build_site_join(TestContext& ctx);

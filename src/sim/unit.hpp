@@ -1911,7 +1911,25 @@ private:
     /// or nothing while the guard goes on as before. `ref` is what it
     /// guards: the guarded unit's position, or the point.
     std::optional<OrderStep> guard_engage(UnitCommand& cmd, const Unit* guarded, const Vector3& ref,
-                                          SimContext& ctx);
+                                          SimContext& ctx, bool& looks);
+    /// Moho's CUnitGuardTask::GetBestEnemy and SetEnemy.
+    std::optional<OrderStep> guard_look(UnitCommand& cmd, const Unit* guarded, const Vector3& ref,
+                                        SimContext& ctx);
+    std::optional<OrderStep> guard_runs(UnitCommand& cmd, Unit& ward, bool looked, SimContext& ctx);
+    /// Moho's CUnitGuardTask constructor's flag.
+    bool guard_ward_unfinished(const UnitCommand& cmd, EntityRegistry& registry) const;
+    /// Moho's CUnitGuardTask::ShouldAbortGuardForBuilderContext.
+    bool guard_ends_for_builder(const UnitCommand& cmd, Unit* ward, SimContext& ctx);
+    bool guard_finds_work(Unit* ward, const Vector3& point, SimContext& ctx);
+    /// Moho's CUnitGuardTask::TryResolveGuardBuildBlueprint.
+    const UnitCommand* guard_build_to_take_up(const Unit& ward, SimContext& ctx) const;
+    /// Moho's CUnitGuardTask::DispatchMobileBuildTask.
+    OrderStep take_up_guard_build(UnitCommand& cmd, const Unit& ward, const UnitCommand& build);
+    /// Moho's CUnitGuardTask::SelectAssistOrCaptureCandidateUnit.
+    bool guard_ward_needs_help(Unit& ward, SimContext& ctx) const;
+    /// Moho's CUnitGuardTask::SelectAssistOrCaptureCandidateUnit.
+    bool guard_point_finds_work(const Vector3& point, SimContext& ctx) const;
+    OrderStep end_guard();
     /// A Guard of a point: go there, and take on enemies near it.
     OrderStep order_guard_point(UnitCommand& cmd, SimContext& ctx);
     /// Head for `goal`, setting a new path only when it moved by a unit.
@@ -1940,7 +1958,6 @@ private:
     /// first.
     OrderStep order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff,
                                         Unit& target, bool task_waits = false);
-    /// Help with what the guarded unit works on, or follow it. Never ends.
     OrderStep order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// A factory guarding a factory takes work from its queue (Moho's guard
     /// task for an immobile FACTORY, TryDispatchFactoryOrUpgradeFromGuardQueues).

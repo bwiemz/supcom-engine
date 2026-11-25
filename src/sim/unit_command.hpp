@@ -332,6 +332,8 @@ struct UnitCommand {
     /// An engineer guarding a factory has walked up to it (Moho's guard
     /// task's Preparing). Runtime state.
     bool guard_prepared = false;
+    /// Moho's CUnitGuardTask constructor's flag.
+    bool guard_ward_unfinished = false;
     /// What a patrol leg has gone to reclaim, not to be picked again on it
     /// (Moho's patrol task's entity set). Runtime state.
     std::vector<EntityId> patrol_claimed;

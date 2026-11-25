@@ -285,8 +285,9 @@ void Unit::prune_upgrade_chain(lua_State* L) {
 void Unit::remove_command(u32 id, SimContext& ctx) {
     EntityRegistry& registry = ctx.registry;
     lua_State* L = ctx.L;
-    const auto it = std::find_if(command_queue_.begin(), command_queue_.end(),
-                                 [&](const UnitCommand& c) { return c.command_id == id; });
+    const auto it =
+        std::find_if(command_queue_.begin(), command_queue_.end(),
+                     [&](const UnitCommand& c) { return c.command_id == id && !c.from_guard; });
     if (it == command_queue_.end()) {
         rally_orders_.erase(
             std::remove_if(rally_orders_.begin(), rally_orders_.end(),
@@ -294,9 +295,15 @@ void Unit::remove_command(u32 id, SimContext& ctx) {
             rally_orders_.end());
         return;
     }
-    if (it != command_queue_.begin()) {
+    const bool heads = std::all_of(command_queue_.begin(), it, [&](const UnitCommand& c) {
+        return c.from_guard && c.command_id == id;
+    });
+    if (!heads) {
         command_queue_.erase(it);
         return;
+    }
+    while (command_queue_.front().from_guard) {
+        command_queue_.pop_front();
     }
     const bool factory_build = building_factory_order();
     const bool upgrade = upgrading();

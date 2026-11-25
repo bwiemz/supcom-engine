@@ -1073,3 +1073,29 @@ TEST_CASE("A settled drag formation shows each unit's ghost in its slot, facing 
     CHECK(input.formation_ghosts(*w.sim).empty());
     lua_close(L);
 }
+
+TEST_CASE("Taking a guard off its queue takes the build it runs for the guard with it",
+          "[order_edit][guard]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    Unit& ward = w.walker(30, 10);
+    UnitCommand own;
+    own.type = CommandType::BuildMobile;
+    own.blueprint_id = "ueb1101";
+    own.target_pos = {40, 0, 40};
+    own.command_id = 5;
+    own.from_guard = true;
+    UnitCommand guard;
+    guard.type = CommandType::Guard;
+    guard.target_id = ward.entity_id();
+    guard.command_id = 5;
+    UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {60, 0, 60};
+    move.command_id = 6;
+    a.push_command(own, true);
+    a.push_command(guard, false);
+    a.push_command(move, false);
+    w.sim->run_sim_callback(removal(5, {a.entity_id()}));
+    CHECK(ids_of(a) == std::vector<osc::u32>{6});
+}

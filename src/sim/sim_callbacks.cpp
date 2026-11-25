@@ -5,6 +5,7 @@
 #include "blueprints/blueprint_store.hpp"
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/blueprint_categories.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/lua_bytes.hpp"
 #include "sim/sim_console.hpp"
@@ -291,25 +292,6 @@ void set_command_type(SimState& sim, const SimCallbackEntry& cb) {
             }
         }
     });
-}
-
-/// Whether the blueprint `id` makes a unit that moves (Moho's IsMobile: a
-/// Physics.MotionType other than RULEUMT_None).
-bool blueprint_is_mobile(lua_State* L, const std::string& id) {
-    const int top = lua_gettop(L);
-    bool mobile = false;
-    if (blueprints::push_blueprint(L, id)) {
-        lua_pushstring(L, "Physics");
-        lua_rawget(L, -2);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "MotionType");
-            lua_rawget(L, -2);
-            mobile = lua_type(L, -1) == LUA_TSTRING &&
-                     std::string_view(lua_tostring(L, -1)) != "RULEUMT_None";
-        }
-    }
-    lua_settop(L, top);
-    return mobile;
 }
 
 /// Moho's Sim::CreateUnit for CMDST_CreateUnit (faf-re Sim.cpp 0x00748AA0):

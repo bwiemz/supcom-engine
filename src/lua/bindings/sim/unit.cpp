@@ -724,6 +724,9 @@ static int unit_GetCommandQueue(lua_State* L) {
     };
     int idx = 1;
     for (const auto& cmd : unit->command_queue()) {
+        if (cmd.from_patrol || cmd.from_guard) {
+            continue;
+        }
         lua_newtable(L);
         number("commandType", sim::moho_command_number(cmd));
         const sim::Entity* target =

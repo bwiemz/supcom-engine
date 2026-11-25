@@ -17,6 +17,7 @@
 #include "sim/prepare_move.hpp"
 #include "sim/script_class.hpp"
 #include "sim/sim_random.hpp"
+#include "sim/steering.hpp"
 #include "sim/work_range.hpp"
 #include "map/terrain.hpp"
 
@@ -625,8 +626,9 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
                 return true;
             }
             // Moho's dispatch makes no task for a build the unit may not make: the order goes.
-            if (command_queue_.front().type == CommandType::BuildMobile ||
-                command_queue_.front().type == CommandType::BuildFactory) {
+            if ((command_queue_.front().type == CommandType::BuildMobile ||
+                 command_queue_.front().type == CommandType::BuildFactory) &&
+                !command_queue_.front().from_guard) {
                 const u32 order = command_queue_.front().command_id;
                 const bool makes =
                     dispatch_makes_build_task(ctx.L, *this, command_queue_.front(), ctx);
@@ -649,7 +651,7 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
             continue;
         }
         UnitCommand& front = command_queue_.front();
-        if (front.from_patrol && front.patrol_scan > 0) {
+        if ((front.from_patrol || front.from_guard) && front.patrol_scan > 0) {
             --front.patrol_scan;
             return true;
         }
@@ -682,6 +684,9 @@ void Unit::begin_order(UnitCommand& cmd, SimContext& ctx) {
     }
     if (cmd.type == CommandType::Patrol || cmd.type == CommandType::AggressiveMove) {
         cmd.patrol_from = position();
+    }
+    if (cmd.type == CommandType::Guard) {
+        cmd.guard_ward_unfinished = guard_ward_unfinished(cmd, ctx.registry);
     }
     // Moho's capture task, and its wait at a ferry beacon, make the order's
     // target their unit's focus as they are made (CUnitCaptureTask's and
@@ -1626,6 +1631,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             call_lua_method(L, "OnFailedToBuild");
             return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
         }
+        // Moho's TASKSTATE_Processing
         if (!find_build_site_frame(registry, cmd.blueprint_id, cmd.target_pos)) {
             if (build_site_taken(L, *ctx.sim, army(), cmd.blueprint_id, cmd.target_pos)) {
                 command_queue_.pop_front();
@@ -1635,9 +1641,9 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             if (units_on_site(cmd, ctx)) {
                 return OrderStep::Hold;
             }
-        }
-        if (awaits_arm() || waits_paused(cmd)) {
-            return OrderStep::Hold;
+            if (awaits_arm() || waits_paused(cmd)) {
+                return OrderStep::Hold;
+            }
         }
         const u32 building = cmd.command_id; // cmd may go with the scripts' changes
         const EntityId wreck_id = cmd.rebuild_wreck_id;
@@ -2481,8 +2487,11 @@ void Unit::walk_to(const Vector3& goal, SimContext& ctx) {
 }
 
 std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarded,
-                                            const Vector3& ref, SimContext& ctx) {
-    if (!guard_reacts(guarded)) return std::nullopt;
+                                            const Vector3& ref, SimContext& ctx, bool& looks) {
+    looks = !guard_sleeps(guarded);
+    if (looks) {
+        return std::nullopt;
+    }
     // Back from a fight, it goes home before it looks about again (Moho's
     // Starting state: within its guarded unit's footprint and half its
     // GuardScanRadius of it, or of the point).
@@ -2501,9 +2510,10 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
         cmd.patrol_scan = 5; // this Execute returns 7: the next look is 6 ticks on
         return std::nullopt;
     }
-    // It looks every 6 ticks (Moho's Execute returns 7), and not while it
-    // helps: Moho's help is a task of its own above the guard's.
+    // It looks every 6 ticks (Moho's Execute returns 7), and at once when
+    // its help ends: Moho's help is a task of its own above the guard's.
     if (is_building() || is_reclaiming() || is_repairing() || silo_assist_id_) {
+        cmd.patrol_scan = 0;
         return std::nullopt;
     }
     if (cmd.patrol_scan > 0) {
@@ -2511,6 +2521,15 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
         return std::nullopt;
     }
     cmd.patrol_scan = 5;
+    looks = true;
+    return guard_look(cmd, guarded, ref, ctx);
+}
+
+std::optional<OrderStep> Unit::guard_look(UnitCommand& cmd, const Unit* guarded, const Vector3& ref,
+                                          SimContext& ctx) {
+    if (!guard_reacts(guarded)) {
+        return std::nullopt;
+    }
     Entity* enemy =
         best_enemy(ctx.registry.units_in_radius(position().x, position().z, guard_scan_radius_),
                    guard_scan_radius_, ctx);
@@ -2535,8 +2554,12 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
 OrderStep Unit::order_guard_point(UnitCommand& cmd, SimContext& ctx) {
     // A place to guard (IssueGuard at a position): Moho's guard task with
     // no guarded unit, its reference the point.
-    if (const auto step = guard_engage(cmd, nullptr, cmd.target_pos, ctx)) {
+    bool looks = false;
+    if (const auto step = guard_engage(cmd, nullptr, cmd.target_pos, ctx, looks)) {
         return *step;
+    }
+    if (looks && guard_ends_for_builder(cmd, nullptr, ctx)) {
+        return end_guard();
     }
     // A hovering aircraft with nothing to do flies as a winged one, hunting
     // round its point rather than hanging still (flies_winged_on_guard).
@@ -2596,13 +2619,18 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     bool task_waits = waits_out_task(cmd);
     // Enemies near it come before helping (Moho's guard task looks for one
     // after factory assist, before build, reclaim and repair help).
-    if (const auto step = guard_engage(cmd, target_unit, target_unit->position(), ctx)) {
+    bool looks = false;
+    if (const auto step = guard_engage(cmd, target_unit, target_unit->position(), ctx, looks)) {
         return *step;
     }
 
     // Moho's guard task returns 7 (or 1) after handing out a task, which
     // first runs 6 ticks on (or the next tick).
-    if (is_building() || is_repairing() || is_reclaiming() || silo_assist_id_) {
+    const auto helping = [&] {
+        return is_building() || is_repairing() || is_reclaiming() || silo_assist_id_;
+    };
+    const bool helps = helping();
+    if (helps) {
         cmd.handout_wait = -1;
     }
     const auto hands_out = [&] {
@@ -2637,6 +2665,11 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             cmd.handout_wait = 2;
             return OrderStep::Hold;
         }
+    }
+
+    const UnitCommand* build = guard_build_to_take_up(*target_unit, ctx);
+    if (build && looks && !helps && cmd.handout_wait < 0 && !task_waits) {
+        return take_up_guard_build(cmd, *target_unit, *build);
     }
 
     // Help only within reach of the work (M206e): Moho's guard hands
@@ -2711,7 +2744,17 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         }
         if (within_reach(*target_unit, true, build_target_id_ == cmd.target_id) &&
             target_unit->holds_for_repair()) {
-            return order_repair_construction(cmd, dt, ctx, econ_eff, *target_unit, task_waits);
+            const u32 guard_id = cmd.command_id;
+            const OrderStep step =
+                order_repair_construction(cmd, dt, ctx, econ_eff, *target_unit, task_waits);
+            if (step == OrderStep::Hold && helps && !helping() && !task_waits &&
+                !command_queue_.empty() && command_queue_.front().command_id == guard_id) {
+                if (const auto ends =
+                        guard_runs(command_queue_.front(), *target_unit, looks, ctx)) {
+                    return *ends;
+                }
+            }
+            return step;
         }
         if (is_building()) {
             stop_assisting(L, &registry);
@@ -2720,7 +2763,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     }
 
     // Assist: if target is building, contribute build power
-    const Entity* guarded_build = repairs && !rebuilder && target_unit->is_building()
+    const Entity* guarded_build = repairs && !rebuilder && !build && target_unit->is_building()
                                       ? registry.find(target_unit->build_target_id())
                                       : nullptr;
     if (!guarded_build || guarded_build->destroyed()) {
@@ -2782,10 +2825,8 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                     build_target_id_ = target_build_id;
                     build_command_id_ = cmd.command_id;
                     build_released_with_order_ = true;
-                    build_repairs_ =
-                        target_unit->command_queue_.empty() ||
-                        target_unit->command_queue_.front().type != CommandType::BuildMobile;
-                    build_order_ = build_repairs_ ? "Repair" : "MobileBuild";
+                    build_repairs_ = true;
+                    build_order_ = "Repair";
                     build_time_ = target_unit->build_time();
                     build_cost_mass_ = target_unit->build_cost_mass();
                     build_cost_energy_ = target_unit->build_cost_energy();
@@ -2809,7 +2850,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                     if (destroyed() || !in_registry()) {
                         return OrderStep::Gone;
                     }
-                    if (build_repairs_ && build_target_id_ == target_build_id) {
+                    if (build_target_id_ == target_build_id) {
                         set_unit_state("Repairing", true);
                     }
                 }
@@ -2984,7 +3025,180 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     if (!working && !task_waits) {
         cmd.handout_wait = -1;
     }
+    if (!task_waits && ((!working && looks) || (helps && !helping()))) {
+        if (const auto step = guard_runs(cmd, *target_unit, looks, ctx)) {
+            return *step;
+        }
+    }
     return guard_follow(*target_unit, working, winged_goal, ctx);
+}
+
+std::optional<OrderStep> Unit::guard_runs(UnitCommand& cmd, Unit& ward, bool looked,
+                                          SimContext& ctx) {
+    if (!looked) {
+        cmd.patrol_scan = 5;
+        if (const auto step = guard_look(cmd, &ward, ward.position(), ctx)) {
+            return step;
+        }
+    }
+    if (const UnitCommand* build = guard_build_to_take_up(ward, ctx)) {
+        return take_up_guard_build(cmd, ward, *build);
+    }
+    if (guard_ends_for_builder(cmd, &ward, ctx)) {
+        return end_guard();
+    }
+    return std::nullopt;
+}
+
+bool Unit::guard_ward_unfinished(const UnitCommand& cmd, EntityRegistry& registry) const {
+    const Entity* target = cmd.target_id ? registry.find(cmd.target_id) : nullptr;
+    if (!target || target->destroyed() || !target->is_unit()) {
+        return false;
+    }
+    const auto& ward = static_cast<const Unit&>(*target);
+    if (!ward.is_mobile() && has_category("REBUILDER")) {
+        return false;
+    }
+    return (ward.is_being_built() || ward.has_unit_state("Upgrading")) &&
+           !ward.has_category("FACTORY") && !ward.has_category("SHIELD") &&
+           !ward.has_category("SILO") && !ward.is_mobile();
+}
+
+bool Unit::guard_ends_for_builder(const UnitCommand& cmd, Unit* ward, SimContext& ctx) {
+    if ((!has_category("ENGINEER") && !has_category("POD")) || has_category("REBUILDER")) {
+        return false;
+    }
+    if (command_queue_.size() < 2 &&
+        !(cmd.guard_ward_unfinished && ward && ward->command_queue().empty())) {
+        return false;
+    }
+    return !guard_finds_work(ward, cmd.target_pos, ctx);
+}
+
+bool Unit::guard_finds_work(Unit* ward, const Vector3& point, SimContext& ctx) {
+    if (!ward) {
+        return has_category("REPAIR") && guard_point_finds_work(point, ctx);
+    }
+    if (has_category("RECLAIM") && ward->is_reclaiming() && ctx.L &&
+        blueprint_builds(ctx.L, blueprint_id())) {
+        const Entity* focus = ctx.registry.find(ward->reclaim_target_id());
+        if (focus && !focus->destroyed()) {
+            return true;
+        }
+    }
+    return has_category("REPAIR") && guard_ward_needs_help(*ward, ctx);
+}
+
+const UnitCommand* Unit::guard_build_to_take_up(const Unit& ward, SimContext& ctx) const {
+    // Moho's BuilderGetNextRebuildStructure
+    if (has_category("REBUILDER")) {
+        return nullptr;
+    }
+    std::vector<EntityId> seen;
+    const Unit* at = &ward;
+    while (std::find(seen.begin(), seen.end(), at->entity_id()) == seen.end()) {
+        const EntityId next_id = at->guarded_unit_id();
+        const Entity* next = next_id ? ctx.registry.find(next_id) : nullptr;
+        if (next && !next->destroyed() && next->is_unit()) {
+            seen.push_back(at->entity_id());
+            at = static_cast<const Unit*>(next);
+            continue;
+        }
+        const auto& queue = at->command_queue();
+        if (queue.empty() || queue.front().type != CommandType::BuildMobile || !ctx.L ||
+            !unit_can_build(ctx.L, *this, queue.front(), ctx) ||
+            blueprint_is_mobile(ctx.L, queue.front().blueprint_id)) {
+            return nullptr;
+        }
+        return &queue.front();
+    }
+    return nullptr;
+}
+
+OrderStep Unit::take_up_guard_build(UnitCommand& cmd, const Unit& ward, const UnitCommand& build) {
+    UnitCommand own;
+    own.type = CommandType::BuildMobile;
+    own.blueprint_id = build.blueprint_id;
+    own.target_pos = build.target_pos;
+    own.command_id = cmd.command_id;
+    own.from_guard = true;
+    own.patrol_scan = guard_sleeps(&ward) ? 5 : 0;
+    cmd.patrol_scan = 0;
+    cmd.handout_wait = -1;
+    abort_move();
+    command_queue_.push_front(std::move(own));
+    return OrderStep::Hold;
+}
+
+bool Unit::guard_ward_needs_help(Unit& ward, SimContext& ctx) const {
+    if (ward.moved_last_tick()) {
+        return false;
+    }
+    if (ward.health() < ward.max_health() ||
+        (ward.fuel_use_time() > 1.0f && ward.fuel_ratio() < 1.0f) ||
+        ward.shield_needs_repair(ctx.registry, ctx.L) ||
+        (!ward.is_paused() && ward.is_enhancing())) {
+        return true;
+    }
+    const Unit* silo = &ward;
+    const EntityId focus_id = ward.focus_id() ? ward.focus_id() : ward.focus_entity_id();
+    const Entity* focus = focus_id ? ctx.registry.find(focus_id) : nullptr;
+    if (focus && !focus->destroyed() && !ward.is_reclaiming()) {
+        if (!focus->is_unit()) {
+            return false;
+        }
+        const auto& work = static_cast<const Unit&>(*focus);
+        if (work.army() != army() || work.health() < work.max_health()) {
+            return true;
+        }
+        if (work.is_paused()) {
+            return false;
+        }
+        if (work.is_enhancing()) {
+            return true;
+        }
+        silo = &work;
+    }
+    return !silo->is_paused() && silo->silo_building();
+}
+
+bool Unit::guard_point_finds_work(const Vector3& point, SimContext& ctx) const {
+    if (!ctx.sim) {
+        return false;
+    }
+    const ArmyBrain* brain = ctx.sim->get_army(army());
+    const bool whole_map = brain && brain->use_whole_map();
+    for (Entity* e : units_meeting_sphere(*ctx.sim, point, guard_scan_radius_)) {
+        const auto& other = static_cast<const Unit&>(*e);
+        if (&other == this || other.destroyed() || other.is_dying() ||
+            !within_map(*ctx.sim, other.position().x, other.position().z, 1.0f, whole_map) ||
+            other.moved_last_tick() || other.layer() == "Air" ||
+            (other.army() != army() && !ctx.sim->is_ally(army(), other.army()))) {
+            continue;
+        }
+        if (other.is_being_built() || other.health() < other.max_health()) {
+            return true;
+        }
+        const EntityId focus_id = other.focus_id() ? other.focus_id() : other.focus_entity_id();
+        const Entity* focus = focus_id ? ctx.registry.find(focus_id) : nullptr;
+        if ((focus && !focus->destroyed() && focus->is_unit()) || other.is_enhancing() ||
+            other.silo_building()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+OrderStep Unit::end_guard() {
+    // Moho's ~CUnitGuardTask
+    if (is_mobile()) {
+        if (moved_last_tick()) {
+            abort_move();
+        }
+        update_speed_through();
+    }
+    command_queue_.pop_front();
+    return OrderStep::Next;
 }
 
 OrderStep Unit::guard_factory_queue(UnitCommand& cmd, Unit& target_unit, f64 dt, SimContext& ctx,

@@ -275,7 +275,7 @@ void capture_unit(const Unit& u, EntityRecord& r, SideLists& out) {
 
     r.command_offset = static_cast<u32>(out.commands.size());
     for (const auto& c : u.command_queue()) {
-        if (!c.from_patrol) {
+        if (!c.from_patrol && !c.from_guard) {
             out.commands.push_back(command_record(c, false));
         }
     }
@@ -653,7 +653,7 @@ void capture_pending(const SimState& sim, WorldSnapshot& out) {
     for (const auto& [id, queue] : sim.queues_with_pending()) {
         const auto offset = static_cast<u32>(out.pending_commands.size());
         for (size_t i = 0; i < queue.orders.size(); ++i) {
-            if (!queue.orders[i].from_patrol) {
+            if (!queue.orders[i].from_patrol && !queue.orders[i].from_guard) {
                 out.pending_commands.push_back(command_record(queue.orders[i], queue.pending[i]));
             }
         }
