@@ -173,7 +173,7 @@ TEST_CASE("An animator plays at rate 1, and is done as Moho's is", "[pose]") {
     AnimCache cache(nullptr);
     cache.inject("/slide.sca", root_slide()); // one second long
     AnimManipulator anim;
-    CHECK(anim.is_at_goal()); // nothing played
+    CHECK_FALSE(anim.is_at_goal()); // nothing played: Moho's event starts unsignaled
 
     anim.play_anim("/slide.sca", false, &cache);
     CHECK(anim.rate() == 1.0f); // PlayAnim alone plays it
@@ -195,6 +195,68 @@ TEST_CASE("An animator plays at rate 1, and is done as Moho's is", "[pose]") {
     // An animation that doesn't load is done at once.
     anim.set_rate(1.0f);
     anim.play_anim("/missing.sca", false, &cache);
+    CHECK(anim.is_at_goal());
+}
+
+TEST_CASE("A one-shot animator set back after its end is done again at its start", "[pose]") {
+    AnimCache cache(nullptr);
+    cache.inject("/slide.sca", root_slide());
+    AnimManipulator anim;
+    anim.play_anim("/slide.sca", false, &cache);
+    for (int i = 0; i < 10; ++i) {
+        anim.tick(0.1f);
+    }
+    REQUIRE(anim.is_at_goal());
+    REQUIRE(anim.animation_time() == 1.0f);
+
+    anim.set_rate(-1.0f);
+    CHECK_FALSE(anim.is_at_goal());
+    for (int i = 0; i < 9; ++i) {
+        anim.tick(0.1f);
+        CHECK_FALSE(anim.is_at_goal());
+    }
+    anim.tick(0.1f);
+    CHECK(anim.is_at_goal());
+    CHECK(anim.animation_time() == 0.0f);
+
+    anim.set_rate(1.0f);
+    CHECK_FALSE(anim.is_at_goal());
+}
+
+TEST_CASE("An animator's playhead runs in seconds, as Moho's", "[pose]") {
+    SCAData slow = root_slide();
+    slow.duration = 10.0f;
+    AnimCache cache(nullptr);
+    cache.inject("/slow.sca", slow);
+    AnimManipulator anim;
+    anim.play_anim("/slow.sca", false, &cache);
+    for (const f32 rate : {1.0f, -1.0f}) {
+        anim.set_rate(rate);
+        for (int i = 0; i < 99; ++i) {
+            anim.tick(0.1f);
+            CHECK_FALSE(anim.is_at_goal());
+        }
+        anim.tick(0.1f);
+        CHECK(anim.is_at_goal());
+        CHECK(anim.animation_time() == (rate > 0.0f ? 10.0f : 0.0f));
+    }
+}
+
+TEST_CASE("An animator's signal changes at a tick or a rate, not at a set time", "[pose]") {
+    AnimCache cache(nullptr);
+    cache.inject("/slide.sca", root_slide());
+    AnimManipulator anim;
+    anim.play_anim("/slide.sca", false, &cache);
+    anim.set_animation_fraction(1.0f);
+    CHECK_FALSE(anim.is_at_goal());
+    anim.tick(0.1f);
+    CHECK(anim.is_at_goal());
+
+    anim.set_animation_time(0.0f);
+    CHECK(anim.is_at_goal());
+    anim.tick(0.1f);
+    CHECK_FALSE(anim.is_at_goal());
+    anim.set_rate(0.0f);
     CHECK(anim.is_at_goal());
 }
 

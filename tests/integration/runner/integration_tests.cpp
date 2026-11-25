@@ -4210,8 +4210,9 @@ void test_manip(TestContext& ctx) {
     // Test 4: AnimManipulator with PlayAnim/SetRate/GetAnimationFraction
     {
         ctx.lua_state.do_string(R"(
-            __test_anim = CreateAnimator(GetEntityById(__osc_test_acu_id(1)))
-            __test_anim:PlayAnim('/test.sca'):SetRate(2)
+            local e = GetEntityById(__osc_test_acu_id(1))
+            __test_anim = CreateAnimator(e)
+            __test_anim:PlayAnim(e:GetBlueprint().Display.AnimationWalk):SetRate(2)
         )");
         tick_until(ctx, "the animator plays", 40, "__test_anim:GetAnimationFraction() > 0");
         auto r = ctx.lua_state.do_string(R"(
@@ -11388,6 +11389,17 @@ void test_missile(TestContext& ctx) {
             e:SetPaused(false)
         end
     )");
+    tick_until([&] { run(1); }, "B's engineers, whose help B's pause ended, repair it again", 30,
+               [&] {
+                   return lua_true(ctx.lua_state, R"(
+                (function()
+                    for _, e in __osc_engineers do
+                        if not e:IsUnitState('Repairing') then return false end
+                    end
+                    return true
+                end)()
+            )");
+               });
     // Their requests are granted the tick after, and worked from the one
     // after that (Moho's ResourceConsumed)
     run(2);
@@ -13522,6 +13534,12 @@ void test_factory_rally(TestContext& ctx) {
         __osc_eng = false
         __osc_strayed = 0
         __osc_rolled_to = false
+        local roll_off_end = __osc_air.PlayFxRollOffEnd
+        __osc_air.PlayFxRollOffEnd = function(self)
+            __osc_platform = {from = GetGameTick(), fraction = self.RollOffAnim:GetAnimationFraction()}
+            roll_off_end(self)
+            __osc_platform.to = GetGameTick()
+        end
     )");
     tick_until(
         [&] {
@@ -13547,6 +13565,13 @@ void test_factory_rally(TestContext& ctx) {
             error('rolled off to ' .. p[1] .. ', ' .. p[3] .. '; 677.25, 140.35 expected')
         end
         if __osc_strayed > 0.5 then error('strayed ' .. __osc_strayed .. ' from its line') end
+    )");
+    tick_until(ctx, "the air factory's roll-off ends", 60,
+               "__osc_platform ~= nil and __osc_platform.to ~= nil");
+    lua_check("the air factory's platform plays back to its start before the roll-off ends", R"(
+        local p = __osc_platform
+        if p.fraction ~= 1 then error('the platform stood at ' .. p.fraction) end
+        if p.to - p.from ~= 20 then error('it played back in ' .. (p.to - p.from) .. ' ticks') end
     )");
     lua_check("a UEF air factory builds a scout, rallied west", R"(
         __osc_airf = __osc_spawn('ueb0102', 1, 700, 180)

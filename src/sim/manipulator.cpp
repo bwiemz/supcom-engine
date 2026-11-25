@@ -100,8 +100,8 @@ void AnimManipulator::play_anim(const std::string& anim, bool loop,
 
     current_anim_ = anim;
     looping_ = loop;
-    fraction_ = 0.0f;
-    finished_ = false;
+    time_ = 0.0f;
+    duration_ = 0.0f;
     sca_data_ = nullptr;
     sca_to_scm_map_.clear();
     scm_to_sca_map_.clear();
@@ -111,7 +111,6 @@ void AnimManipulator::play_anim(const std::string& anim, bool loop,
         sca_data_ = cache->get(anim);
         if (sca_data_) {
             duration_ = sca_data_->duration;
-            if (duration_ <= 0) duration_ = 1.0f;
 
             // Build SCA bone → SCM bone index mapping
             auto* bd = owner_ ? owner_->bone_data() : nullptr;
@@ -126,52 +125,63 @@ void AnimManipulator::play_anim(const std::string& anim, bool loop,
             }
         }
     }
+    update_signal();
+}
+
+void AnimManipulator::set_rate(f32 rate) {
+    rate_ = rate;
+    update_signal();
+}
+
+namespace {
+
+f32 wrap_time(f32 time, f32 duration) {
+    if (duration == 0.0f) {
+        return 0.0f;
+    }
+    f32 wrapped = std::fmod(time, duration);
+    if ((0.0f > wrapped) != (0.0f > duration)) {
+        wrapped += duration;
+    }
+    return wrapped;
+}
+
+f32 clamp_time(f32 time, f32 duration) {
+    const f32 capped = std::min(duration, time);
+    return capped < 0.0f ? 0.0f : capped;
+}
+
+} // namespace
+
+void AnimManipulator::set_animation_fraction(f32 frac) {
+    if (!sca_data_) {
+        return;
+    }
+    if (looping_) {
+        frac -= std::floor(frac);
+    } else {
+        frac = 1.0f > frac ? frac : 1.0f;
+        frac = 0.0f > frac ? 0.0f : frac;
+    }
+    time_ = duration_ * frac;
 }
 
 void AnimManipulator::set_animation_time(f32 time) {
-    if (duration_ > 0) {
-        fraction_ = time / duration_;
-        if (fraction_ < 0) fraction_ = 0;
-        if (fraction_ > 1.0f && !looping_) fraction_ = 1.0f;
+    if (!sca_data_) {
+        return;
     }
+    time_ = looping_ ? wrap_time(time, duration_) : clamp_time(time, duration_);
 }
 
 void AnimManipulator::tick(f32 dt) {
-    if (current_anim_.empty()) return;
-
-    // Only the playhead stops when the animation is finished or paused: the
-    // pose is written every tick regardless, because Unit::tick_manipulators
-    // resets all bones to identity first. Scripts rely on this to hold a
-    // pose (PlayAnim + SetRate(0) + SetAnimationFraction, or a one-shot
-    // animation left at its last frame).
-    f32 rate = directional_ && owner() && owner()->ground_speed() < 0 ? -rate_ : rate_;
-    if (motion_scaled_ && owner()) {
-        rate *= owner()->anim_motion_scale(dt);
-    }
-    if (!finished_ && rate != 0) {
-        fraction_ += (rate * dt) / duration_;
-
-        if (rate > 0) {
-            if (fraction_ >= 1.0f) {
-                if (looping_) {
-                    fraction_ = std::fmod(fraction_, 1.0f);
-                } else {
-                    fraction_ = 1.0f;
-                    finished_ = true;
-                }
-            }
-        } else {
-            // Negative rate = reverse playback
-            if (fraction_ <= 0.0f) {
-                if (looping_) {
-                    fraction_ = std::fmod(fraction_, 1.0f);
-                    if (fraction_ < 0.0f) fraction_ += 1.0f;
-                } else {
-                    fraction_ = 0.0f;
-                    finished_ = true;
-                }
-            }
+    if (sca_data_) {
+        f32 rate = directional_ && owner() && owner()->ground_speed() < 0 ? -rate_ : rate_;
+        if (motion_scaled_ && owner()) {
+            rate *= owner()->anim_motion_scale(dt);
         }
+        time_ += rate * dt;
+        time_ = looping_ ? wrap_time(time_, duration_) : clamp_time(time_, duration_);
+        update_signal();
     }
 
     // Advance the cross-fade before the pose is taken (Unit::update_pose),
@@ -182,12 +192,15 @@ void AnimManipulator::tick(f32 dt) {
     }
 }
 
+// Moho's CAnimationManipulator::UpdateTriggeredState
+void AnimManipulator::update_signal() {
+    const bool at_start = rate_ < 0.0f && time_ == 0.0f;
+    const bool at_end = rate_ > 0.0f && time_ == duration_;
+    signaled_ = !sca_data_ || rate_ == 0.0f || (!looping_ && (at_start || at_end));
+}
+
 bool AnimManipulator::is_at_goal() const {
-    // Done, for WaitFor, as Moho's CAnimationManipulator signals it (faf-re
-    // UpdateTriggeredState): no animation (none played, or it failed to
-    // load), a rate of 0, or a one-shot at its end (its start, played
-    // backwards). A looping one at rate is never done.
-    return !sca_data_ || rate_ == 0.0f || finished_;
+    return signaled_;
 }
 
 void AnimManipulator::set_bone_enabled(i32 scm_idx, bool enabled) {
@@ -221,8 +234,8 @@ void AnimManipulator::apply_pose(PoseLocals& pose) {
 
     const u32 num_sca_bones = sca_data_->num_bones;
     const u32 num_frames = sca_data_->num_frames;
-    const f32 frac = std::clamp(fraction_, 0.0f, 1.0f);
-    const f32 frame_float = frac * static_cast<f32>(num_frames - 1);
+    const f32 frame_float =
+        duration_ != 0.0f ? (static_cast<f32>(num_frames - 1) / duration_) * time_ : 0.0f;
     const u32 frame_a = static_cast<u32>(frame_float);
     const u32 frame_b = std::min(frame_a + 1, num_frames - 1);
     const f32 t = frame_float - static_cast<f32>(frame_a);

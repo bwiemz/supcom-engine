@@ -14,12 +14,17 @@
 // 4. turns the arm 36 degrees a tick (SetAimingArc's 360 a second), from
 //    the root bone's line to the site, and makes the frame on tick 9, the
 //    arm 11 degrees off (inside 15); the arm settles on tick 10.
+// 5. built, closes its arm (SetRate(-5)) on its way to the next build, and
+//    opening it there waits as long as the first time.
+// 6. a build right after another in its reach begins a tick after its arm is
+//    aimed: the finished build's aim was cleared as it ended.
 // Before, the engine built at the order's point, aimed on the order's tick,
 // opened the arm a tick sooner and turned it in one tick: the frame came on
 // tick 5.
 
 #include "integration_tests.hpp"
 #include "render_probe.hpp"
+#include "tick_until.hpp"
 
 #include "lua/lua_state.hpp"
 #include "sim/sim_state.hpp"
@@ -189,6 +194,69 @@ void test_mobile_build_start(TestContext& ctx) {
             fmt::format("1: the frame on its footprint's cell, ({}, {}) as the original's "
                         "(262.5, 784.5)",
                         x, z));
+
+    if (!run("5: the next build queued, out of the engineer's reach",
+             "__osc_mb_first = __osc_mb_eng:GetFocusUnit()\n"
+             "IssueBuildMobile({__osc_mb_eng}, {272, GetTerrainHeight(272, 800), 800}, 'ueb1101', "
+             "{})\n")) {
+        return;
+    }
+    tick_until(ctx, "5: the power generator is built", 600,
+               "__osc_mb_first:GetFractionComplete() == 1");
+    if (!run("5: the second build's callbacks watched", "__osc_mb_events = {}\n"
+                                                        "__osc_mb_row = -1\n"
+                                                        "ForkThread(function()\n"
+                                                        "    for row = 0, 400 do\n"
+                                                        "        __osc_mb_row = row\n"
+                                                        "        WaitTicks(1)\n"
+                                                        "    end\n"
+                                                        "end)\n")) {
+        return;
+    }
+    tick_until(ctx, "5: the arm closes on the way", 60,
+               "__osc_mb_eng.BuildingOpenAnimManip:GetAnimationFraction() == 0 and "
+               "__osc_mb_events['OnPrepareArmToBuild'] == nil");
+    tick_until(ctx, "5: the arm opens at the next site", 300,
+               "__osc_mb_events['WaitForBuildAnimation-done'] ~= nil");
+    (void)ctx.lua_state.do_string(
+        "__osc_mb_prepare = __osc_mb_events['OnPrepareArmToBuild'] or -1\n"
+        "__osc_mb_open = __osc_mb_events['WaitForBuildAnimation-done'] or -1\n");
+    const auto prepare = static_cast<int>(global_number(L, "__osc_mb_prepare"));
+    const auto open = static_cast<int>(global_number(L, "__osc_mb_open"));
+    t.check(prepare >= 0 && open - prepare == kOriginalEvents[1].row - kOriginalEvents[0].row,
+            fmt::format("5: the arm opens {} ticks after OnPrepareArmToBuild (rows {} and {}), "
+                        "as on the first build ({})",
+                        open - prepare, prepare, open,
+                        kOriginalEvents[1].row - kOriginalEvents[0].row));
+
+    if (!run(
+            "6: another engineer given two walls straight ahead, in its reach",
+            "__osc_mb_b = CreateUnitHPR('uel0105', 'ARMY_1', 300, GetTerrainHeight(300, 790), 790, "
+            "0, 0, 0)\n"
+            "__osc_mb_b_prepare = {}\n"
+            "__osc_mb_b_start = {}\n"
+            "for name, ticks in {OnPrepareArmToBuild = __osc_mb_b_prepare,\n"
+            "                    OnStartBuild = __osc_mb_b_start} do\n"
+            "    local old, list = __osc_mb_b[name], ticks\n"
+            "    __osc_mb_b[name] = function(self, a, b)\n"
+            "        table.insert(list, GetGameTick())\n"
+            "        return old(self, a, b)\n"
+            "    end\n"
+            "end\n"
+            "for _, z in {793.5, 794.5} do\n"
+            "    IssueBuildMobile({__osc_mb_b}, {300.5, GetTerrainHeight(300.5, z), z}, 'ueb5101', "
+            "{})\n"
+            "end\n")) {
+        return;
+    }
+    tick_until(ctx, "6: the second wall is begun", 200, "table.getn(__osc_mb_b_start) >= 2");
+    (void)ctx.lua_state.do_string(
+        "__osc_mb_b_wait = (__osc_mb_b_start[2] or -1) - (__osc_mb_b_prepare[2] or -1)\n");
+    const auto wait = static_cast<int>(global_number(L, "__osc_mb_b_wait"));
+    t.check(wait == 1,
+            fmt::format("6: the second wall begun {} ticks after its OnPrepareArmToBuild, "
+                        "1 as the original's",
+                        wait));
     spdlog::info("Mobile build start test: {} passed, {} failed", t.pass, t.fail);
 }
 

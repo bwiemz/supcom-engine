@@ -886,12 +886,12 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         const auto& x = static_cast<const AnimManipulator&>(m);
         w.str(x.current_anim_);
         w.f32v(x.rate_);
-        w.f32v(x.fraction_);
+        w.f32v(x.time_);
         w.f32v(x.duration_);
         w.b(x.looping_);
         w.b(x.directional_);
         w.b(x.motion_scaled_);
-        w.b(x.finished_);
+        w.b(x.signaled_);
         // sca_data_: from the animation cache, if the play found it
         w.b(x.sca_data_ != nullptr);
         save_i32s(w, x.sca_to_scm_map_);
@@ -1038,12 +1038,12 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         auto x = std::make_unique<AnimManipulator>();
         x->current_anim_ = r.str();
         x->rate_ = r.f32v();
-        x->fraction_ = r.f32v();
+        x->time_ = r.f32v();
         x->duration_ = r.f32v();
         x->looping_ = r.b();
         x->directional_ = r.b();
         x->motion_scaled_ = r.b();
-        x->finished_ = r.b();
+        x->signaled_ = r.b();
         if (r.b()) {
             x->sca_data_ = sim.anim_cache() ? sim.anim_cache()->get(x->current_anim_) : nullptr;
             if (!x->sca_data_) r.fail("an animation that no longer loads: " + x->current_anim_);

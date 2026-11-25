@@ -586,10 +586,12 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         free_order_reservation(ctx.sim);
     }
     const bool awaited = std::exchange(arm_awaited_, false);
+    // Moho's CUnitMobileBuildTask aims the arm at Waiting and zeroes it as the task ends
     if (!awaited && !is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
         !silo_assist_id_ &&
-        (command_queue_.empty() || (command_queue_.front().type != CommandType::BuildMobile &&
-                                    command_queue_.front().task_wait <= 0))) {
+        (command_queue_.empty() || (command_queue_.front().type == CommandType::BuildMobile
+                                        ? !command_queue_.front().reached
+                                        : command_queue_.front().task_wait <= 0))) {
         aim_builder_arms(nullptr, ctx.L);
     }
     // An attack run ends with its order: Moho's flight resets the combat
@@ -647,9 +649,14 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
             --front.patrol_scan;
             return true;
         }
+        const bool builds = front.type == CommandType::BuildMobile;
+        const u32 order = front.command_id;
         const OrderStep step = run_order(front, dt, ctx, econ_eff);
-        if (step == OrderStep::Hold) return true;
         if (step == OrderStep::Gone) return false;
+        if (builds && (command_queue_.empty() || command_queue_.front().command_id != order)) {
+            aim_builder_arms(nullptr, ctx.L);
+        }
+        if (step == OrderStep::Hold) return true;
     }
     return end_gone_attack(ctx.L);
 }
