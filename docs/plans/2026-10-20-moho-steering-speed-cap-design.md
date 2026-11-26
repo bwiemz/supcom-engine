@@ -71,6 +71,9 @@ After a move retail's Striker coasts 2.04, 1.29, 0.69, 0.21 a second, then stand
   **EN `sim/unit_orders.cpp`**'s mobile build sends a builder by rule 4, where it had gone to a point of
   its own beside the skirt that `prepare_move` could then put back on the site: hemmed in by another
   skirt, braked by rule 2, it stopped on its site and its arm never reached the build.
+  *Done (2026-11-26): the rest of rule 4. A builder that won't fit where it stands (on a factory's
+  cells, say) goes too, and so does one whose own skirt touches the site's; the place is held for it
+  until its order ends, and whether it goes is settled on the order's first tick.*
 
 ## 4. Tests
 

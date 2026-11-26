@@ -57,7 +57,7 @@ struct Site {
             __blueprints = {
                 uel0105 = {
                     BlueprintId = 'uel0105',
-                    Economy = { BuildableCategory = { 'ueb0101' } },
+                    Economy = { BuildableCategory = { 'ueb0101', 'ueb1101' } },
                 },
                 ueb0101 = {
                     BlueprintId = 'ueb0101',
@@ -66,6 +66,13 @@ struct Site {
                                 SkirtOffsetZ = -1.5 },
                     Economy = { BuildTime = 100, BuildCostMass = 1, BuildCostEnergy = 1,
                                 BuildableCategory = { 'ueb0101' } },
+                },
+                ueb1101 = {
+                    BlueprintId = 'ueb1101',
+                    Footprint = { SizeX = 2, SizeZ = 2 },
+                    Physics = { SkirtSizeX = 4, SkirtSizeZ = 4, SkirtOffsetX = -1,
+                                SkirtOffsetZ = -1 },
+                    Economy = { BuildTime = 100, BuildCostMass = 1, BuildCostEnergy = 1 },
                 },
             }
             __failed = 0
@@ -182,11 +189,14 @@ struct Site {
     }
 
     /// The engineer ordered to build the factory on the cells 48-53 by 48-53.
-    void build() {
+    void build() { build("ueb0101", 50.5f, 50.5f); }
+
+    void build(const char* bp, f32 x, f32 z, osc::u32 id = 0) {
         UnitCommand c;
         c.type = CommandType::BuildMobile;
-        c.blueprint_id = "ueb0101";
-        c.target_pos = {50.5f, 0.0f, 50.5f};
+        c.blueprint_id = bp;
+        c.target_pos = {x, 0.0f, z};
+        c.command_id = id;
         engineer->push_command(c, true);
     }
 
@@ -503,4 +513,76 @@ TEST_CASE("A factory's footprint holds it up only by idle units: one with an ord
         CHECK_FALSE(tank->stepping_aside());
         CHECK(tank->position().x == 81.0f);
     }
+}
+
+TEST_CASE("A builder in reach on ground the occupancy grid holds walks to the place nearest it "
+          "clear of the site's skirt grown by a cell, held for it until its order ends; on free "
+          "ground it builds where it stands",
+          "[build][build_site]") {
+    namespace occupancy = osc::blueprints::occupancy;
+    const bool held = GENERATE(false, true);
+    CAPTURE(held);
+    Site s;
+    if (held) {
+        s.sim.occupy_cells(occupancy::kLand, {50, 62, 51, 63}, true);
+    }
+    s.sim.tick();
+    s.build("ueb0101", 50.5f, 50.5f, 1);
+    s.sim.tick();
+    const osc::sim::OccupancyRect place{50, 56, 51, 57};
+    CHECK(s.engineer->navigator().busy() == held);
+    if (held) {
+        CHECK(s.engineer->navigator().goal().x == 50.5f);
+        CHECK(s.engineer->navigator().goal().z == 56.5f);
+    }
+    CHECK(s.sim.occupancy().reserved_any(place) == held);
+    tick_until([&] { s.sim.tick(); }, "the frame stands", 300, [&] { return s.built(); });
+    const osc::sim::Vector3& p = s.engineer->position();
+    CAPTURE(p.x, p.z);
+    if (held) {
+        CHECK(p.z < 58.0f);
+        CHECK(s.sim.footprint_fits_at(s.engineer->footprint(), p.x, p.z) != 0);
+    } else {
+        CHECK(p.x == 50.5f);
+        CHECK(p.z == 62.5f);
+    }
+    CHECK(s.sim.occupancy().reserved_any(place) == held);
+    CHECK(s.failed() == 0);
+
+    UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {20.5f, 0.0f, 90.5f};
+    move.command_id = 2;
+    s.engineer->push_command(move, true);
+    s.sim.tick();
+    CHECK_FALSE(s.sim.occupancy().reserved_any(place));
+}
+
+TEST_CASE("A builder in reach whose own skirt touches the site's walks off it before it builds; "
+          "one a cell further builds where it stands",
+          "[build][build_site]") {
+    const bool touching = GENERATE(true, false);
+    CAPTURE(touching);
+    Site s;
+    // The site's skirt is the cells 48-52 by 48-52.
+    const f32 x = touching ? 52.6f : 53.6f;
+    s.engineer->set_position({x, 0.0f, 50.5f});
+    s.sim.tick();
+    s.build("ueb1101", 50.0f, 50.0f);
+    s.sim.tick();
+    CHECK(s.engineer->navigator().busy() == touching);
+    if (touching) {
+        CHECK(s.engineer->navigator().goal().x == 54.5f);
+        CHECK(s.engineer->navigator().goal().z == 50.5f);
+    }
+    tick_until([&] { s.sim.tick(); }, "the frame stands", 200, [&] { return s.built(); });
+    const osc::sim::Vector3& p = s.engineer->position();
+    CAPTURE(p.x, p.z);
+    if (touching) {
+        CHECK(p.x > 53.0f);
+    } else {
+        CHECK(p.x == x);
+        CHECK(p.z == 50.5f);
+    }
+    CHECK(s.failed() == 0);
 }
