@@ -654,8 +654,7 @@ void capture_pending(const SimState& sim, WorldSnapshot& out) {
         const auto offset = static_cast<u32>(out.pending_commands.size());
         for (size_t i = 0; i < queue.orders.size(); ++i) {
             if (!queue.orders[i].from_patrol) {
-                const bool pending = i >= queue.kept_from_queue;
-                out.pending_commands.push_back(command_record(queue.orders[i], pending));
+                out.pending_commands.push_back(command_record(queue.orders[i], queue.pending[i]));
             }
         }
         out.pending_queues.push_back(

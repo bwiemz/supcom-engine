@@ -175,18 +175,26 @@ static void read_numeral (LexState *LS, int comma, SemInfo *seminfo) {
   size_t l = 0;
   checkbuffer(LS, l);
   if (comma) save(LS, '.', l);
-  /* LuaPlus extension: hex literal support (0x...) */
+  /* LuaPlus extension, as Moho's read_numeral: `0x' and up to eight hex
+  ** digits, an int32 */
   if (!comma && LS->current == '0') {
     save_and_next(LS, l);
-    if (LS->current == 'x' || LS->current == 'X') {
-      save_and_next(LS, l);
-      while (isxdigit(LS->current)) {
-        checkbuffer(LS, l);
-        save_and_next(LS, l);
-      }
-      save(LS, '\0', l);
-      if (!luaO_str2d(luaZ_buffer(LS->buff), &seminfo->r))
-        luaX_lexerror(LS, "malformed number", TK_NUMBER);
+    if (LS->current == 'x') {
+      unsigned int value = 0;
+      int digits = 0;
+      next(LS);
+      do {
+        int c = tolower(LS->current);
+        if (isdigit(c)) {
+          value = value * 16 + (unsigned int)(c - '0');
+        }
+        else if (c >= 'a' && c <= 'f') {
+          value = value * 16 + (unsigned int)(c - 'a' + 10);
+        }
+        next(LS);
+        ++digits;
+      } while (digits < 8 && isxdigit(LS->current));
+      seminfo->r = lua_numfloat((int)value);
       return;
     }
   }

@@ -338,6 +338,30 @@ TEST_CASE("A snapshot holds Moho's random stream where the game left it", "[save
     CHECK(d.random().next_u64() == c.random().next_u64());
 }
 
+TEST_CASE("A snapshot keeps where an order not yet run goes in its queue", "[savegame]") {
+    LuaGuard ga;
+    SimState a(ga.L, nullptr);
+    a.set_seed(31);
+    const auto ids = setup(a);
+    a.set_recording(true);
+    UnitCommand order = move_to(50.0f, 0.0f);
+    order.insert_before = 0x01000004u;
+    a.schedule_command(0, {ids[0]}, order, false);
+    const SavedGame save = osc::sim::save_game(a, "insert");
+    REQUIRE_FALSE(save.snapshot.empty());
+
+    LuaGuard gb;
+    SimState b(gb.L, nullptr);
+    b.set_seed(31);
+    REQUIRE(setup(b) == ids);
+    const std::string err = osc::sim::load_snapshot(b, save.snapshot);
+    INFO(err);
+    REQUIRE(err.empty());
+    const auto pending = b.command_scheduler().pending();
+    REQUIRE(pending.size() == 1);
+    CHECK(pending[0].command.insert_before == 0x01000004u);
+}
+
 TEST_CASE("A restored game's history records the pathing it plays with", "[savegame]") {
     // A save from before replay format 16 doesn't say; its snapshot does,
     // and a save of the restored game must carry it.

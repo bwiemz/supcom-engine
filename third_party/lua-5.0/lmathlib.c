@@ -122,13 +122,14 @@ static int math_exp (lua_State *L) {
   return 1;
 }
 
+/* Moho's math_deg and math_rad: one product by a float constant */
 static int math_deg (lua_State *L) {
-  lua_pushnumber(L, luaL_checknumber(L, 1)/RADIANS_PER_DEGREE);
+  lua_pushnumber(L, luaL_checknumber(L, 1)*(lua_Number)57.29578f);
   return 1;
 }
 
 static int math_rad (lua_State *L) {
-  lua_pushnumber(L, luaL_checknumber(L, 1)*RADIANS_PER_DEGREE);
+  lua_pushnumber(L, luaL_checknumber(L, 1)*(lua_Number)0.017453292f);
   return 1;
 }
 

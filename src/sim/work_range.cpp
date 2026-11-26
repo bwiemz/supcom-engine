@@ -1,6 +1,7 @@
 #include "sim/work_range.hpp"
 
 #include "blueprints/blueprint_store.hpp"
+#include "sim/build_placement.hpp"
 #include "sim/collision.hpp"
 #include "sim/unit.hpp"
 
@@ -35,14 +36,25 @@ std::pair<f32, f32> blueprint_footprint_cells(lua_State* L, const std::string& b
     return size;
 }
 
-std::pair<f32, f32> blueprint_skirt(lua_State* L, const std::string& bp_id) {
-    std::pair<f32, f32> skirt{1.0f, 1.0f};
-    if (!L || bp_id.empty()) return skirt;
+namespace {
+
+struct SkirtOf {
+    f32 fx = 1, fz = 1;
+    f32 sx = 0, sz = 0;
+    f32 ox = 0, oz = 0;
+};
+
+SkirtOf skirt_of(lua_State* L, const std::string& bp_id) {
+    SkirtOf r;
+    if (!L || bp_id.empty()) {
+        return r;
+    }
     const int top = lua_gettop(L);
     if (blueprints::push_blueprint(L, bp_id)) {
         const int bp = lua_gettop(L);
         const auto [fx, fz] = blueprint_footprint(L, bp);
-        f32 sx = 0, sz = 0;
+        r.fx = std::max(fx, 1.0f);
+        r.fz = std::max(fz, 1.0f);
         lua_pushstring(L, "Physics");
         lua_rawget(L, bp);
         if (lua_istable(L, -1)) {
@@ -54,13 +66,26 @@ std::pair<f32, f32> blueprint_skirt(lua_State* L, const std::string& bp_id) {
                 lua_pop(L, 1);
                 return v;
             };
-            sx = number("SkirtSizeX");
-            sz = number("SkirtSizeZ");
+            r.sx = number("SkirtSizeX");
+            r.sz = number("SkirtSizeZ");
+            r.ox = number("SkirtOffsetX");
+            r.oz = number("SkirtOffsetZ");
         }
-        skirt = {std::max({sx, fx, 1.0f}), std::max({sz, fz, 1.0f})};
     }
     lua_settop(L, top);
-    return skirt;
+    return r;
+}
+
+} // namespace
+
+std::pair<f32, f32> blueprint_skirt(lua_State* L, const std::string& bp_id) {
+    const SkirtOf r = skirt_of(L, bp_id);
+    return {std::max(r.sx, r.fx), std::max(r.sz, r.fz)};
+}
+
+StructureSite blueprint_skirt_rect(lua_State* L, const std::string& bp_id, f32 x, f32 z) {
+    const SkirtOf r = skirt_of(L, bp_id);
+    return StructureSite::of(x, z, r.fx, r.fz, r.sx, r.sz, r.ox, r.oz);
 }
 
 f32 work_gap(const Unit& worker, const Vector3& at, f32 target_extent) {

@@ -118,7 +118,7 @@ private:
     }
 
     void push_key(const Key& key) const {
-        if (key.rank == 0) lua_pushnumber(L_, key.number);
+        if (key.rank == 0) lua_pushdouble(L_, key.number);
         else if (key.rank == 1) lua_pushlstring(L_, key.string.data(), key.string.size());
         else lua_pushboolean(L_, key.boolean ? 1 : 0);
     }
@@ -145,7 +145,7 @@ public:
         case kNumber: {
             const f64 v = r_.f64v();
             if (!r_.ok()) return false;
-            lua_pushnumber(L_, v);
+            lua_pushdouble(L_, v);
             return true;
         }
         case kString: {

@@ -627,7 +627,7 @@ public:
     bool command_queued(u32 command_id) const;
     struct QueueWithPending {
         std::vector<UnitCommand> orders;
-        size_t kept_from_queue = 0;
+        std::vector<bool> pending; ///< each order's: not applied yet
     };
     /// Moho's UserCommandQueue with its pending edits applied
     std::map<EntityId, QueueWithPending> queues_with_pending() const;

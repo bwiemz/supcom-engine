@@ -19,6 +19,7 @@ struct lua_State;
 namespace osc::sim {
 
 class Unit;
+struct StructureSite;
 
 /// Capture's fixed reach, not MaxBuildDistance: a unit moves in when the gap
 /// is over 5, and gives up beyond 10.
@@ -38,6 +39,9 @@ std::pair<f32, f32> blueprint_footprint_cells(lua_State* L, const std::string& b
 /// The skirt of the blueprint `bp_id` (at least its footprint), X and Z:
 /// what a structure not yet begun will span. 1 by 1 when unknown.
 std::pair<f32, f32> blueprint_skirt(lua_State* L, const std::string& bp_id);
+
+/// That skirt laid about (x, z), as RUnitBlueprint::GetSkirtRect.
+StructureSite blueprint_skirt_rect(lua_State* L, const std::string& bp_id, f32 x, f32 z);
 
 /// The gap from `worker` to a target centred at `at` whose largest side is
 /// `target_extent`.

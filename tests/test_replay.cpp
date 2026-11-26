@@ -575,6 +575,65 @@ TEST_CASE("A factory command round-trips; a version 6 command loads without the 
     CHECK(out.commands[0].unit_ids == std::vector<EntityId>{EntityId::of(2, 1)});
 }
 
+TEST_CASE("An order's insert index round-trips; a version 19 command loads to the back",
+          "[replay]") {
+    Replay r;
+    ScheduledCommand c;
+    c.exec_beat = 5;
+    c.command.type = CommandType::BuildFactory;
+    c.command.blueprint_id = "uel0105";
+    c.command.command_id = 0x01000009u;
+    c.command.insert_before = 0x01000004u;
+    c.clear_existing = false;
+    c.unit_ids = {EntityId::of(3, 1)};
+    r.commands.push_back(c);
+    Replay out;
+    REQUIRE(Replay::deserialize(r.serialize(), out));
+    REQUIRE(out.commands.size() == 1);
+    CHECK(out.commands[0].command.insert_before == 0x01000004u);
+    CHECK(out.commands[0].unit_ids == c.unit_ids);
+
+    std::vector<osc::u8> bytes;
+    osc::sim::ByteWriter w(bytes);
+    for (char ch : {'O', 'S', 'C', 'R'}) {
+        w.u8v(static_cast<osc::u8>(ch));
+    }
+    w.u32v(19);
+    w.u32v(12);
+    w.u32v(0);
+    w.u64v(77);
+    w.str("domination");
+    w.str("build");
+    w.u8v(0);
+    w.u32v(0);
+    w.u32v(0);
+    w.u32v(1);
+    w.u32v(5);
+    w.u32v(0);
+    w.u8v(0);
+    w.u8v(static_cast<osc::u8>(CommandType::BuildFactory));
+    w.f32v(0.0f);
+    w.f32v(0.0f);
+    w.f32v(0.0f);
+    w.u64v(0);
+    w.u32v(0x01000009u);
+    w.str("uel0105");
+    w.str("");
+    w.u8v(0);
+    w.f32v(0);
+    w.u8v(1);
+    w.u32v(0);
+    w.u8v(0);
+    w.str("");
+    w.u32v(1);
+    w.u64v(EntityId::of(3, 1).key());
+    w.u8v(0);
+    REQUIRE(Replay::deserialize(bytes, out));
+    REQUIRE(out.commands.size() == 1);
+    CHECK(out.commands[0].command.insert_before == 0xFFFFFFFFu);
+    CHECK(out.commands[0].unit_ids == c.unit_ids);
+}
+
 TEST_CASE("A recorded replay reproduces the match", "[replay][sync]") {
     // --- Record ---
     LuaGuard ga;

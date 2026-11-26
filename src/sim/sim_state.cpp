@@ -1811,7 +1811,7 @@ std::map<EntityId, SimState::QueueWithPending> SimState::queues_with_pending() c
         auto [it, fresh] = queues.try_emplace(id);
         if (fresh) {
             it->second.orders.assign(unit.command_queue().begin(), unit.command_queue().end());
-            it->second.kept_from_queue = it->second.orders.size();
+            it->second.pending.assign(it->second.orders.size(), false);
         }
         return it->second;
     };
@@ -1848,12 +1848,10 @@ std::map<EntityId, SimState::QueueWithPending> SimState::queues_with_pending() c
                     }
                     if (remove) {
                         queue.orders.erase(queue.orders.begin() + static_cast<std::ptrdiff_t>(i));
-                        if (i < queue.kept_from_queue) {
-                            --queue.kept_from_queue;
-                        }
+                        queue.pending.erase(queue.pending.begin() + static_cast<std::ptrdiff_t>(i));
                         break;
                     }
-                    orders.push_back({unit, &queue.orders[i], i == 0 && queue.kept_from_queue > 0});
+                    orders.push_back({unit, &queue.orders[i], i == 0 && !queue.pending[0]});
                 }
             }
             if (!remove) {
@@ -1873,7 +1871,7 @@ std::map<EntityId, SimState::QueueWithPending> SimState::queues_with_pending() c
             QueueWithPending& queue = queue_of(id, *unit);
             if (cmd.type == CommandType::Stop && scheduled.clear_existing) {
                 queue.orders.clear();
-                queue.kept_from_queue = 0;
+                queue.pending.clear();
                 continue;
             }
             if (cmd.type == CommandType::SiloBuildNuke ||
@@ -1884,9 +1882,19 @@ std::map<EntityId, SimState::QueueWithPending> SimState::queues_with_pending() c
             }
             if (scheduled.clear_existing) {
                 queue.orders.clear();
-                queue.kept_from_queue = 0;
+                queue.pending.clear();
             }
-            queue.orders.push_back(cmd);
+            auto at = queue.orders.end();
+            if (cmd.insert_before >> 24 != 0xFF) {
+                at = std::find_if(
+                    queue.orders.begin(), queue.orders.end(),
+                    [&](const UnitCommand& c) { return c.command_id == cmd.insert_before; });
+                if (at == queue.orders.end()) {
+                    continue;
+                }
+            }
+            queue.pending.insert(queue.pending.begin() + (at - queue.orders.begin()), true);
+            queue.orders.insert(at, cmd);
         }
     }
     return queues;
@@ -2331,7 +2339,11 @@ void SimState::dispatch_due_commands() {
                     continue;
                 }
             }
-            unit->push_command(cmd, false);
+            if (cmd.insert_before >> 24 == 0xFF) {
+                unit->push_command(cmd, false);
+            } else {
+                unit->insert_command(std::move(cmd));
+            }
         }
     });
 }

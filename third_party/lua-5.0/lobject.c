@@ -91,23 +91,49 @@ int luaO_rawequalObj (const TObject *t1, const TObject *t2) {
 
 int luaO_str2d (const char *s, lua_Number *result) {
   char *endptr;
-  /* LuaPlus extension: handle hex literals (0x...) */
-  if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
-    unsigned long ul = strtoul(s, &endptr, 16);
-    if (endptr == s) return 0;
-    while (isspace((unsigned char)(*endptr))) endptr++;
-    if (*endptr != '\0') return 0;
-    *result = (lua_Number)ul;
-    return 1;
+  lua_Number res;
+  const char *p = s;
+  char spelled[512];
+  /* MSVC8's strtod, as Moho's: decimal digits only (no hex, inf or nan),
+  ** and `d' or `D' may stand for the exponent's `e' */
+  while (isspace((unsigned char)(*p))) {
+    p++;
   }
-  {
-    lua_Number res = lua_str2number(s, &endptr);
-    if (endptr == s) return 0;  /* no conversion */
-    while (isspace((unsigned char)(*endptr))) endptr++;
-    if (*endptr != '\0') return 0;  /* invalid trailing characters? */
-    *result = res;
-    return 1;
+  if (*p == '+' || *p == '-') {
+    p++;
   }
+  if (!isdigit((unsigned char)(*p)) && *p != '.') {
+    return 0;
+  }
+  if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+    return 0;
+  }
+  while (isdigit((unsigned char)(*p))) {
+    p++;
+  }
+  if (*p == '.') {
+    p++;
+  }
+  while (isdigit((unsigned char)(*p))) {
+    p++;
+  }
+  if ((*p == 'd' || *p == 'D') && strlen(s) < sizeof(spelled)) {
+    memcpy(spelled, s, strlen(s) + 1);
+    spelled[p - s] = 'e';
+    s = spelled;
+  }
+  res = lua_str2number(s, &endptr);
+  if (endptr == s) {
+    return 0;
+  }
+  while (isspace((unsigned char)(*endptr))) {
+    endptr++;
+  }
+  if (*endptr != '\0') {
+    return 0;
+  }
+  *result = lua_numfloat(res);
+  return 1;
 }
 
 

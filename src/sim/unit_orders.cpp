@@ -492,21 +492,27 @@ bool Unit::approach_update(SimContext& ctx) {
 }
 
 Vector3 Unit::build_place(const Vector3& site, f32 skirt_x, f32 skirt_z, SimContext& ctx) const {
+    return build_place(site,
+                       StructureSite{site.x - skirt_x * 0.5f, site.z - skirt_z * 0.5f,
+                                     site.x + skirt_x * 0.5f, site.z + skirt_z * 0.5f},
+                       ctx);
+}
+
+Vector3 Unit::build_place(const Vector3& site, const StructureSite& skirt, SimContext& ctx) const {
     // Moho's mobile build task and its repair task for a factory's build: the
     // place nearest the site, looked for a cell at a time, clear of the site's
     // skirt grown by a cell all round (Unit::PrepareMove(1, site, skirt), faf-re
     // CUnitMobileBuildTask.cpp): stopped anywhere in that cell, the builder is
     // off the site, though another skirt hem it in.
-    const f32 half_x = skirt_x * 0.5f + 1;
-    const f32 half_z = skirt_z * 0.5f + 1;
-    Vector3 goal = approach_point(*this, site, half_x, half_z);
+    const MoveExclusion grown{skirt.x0 - 1, skirt.z0 - 1, skirt.x1 + 1, skirt.z1 + 1};
+    Vector3 goal = approach_point(*this, site, (skirt.x1 - skirt.x0) * 0.5f + 1,
+                                  (skirt.z1 - skirt.z0) * 0.5f + 1);
     if (ctx.sim && ctx.terrain) {
         Vector3 place = site;
-        const MoveExclusion skirt{site.x - half_x, site.z - half_z, site.x + half_x,
-                                  site.z + half_z};
         if (prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()),
-                         place, 1, &skirt))
+                         place, 1, &grown)) {
             goal = place;
+        }
     }
     return goal;
 }
@@ -1543,31 +1549,39 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                 cmd.rebuild_bonus = site.bonus;
             }
         }
-        // Phase 1: reach the site. In range when the gap to its skirt
-        // is within MaxBuildDistance and the builder is off the
-        // skirt (Moho's CUnitMobileBuildTask); else it walks just
-        // clear of the skirt, one cell out, and builds from there if
-        // in range, or gives up. Range is looked at once (Moho's
-        // TASKSTATE_Waiting).
+        // Phase 1: reach the site. The builder stays where it is when it
+        // fits there, the gap to the site's skirt is within MaxBuildDistance
+        // and its own skirt doesn't touch the site's (Moho's
+        // CUnitMobileBuildTask); else it walks just clear of the skirt, one
+        // cell out, and builds from there if in range, or gives up. Range is
+        // looked at once (Moho's TASKSTATE_Waiting).
         if (!cmd.reached) {
             if (cmd.site_skirt_x <= 0) {
                 const auto [sx, sz] = blueprint_skirt(L, cmd.blueprint_id);
                 cmd.site_skirt_x = sx;
                 cmd.site_skirt_z = sz;
             }
-            const f32 half_x = cmd.site_skirt_x * 0.5f;
-            const f32 half_z = cmd.site_skirt_z * 0.5f;
-            const auto reachable = [&] {
-                const f32 skirt = std::max(cmd.site_skirt_x, cmd.site_skirt_z);
-                const f32 room = footprint_extent(*this) * 0.5f;
-                const bool on_site = std::abs(position().x - cmd.target_pos.x) <= half_x + room &&
-                                     std::abs(position().z - cmd.target_pos.z) <= half_z + room;
-                return !on_site && work_gap(*this, cmd.target_pos, skirt) <= max_build_distance_;
+            const f32 skirt = std::max(cmd.site_skirt_x, cmd.site_skirt_z);
+            const auto in_range = [&] {
+                return work_gap(*this, cmd.target_pos, skirt) <= max_build_distance_;
             };
-            if (!cmd.approached && !reachable() && effective_speed() > 0) {
-                cmd.approached = true;
-                set_path_goal(build_place(cmd.target_pos, cmd.site_skirt_x, cmd.site_skirt_z, ctx),
-                              ctx);
+            if (!cmd.prepared && effective_speed() > 0) {
+                const Vector3& at = cmd.target_pos;
+                const StructureSite site = blueprint_skirt_rect(L, cmd.blueprint_id, at.x, at.z);
+                const StructureSite own = StructureSite::of(
+                    position().x, position().z, footprint_size_x(), footprint_size_z(),
+                    skirt_size_x(), skirt_size_z(), skirt_offset_x(), skirt_offset_z());
+                const bool on_site = own.x0 <= site.x1 && site.x0 <= own.x1 && own.z0 <= site.z1 &&
+                                     site.z0 <= own.z1;
+                const bool fits =
+                    !ctx.sim || !ctx.terrain ||
+                    ctx.sim->footprint_fits_at(footprint(), position().x, position().z) != 0;
+                if (!fits || !in_range() || on_site) {
+                    cmd.approached = true;
+                    const Vector3 place = build_place(at, site, ctx);
+                    reserve_for_order(cmd.command_id, place, ctx.sim);
+                    set_path_goal(place, ctx);
+                }
             }
             // The task's first tick checks the site and sends the builder; it
             // aims from the next (Moho's TASKSTATE_Preparing returns 1).
@@ -1578,11 +1592,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             if (cmd.approached && approach_update(ctx)) {
                 return OrderStep::Hold;
             }
-            // After the walk only range decides: the pathfinder may have moved
-            // its goal onto the site
-            const f32 skirt = std::max(cmd.site_skirt_x, cmd.site_skirt_z);
-            const bool in_range = work_gap(*this, cmd.target_pos, skirt) <= max_build_distance_;
-            if (!reachable() && !(cmd.approached && in_range)) {
+            if (!in_range()) {
                 command_queue_.pop_front();
                 call_lua_method(L, "OnFailedToBuild");
                 return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
@@ -1681,6 +1691,10 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
 OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
+    if (cmd.type == CommandType::BuildFactory && lost_work(cmd, ctx)) {
+        remove_command(cmd.command_id, ctx);
+        return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+    }
     // A factory whose unit is done keeps the order while it rolls the unit
     // off (holds_for_rolloff), and only then goes on to its next.
     if (cmd.rolloff_wait > 0) {
@@ -1740,6 +1754,18 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
     return OrderStep::Hold;
 }
 
+bool Unit::lost_work(UnitCommand& cmd, SimContext& ctx) {
+    if (cmd.work_order == 0 || !ctx.sim) {
+        return false;
+    }
+    const u32 now = ctx.sim->beat_count();
+    if (cmd.work_order_gone == 0 && !ctx.sim->command_queued(cmd.work_order)) {
+        cmd.work_order_gone = now;
+    }
+    const bool executes = cmd.rolloff_wait > 0 ? cmd.rolloff_wait == 1 : cmd.task_wait <= 1;
+    return cmd.work_order_gone != 0 && cmd.work_order_gone < now && executes;
+}
+
 bool Unit::waits_out_task(UnitCommand& cmd) {
     if (cmd.task_wait <= 0) {
         return false;
@@ -1786,11 +1812,15 @@ OrderStep Unit::end_factory_build_order(UnitCommand& cmd) {
         cmd.rolloff_wait = 0;
         cmd.task_wait = 0;
         cmd.begun = false;
+        cmd.work_order = 0;
+        cmd.work_order_gone = 0;
         return OrderStep::Next;
     }
     if (repeat_queue_) {
         auto finished = std::move(cmd); // cmd is the element pop_front destroys
         finished.rolloff_wait = 0;
+        finished.work_order = 0;
+        finished.work_order_gone = 0;
         finished.count = std::max(finished.max_count, 1);
         command_queue_.pop_front();
         command_queue_.push_back(std::move(finished));

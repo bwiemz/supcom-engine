@@ -419,10 +419,10 @@ static void Bitwise (lua_State *L, StkId ra,
   switch (op) {
     case OP_BOR: r = x | y; break;
     case OP_BAND: r = x & y; break;
-    case OP_SHL: r = (y >= 32) ? 0 : (x << y); break;
-    default: r = (y >= 32) ? 0 : (x >> y); break;  /* OP_SHR */
+    case OP_SHL: r = x << (y & 31); break;
+    default: r = x >> (y & 31); break;  /* OP_SHR */
   }
-  setnvalue(ra, cast(lua_Number, r));
+  setnvalue(ra, lua_numfloat(r));
 }
 
 
@@ -433,10 +433,10 @@ static void Arith (lua_State *L, StkId ra,
   if ((b = luaV_tonumber(rb, &tempb)) != NULL &&
       (c = luaV_tonumber(rc, &tempc)) != NULL) {
     switch (op) {
-      case TM_ADD: setnvalue(ra, nvalue(b) + nvalue(c)); break;
-      case TM_SUB: setnvalue(ra, nvalue(b) - nvalue(c)); break;
-      case TM_MUL: setnvalue(ra, nvalue(b) * nvalue(c)); break;
-      case TM_DIV: setnvalue(ra, nvalue(b) / nvalue(c)); break;
+      case TM_ADD: setnvalue(ra, lua_numfloat(nvalue(b) + nvalue(c))); break;
+      case TM_SUB: setnvalue(ra, lua_numfloat(nvalue(b) - nvalue(c))); break;
+      case TM_MUL: setnvalue(ra, lua_numfloat(nvalue(b) * nvalue(c))); break;
+      case TM_DIV: setnvalue(ra, lua_numfloat(nvalue(b) / nvalue(c))); break;
       case TM_POW: {
         const TObject *f = luaH_getstr(hvalue(gt(L)), G(L)->tmname[TM_POW]);
         ptrdiff_t res = savestack(L, ra);
@@ -603,7 +603,7 @@ StkId luaV_execute (lua_State *L) {
         TObject *rb = RKB(i);
         TObject *rc = RKC(i);
         if (ttisnumber(rb) && ttisnumber(rc)) {
-          setnvalue(ra, nvalue(rb) + nvalue(rc));
+          setnvalue(ra, lua_numfloat(nvalue(rb) + nvalue(rc)));
         }
         else
           Arith(L, ra, rb, rc, TM_ADD);
@@ -613,7 +613,7 @@ StkId luaV_execute (lua_State *L) {
         TObject *rb = RKB(i);
         TObject *rc = RKC(i);
         if (ttisnumber(rb) && ttisnumber(rc)) {
-          setnvalue(ra, nvalue(rb) - nvalue(rc));
+          setnvalue(ra, lua_numfloat(nvalue(rb) - nvalue(rc)));
         }
         else
           Arith(L, ra, rb, rc, TM_SUB);
@@ -623,7 +623,7 @@ StkId luaV_execute (lua_State *L) {
         TObject *rb = RKB(i);
         TObject *rc = RKC(i);
         if (ttisnumber(rb) && ttisnumber(rc)) {
-          setnvalue(ra, nvalue(rb) * nvalue(rc));
+          setnvalue(ra, lua_numfloat(nvalue(rb) * nvalue(rc)));
         }
         else
           Arith(L, ra, rb, rc, TM_MUL);
@@ -633,7 +633,7 @@ StkId luaV_execute (lua_State *L) {
         TObject *rb = RKB(i);
         TObject *rc = RKC(i);
         if (ttisnumber(rb) && ttisnumber(rc)) {
-          setnvalue(ra, nvalue(rb) / nvalue(rc));
+          setnvalue(ra, lua_numfloat(nvalue(rb) / nvalue(rc)));
         }
         else
           Arith(L, ra, rb, rc, TM_DIV);
@@ -799,7 +799,7 @@ StkId luaV_execute (lua_State *L) {
         if (!tonumber(pstep, ra+2))
           luaG_runerror(L, "`for' step must be a number");
         step = nvalue(pstep);
-        idx = nvalue(ra) + step;  /* increment index */
+        idx = lua_numfloat(nvalue(ra) + step);  /* increment index */
         limit = nvalue(plimit);
         if (step > 0 ? idx <= limit : idx >= limit) {
           dojump(pc, GETARG_sBx(i));  /* jump back */
