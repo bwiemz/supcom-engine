@@ -11,6 +11,7 @@ extern "C" {
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 
 namespace osc::sim {
 
@@ -137,6 +138,10 @@ void push_entity_id(lua_State* L, EntityId id) {
 }
 
 EntityId to_entity_id(lua_State* L, int idx, const EntityRegistry& registry) {
+    if (lua_type(L, idx) == LUA_TSTRING && lua_isnumber(L, idx)) {
+        return registry.live_id(
+            static_cast<u32>(static_cast<i32>(std::strtol(lua_tostring(L, idx), nullptr, 10))));
+    }
     if (!lua_isnumber(L, idx)) {
         return EntityId();
     }
@@ -144,7 +149,7 @@ EntityId to_entity_id(lua_State* L, int idx, const EntityRegistry& registry) {
 }
 
 void push_entity_key(lua_State* L, EntityId id) {
-    lua_pushnumber(L, static_cast<lua_Number>(id.key()));
+    lua_pushdouble(L, static_cast<lua_Number>(id.key()));
 }
 
 EntityId to_entity_key(lua_State* L, int idx) {

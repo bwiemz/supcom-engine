@@ -95,6 +95,9 @@ typedef double lua_Number;
 typedef LUA_NUMBER lua_Number;
 #endif
 
+/* Moho's LuaPlus is built with LUA_NUMBER=float */
+#define lua_numfloat(n)	((lua_Number)(float)(n))
+
 
 /* mark for all API functions */
 #ifndef LUA_API
@@ -156,6 +159,7 @@ LUA_API const void     *lua_topointer (lua_State *L, int idx);
 */
 LUA_API void  lua_pushnil (lua_State *L);
 LUA_API void  lua_pushnumber (lua_State *L, lua_Number n);
+LUA_API void  lua_pushdouble (lua_State *L, lua_Number n);
 LUA_API void  lua_pushlstring (lua_State *L, const char *s, size_t l);
 LUA_API void  lua_pushstring (lua_State *L, const char *s);
 LUA_API const char *lua_pushvfstring (lua_State *L, const char *fmt,

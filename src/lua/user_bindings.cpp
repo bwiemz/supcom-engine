@@ -1245,7 +1245,7 @@ static int l_c_CreateDecal(lua_State* L) {
         return 1;
     }
     lua_pushstring(L, "_c_user_decal");
-    lua_pushnumber(L, static_cast<lua_Number>(reg->user_decals().create()));
+    lua_pushdouble(L, static_cast<lua_Number>(reg->user_decals().create()));
     lua_rawset(L, 1);
     lua_pushvalue(L, 1);
     return 1;
