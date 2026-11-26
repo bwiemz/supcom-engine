@@ -374,11 +374,10 @@ static int platoon_order_to(lua_State* L, sim::CommandType type, int squad_arg) 
         }
     }
 
-    u32 cmd_id = sim->next_command_id();
+    u32 cmd_id = 0;
     sim::UnitCommand cmd;
     cmd.type = type;
     cmd.target_pos = pos;
-    cmd.command_id = cmd_id;
 
     // One order per formation, in order of first appearance.
     std::vector<std::pair<std::string, std::vector<sim::EntityId>>> groups;
@@ -396,7 +395,10 @@ static int platoon_order_to(lua_State* L, sim::CommandType type, int squad_arg) 
     for (auto& [formation, ids] : groups) {
         sim::UnitCommand order = cmd;
         order.formation = formation;
-        sim->route_command(ids, order, false);
+        order.command_id = cmd_id;
+        if (const u32 issued = sim->route_command(ids, order, false); cmd_id == 0) {
+            cmd_id = issued;
+        }
     }
     lua_pushnumber(L, cmd_id);
     return 1;
@@ -428,16 +430,17 @@ static int platoon_Patrol(lua_State* L) {
     if (lua_isnumber(L, -1)) pos.z = static_cast<f32>(lua_tonumber(L, -1));
     lua_pop(L, 1);
 
-    u32 cmd_id = sim->next_command_id();
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Patrol;
     cmd.target_pos = pos;
-    cmd.command_id = cmd_id;
 
     for (sim::EntityId id : order_units(L, *sim, *platoon, 3, 1, 5, true)) {
+        if (cmd.serial == 0) {
+            sim->number_command(cmd);
+        }
         static_cast<sim::Unit*>(sim->entity_registry().find(id))->push_command(cmd, false);
     }
-    lua_pushnumber(L, cmd_id);
+    lua_pushnumber(L, cmd.command_id);
     return 1;
 }
 
@@ -450,18 +453,19 @@ static int platoon_AttackTarget(lua_State* L) {
     auto* target = check_entity(L, 2);
     if (!target || target->destroyed()) { lua_pushnil(L); return 1; }
 
-    u32 cmd_id = sim->next_command_id();
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Attack;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    cmd.command_id = cmd_id;
     sim->pick_target_point(cmd);
 
     for (sim::EntityId id : order_units(L, *sim, *platoon, 3, 1, 2, true)) {
+        if (cmd.serial == 0) {
+            sim->number_command(cmd);
+        }
         static_cast<sim::Unit*>(sim->entity_registry().find(id))->push_command(cmd, false);
     }
-    lua_pushnumber(L, cmd_id);
+    lua_pushnumber(L, cmd.command_id);
     return 1;
 }
 
@@ -473,23 +477,27 @@ static int platoon_GuardTarget(lua_State* L) {
     auto* target = check_entity(L, 2);
     if (!target || target->destroyed()) { lua_pushnil(L); return 1; }
 
-    u32 cmd_id = sim->next_command_id();
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Guard;
     cmd.target_id = target->entity_id();
-    cmd.command_id = cmd_id;
     sim->pick_target_point(cmd);
 
     bool queued = false;
     for (sim::EntityId id : order_units(L, *sim, *platoon, 3, 1, 2, true)) {
         auto* u = static_cast<sim::Unit*>(sim->entity_registry().find(id));
         if (!sim->takes_command(*u, cmd)) continue;
+        if (cmd.serial == 0) {
+            sim->number_command(cmd);
+        }
         u->push_command(cmd, false);
         queued = true;
     }
     // The command, or nil when none of its units took it (as Issue*).
-    if (queued) lua_pushnumber(L, cmd_id);
-    else lua_pushnil(L);
+    if (queued) {
+        lua_pushnumber(L, cmd.command_id);
+    } else {
+        lua_pushnil(L);
+    }
     return 1;
 }
 

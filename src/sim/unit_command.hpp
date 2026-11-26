@@ -161,6 +161,8 @@ struct UnitCommand {
     EntityId target_id{};       // entity ID for Attack/Guard
     std::string blueprint_id;   // for Build commands (empty for non-build)
     u32 command_id = 0;         // unique ID for IsCommandsActive tracking
+    /// Moho's CUnitCommand::mInstanceSerial: when the order was made, among all (0: not yet).
+    u32 serial = 0;
     /// A group order's formation (a /lua/formations.lua function, e.g.
     /// AttackFormation): the sim lays its units out in slots about the target
     /// when it applies the order (M204). Empty: every unit to the target.

@@ -76,6 +76,7 @@ osc::sim::UnitCommand patrol(osc::f32 x, osc::f32 z, osc::u32 id) {
     c.type = CommandType::Patrol;
     c.target_pos = {x, 0.0f, z};
     c.command_id = id;
+    c.serial = id;
     return c;
 }
 
@@ -178,6 +179,27 @@ TEST_CASE("A patrol point added to a running patrol joins the loop after the las
     REQUIRE(u->command_queue().size() == 3);
     CHECK(u->command_queue()[1].command_id == 3);
     CHECK(u->command_queue()[2].command_id == 1);
+}
+
+TEST_CASE("A patrol point added to a running patrol goes before its oldest by when made, not by id",
+          "[patrol]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* u = walker(sim, 10.0f, 10.0f);
+    const auto point = [](osc::f32 x, osc::f32 z, osc::u32 id, osc::u32 serial) {
+        osc::sim::UnitCommand c = patrol(x, z, id);
+        c.serial = serial;
+        return c;
+    };
+    u->push_command(point(60.0f, 10.0f, 0x80000009u, 1), true);
+    u->push_command(point(60.0f, 60.0f, 0x80000008u, 2), false);
+    tick_until([&] { sim.tick(); }, "the patrol reaches its first point", 400,
+               [&] { return u->command_queue().front().command_id == 0x80000008u; });
+    u->push_command(point(10.0f, 60.0f, 0x80000007u, 3), false);
+    REQUIRE(u->command_queue().size() == 3);
+    CHECK(u->command_queue()[1].command_id == 0x80000007u);
+    CHECK(u->command_queue()[2].command_id == 0x80000009u);
 }
 
 TEST_CASE("A queued patrol starts where the orders before it end even before they run",

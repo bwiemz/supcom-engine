@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 130; // 2: entities' wanted loops (M216b);
+constexpr u32 kVersion = 135; // 2: entities' wanted loops (M216b);
                               // 3: emitter overrides (M214d);
                               // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                               // 6: weapons' lead physics;
@@ -177,6 +177,8 @@ constexpr u32 kVersion = 130; // 2: entities' wanted loops (M216b);
                               // 129: where a build arm's reference bone stood in the last pose
                               // 130: fliers' inertia tensors; their angular momentum
                               //      with their mass, as SPhysBody's
+                              // 135: the sim's order ids from a pool (CCommandDB);
+                              //      orders' serials
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -200,6 +202,25 @@ std::vector<u32> load_ids(StateReader& r) {
     std::vector<u32> ids(r.size(4));
     for (u32& id : ids) id = r.u32v();
     return ids;
+}
+
+void save_id_pool(StateWriter& w, const IdPool& pool) {
+    w.u32v(pool.next);
+    save_ids(w, std::vector<u32>(pool.released.begin(), pool.released.end()));
+    w.size(pool.held.size());
+    for (const std::vector<u32>& beat : pool.held) {
+        save_ids(w, beat);
+    }
+}
+bool load_id_pool(StateReader& r, IdPool& pool) {
+    pool.next = r.u32v();
+    const std::vector<u32> released = load_ids(r);
+    pool.released = std::set<u32>(released.begin(), released.end());
+    pool.held.resize(r.size(4));
+    for (std::vector<u32>& beat : pool.held) {
+        beat = load_ids(r);
+    }
+    return !pool.held.empty() && pool.held.size() <= IdPool::kHeldUpdates;
 }
 
 // A map keyed by id, in id order (an unordered one sorted first).
@@ -252,12 +273,7 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
     w.size(reg.id_pools_.size());
     for (const auto& [bits, pool] : reg.id_pools_) {
         w.u32v(bits);
-        w.u32v(pool.next);
-        save_ids(w, std::vector<u32>(pool.released.begin(), pool.released.end()));
-        w.size(pool.held.size());
-        for (const std::vector<u32>& beat : pool.held) {
-            save_ids(w, beat);
-        }
+        save_id_pool(w, pool);
         save_ids(w, pool.generations);
     }
     w.ids(std::vector<EntityId>(reg.deletion_queue_.begin(), reg.deletion_queue_.end()));
@@ -376,15 +392,8 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     }
     const size_t pools = r.size(8);
     for (size_t i = 0; i < pools && r.ok(); ++i) {
-        EntityRegistry::IdPool& pool = reg.id_pools_[r.u32v()];
-        pool.next = r.u32v();
-        const std::vector<u32> released = load_ids(r);
-        pool.released = std::set<u32>(released.begin(), released.end());
-        pool.held.resize(r.size(4));
-        for (std::vector<u32>& beat : pool.held) {
-            beat = load_ids(r);
-        }
-        if (pool.held.empty() || pool.held.size() > EntityRegistry::kIdHeldBeats) {
+        EntityRegistry::EntityIdPool& pool = reg.id_pools_[r.u32v()];
+        if (!load_id_pool(r, pool)) {
             return r.fail("an id pool's held serials");
         }
         pool.generations = load_ids(r);
@@ -551,7 +560,9 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
             w.b(src.enabled);
         }
     }
-    w.u32v(sim.next_command_id_);
+    save_id_pool(w, sim.sim_command_ids_);
+    save_ids(w, std::vector<u32>(sim.sim_commands_.begin(), sim.sim_commands_.end()));
+    w.u32v(sim.next_command_serial_);
     w.u32v(sim.player_commands_issued_);
     w.b(sim.game_ended_);
     w.b(sim.script_victory_);
@@ -810,7 +821,12 @@ void StateIO::load(StateReader& r, SimState& sim) {
             src.enabled = r.b();
         }
     }
-    sim.next_command_id_ = r.u32v();
+    if (!load_id_pool(r, sim.sim_command_ids_)) {
+        return r.fail("the sim's order id pool");
+    }
+    const std::vector<u32> held = load_ids(r);
+    sim.sim_commands_ = std::set<u32>(held.begin(), held.end());
+    sim.next_command_serial_ = r.u32v();
     sim.player_commands_issued_ = r.u32v();
     sim.game_ended_ = r.b();
     sim.game_over_ = sim.game_ended_;

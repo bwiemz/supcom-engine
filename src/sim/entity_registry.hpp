@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 #include "sim/collision_cells.hpp"
 #include "sim/entity_id.hpp"
+#include "sim/id_pool.hpp"
 #include "sim/sim_random.hpp"
 
 #include <algorithm>
@@ -62,7 +63,7 @@ public:
     /// Moho's IdPool::Update on every pool, the tail of EntityDB::Purge: a serial released
     /// kIdHeldBeats updates ago is free again.
     void update_id_pools();
-    static constexpr size_t kIdHeldBeats = 99;
+    static constexpr size_t kIdHeldBeats = IdPool::kHeldUpdates;
 
     /// Moho's stage A list (CTaskStage): the order the entities step in, kept from walk to walk.
     std::vector<EntityId>& walk() { return walk_; }
@@ -287,16 +288,12 @@ private:
     /// The slot of `slots` (order_ or unit_order_) whose seq is `seq`, by a
     /// binary search; null if none is. A compaction renumbers nothing.
     static Slot* find_slot(std::vector<Slot>& slots, u64 seq);
-    /// Moho's id pools (sim/IdPool.cpp), by family and source bits.
-    struct IdPool {
-        u32 next = 0;
-        std::set<u32> released;
-        /// The serials released in each of the last updates, the newest open: Moho's ring.
-        std::deque<std::vector<u32>> held = std::deque<std::vector<u32>>(1);
+    /// Moho's id pools, by family and source bits.
+    struct EntityIdPool : IdPool {
         /// Each serial's last generation, of the ids in this pool's range.
         std::vector<u32> generations;
     };
-    std::map<u32, IdPool> id_pools_;
+    std::map<u32, EntityIdPool> id_pools_;
     EntityId reserve_id(const Entity& e);
     /// Walks in progress (a walk's callback may start another).
     mutable u32 walking_ = 0;

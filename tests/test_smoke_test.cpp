@@ -628,7 +628,7 @@ TEST_CASE("A unit a factory finishes takes the factory's rally orders", "[sessio
     osc::sim::UnitCommand guard;
     guard.type = osc::sim::CommandType::Guard;
     guard.target_id = f->entity_id();
-    guard.command_id = h.sim.next_command_id();
+    h.sim.number_command(guard);
     f->add_rally_order(guard);
 
     h.sim.tick();
@@ -644,6 +644,41 @@ TEST_CASE("A unit a factory finishes takes the factory's rally orders", "[sessio
     CHECK(tank->command_queue().front().type == osc::sim::CommandType::Guard);
     CHECK(tank->command_queue().front().command_id == guard.command_id);
     CHECK(f->rally_orders().size() == 3); // the factory keeps them
+}
+
+TEST_CASE("A unit a factory finishes takes its rally orders as they are, none made for it",
+          "[session][rules]") {
+    for (const bool guarded : {false, true}) {
+        BuildRuleHarness h;
+        h.sim.set_no_rush(100.0f, 2.0f);
+        REQUIRE(h.state.do_string("factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                                  "IssueClearFactoryCommands({factory})\n"));
+        osc::sim::Unit* f = find_factory(h);
+        REQUIRE(f);
+        osc::sim::UnitCommand guard;
+        guard.type = osc::sim::CommandType::Guard;
+        guard.target_id = f->entity_id();
+        h.sim.number_command(guard);
+        if (guarded) {
+            f->add_rally_order(guard);
+        }
+        REQUIRE(h.state.do_string("IssueBuildFactory({factory}, 'test_tank', 1)\n"));
+        h.sim.tick();
+        osc::sim::Unit* tank = find_unit(h, "test_tank");
+        REQUIRE(tank);
+        tick_until([&] { h.sim.tick(); }, "the tank is built", 50,
+                   [&] { return f->factory_queue().empty(); });
+        REQUIRE_FALSE(tank->is_being_built());
+        if (guarded) {
+            REQUIRE(f->rally_orders().size() == 1);
+            CHECK(f->rally_orders().front().command_id == guard.command_id);
+            REQUIRE(tank->command_queue().size() == 1);
+            CHECK(tank->command_queue().front().command_id == guard.command_id);
+        } else {
+            CHECK(f->rally_orders().empty());
+            CHECK(tank->command_queue().empty());
+        }
+    }
 }
 
 TEST_CASE("A factory is made with its initial rally, ahead of itself", "[session][rules]") {
@@ -665,7 +700,7 @@ TEST_CASE("A factory is made with its initial rally, ahead of itself", "[session
     CHECK(point.z == 25.0f);
     CHECK(tank->rally_orders().empty());
     CHECK_FALSE(tank->rally_point(h.state.raw(), point));
-    CHECK(f->validated_rally_orders(h.state.raw(), &h.sim).size() == 1);
+    CHECK(f->rally_orders().size() == 1);
 
     lua_State* L = h.state.raw();
     lua_pushstring(L, "__osc_create_building_unit");

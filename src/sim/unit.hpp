@@ -372,10 +372,12 @@ public:
     const std::vector<UnitCommand>& rally_orders() const { return rally_orders_; }
     void add_rally_order(const UnitCommand& cmd) { rally_orders_.push_back(cmd); }
     void clear_rally_orders() { rally_orders_.clear(); }
-    /// The rally orders, first given the blueprint's initial rally if there
-    /// are none (Moho's BuilderSetUpInitialRally), as Moho keeps a factory's.
-    /// It changes sim state: only the sim's own steps may call it.
-    const std::vector<UnitCommand>& validated_rally_orders(lua_State* L, SimState* sim);
+    /// Moho's BuilderSetUpInitialRally: a factory with no rally orders is given its blueprint's
+    /// initial rally, unless the no-rush radius holds it. Only the sim's own steps may call it.
+    void set_up_initial_rally(lua_State* L, SimState* sim);
+    /// Moho's BuilderValidateFactoryCommandQueue, at the end of its motion tick: a rally order to
+    /// board what can no longer carry is dropped, and an empty list is set up again.
+    void validate_rally_orders(SimContext& ctx);
     /// Where the first rally order goes (unit:GetRallyPoint), without
     /// changing anything: the initial rally's point if there are none yet.
     /// False for a unit that keeps none. `L` is the sim's Lua state, whose

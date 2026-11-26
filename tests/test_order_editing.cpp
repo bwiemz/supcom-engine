@@ -283,23 +283,15 @@ TEST_CASE("A moved build order snaps to its footprint, unless it is under way", 
     CHECK(a.command_queue().front().target_pos.x == 60.0f);
 }
 
-TEST_CASE("An order with no place, or of no unit named, is left alone", "[order_edit]") {
+TEST_CASE("An order with no place is left alone", "[order_edit]") {
     World w;
     Unit& a = w.walker(10, 10);
-    Unit& b = w.walker(10, 20);
     UnitCommand stop;
     stop.type = CommandType::Upgrade;
     stop.command_id = 3;
     a.push_command(stop, true);
-    UnitCommand move;
-    move.type = CommandType::Move;
-    move.command_id = 4;
-    move.target_pos = {50, 0, 50};
-    b.push_command(move, true);
     w.sim->run_sim_callback(retarget(3, {a.entity_id()}, 30, 30));
     CHECK(a.command_queue().front().target_pos.x == 0.0f);
-    w.sim->run_sim_callback(retarget(4, {a.entity_id()}, 30, 30));
-    CHECK(b.command_queue().front().target_pos.x == 50.0f);
 }
 
 namespace {

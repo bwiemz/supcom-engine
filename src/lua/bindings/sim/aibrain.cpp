@@ -1439,7 +1439,7 @@ static int brain_BuildStructure(lua_State* L) {
         cmd.has_facing = true;
         cmd.facing = angle;
         if (sim) {
-            cmd.command_id = sim->next_command_id();
+            sim->number_command(cmd);
             ordered = cmd.command_id;
         }
         unit->push_command(cmd, false);
@@ -1470,6 +1470,9 @@ static int brain_BuildUnit(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::BuildFactory;
     cmd.blueprint_id = bp_id;
+    if (auto* sim = get_sim(L)) {
+        sim->number_command(cmd);
+    }
     unit->push_command(cmd, false);
     return 0;
 }
@@ -1661,6 +1664,9 @@ static int brain_BuildPlatoon(lua_State* L) {
             sim::UnitCommand cmd;
             cmd.type = sim::CommandType::BuildFactory;
             cmd.blueprint_id = bp_id;
+            if (auto* sim = get_sim(L)) {
+                sim->number_command(cmd);
+            }
             factory->push_command(cmd, false);
         }
     }

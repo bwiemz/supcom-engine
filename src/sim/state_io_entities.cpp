@@ -369,6 +369,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.id(c.target_id);
     w.str(c.blueprint_id);
     w.u32v(c.command_id);
+    w.u32v(c.serial);
     w.str(c.formation);
     w.b(c.has_facing);
     w.f32v(c.facing);
@@ -440,6 +441,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.target_id = r.id();
     c.blueprint_id = r.str();
     c.command_id = r.u32v();
+    c.serial = r.u32v();
     c.formation = r.str();
     c.has_facing = r.b();
     c.facing = r.f32v();
