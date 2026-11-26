@@ -65,10 +65,51 @@ Weapon* Unit::get_weapon(i32 index) {
     return weapons_[index].get();
 }
 
+bool Unit::issue_stops_move(CommandType issued) const {
+    const auto real = [](const UnitCommand& c) { return !c.from_patrol && !c.from_guard; };
+    const auto head = std::find_if(command_queue_.begin(), command_queue_.end(), real);
+    if (head == command_queue_.end() || !head->begun) {
+        return false;
+    }
+    const auto after = std::find_if(std::next(head), command_queue_.end(), real);
+    const bool instant =
+        instant_order(issued) || (after != command_queue_.end() && instant_order(after->type));
+    for (auto task = command_queue_.begin(); task != std::next(head); ++task) {
+        switch (task->type) {
+        case CommandType::Attack:
+        case CommandType::Overcharge:
+        case CommandType::Ferry: return true;
+        case CommandType::Guard:
+        case CommandType::Patrol:
+        case CommandType::AggressiveMove:
+            if (moved_last_tick()) {
+                return true;
+            }
+            break;
+        case CommandType::Move:
+            if (task->formed || instant) {
+                return true;
+            }
+            break;
+        case CommandType::Nuke:
+        case CommandType::Tactical: break;
+        default:
+            if (instant && navigator_.busy()) {
+                return true;
+            }
+            break;
+        }
+    }
+    return false;
+}
+
 void Unit::push_command(const UnitCommand& cmd, bool clear_existing) {
     if (clear_existing) {
+        const bool stop = issue_stops_move(cmd.type);
         command_queue_.clear();
-        abort_move();
+        if (stop) {
+            abort_move();
+        }
     }
     // Moho's queue puts a patrol point added to a running patrol before the
     // loop's oldest point: the loop goes on through it in the order given
@@ -126,10 +167,14 @@ void Unit::note_queue_head() {
     }
 }
 
-void Unit::clear_commands(SimContext& ctx) {
+void Unit::clear_commands(SimContext& ctx, std::optional<CommandType> issued) {
     const bool factory_build = building_factory_order();
     const bool upgrade = upgrading();
-    clear_commands();
+    if (!issued || issue_stops_move(*issued)) {
+        clear_commands();
+    } else {
+        command_queue_.clear();
+    }
     if (factory_build) {
         cancel_factory_build(ctx.registry, ctx.L);
     }
@@ -643,8 +688,8 @@ bool Unit::nav_update(f32 speed_cap) {
 bool Unit::nav_step(f64 dt, const map::Terrain* terrain) {
     navigator_.set_ended(false);
     const bool requested = std::exchange(nav_requested_, false);
-    // Its navigator idle, its motion still follows the spline its steering brakes along.
-    if (!navigator_.busy() && navigator_.has_motion_node() && !is_air_unit()) {
+    // CUnitMotion::CalcMoveCommon takes its steering's node each tick (CUnitMotion.cpp:2686).
+    if ((!navigator_.busy() || !requested) && navigator_.has_motion_node() && !is_air_unit()) {
         navigator_.update(*this, nav_speed(), dt, terrain);
         return true;
     }

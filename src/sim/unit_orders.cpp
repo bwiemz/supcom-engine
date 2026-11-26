@@ -657,6 +657,10 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
 void Unit::begin_order(UnitCommand& cmd, SimContext& ctx) {
     lua_State* L = ctx.L;
     cmd.begun = true;
+    // CUnitReclaimTask's constructor (CUnitReclaimTask.cpp:254-256)
+    if (cmd.type == CommandType::Reclaim && !cmd.from_patrol) {
+        abort_move();
+    }
     // Moho's CUnitMoveTask constructor (ShouldUseCurrentCommandTargetPosition):
     // a factory-issued move that is the unit's last order settles its goal.
     if (cmd.type == CommandType::Move && cmd.from_factory && command_queue_.size() == 1 &&
@@ -1535,6 +1539,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             if (site.reclaim_id) {
                 cmd.clearing_prop_id = site.reclaim_id;
                 cmd.clearing_approached = false;
+                abort_move();
                 return OrderStep::Hold;
             }
             cmd.site_cleared = true;
@@ -1587,7 +1592,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                 call_lua_method(L, "OnFailedToBuild");
                 return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
             }
-            abort_move();
+            end_approach(cmd);
             cmd.reached = true;
         }
         {
@@ -1978,10 +1983,10 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Next;
         }
     }
-    abort_move();
 
     // Start reclaim if not already reclaiming this target
     if (reclaim_target_id_ != cmd.target_id) {
+        end_approach(cmd);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
         const ReclaimCosts costs = reclaim_costs(L, *this, *target, static_cast<f64>(build_rate_));

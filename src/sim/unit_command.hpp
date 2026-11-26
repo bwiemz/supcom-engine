@@ -84,7 +84,8 @@ inline bool instant_order(CommandType type) {
     case CommandType::Teleport:
     case CommandType::Reclaim:
     case CommandType::Capture:
-    case CommandType::Upgrade: return true;
+    case CommandType::Upgrade:
+    case CommandType::DestroySelf: return true;
     default: return false;
     }
 }
