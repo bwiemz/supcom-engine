@@ -90,6 +90,27 @@ void Unit::push_command(const UnitCommand& cmd, bool clear_existing) {
     update_speed_through();
 }
 
+void Unit::insert_command(UnitCommand cmd) {
+    const auto at =
+        std::find_if(command_queue_.begin(), command_queue_.end(),
+                     [&](const UnitCommand& c) { return c.command_id == cmd.insert_before; });
+    if (at == command_queue_.end()) {
+        return;
+    }
+    if (at == command_queue_.begin() && at->begun) {
+        std::swap(cmd.command_id, at->command_id);
+        std::swap(cmd.count, at->count);
+        std::swap(cmd.max_count, at->max_count);
+        if (at->work_order == 0) {
+            at->work_order = cmd.command_id;
+        }
+        command_queue_.insert(std::next(command_queue_.begin()), std::move(cmd));
+    } else {
+        command_queue_.insert(at, std::move(cmd));
+    }
+    update_speed_through();
+}
+
 void Unit::clear_commands(const char*) {
     command_queue_.clear();
     abort_move();
@@ -294,24 +315,34 @@ void Unit::remove_command(u32 id, SimContext& ctx) {
     end_gone_orders(ctx);
 }
 
-void Unit::increase_build_count(int index, int count) {
-    if (index < 1 || count < 1) return;
-    // The group's last order, as factory_queue() groups them.
+std::optional<size_t> Unit::group_factory_build(int index) const {
     std::optional<size_t> last;
     int g = 0;
     const std::string* run = nullptr;
     for (size_t i = 0; i < command_queue_.size(); ++i) {
         const auto& c = command_queue_[i];
-        if (!queued_build(c)) continue;
+        if (!queued_build(c)) {
+            continue;
+        }
         if (!run || *run != c.blueprint_id) {
-            if (++g > index) break;
+            if (++g > index) {
+                break;
+            }
             run = &c.blueprint_id;
         }
-        if (g == index) last = i;
+        if (g == index && c.type == CommandType::BuildFactory) {
+            last = i;
+        }
     }
-    if (!last || command_queue_[*last].type != CommandType::BuildFactory) return;
-    // Moho's IncreaseBuildCountInQueue raises the group's newest order's
-    // count (CUnitCommand::IncreaseCount), its high-water mark with it.
+    return last;
+}
+
+void Unit::increase_build_count(int index, int count) {
+    const auto last = group_factory_build(index);
+    if (!last || count < 1) {
+        return;
+    }
+    // CUnitCommand::IncreaseCount: its high-water mark with it
     UnitCommand& order = command_queue_[*last];
     order.count = std::max(order.count, 1) + count;
     order.max_count = std::max(order.max_count, order.count);

@@ -379,6 +379,14 @@ TEST_CASE("A version 10 replay's commands load without a Script table", "[script
     const auto differ = std::mismatch(plain.begin(), plain.end(), marked.begin());
     const size_t at =
         bytes.size() - plain.size() + static_cast<size_t>(differ.first - plain.begin());
+    osc::sim::ScheduledCommand inserted = r.commands.back();
+    inserted.command.insert_before = 0;
+    std::vector<osc::u8> placed;
+    osc::sim::ByteWriter wi(placed);
+    osc::sim::write_command(wi, inserted);
+    const auto place = std::mismatch(plain.begin(), plain.end(), placed.begin());
+    const size_t insert_at =
+        bytes.size() - plain.size() + static_cast<size_t>(place.first - plain.begin());
     c.command.form_move = false;
     std::vector<osc::u8> paced;
     osc::sim::ByteWriter wf(paced);
@@ -402,6 +410,7 @@ TEST_CASE("A version 10 replay's commands load without a Script table", "[script
                     bytes.begin() + static_cast<std::ptrdiff_t>(from + n));
     };
     erase(unit_at + 4, 4);
+    erase(insert_at, 4);
     erase(at, 4);
     erase(form_move_at, 1);
     erase(target_at + 4, 4);
