@@ -1037,7 +1037,10 @@ TEST_CASE("An engineer guarding a point with an order queued ends at once, unles
     eng->push_command(move_to(20.0f, 50.0f, 2), false);
 
     sim.tick();
-    CHECK(heads(*eng, CommandType::Guard, 1) == c.stays);
+    const auto& q = eng->command_queue();
+    CHECK(std::any_of(q.begin(), q.end(), [](const UnitCommand& o) {
+              return o.type == CommandType::Guard && o.command_id == 1;
+          }) == c.stays);
     CHECK(heads(*eng, CommandType::Move, 2) == !c.stays);
 }
 
@@ -1131,4 +1134,106 @@ TEST_CASE("A guard whose task runs every 6 ticks sets its goal following a movin
     const bool off_run =
         std::any_of(changes.begin(), changes.end(), [](int t) { return (t - 1) % 6 != 0; });
     CHECK(off_run == every_tick);
+}
+
+namespace {
+
+void with_repair_blueprints(lua_State* L) {
+    run_lua(L, "__blueprints = { tank = { Economy = { BuildTime = 10, BuildCostMass = 1, "
+               "BuildCostEnergy = 1 } } }");
+}
+
+const UnitCommand* handed_out(const Unit& u) {
+    const auto& q = u.command_queue();
+    return !q.empty() && q.front().from_guard ? &q.front() : nullptr;
+}
+
+} // namespace
+
+TEST_CASE("A guard repairs an enhancing ward, by its own order or a script's, as Moho's guard "
+          "task hands its enhancement a repair",
+          "[guard][enhance]") {
+    const bool by_script = GENERATE(false, true);
+    CAPTURE(by_script);
+    LuaGuard g;
+    with_repair_blueprints(g.L);
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* ward = still(sim, 0, 50.0f, 50.0f);
+    ward->set_unit_id("tank");
+    if (by_script) {
+        ward->set_unit_state("Enhancing", true);
+    } else {
+        ward->set_enhancing(true);
+    }
+    Unit* eng = engineer_of(sim, 53.0f, 50.0f);
+    eng->push_command(guard(ward, 1), true);
+    tick_until([&] { sim.tick(); }, "the guard repairs its ward", 20,
+               [&] { return eng->repair_target_id() == ward->entity_id(); });
+}
+
+TEST_CASE("A guard helps with its ward's work before it, in Moho's order: the ward's own damage, "
+          "then the unit it repairs, the enemy it captures",
+          "[guard]") {
+    const std::string work = GENERATE("repair", "capture", "damaged factory");
+    CAPTURE(work);
+    LuaGuard g;
+    with_repair_blueprints(g.L);
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* eng = engineer_of(sim, 53.0f, 50.0f);
+    if (work == "damaged factory") {
+        const auto [factory, unit] = factory_at_work(sim, 50.5f, 50.5f, 50.5f, 46.5f);
+        factory->set_unit_id("tank");
+        factory->set_health(50.0f);
+        eng->push_command(guard(factory, 1), true);
+        tick_until([&] { sim.tick(); }, "the guard repairs the factory", 60,
+                   [&] { return eng->repair_target_id() == factory->entity_id(); });
+        CHECK_FALSE(eng->build_target_id());
+        return;
+    }
+    Unit* ward = still(sim, 0, 50.0f, 50.0f);
+    ward->add_category("ENGINEER");
+    Unit* work_on = still(sim, work == "capture" ? 1 : 0, 50.0f, 54.0f);
+    work_on->set_unit_id("tank");
+    if (work == "repair") {
+        work_on->set_health(50.0f);
+        ward->set_repair_target_id(work_on->entity_id());
+    } else {
+        ward->set_focus_entity_id(work_on->entity_id());
+    }
+    eng->push_command(guard(ward, 1), true);
+    sim.tick();
+    const UnitCommand* task = handed_out(*eng);
+    REQUIRE(task != nullptr);
+    CHECK(task->type == (work == "repair" ? CommandType::Repair : CommandType::Capture));
+    CHECK(task->target_id == work_on->entity_id());
+    CHECK(task->command_id == 1);
+}
+
+TEST_CASE("A guard of a point repairs the nearest damaged ally within its GuardScanRadius of the "
+          "point, not an enemy or one beyond it",
+          "[guard]") {
+    LuaGuard g;
+    with_repair_blueprints(g.L);
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* eng = engineer_of(sim, 50.0f, 50.0f);
+    eng->set_guard_scan_radius(20.0f);
+    const auto damaged = [&](int army, f32 x) {
+        Unit* u = still(sim, army, x, 50.0f);
+        u->set_collision_shape({osc::sim::CollisionShapeType::SPHERE, 0, 0, 0, 1, 1, 1});
+        u->set_unit_id("tank");
+        u->set_health(50.0f);
+        return u;
+    };
+    damaged(1, 52.0f);
+    damaged(0, 75.0f);
+    Unit* hurt = damaged(0, 62.0f);
+    eng->push_command(guard(nullptr, 1, {50.0f, 0.0f, 50.0f}), true);
+    sim.tick();
+    const UnitCommand* task = handed_out(*eng);
+    REQUIRE(task != nullptr);
+    CHECK(task->type == CommandType::Repair);
+    CHECK(task->target_id == hurt->entity_id());
 }

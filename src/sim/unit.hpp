@@ -763,6 +763,7 @@ public:
     EntityId repair_target_id() const { return repair_target_id_; }
     void set_repair_target_id(EntityId id) { repair_target_id_ = id; }
     bool is_repairing() const { return static_cast<bool>(repair_target_id_); }
+    bool repair_inherits_work() const { return repair_inherits_work_; }
     bool start_repair(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L);
     bool progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
                           f32 efficiency = 1.0f);
@@ -800,6 +801,9 @@ public:
     /// Slot -> enhancement, by slot name (scripts see them in this order).
     const std::map<std::string, std::string>& enhancements() const { return enhancements_; }
     bool is_enhancing() const { return enhancing_; }
+    void set_enhancing(bool e) { enhancing_ = e; }
+    /// Moho's UNITSTATE_Enhancing.
+    bool enhances() const;
     const std::string& enhance_name() const { return enhance_name_; }
     /// Reads the enhancement from the unit's own blueprint in `store` (not
     /// self.Blueprint, which only FAF's unit script sets).
@@ -1926,10 +1930,13 @@ private:
     const UnitCommand* guard_build_to_take_up(const Unit& ward, SimContext& ctx) const;
     /// Moho's CUnitGuardTask::DispatchMobileBuildTask.
     OrderStep take_up_guard_build(UnitCommand& cmd, const Unit& ward, const UnitCommand& build);
+    void hand_out_guard_task(UnitCommand& cmd, const Unit* ward, UnitCommand task);
     /// Moho's CUnitGuardTask::SelectAssistOrCaptureCandidateUnit.
-    bool guard_ward_needs_help(Unit& ward, SimContext& ctx) const;
+    Unit* guard_assist_candidate(Unit& ward, SimContext& ctx) const;
     /// Moho's CUnitGuardTask::SelectAssistOrCaptureCandidateUnit.
-    bool guard_point_finds_work(const Vector3& point, SimContext& ctx) const;
+    Unit* guard_point_candidate(const Vector3& point, SimContext& ctx) const;
+    /// Moho's CUnitGuardTask::DispatchAssistOrCaptureTask.
+    bool guard_dispatch(UnitCommand& cmd, const Unit* ward, Unit& help, SimContext& ctx);
     OrderStep end_guard();
     /// A Guard of a point: go there, and take on enemies near it.
     OrderStep order_guard_point(UnitCommand& cmd, SimContext& ctx);
@@ -2228,6 +2235,7 @@ private:
     f64 repair_build_time_ = 0;   // target's Economy.BuildTime
     f64 repair_cost_mass_ = 0;    // target's Economy.BuildCostMass
     f64 repair_cost_energy_ = 0;  // target's Economy.BuildCostEnergy
+    bool repair_inherits_work_ = false; // Moho's mInheritingWork
     EntityId capture_target_id_{}; // the unit it captures, once begun (Moho's mTargetEntity)
     i32 capture_ticks_ = 0;        // the capture's ticks, one captor's (Moho's mCaptureTime)
     i32 capture_progress_ = 0;     // of them, done (Moho's mCaptureProgress)

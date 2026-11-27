@@ -1122,3 +1122,32 @@ TEST_CASE("A guard hands out a repair only on its task's runs: every 6 ticks gua
     REQUIRE(late > 0);
     CHECK(late - early == (ward_engineer ? 4 : 0));
 }
+
+TEST_CASE("A repair of an enhancing unit adds to its WorkProgress at the repairer's build rate over "
+          "its WorkItemBuildTime, and ends with the enhancement",
+          "[build][assist][enhance]") {
+    AssistSim w;
+    w.site->set_is_being_built(false);
+    w.site->set_fraction_complete(1.0f);
+    w.site->set_health(w.site->max_health());
+    w.site->set_enhancing(true);
+    lua_rawgeti(w.L, LUA_REGISTRYINDEX, w.site->lua_table_ref());
+    lua_pushstring(w.L, "WorkItemBuildTime");
+    lua_pushnumber(w.L, 100);
+    lua_rawset(w.L, -3);
+    lua_pop(w.L, 1);
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    tick_until([&] { w.sim.tick(); }, "the repair starts", 20, [&] { return eng->is_repairing(); });
+    const osc::f32 before = w.site->work_progress();
+    for (int t = 0; t < 5; ++t) {
+        w.sim.tick();
+    }
+    CHECK(w.site->work_progress() - before == Catch::Approx(0.05).margin(1e-5));
+    CHECK(w.site->health() == w.site->max_health());
+
+    w.site->set_enhancing(false);
+    w.sim.tick();
+    CHECK_FALSE(eng->is_repairing());
+    CHECK(eng->command_queue().empty());
+}

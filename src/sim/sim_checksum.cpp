@@ -335,6 +335,9 @@ void mix_unit_work(Fnv& units, const Unit& u) {
         units.mix((u.builder_on_target() ? 1u : 0u) | (u.arm_awaited() ? 2u : 0u));
     }
     units.mix(u.repair_target_id());
+    if (u.repair_inherits_work()) {
+        units.mix(0x52455031u);
+    }
     units.mix(u.capture_target_id());
     // A unit being captured: how many capture it, its captors' pace (only
     // then, so other units hash as before)

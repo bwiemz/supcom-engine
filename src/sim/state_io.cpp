@@ -178,7 +178,8 @@ constexpr u32 kVersion = 134; // 2: entities' wanted loops (M216b);
                               // 130: fliers' inertia tensors; their angular momentum
                               //      with their mass, as SPhysBody's
                               // 131: an order's place in its queue (Moho's mIndex)
-                              // 134: a guard's unit unfinished as the guard began
+                              // 134: a guard's unit unfinished as the guard began;
+                              //      a repair's inherited enhancement
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a

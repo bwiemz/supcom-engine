@@ -2374,6 +2374,10 @@ bool Unit::shield_needs_repair(EntityRegistry& registry, lua_State* L) {
     return bubble && bubble->health() < bubble->max_health() && script_bool(L, *this, "ShieldIsOn");
 }
 
+bool Unit::enhances() const {
+    return enhancing_ || has_unit_state("Enhancing");
+}
+
 bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
                         lua_State* L) {
     auto* target = registry.find(cmd.target_id);
@@ -2382,8 +2386,9 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
 
     // Don't repair units that are being built (use build-assist instead)
     if (target_unit->is_being_built()) return false;
+    const bool enhancing = target_unit->enhances();
     if (target->health() >= target->max_health() &&
-        !target_unit->shield_needs_repair(registry, L)) {
+        !target_unit->shield_needs_repair(registry, L) && !enhancing) {
         return false;
     }
 
@@ -2396,6 +2401,7 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
     if (repair_build_time_ <= 0) return false;
 
     repair_target_id_ = cmd.target_id;
+    repair_inherits_work_ = enhancing;
 
     // Set economy consumption (same formula as build)
     economy_.consumption_mass =
@@ -2465,6 +2471,30 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
     if (paused_) {
         return true;
     }
+    auto& target_unit = static_cast<Unit&>(*target);
+    // Moho's CBuildTaskHelper::UpdateWorkProgress
+    if (target_unit.enhances()) {
+        f32 progress = script_number(L, target_unit, "WorkProgress");
+        if (progress >= 1.0f) {
+            stop_repairing(L, registry);
+            return false;
+        }
+        if (efficiency != 0.0f) {
+            const f32 build_time = script_number(L, target_unit, "WorkItemBuildTime");
+            const f32 advanced = 1.0f / (build_time / build_rate_) * efficiency * 0.1f + progress;
+            progress = advanced > 1.0f ? 1.0f : advanced;
+            target_unit.set_work_progress(progress);
+            if (L && target_unit.lua_table_ref() >= 0) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, target_unit.lua_table_ref());
+                lua_pushstring(L, "WorkProgress");
+                lua_pushnumber(L, progress);
+                lua_rawset(L, -3);
+                lua_pop(L, 1);
+            }
+        }
+        work_progress_ = progress;
+        return true;
+    }
 
     // heal_per_tick = (build_rate / build_time) * max_health * dt * efficiency
     f32 heal_rate = build_rate_ / static_cast<f32>(repair_build_time_);
@@ -2472,7 +2502,6 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
 
     // Moho's CBuildTaskHelper::UpdateWorkProgress: a SHIELD unit's focus entity is its bubble.
     const bool damaged = target->health() < target->max_health();
-    auto& target_unit = static_cast<Unit&>(*target);
     Entity* bubble = shield_focus(target_unit, registry);
     if (bubble && efficiency != 0.0f) {
         // Moho asks ShieldIsOn only of an undamaged unit, so a damaged one's
@@ -2508,8 +2537,9 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
                               target->health() + heal_amount);
     target->set_health(new_health);
 
-    if (new_health >= target->max_health() &&
-        (!bubble || bubble->health() >= bubble->max_health())) {
+    if ((new_health >= target->max_health() &&
+         (!bubble || bubble->health() >= bubble->max_health())) ||
+        repair_inherits_work_) {
         spdlog::info("repair complete: entity #{} finished repairing #{}",
                      entity_id(), repair_target_id_);
         stop_repairing(L, registry);
@@ -2526,6 +2556,7 @@ void Unit::stop_repairing(lua_State* L, EntityRegistry& registry) {
     repair_build_time_ = 0;
     repair_cost_mass_ = 0;
     repair_cost_energy_ = 0;
+    repair_inherits_work_ = false;
 
     // Clear economy drain
     economy_.consumption_mass = 0;

@@ -1307,6 +1307,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(u.repair_build_time_);
     w.f64v(u.repair_cost_mass_);
     w.f64v(u.repair_cost_energy_);
+    w.b(u.repair_inherits_work_);
     w.id(u.capture_target_id_);
     w.i32v(u.capture_ticks_);
     w.i32v(u.capture_progress_);
@@ -1763,6 +1764,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.repair_build_time_ = r.f64v();
     u.repair_cost_mass_ = r.f64v();
     u.repair_cost_energy_ = r.f64v();
+    u.repair_inherits_work_ = r.b();
     u.capture_target_id_ = r.id();
     u.capture_ticks_ = r.i32v();
     u.capture_progress_ = r.i32v();

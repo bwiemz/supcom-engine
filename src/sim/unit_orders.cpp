@@ -2161,7 +2161,8 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
     // Already at full health? Done. (One under construction is built first.)
     const bool under_construction = static_cast<const Unit&>(*rtarget).is_being_built();
     if ((!under_construction && rtarget->health() >= rtarget->max_health() &&
-         !static_cast<Unit*>(rtarget)->shield_needs_repair(registry, L)) ||
+         !static_cast<Unit*>(rtarget)->shield_needs_repair(registry, L) &&
+         !static_cast<const Unit&>(*rtarget).enhances()) ||
         !static_cast<const Unit&>(*rtarget).holds_for_repair()) {
         let_go();
         command_queue_.pop_front();
@@ -2559,6 +2560,13 @@ OrderStep Unit::order_guard_point(UnitCommand& cmd, SimContext& ctx) {
     if (const auto step = guard_engage(cmd, nullptr, cmd.target_pos, ctx, looks)) {
         return *step;
     }
+    if (looks && has_category("REPAIR")) {
+        if (Unit* help = guard_point_candidate(cmd.target_pos, ctx)) {
+            abort_move();
+            guard_dispatch(cmd, nullptr, *help, ctx);
+            return OrderStep::Hold;
+        }
+    }
     if (looks && guard_ends_for_builder(cmd, nullptr, ctx)) {
         return end_guard();
     }
@@ -2745,9 +2753,11 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     const bool repairs = has_category("REPAIR");
     const auto needs_repair = [&] {
         return target_unit->health() < target_unit->max_health() ||
-               target_unit->shield_needs_repair(registry, L);
+               target_unit->shield_needs_repair(registry, L) ||
+               (!target_unit->is_paused() && target_unit->enhances());
     };
     const bool reclaims = has_category("RECLAIM") && build_rate_ > 0 && !rebuilder;
+    const Unit* candidate = repairs ? guard_assist_candidate(*target_unit, ctx) : nullptr;
 
     // An unfinished ward needs construction, just as a direct Repair on
     // it does. start_repair rejects unfinished units: trying it each tick
@@ -2782,6 +2792,10 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     const Entity* guarded_build = repairs && !rebuilder && !build && target_unit->is_building()
                                       ? registry.find(target_unit->build_target_id())
                                       : nullptr;
+    if (guarded_build && build_target_id_ != target_unit->build_target_id() &&
+        candidate != guarded_build) {
+        guarded_build = nullptr;
+    }
     if (!guarded_build || guarded_build->destroyed()) {
         cmd.approached = false;
         cmd.prepared = false;
@@ -3001,7 +3015,8 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
         // Auto-repair: if target is damaged
-        if (repairs && needs_repair() && target_unit->holds_for_repair()) {
+        if (repairs && needs_repair() && target_unit->holds_for_repair() &&
+            (repair_target_id_ == cmd.target_id || candidate == target_unit)) {
             working = true;
             if (repair_target_id_ != cmd.target_id && hands_out()) {
                 return held();
@@ -3063,7 +3078,8 @@ std::optional<OrderStep> Unit::guard_runs(UnitCommand& cmd, Unit& ward, bool loo
     }
     if (guard_finds_work(&ward, cmd.target_pos, ctx)) {
         abort_move();
-        if (help_ended) {
+        Unit* help = has_category("REPAIR") ? guard_assist_candidate(ward, ctx) : nullptr;
+        if (!(help && guard_dispatch(cmd, &ward, *help, ctx)) && help_ended) {
             cmd.handout_wait = guard_sleeps(&ward) ? 6 : 1;
         }
         return OrderStep::Hold;
@@ -3101,7 +3117,7 @@ bool Unit::guard_ends_for_builder(const UnitCommand& cmd, Unit* ward, SimContext
 
 bool Unit::guard_finds_work(Unit* ward, const Vector3& point, SimContext& ctx) {
     if (!ward) {
-        return has_category("REPAIR") && guard_point_finds_work(point, ctx);
+        return has_category("REPAIR") && guard_point_candidate(point, ctx);
     }
     if (has_category("RECLAIM") && ward->is_reclaiming() && ctx.L &&
         blueprint_builds(ctx.L, blueprint_id())) {
@@ -3110,7 +3126,7 @@ bool Unit::guard_finds_work(Unit* ward, const Vector3& point, SimContext& ctx) {
             return true;
         }
     }
-    return has_category("REPAIR") && guard_ward_needs_help(*ward, ctx);
+    return has_category("REPAIR") && guard_assist_candidate(*ward, ctx);
 }
 
 const UnitCommand* Unit::guard_build_to_take_up(const Unit& ward, SimContext& ctx) const {
@@ -3144,73 +3160,109 @@ OrderStep Unit::take_up_guard_build(UnitCommand& cmd, const Unit& ward, const Un
     own.type = CommandType::BuildMobile;
     own.blueprint_id = build.blueprint_id;
     own.target_pos = build.target_pos;
-    own.command_id = cmd.command_id;
-    own.from_guard = true;
-    own.patrol_scan = guard_sleeps(&ward) ? 5 : 0;
-    cmd.patrol_scan = 0;
-    cmd.handout_wait = -1;
-    abort_move();
-    command_queue_.push_front(std::move(own));
+    hand_out_guard_task(cmd, &ward, std::move(own));
     return OrderStep::Hold;
 }
 
-bool Unit::guard_ward_needs_help(Unit& ward, SimContext& ctx) const {
+void Unit::hand_out_guard_task(UnitCommand& cmd, const Unit* ward, UnitCommand task) {
+    task.command_id = cmd.command_id;
+    task.from_guard = true;
+    task.patrol_scan = guard_sleeps(ward) ? 5 : 0;
+    cmd.patrol_scan = 0;
+    cmd.handout_wait = -1;
+    abort_move();
+    command_queue_.push_front(std::move(task));
+}
+
+Unit* Unit::guard_assist_candidate(Unit& ward, SimContext& ctx) const {
     if (ward.moved_last_tick()) {
-        return false;
+        return nullptr;
     }
     if (ward.health() < ward.max_health() ||
         (ward.fuel_use_time() > 1.0f && ward.fuel_ratio() < 1.0f) ||
         ward.shield_needs_repair(ctx.registry, ctx.L) ||
-        (!ward.is_paused() && ward.is_enhancing())) {
-        return true;
+        (!ward.is_paused() && ward.enhances())) {
+        return &ward;
     }
-    const Unit* silo = &ward;
+    Unit* silo = &ward;
     const EntityId focus_id = ward.focus_id() ? ward.focus_id() : ward.focus_entity_id();
-    const Entity* focus = focus_id ? ctx.registry.find(focus_id) : nullptr;
+    Entity* focus = focus_id ? ctx.registry.find(focus_id) : nullptr;
     if (focus && !focus->destroyed() && !ward.is_reclaiming()) {
         if (!focus->is_unit()) {
-            return false;
+            return nullptr;
         }
-        const auto& work = static_cast<const Unit&>(*focus);
+        auto& work = static_cast<Unit&>(*focus);
         if (work.army() != army() || work.health() < work.max_health()) {
-            return true;
+            return &work;
         }
         if (work.is_paused()) {
-            return false;
+            return nullptr;
         }
-        if (work.is_enhancing()) {
-            return true;
+        if (work.enhances()) {
+            return &work;
         }
         silo = &work;
     }
-    return !silo->is_paused() && silo->silo_building();
+    return !silo->is_paused() && silo->silo_building() ? silo : nullptr;
 }
 
-bool Unit::guard_point_finds_work(const Vector3& point, SimContext& ctx) const {
+Unit* Unit::guard_point_candidate(const Vector3& point, SimContext& ctx) const {
     if (!ctx.sim) {
-        return false;
+        return nullptr;
     }
     const ArmyBrain* brain = ctx.sim->get_army(army());
     const bool whole_map = brain && brain->use_whole_map();
+    Unit* best = nullptr;
+    f32 best_d2 = std::numeric_limits<f32>::infinity();
     for (Entity* e : units_meeting_sphere(*ctx.sim, point, guard_scan_radius_)) {
-        const auto& other = static_cast<const Unit&>(*e);
+        auto& other = static_cast<Unit&>(*e);
         if (&other == this || other.destroyed() || other.is_dying() ||
             !within_map(*ctx.sim, other.position().x, other.position().z, 1.0f, whole_map) ||
             other.moved_last_tick() || other.layer() == "Air" ||
             (other.army() != army() && !ctx.sim->is_ally(army(), other.army()))) {
             continue;
         }
-        if (other.is_being_built() || other.health() < other.max_health()) {
-            return true;
+        Unit* target = &other;
+        if (!other.is_being_built() && other.health() >= other.max_health()) {
+            const EntityId focus_id = other.focus_id() ? other.focus_id() : other.focus_entity_id();
+            Entity* focus = focus_id ? ctx.registry.find(focus_id) : nullptr;
+            if (focus && !focus->destroyed() && focus->is_unit()) {
+                target = static_cast<Unit*>(focus);
+            } else if (!other.enhances() && !other.silo_building()) {
+                continue;
+            }
         }
-        const EntityId focus_id = other.focus_id() ? other.focus_id() : other.focus_entity_id();
-        const Entity* focus = focus_id ? ctx.registry.find(focus_id) : nullptr;
-        if ((focus && !focus->destroyed() && focus->is_unit()) || other.is_enhancing() ||
-            other.silo_building()) {
-            return true;
+        const f32 dx = position().x - target->position().x;
+        const f32 dy = position().y - target->position().y;
+        const f32 dz = position().z - target->position().z;
+        const f32 d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < best_d2) {
+            best_d2 = d2;
+            best = target;
         }
     }
-    return false;
+    return best;
+}
+
+bool Unit::guard_dispatch(UnitCommand& cmd, const Unit* ward, Unit& help, SimContext& ctx) {
+    const bool allied = help.army() == army() || (ctx.sim && ctx.sim->is_ally(army(), help.army()));
+    UnitCommand task;
+    if (allied) {
+        if (&help == ward || (ward && ward->is_building() && ward->build_target_id() == help.entity_id())) {
+            return false;
+        }
+        if (help.health() >= help.max_health() && !help.enhances() &&
+            !help.shield_needs_repair(ctx.registry, ctx.L)) {
+            return false;
+        }
+        task.type = CommandType::Repair;
+    } else {
+        task.type = CommandType::Capture;
+    }
+    task.target_id = help.entity_id();
+    task.target_pos = help.position();
+    hand_out_guard_task(cmd, ward, std::move(task));
+    return true;
 }
 
 OrderStep Unit::end_guard() {
