@@ -78,7 +78,7 @@ void Unit::push_command(const UnitCommand& cmd, bool clear_existing) {
         first->type == CommandType::Patrol) {
         const auto oldest = std::min_element(
             first, command_queue_.end(),
-            [](const UnitCommand& a, const UnitCommand& b) { return a.command_id < b.command_id; });
+            [](const UnitCommand& a, const UnitCommand& b) { return a.serial < b.serial; });
         if (oldest != first) {
             command_queue_.insert(oldest, cmd);
             update_speed_through();
@@ -1061,6 +1061,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
     take_step(dt, ctx);
     if (in_registry()) {
         manage_resources(ctx.sim ? ctx.sim->get_army(army()) : nullptr);
+        validate_rally_orders(ctx);
     }
 }
 

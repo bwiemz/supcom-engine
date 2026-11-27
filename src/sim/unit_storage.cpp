@@ -155,7 +155,12 @@ OrderStep Unit::order_carrier_launch(UnitCommand& cmd, SimContext& ctx) {
         move.type = CommandType::Move;
         move.target_pos = cmd.target_pos;
         for (EntityId id : cmd.launch_queue) {
-            if (Unit* u = live_unit(registry, id)) u->push_command(move, true);
+            if (Unit* u = live_unit(registry, id)) {
+                if (move.serial == 0 && ctx.sim) {
+                    ctx.sim->number_command(move);
+                }
+                u->push_command(move, true);
+            }
         }
         // The first leaves the next tick: Moho's task gets ready (returning
         // 1), then orders the units and launches at once (returning 0).

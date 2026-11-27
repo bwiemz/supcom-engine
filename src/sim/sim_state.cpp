@@ -553,6 +553,49 @@ void SimState::run_deletion_queue() {
     entity_registry_.update_id_pools();
 }
 
+u32 SimState::take_sim_command_id() {
+    const u32 serial = sim_command_ids_.take();
+    sim_commands_.insert(serial);
+    return 0x80000000u | serial;
+}
+
+void SimState::number_command(UnitCommand& command) {
+    if (command.command_id == 0) {
+        command.command_id = take_sim_command_id();
+    }
+    command.serial = next_command_serial_++;
+}
+
+void SimState::release_sim_commands() {
+    if (sim_commands_.empty()) {
+        sim_command_ids_.update();
+        return;
+    }
+    std::set<u32> held;
+    const auto hold = [&](const UnitCommand& c) {
+        if ((c.command_id & 0xFF000000u) == 0x80000000u) {
+            held.insert(c.command_id & 0xFFFFFFu);
+        }
+    };
+    entity_registry_.for_each_unit([&](Entity& e) {
+        const auto& unit = static_cast<const Unit&>(e);
+        if (unit.destroyed() || unit.is_dying()) {
+            return;
+        }
+        std::for_each(unit.command_queue().begin(), unit.command_queue().end(), hold);
+        std::for_each(unit.rally_orders().begin(), unit.rally_orders().end(), hold);
+    });
+    for (auto it = sim_commands_.begin(); it != sim_commands_.end();) {
+        if (held.contains(*it)) {
+            ++it;
+            continue;
+        }
+        sim_command_ids_.give_back(*it);
+        it = sim_commands_.erase(it);
+    }
+    sim_command_ids_.update();
+}
+
 void SimState::destroy_orphaned_stored_units() {
     while (!stored_to_destroy_.empty()) {
         const EntityId id = stored_to_destroy_.back();
@@ -1247,7 +1290,7 @@ u32 SimState::route_command(const std::vector<EntityId>& unit_ids, const UnitCom
         if (playback_) return 0; // a replay plays only what it recorded
         UnitCommand issued = command;
         issued.command_id = 0;
-        if (!issued.factory && issued.type != CommandType::Stop) {
+        if (issued.type != CommandType::Stop) {
             issued.command_id = next_player_command_id();
         }
         if (local_command_sink_) {
@@ -1264,12 +1307,9 @@ u32 SimState::route_command(const std::vector<EntityId>& unit_ids, const UnitCom
         apply_factory_command(unit_ids, command, clear_existing);
         return 0;
     }
-    // It goes into queues as one command with an id of its own, from the
-    // sim's counter (so every peer numbers it alike), as Moho's issue
-    // returns the one CUnitCommand its units share.
+    // It goes into queues as one command its units share, as Moho's issue
+    // returns the one CUnitCommand, numbered as the first of them takes it.
     UnitCommand issued = command;
-    if (issued.type != CommandType::Stop && issued.command_id == 0)
-        issued.command_id = next_command_id();
     pick_target_point(issued);
     const std::vector<EntityId> issue_ids = issued.type == CommandType::TransportReverseLoad
                                                 ? reverse_load_units(unit_ids, issued)
@@ -1283,6 +1323,9 @@ u32 SimState::route_command(const std::vector<EntityId>& unit_ids, const UnitCom
             stop_unit(*unit);
         } else if (!apply_silo_build(*unit, cmd) &&
                    issue_takes(*unit, issued, clear_existing, issue_ids)) {
+            if (issued.type != CommandType::Stop && issued.serial == 0) {
+                number_command(issued);
+            }
             if (clear_existing) {
                 SimContext ctx = sim_context();
                 unit->clear_commands(ctx);
@@ -1290,7 +1333,10 @@ u32 SimState::route_command(const std::vector<EntityId>& unit_ids, const UnitCom
                     continue;
                 }
             }
-            unit->push_command(cmd, false);
+            UnitCommand order = cmd;
+            order.command_id = issued.command_id;
+            order.serial = issued.serial;
+            unit->push_command(order, false);
             queued = true;
         }
     }
@@ -1930,6 +1976,9 @@ void SimState::apply_factory_command(const std::vector<EntityId>& unit_ids,
         if (!unit.keeps_rally_orders() || outside_no_rush(unit.army(), rally.target_pos)) {
             continue;
         }
+        if (rally.serial == 0) {
+            number_command(rally);
+        }
         if (clear_existing) unit.clear_rally_orders();
         unit.add_rally_order(rally);
     }
@@ -2290,9 +2339,7 @@ void SimState::dispatch_due_commands() {
             return;
         }
         UnitCommand base = sc.command;
-        if (base.command_id == 0) {
-            base.command_id = next_command_id();
-        } else if (base.command_id >> 24 != 0) {
+        if (base.command_id >> 24 != 0) {
             player_commands_issued_ =
                 std::max(player_commands_issued_, base.command_id & 0xFFFFFFu);
         }
@@ -2324,6 +2371,9 @@ void SimState::dispatch_due_commands() {
             if (!issue_takes(*unit, base, sc.clear_existing, issue_ids)) {
                 continue;
             }
+            if (base.type != CommandType::Stop && base.serial == 0) {
+                number_command(base);
+            }
             if (sc.clear_existing) {
                 SimContext ctx = sim_context();
                 unit->clear_commands(ctx);
@@ -2331,6 +2381,8 @@ void SimState::dispatch_due_commands() {
                     continue;
                 }
             }
+            cmd.command_id = base.command_id;
+            cmd.serial = base.serial;
             unit->push_command(cmd, false);
         }
     });
@@ -2465,6 +2517,7 @@ void SimState::advance_tick() {
 
 void SimState::end_beat(bool ticked) {
     run_deletion_queue();
+    release_sim_commands();
 
     // VFX: expire timed effects (decals, splats) and garbage collect destroyed ones
     {

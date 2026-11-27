@@ -631,7 +631,7 @@ static void create_unit_weapons(lua_State* L, int unit_tbl, const char* what) {
 // (BuilderSetUpInitialRally) after its weapons, before OnCreate.
 static void set_up_initial_rally(sim::SimState& sim, sim::EntityId id) {
     if (auto* unit = static_cast<sim::Unit*>(sim.entity_registry().find(id))) {
-        unit->validated_rally_orders(sim.lua_state(), &sim);
+        unit->set_up_initial_rally(sim.lua_state(), &sim);
     }
 }
 
@@ -5140,6 +5140,9 @@ static int l_IssueToUnitMove(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
+    if (auto* sim = get_sim(L)) {
+        sim->number_command(cmd);
+    }
     u->push_command(cmd, false);
     return 0;
 }
@@ -5152,6 +5155,9 @@ static int l_IssueToUnitMoveOffFactory(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
+    if (auto* sim = get_sim(L)) {
+        sim->number_command(cmd);
+    }
     u->push_command(cmd, true);
     return 0;
 }
@@ -5663,7 +5669,9 @@ static int l_IssueFactoryRallyPoint(lua_State* L) {
                 return;
             }
             // One command id for them all, taken only if a factory gets it.
-            if (r.move.command_id == 0 && r.sim) r.move.command_id = r.sim->next_command_id();
+            if (r.move.serial == 0 && r.sim) {
+                r.sim->number_command(r.move);
+            }
             u->add_rally_order(r.move);
         },
         &rally);

@@ -21,14 +21,7 @@ EntityId EntityRegistry::reserve_id(const Entity& e) {
     else if (!e.is_unit()) bits = (source | 0x500u) << 20;
     IdPool& pool = id_pools_[bits];
     for (;;) {
-        u32 serial = 0;
-        if (pool.released.empty()) {
-            serial = pool.next++;
-        } else {
-            serial = *pool.released.begin();
-            pool.released.erase(pool.released.begin());
-        }
-        const u32 moho = bits | serial;
+        const u32 moho = bits | pool.take();
         // Past 2^20 serials Moho's id runs into another pool's, whose entity may be alive.
         if (live_by_moho_.contains(moho)) {
             continue;
@@ -51,24 +44,7 @@ EntityId EntityRegistry::live_id(u32 moho) const {
 
 void EntityRegistry::update_id_pools() {
     for (auto& [bits, pool] : id_pools_) {
-        if (pool.held.size() == kIdHeldBeats) {
-            const std::vector<u32>& oldest = pool.held.front();
-            if (!oldest.empty()) {
-                pool.released.insert(oldest.begin(), oldest.end());
-                auto top = pool.released.lower_bound(pool.next);
-                u32 next = pool.next;
-                while (top != pool.released.begin() && *std::prev(top) == next - 1) {
-                    --top;
-                    --next;
-                }
-                if (next != pool.next) {
-                    pool.released.erase(top, pool.released.end());
-                    pool.next = next;
-                }
-            }
-            pool.held.pop_front();
-        }
-        pool.held.emplace_back();
+        pool.update();
     }
 }
 
@@ -158,7 +134,7 @@ void EntityRegistry::unregister_entity(EntityId id) {
     --live_count_;
     const u32 moho = id.moho();
     live_by_moho_.erase(moho);
-    id_pools_[moho & 0xFFF00000u].held.back().push_back(moho & 0xFFFFFu);
+    id_pools_[moho & 0xFFF00000u].give_back(moho & 0xFFFFFu);
     const u64 seq = entity->registry_seq();
     if (Slot* slot = find_slot(order_, seq); slot && slot->entity == entity.get()) {
         slot->entity = nullptr;

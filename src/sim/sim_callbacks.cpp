@@ -245,21 +245,37 @@ void forget_target(UnitCommand& c) {
     c.patrol_claimed.clear();
 }
 
+// Moho's FindCommandById and OkayToMessWith(command): the units that hold the order, whoever
+// the edit names, if the edit's source may give them orders.
+std::vector<Unit*> holders_of(SimState& sim, u32 id) {
+    std::vector<Unit*> holders;
+    sim.entity_registry().for_each_unit([&](Entity& e) {
+        auto& u = static_cast<Unit&>(e);
+        if (!u.destroyed() && !u.commands_with_id(id).empty()) {
+            holders.push_back(&u);
+        }
+    });
+    if (!holders.empty() && !sim.okay_to_mess_with(holders.front()->army())) {
+        holders.clear();
+    }
+    return holders;
+}
+
 void set_command_target(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     const auto* command = number_in(cb, "Command", 1, 4294967295.0);
     if (!command) {
         return;
     }
     std::vector<SimState::CommandToRetarget> orders;
-    for_each_unit(sim, cb, [&](Unit& u) {
-        for (UnitCommand* c : u.commands_with_id(static_cast<u32>(*command))) {
+    for (Unit* u : holders_of(sim, static_cast<u32>(*command))) {
+        for (UnitCommand* c : u->commands_with_id(static_cast<u32>(*command))) {
             if (c->from_patrol || c->from_guard) {
                 continue;
             }
-            const bool front = !u.command_queue().empty() && &u.command_queue().front() == c;
-            orders.push_back({&u, c, front});
+            const bool front = !u->command_queue().empty() && &u->command_queue().front() == c;
+            orders.push_back({u, c, front});
         }
-    });
+    }
     std::optional<std::pair<f32, f32>> footprint;
     if (!orders.empty() && orders.front().command->type == CommandType::BuildMobile) {
         footprint = blueprint_footprint_cells(L, orders.front().command->blueprint_id);
@@ -283,14 +299,14 @@ void set_command_type(SimState& sim, const SimCallbackEntry& cb) {
     if (!command || !type || static_cast<CommandType>(*type) != CommandType::Patrol) {
         return;
     }
-    for_each_unit(sim, cb, [&](Unit& u) {
-        for (UnitCommand* c : u.commands_with_id(static_cast<u32>(*command))) {
+    for (Unit* u : holders_of(sim, static_cast<u32>(*command))) {
+        for (UnitCommand* c : u->commands_with_id(static_cast<u32>(*command))) {
             if (c->type == CommandType::Move) {
                 c->type = CommandType::Patrol;
                 forget_target(*c);
             }
         }
-    });
+    }
 }
 
 /// Whether the blueprint `id` makes a unit that moves (Moho's IsMobile: a

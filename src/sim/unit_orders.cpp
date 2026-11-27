@@ -2385,15 +2385,38 @@ Vector3 initial_rally_point(const Unit& u, lua_State* L) {
 }
 } // namespace
 
-const std::vector<UnitCommand>& Unit::validated_rally_orders(lua_State* L, SimState* sim) {
-    if (rally_orders_.empty() && keeps_rally_orders()) {
-        UnitCommand rally;
-        rally.type = CommandType::Move;
-        rally.target_pos = initial_rally_point(*this, L);
-        rally.command_id = sim ? sim->next_command_id() : 0;
-        rally_orders_.push_back(rally);
+void Unit::set_up_initial_rally(lua_State* L, SimState* sim) {
+    if (!rally_orders_.empty() || !keeps_rally_orders()) {
+        return;
     }
-    return rally_orders_;
+    UnitCommand rally;
+    rally.type = CommandType::Move;
+    rally.target_pos = initial_rally_point(*this, L);
+    if (sim) {
+        if (sim->outside_no_rush(army(), rally.target_pos)) {
+            return;
+        }
+        sim->number_command(rally);
+    }
+    rally_orders_.push_back(rally);
+}
+
+void Unit::validate_rally_orders(SimContext& ctx) {
+    if (!keeps_rally_orders()) {
+        return;
+    }
+    std::erase_if(rally_orders_, [&](const UnitCommand& order) {
+        if (order.type != CommandType::TransportLoad && order.type != CommandType::WaitForFerry) {
+            return false;
+        }
+        const Entity* e = ctx.registry.find(order.target_id);
+        const auto* target =
+            e && e->is_unit() && !e->destroyed() ? static_cast<const Unit*>(e) : nullptr;
+        return !target ||
+               !(target->has_category("FERRYBEACON") || target->has_category("TRANSPORTATION") ||
+                 target->has_category("AIRSTAGINGPLATFORM"));
+    });
+    set_up_initial_rally(ctx.L, ctx.sim);
 }
 
 bool Unit::rally_point(lua_State* L, Vector3& out) const {
@@ -2416,7 +2439,7 @@ void Unit::hand_over_rally_orders(EntityId built_id, EntityId rally_id, SimConte
     auto& rally = static_cast<Unit&>(*rally_entity);
     // Aircraft and ships don't take a rally order to board a transport.
     const bool air_or_naval = built.has_category("AIR") || built.has_category("NAVAL");
-    for (const UnitCommand& order : rally.validated_rally_orders(ctx.L, ctx.sim)) {
+    for (const UnitCommand& order : rally.rally_orders()) {
         if (order.type == CommandType::TransportLoad && air_or_naval) continue;
         built.command_queue_.push_back(order);
         built.command_queue_.back().from_factory = true;
@@ -3798,6 +3821,9 @@ OrderStep Unit::order_staging_release(UnitCommand& cmd, SimContext& ctx) {
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<Unit*>(e);
         if (!unit->transport_id()) {
+            if (move.serial == 0 && ctx.sim) {
+                ctx.sim->number_command(move);
+            }
             unit->push_command(move, true);
         }
     }

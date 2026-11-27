@@ -8,6 +8,7 @@
 #include "sim/command_scheduler.hpp"
 #include "sim/economy_event.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/id_pool.hpp"
 #include "sim/debug_canvas.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/intel_sources.hpp"
@@ -905,12 +906,17 @@ public:
     void kill_cleanup();
     /// Moho's deletion queue at the end of the beat, then its EntityDB::Purge.
     void run_deletion_queue();
+    /// Moho's CCommandDB::PublishSyncData after the purge: an order of the sim's that no unit or
+    /// factory holds is gone, and its serial given back.
+    void release_sim_commands();
 
     static u32 sim_generation() { return s_sim_generation_; }
     static void increment_sim_generation() { ++s_sim_generation_; }
 
-    /// Monotonically increasing command ID for IsCommandsActive tracking.
-    u32 next_command_id() { return ++next_command_id_; }
+    /// Moho's CCommandDB::AddIssueData and the CUnitCommand it makes: an order without an id
+    /// takes the sim's, 0x80000000 | its pool's serial (given back once no unit or factory holds
+    /// the order), and every order its mInstanceSerial.
+    void number_command(UnitCommand& command);
     u32 next_player_command_id() const;
 
     // VFX / IEffect registry
@@ -1098,6 +1104,7 @@ public:
                                        const Vector3& destination) const;
 
 private:
+    u32 take_sim_command_id();
     /// Whether an order's target lies where Moho's ProcessIssuedUnitCommand
     /// lets the unit's army send it: on the map (STIMap::IsWithin) and in its
     /// No Rush zone.
@@ -1353,7 +1360,9 @@ private:
     };
     std::vector<TempVision> temp_visions_;
     std::map<EntityId, EntityIntel> entity_intel_; ///< by entity id: painted in id order
-    u32 next_command_id_ = 0;
+    IdPool sim_command_ids_;
+    std::set<u32> sim_commands_; ///< the serials of the sim's orders still held
+    u32 next_command_serial_ = 1;
     u32 issuing_source_ = 0;
     u32 player_commands_issued_ = 0;
     bool game_ended_ = false;
