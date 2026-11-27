@@ -361,9 +361,9 @@ TEST_CASE("Engineers assisting a shield generator regenerate its bubble while it
 
     run_lua(g.L, "on = true");
     gen->set_health(50.0f);
-    for (int t = 0; t < 8; ++t) {
-        sim.tick();
-    }
+    tick_until([&] { sim.tick(); }, "the engineer repairs the generator again", 13,
+               [&] { return eng->repair_target_id() == gen->entity_id(); });
+    sim.tick();
     const f32 before = bubble->health();
     sim.tick();
     CHECK(std::abs(bubble->health() - before - 0.5f) < 1e-3f);
@@ -1039,4 +1039,96 @@ TEST_CASE("An engineer guarding a point with an order queued ends at once, unles
     sim.tick();
     CHECK(heads(*eng, CommandType::Guard, 1) == c.stays);
     CHECK(heads(*eng, CommandType::Move, 2) == !c.stays);
+}
+
+TEST_CASE("An armed guard takes on no enemy while a repair it handed out is yet to start or under "
+          "way, and does on the tick the repair ends",
+          "[guard]") {
+    LuaGuard g;
+    const std::string bps =
+        "__blueprints = { tank = { Economy = { BuildTime = 10, BuildCostMass = 1, "
+        "BuildCostEnergy = 1 } } }";
+    REQUIRE(luaL_loadbuffer(g.L, bps.c_str(), bps.size(), "bps") == 0);
+    REQUIRE(lua_pcall(g.L, 0, 0, 0) == 0);
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.get_army(0)->set_extra_storage(100000.0, 100000.0);
+    sim.get_army(0)->set_stored_resources(100000.0, 100000.0);
+    Unit* ward = still(sim, 0, 50.0f, 50.0f);
+    ward->set_unit_id("tank");
+    ward->set_health(50.0f);
+    Unit* eng = armed(sim, 0, 53.0f, 50.0f);
+    eng->add_category("ENGINEER");
+    eng->add_category("REPAIR");
+    eng->set_build_rate(5.0f);
+    eng->set_max_build_distance(5.0f);
+    eng->push_command(guard(ward, 1), true);
+    sim.tick();
+    sim.tick();
+    still(sim, 1, 60.0f, 50.0f);
+    const auto whole = [&] { return ward->health() >= ward->max_health(); };
+    tick_until(
+        [&] {
+            sim.tick();
+            if (!whole()) {
+                REQUIRE(fight(*eng) == nullptr);
+            }
+        },
+        "the tank is whole", 400, whole);
+    CHECK(fight(*eng) != nullptr);
+}
+
+TEST_CASE("A guard whose ward is a candidate for help it hands nothing out for stands on its "
+          "task's runs, instead of following",
+          "[guard]") {
+    const bool low_fuel = GENERATE(false, true);
+    CAPTURE(low_fuel);
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* ward = still(sim, 0, 80.0f, 50.0f);
+    ward->set_fuel_use_time(2.0f);
+    ward->set_fuel_ratio(low_fuel ? 0.5f : 1.0f);
+    Unit* eng = engineer_of(sim, 50.0f, 50.0f);
+    eng->push_command(guard(ward, 1), true);
+    for (int t = 0; t < 40; ++t) {
+        sim.tick();
+    }
+    if (low_fuel) {
+        CHECK(eng->position().x == 50.0f);
+    } else {
+        CHECK(eng->position().x > 52.0f);
+    }
+}
+
+TEST_CASE("A guard whose task runs every 6 ticks sets its goal following a moving ward only on "
+          "those runs; one guarding an engineer, on any tick",
+          "[guard]") {
+    const bool every_tick = GENERATE(false, true);
+    CAPTURE(every_tick);
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* ward = walker(sim, 0, 50.0f, 50.0f, 2.0f);
+    Unit* guard_unit = every_tick ? engineer_of(sim, 40.0f, 50.0f) : walker(sim, 0, 40.0f, 50.0f);
+    if (every_tick) {
+        ward->add_category("ENGINEER");
+    }
+    ward->push_command(move_to(110.0f, 50.0f, 9), true);
+    guard_unit->push_command(guard(ward, 1), true);
+    std::vector<int> changes;
+    osc::sim::Vector3 last = guard_unit->navigator().goal();
+    for (int t = 1; t <= 60; ++t) {
+        sim.tick();
+        const osc::sim::Vector3 goal = guard_unit->navigator().goal();
+        if (goal.x != last.x || goal.z != last.z) {
+            changes.push_back(t);
+        }
+        last = goal;
+    }
+    CAPTURE(changes);
+    REQUIRE(changes.size() > 2);
+    const bool off_run =
+        std::any_of(changes.begin(), changes.end(), [](int t) { return (t - 1) % 6 != 0; });
+    CHECK(off_run == every_tick);
 }

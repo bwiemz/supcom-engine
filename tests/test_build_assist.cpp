@@ -1089,3 +1089,36 @@ TEST_CASE("A guard with an order queued ends the tick its help makes its target 
     CHECK(std::none_of(queue.begin(), queue.end(),
                        [](const UnitCommand& c) { return c.command_id == 1; }));
 }
+
+TEST_CASE("A guard hands out a repair only on its task's runs: every 6 ticks guarding a unit that "
+          "is no engineer, the next tick guarding an engineer",
+          "[build][assist][guard]") {
+    const bool ward_engineer = GENERATE(false, true);
+    CAPTURE(ward_engineer);
+    const auto repair_starts = [&](int damaged_after) {
+        AssistSim w;
+        w.site->set_is_being_built(false);
+        w.site->set_fraction_complete(1.0f);
+        w.site->set_health(w.site->max_health());
+        if (ward_engineer) {
+            w.site->add_category("ENGINEER");
+        }
+        Unit* eng = w.engineer("eng", 16.0f);
+        eng->push_command(order(CommandType::Guard, *w.site, 1), true);
+        for (int t = 1; t <= 40; ++t) {
+            w.sim.tick();
+            if (t == damaged_after) {
+                w.site->set_health(0.5f * w.site->max_health());
+            }
+            if (eng->is_repairing()) {
+                return t;
+            }
+        }
+        return 0;
+    };
+    const int early = repair_starts(2);
+    const int late = repair_starts(6);
+    REQUIRE(early > 0);
+    REQUIRE(late > 0);
+    CHECK(late - early == (ward_engineer ? 4 : 0));
+}

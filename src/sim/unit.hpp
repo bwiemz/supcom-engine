@@ -1911,11 +1911,12 @@ private:
     /// or nothing while the guard goes on as before. `ref` is what it
     /// guards: the guarded unit's position, or the point.
     std::optional<OrderStep> guard_engage(UnitCommand& cmd, const Unit* guarded, const Vector3& ref,
-                                          SimContext& ctx, bool& looks);
+                                          SimContext& ctx, bool& looks, bool task_out = false);
     /// Moho's CUnitGuardTask::GetBestEnemy and SetEnemy.
     std::optional<OrderStep> guard_look(UnitCommand& cmd, const Unit* guarded, const Vector3& ref,
                                         SimContext& ctx);
-    std::optional<OrderStep> guard_runs(UnitCommand& cmd, Unit& ward, bool looked, SimContext& ctx);
+    std::optional<OrderStep> guard_runs(UnitCommand& cmd, Unit& ward, bool looked, bool help_ended,
+                                        SimContext& ctx);
     /// Moho's CUnitGuardTask constructor's flag.
     bool guard_ward_unfinished(const UnitCommand& cmd, EntityRegistry& registry) const;
     /// Moho's CUnitGuardTask::ShouldAbortGuardForBuilderContext.

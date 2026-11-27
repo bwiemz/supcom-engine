@@ -11234,7 +11234,7 @@ void test_missile(TestContext& ctx) {
               R"(
         local b = __osc_b.__osc.builds[1]
         -- 80 + 4 x 5 build rate: 24 s, from when the engineers' arms are on B.
-        if b.done - b.start < 240 or b.done - b.start > 243 then error('B took ' .. (b.done - b.start) .. ' ticks') end
+        if b.done - b.start < 240 or b.done - b.start > 244 then error('B took ' .. (b.done - b.start) .. ' ticks') end
         -- The missile's cost, and the engineers' grants that run ahead of
         -- their work (Moho's ResourceConsumed: a grant is worked the tick
         -- after, and given back to the army if they stop first, which the
