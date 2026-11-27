@@ -120,7 +120,7 @@ public:
 
     void play_anim(const std::string& anim, bool loop,
                    AnimCache* cache = nullptr);
-    void set_rate(f32 rate) { rate_ = rate; }
+    void set_rate(f32 rate);
     f32 rate() const { return rate_; }
     /// SetDirectionalAnim: the animation runs backward while its unit backs
     /// up (Moho's CAnimationManipulator: rate negated while the unit's
@@ -129,11 +129,11 @@ public:
     bool directional() const { return directional_; }
     void set_motion_scaled(bool on) { motion_scaled_ = on; }
     bool motion_scaled() const { return motion_scaled_; }
-    void set_animation_fraction(f32 frac) { fraction_ = frac; finished_ = false; }
-    f32 animation_fraction() const { return fraction_; }
+    void set_animation_fraction(f32 frac);
+    f32 animation_fraction() const { return duration_ > 0.0f ? time_ / duration_ : 0.0f; }
     f32 animation_duration() const { return duration_; }
     void set_animation_time(f32 time);
-    f32 animation_time() const { return fraction_ * duration_; }
+    f32 animation_time() const { return time_; }
     const std::string& current_anim() const { return current_anim_; }
 
     const SCAData* sca_data() const { return sca_data_; }
@@ -151,14 +151,16 @@ public:
     void apply_pose(PoseLocals& pose) override;
 
 private:
+    void update_signal();
+
     std::string current_anim_;
     f32 rate_ = 1.0f;         // Moho's starts at 1: PlayAnim alone plays it
-    f32 fraction_ = 0.0f;     // 0.0-1.0
-    f32 duration_ = 1.0f;     // default (no .sca parsing yet)
+    f32 time_ = 0.0f;
+    f32 duration_ = 0.0f;
     bool looping_ = false;
     bool directional_ = false;
     bool motion_scaled_ = false;
-    bool finished_ = false;
+    bool signaled_ = false;
 
     const SCAData* sca_data_ = nullptr;
     std::vector<i32> sca_to_scm_map_;  // SCA bone → SCM bone index

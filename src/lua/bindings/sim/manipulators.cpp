@@ -279,8 +279,10 @@ static int anim_GetRate(lua_State* L) {
 static int anim_SetAnimationFraction(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) {
-        static_cast<sim::AnimManipulator*>(m)->set_animation_fraction(
-            static_cast<f32>(lua_tonumber(L, 2)));
+        f32 fraction = static_cast<f32>(lua_tonumber(L, 2));
+        fraction = fraction > 1.0f ? 1.0f : fraction;
+        fraction = fraction > 0.0f ? fraction : 0.0f;
+        static_cast<sim::AnimManipulator*>(m)->set_animation_fraction(fraction);
     }
     lua_pushvalue(L, 1); // setters return self for chaining
     return 1;

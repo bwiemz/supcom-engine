@@ -19,6 +19,7 @@ extern "C" {
 
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -351,13 +352,31 @@ TEST_CASE("A mobile build aims at the middle of the structure's collision box ov
             arm->set_builder_arm(true);
             auto* raw =
                 static_cast<osc::sim::AimManipulator*>(w.engineer->add_manipulator(std::move(arm)));
+            std::optional<osc::sim::Vector3> aimed;
+            auto note = [&] {
+                if (raw->has_target()) {
+                    aimed = raw->target();
+                }
+            };
+            lua_pushlightuserdata(w.L, &note);
+            lua_pushcclosure(
+                w.L,
+                [](lua_State* L) -> int {
+                    (*static_cast<decltype(note)*>(lua_touserdata(L, lua_upvalueindex(1))))();
+                    return 0;
+                },
+                1);
+            lua_setglobal(w.L, "__osc_note_aim");
+            const std::string hook = "function Engineer:OnPrepareArmToBuild() __osc_note_aim() end";
+            REQUIRE(luaL_loadbuffer(w.L, hook.c_str(), hook.size(), "hook") == 0);
+            REQUIRE(lua_pcall(w.L, 0, 0, 0) == 0);
             w.build("site");
             w.sim.tick();
             w.sim.tick();
-            REQUIRE(raw->has_target());
-            CHECK(raw->target().x == 11.0f);
-            CHECK(raw->target().y == row.aim_y);
-            CHECK(raw->target().z == 11.0f);
+            REQUIRE(aimed);
+            CHECK(aimed->x == 11.0f);
+            CHECK(aimed->y == row.aim_y);
+            CHECK(aimed->z == 11.0f);
         }
     }
 }
