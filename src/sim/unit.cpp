@@ -2378,6 +2378,12 @@ bool Unit::enhances() const {
     return enhancing_ || has_unit_state("Enhancing");
 }
 
+bool Unit::upgrades() const {
+    return (!command_queue_.empty() && command_queue_.front().type == CommandType::Upgrade &&
+            command_queue_.front().begun) ||
+           has_unit_state("Upgrading");
+}
+
 bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
                         lua_State* L) {
     auto* target = registry.find(cmd.target_id);

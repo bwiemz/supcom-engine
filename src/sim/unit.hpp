@@ -804,6 +804,8 @@ public:
     void set_enhancing(bool e) { enhancing_ = e; }
     /// Moho's UNITSTATE_Enhancing.
     bool enhances() const;
+    /// Moho's UNITSTATE_Upgrading.
+    bool upgrades() const;
     const std::string& enhance_name() const { return enhance_name_; }
     /// Reads the enhancement from the unit's own blueprint in `store` (not
     /// self.Blueprint, which only FAF's unit script sets).
@@ -1966,6 +1968,9 @@ private:
     /// first.
     OrderStep order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff,
                                         Unit& target, bool task_waits = false);
+    static const Unit* guard_repair_reach(const UnitCommand& cmd, const Unit& target,
+                                          EntityRegistry& registry);
+    static Unit* guard_repair_target(Unit& target, EntityRegistry& registry);
     /// Moho's CUnitRepairTask with isSilo.
     OrderStep order_silo_assist(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff,
                                 Unit& silo);

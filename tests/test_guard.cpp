@@ -1286,3 +1286,52 @@ TEST_CASE("A guard of a point lends an allied silo's missile its build power, as
     REQUIRE_FALSE(eng->command_queue().empty());
     CHECK(eng->command_queue().front().type == CommandType::Guard);
 }
+
+TEST_CASE("A guard of a damaged unit that upgrades, by its order or a script's state, helps the "
+          "upgrade, not the unit's damage, as Moho's repair task for a guard does",
+          "[guard]") {
+    const bool by_order = GENERATE(true, false);
+    CAPTURE(by_order);
+    LuaGuard g;
+    with_repair_blueprints(g.L);
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* eng = engineer_of(sim, 53.0f, 50.0f);
+    const auto [factory, upgrade] = factory_at_work(sim, 50.5f, 50.5f, 50.5f, 50.5f);
+    factory->set_unit_id("tank");
+    upgrade->set_unit_id("tank");
+    factory->set_health(50.0f);
+    if (by_order) {
+        UnitCommand up;
+        up.type = CommandType::Upgrade;
+        up.blueprint_id = "tank";
+        up.begun = true;
+        factory->push_command(up, true);
+    } else {
+        factory->set_unit_state("Upgrading", true);
+    }
+    eng->push_command(guard(factory, 1), true);
+    tick_until([&] { sim.tick(); }, "the guard helps the upgrade", 60,
+               [&] { return eng->build_target_id() == upgrade->entity_id(); });
+    CHECK_FALSE(eng->repair_target_id());
+    CHECK(factory->health() == 50.0f);
+}
+
+TEST_CASE("A repair a guard hands out for a unit a factory builds is in reach of the factory, as "
+          "Moho's repair task for a guard measures it",
+          "[guard]") {
+    LuaGuard g;
+    with_repair_blueprints(g.L);
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* eng = engineer_of(sim, 62.5f, 50.5f);
+    eng->set_guard_scan_radius(20.0f);
+    const auto [factory, unit] = factory_at_work(sim, 50.5f, 50.5f, 50.5f, 50.5f);
+    unit->set_unit_id("tank");
+    unit->set_creator_id(factory->entity_id());
+    unit->set_collision_shape({osc::sim::CollisionShapeType::SPHERE, 0, 0, 0, 1, 1, 1});
+    eng->push_command(guard(nullptr, 1, eng->position()), true);
+    tick_until([&] { sim.tick(); }, "the guard builds the factory's unit", 40,
+               [&] { return eng->build_target_id() == unit->entity_id(); });
+    CHECK(eng->position().x == 62.5f);
+}
