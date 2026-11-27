@@ -1237,3 +1237,52 @@ TEST_CASE("A guard of a point repairs the nearest damaged ally within its GuardS
     CHECK(task->type == CommandType::Repair);
     CHECK(task->target_id == hurt->entity_id());
 }
+
+TEST_CASE("A guard of a point lends an allied silo's missile its build power, as a repair Moho's "
+          "guard task hands out for it, until the missile is built",
+          "[guard][silo]") {
+    LuaGuard g;
+    run_lua(g.L, "__blueprints = { missile = { Economy = { BuildTime = 100000, "
+                 "BuildCostEnergy = 1, BuildCostMass = 1 } } }");
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.get_army(0)->set_extra_storage(100000.0, 100000.0);
+    sim.get_army(0)->set_stored_resources(100000.0, 100000.0);
+    Unit* eng = engineer_of(sim, 50.0f, 50.0f);
+    eng->set_guard_scan_radius(20.0f);
+    Unit* silo = still(sim, 0, 53.0f, 50.0f);
+    silo->set_collision_shape({osc::sim::CollisionShapeType::SPHERE, 0, 0, 0, 1, 1, 1});
+    silo->set_build_rate(1.0f);
+    auto launcher = std::make_unique<osc::sim::Weapon>();
+    launcher->counted_projectile = true;
+    launcher->nuke_weapon = true;
+    launcher->max_projectile_storage = 5;
+    launcher->projectile_bp_id = "missile";
+    silo->add_weapon(std::move(launcher));
+    silo->order_silo_build(true);
+    sim.tick();
+    REQUIRE(silo->silo_building());
+
+    eng->push_command(guard(nullptr, 1, {50.0f, 0.0f, 50.0f}), true);
+    tick_until([&] { sim.tick(); }, "the guard lends the silo its build power", 20,
+               [&] { return eng->silo_assist_id() == silo->entity_id(); });
+    const UnitCommand* task = handed_out(*eng);
+    REQUIRE(task != nullptr);
+    CHECK(task->type == CommandType::Repair);
+    CHECK(task->target_id == silo->entity_id());
+    CHECK(eng->has_unit_state("Repairing"));
+    const double own_steps = 5 * 1.0 * 0.1 / 100000.0;
+    const double before = silo->silo_build().progress;
+    for (int i = 0; i < 5; ++i) {
+        sim.tick();
+    }
+    CHECK(eng->silo_assist_id() == silo->entity_id());
+    CHECK(silo->silo_build().progress - before > 2.0 * own_steps);
+
+    silo->stop_silo_build();
+    sim.tick();
+    CHECK(eng->silo_assist_id() == osc::sim::EntityId());
+    CHECK_FALSE(eng->has_unit_state("Repairing"));
+    REQUIRE_FALSE(eng->command_queue().empty());
+    CHECK(eng->command_queue().front().type == CommandType::Guard);
+}

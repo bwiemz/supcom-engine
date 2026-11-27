@@ -419,6 +419,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.i32v(c.handout_wait);
     w.b(c.guard_prepared);
     w.b(c.guard_ward_unfinished);
+    w.b(c.silo_assist);
     w.ids(c.patrol_claimed);
     w.vec3(c.patrol_from);
     w.i32v(c.patrol_runs);
@@ -494,6 +495,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.handout_wait = r.i32v();
     c.guard_prepared = r.b();
     c.guard_ward_unfinished = r.b();
+    c.silo_assist = r.b();
     c.patrol_claimed = r.ids();
     c.patrol_from = r.vec3();
     c.patrol_runs = r.i32v();

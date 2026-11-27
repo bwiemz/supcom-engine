@@ -1123,8 +1123,8 @@ TEST_CASE("A guard hands out a repair only on its task's runs: every 6 ticks gua
     CHECK(late - early == (ward_engineer ? 4 : 0));
 }
 
-TEST_CASE("A repair of an enhancing unit adds to its WorkProgress at the repairer's build rate over "
-          "its WorkItemBuildTime, and ends with the enhancement",
+TEST_CASE("A repair of an enhancing unit adds to its WorkProgress at the repairer's build rate "
+          "over its WorkItemBuildTime, and ends with the enhancement",
           "[build][assist][enhance]") {
     AssistSim w;
     w.site->set_is_being_built(false);

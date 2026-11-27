@@ -2140,6 +2140,9 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
         if (build_target_id_ && build_target_id_ == cmd.target_id) {
             stop_assisting(L, &registry);
         }
+        if (silo_assist_id_ && silo_assist_id_ == cmd.target_id) {
+            end_silo_assist(L, registry);
+        }
         end_approach(cmd);
         free_order_reservation(ctx.sim);
     };
@@ -2160,7 +2163,7 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
     }
     // Already at full health? Done. (One under construction is built first.)
     const bool under_construction = static_cast<const Unit&>(*rtarget).is_being_built();
-    if ((!under_construction && rtarget->health() >= rtarget->max_health() &&
+    if ((!under_construction && !cmd.silo_assist && rtarget->health() >= rtarget->max_health() &&
          !static_cast<Unit*>(rtarget)->shield_needs_repair(registry, L) &&
          !static_cast<const Unit&>(*rtarget).enhances()) ||
         !static_cast<const Unit&>(*rtarget).holds_for_repair()) {
@@ -2211,6 +2214,9 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
         if (is_repairing()) stop_repairing(L, registry);
         return order_repair_construction(cmd, dt, ctx, econ_eff, *static_cast<Unit*>(rtarget));
     }
+    if (cmd.silo_assist) {
+        return order_silo_assist(cmd, dt, ctx, econ_eff, *static_cast<Unit*>(rtarget));
+    }
 
     // Start repair if not already repairing this target
     if (repair_target_id_ != cmd.target_id) {
@@ -2234,6 +2240,55 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
         command_queue_.pop_front();
         return OrderStep::Next;
     }
+    return OrderStep::Hold;
+}
+
+OrderStep Unit::order_silo_assist(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff,
+                                  Unit& silo) {
+    if (silo_assist_id_ != cmd.target_id) {
+        if (is_repairing()) {
+            stop_repairing(ctx.L, ctx.registry);
+        }
+        const Vector3 at = silo.position();
+        aim_builder_arms(&at, ctx.L);
+        if (destroyed() || !in_registry()) {
+            return OrderStep::Gone;
+        }
+        if (turns_to_face(at) || awaits_arm() || waits_out_task(cmd) || waits_paused(cmd)) {
+            return OrderStep::Hold;
+        }
+        if (silo_assist_id_) {
+            end_silo_assist(ctx.L, ctx.registry);
+        }
+        silo_assist_id_ = cmd.target_id;
+        notify_focus_assigned(ctx.L);
+        call_build_callback(ctx.L, "OnStartBuild", &silo, "Repair");
+        if (destroyed() || !in_registry()) {
+            return OrderStep::Gone;
+        }
+        if (silo_assist_id_ != cmd.target_id) {
+            command_queue_.pop_front();
+            return OrderStep::Next;
+        }
+        set_unit_state("Repairing", true);
+    }
+    if (!paused_ && (silo.destroyed() || !silo.silo_building())) {
+        end_silo_assist(ctx.L, ctx.registry);
+        command_queue_.pop_front();
+        return OrderStep::Next;
+    }
+    silo_assist_renewed_ = true;
+    if (paused_) {
+        work_progress_ = silo.fraction_complete();
+        return OrderStep::Hold;
+    }
+    const SiloBuild& missile = silo.silo_build();
+    const f64 per_second = static_cast<f64>(build_rate_) / missile.build_time;
+    economy_.consumption_energy = missile.energy * per_second;
+    economy_.consumption_mass = missile.mass * per_second;
+    economy_.consumption_active = true;
+    silo.assist_silo_build(build_rate_, dt, econ_eff);
+    work_progress_ = silo.work_progress();
     return OrderStep::Hold;
 }
 
@@ -3180,8 +3235,7 @@ Unit* Unit::guard_assist_candidate(Unit& ward, SimContext& ctx) const {
     }
     if (ward.health() < ward.max_health() ||
         (ward.fuel_use_time() > 1.0f && ward.fuel_ratio() < 1.0f) ||
-        ward.shield_needs_repair(ctx.registry, ctx.L) ||
-        (!ward.is_paused() && ward.enhances())) {
+        ward.shield_needs_repair(ctx.registry, ctx.L) || (!ward.is_paused() && ward.enhances())) {
         return &ward;
     }
     Unit* silo = &ward;
@@ -3248,14 +3302,18 @@ bool Unit::guard_dispatch(UnitCommand& cmd, const Unit* ward, Unit& help, SimCon
     const bool allied = help.army() == army() || (ctx.sim && ctx.sim->is_ally(army(), help.army()));
     UnitCommand task;
     if (allied) {
-        if (&help == ward || (ward && ward->is_building() && ward->build_target_id() == help.entity_id())) {
-            return false;
-        }
-        if (help.health() >= help.max_health() && !help.enhances() &&
-            !help.shield_needs_repair(ctx.registry, ctx.L)) {
+        if (&help == ward ||
+            (ward && ward->is_building() && ward->build_target_id() == help.entity_id())) {
             return false;
         }
         task.type = CommandType::Repair;
+        if (help.health() >= help.max_health() && !help.enhances() &&
+            !help.shield_needs_repair(ctx.registry, ctx.L)) {
+            if (help.is_paused() || !help.silo_building()) {
+                return false;
+            }
+            task.silo_assist = true;
+        }
     } else {
         task.type = CommandType::Capture;
     }

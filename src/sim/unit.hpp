@@ -1966,6 +1966,9 @@ private:
     /// first.
     OrderStep order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff,
                                         Unit& target, bool task_waits = false);
+    /// Moho's CUnitRepairTask with isSilo.
+    OrderStep order_silo_assist(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff,
+                                Unit& silo);
     OrderStep order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// A factory guarding a factory takes work from its queue (Moho's guard
     /// task for an immobile FACTORY, TryDispatchFactoryOrUpgradeFromGuardQueues).

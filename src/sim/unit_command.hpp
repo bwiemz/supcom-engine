@@ -334,6 +334,8 @@ struct UnitCommand {
     bool guard_prepared = false;
     /// Moho's CUnitGuardTask constructor's flag.
     bool guard_ward_unfinished = false;
+    /// Moho's CUnitRepairTask isSilo.
+    bool silo_assist = false;
     /// What a patrol leg has gone to reclaim, not to be picked again on it
     /// (Moho's patrol task's entity set). Runtime state.
     std::vector<EntityId> patrol_claimed;
