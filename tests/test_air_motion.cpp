@@ -1067,3 +1067,36 @@ TEST_CASE("An aircraft's aborted move makes for its stop point at once", "[air_m
     a.abort_move();
     CHECK(a.navigator().air_hold() != nullptr);
 }
+
+TEST_CASE("An aircraft whose move ends on its own makes for where it would be a second on, an "
+          "order after it or none",
+          "[air_motion][order-switch]") {
+    const bool attack_after = GENERATE(false, true);
+    World w(true);
+    Unit& a = w.make("gunship", 30.0f, 128.0f);
+    const Unit& tank = w.make("tank", 220.0f, 128.0f, 2);
+    World::move(a, 100.0f, 128.0f);
+    if (attack_after) {
+        osc::sim::UnitCommand attack;
+        attack.type = osc::sim::CommandType::Attack;
+        attack.target_id = tank.entity_id();
+        a.push_command(attack, false);
+    }
+    f32 last = a.position().x;
+    f32 before = last;
+    tick_until(
+        [&] {
+            before = last;
+            last = a.position().x;
+            w.sim.tick();
+        },
+        "the move ends", 300, [&] { return a.command_queue().empty(); });
+    const f32 expected = last + 10.0f * (last - before);
+    for (int t = 0; t < 100; ++t) {
+        w.sim.tick();
+    }
+    CHECK(a.position().x == Approx(expected).margin(1.0f));
+    if (attack_after) {
+        CHECK(a.position().x > 105.0f);
+    }
+}

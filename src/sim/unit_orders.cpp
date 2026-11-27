@@ -961,10 +961,7 @@ OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
             free_order_reservation(ctx.sim);
         }
         command_queue_.pop_front();
-        if (is_air_unit() &&
-            (command_queue_.empty() || instant_order(command_queue_.front().type))) {
-            stop_air();
-        }
+        abort_move();
         return OrderStep::Next;
     }
     // A settled goal whose order was moved (Moho's move task hears the
@@ -989,10 +986,8 @@ OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
             free_order_reservation(ctx.sim);
         }
         command_queue_.pop_front();
-        if (is_air_unit() &&
-            (command_queue_.empty() || instant_order(command_queue_.front().type))) {
-            stop_air();
-        }
+        // ~CUnitMoveTask: with no order being issued, ComputeNextCommandIsInstant holds.
+        abort_move();
         return OrderStep::Next;
     }
     return OrderStep::Hold; // Still moving
