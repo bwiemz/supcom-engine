@@ -305,9 +305,10 @@ std::string ModsFlowTest::effect_report(lua_State* sim_L, const sim::SimState& s
     // by (sim_bindings.cpp's emitter_blueprint_lifetime).
     std::string sim_lifetime = "none";
     if (const auto* store = sim.blueprint_store()) {
-        if (const auto* entry = store->find_effect(kEffect, blueprints::BlueprintType::Emitter))
-            sim_lifetime =
-                fmt::format("{}", store->get_number_field(*entry, "Lifetime", sim_L).value_or(0.0));
+        if (const auto* entry = store->find_effect(kEffect, blueprints::BlueprintType::Emitter)) {
+            const f64 lifetime = store->get_number_field(*entry, "Lifetime", sim_L).value_or(0.0);
+            sim_lifetime = fmt::format("{}", static_cast<f32>(lifetime));
+        }
     }
     const renderer::EmitterBlueprintData* drawn = renderer.emitter_blueprint(kEffect, ui_L);
     return fmt::format("sim={} render={} texture={}", sim_lifetime,

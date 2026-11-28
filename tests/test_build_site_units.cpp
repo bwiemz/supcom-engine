@@ -27,6 +27,7 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -57,7 +58,7 @@ struct Site {
             __blueprints = {
                 uel0105 = {
                     BlueprintId = 'uel0105',
-                    Economy = { BuildableCategory = { 'ueb0101' } },
+                    Economy = { BuildableCategory = { 'ueb0101', 'ueb1101' } },
                 },
                 ueb0101 = {
                     BlueprintId = 'ueb0101',
@@ -66,6 +67,13 @@ struct Site {
                                 SkirtOffsetZ = -1.5 },
                     Economy = { BuildTime = 100, BuildCostMass = 1, BuildCostEnergy = 1,
                                 BuildableCategory = { 'ueb0101' } },
+                },
+                ueb1101 = {
+                    BlueprintId = 'ueb1101',
+                    Footprint = { SizeX = 2, SizeZ = 2 },
+                    Physics = { SkirtSizeX = 4, SkirtSizeZ = 4, SkirtOffsetX = -1,
+                                SkirtOffsetZ = -1 },
+                    Economy = { BuildTime = 100, BuildCostMass = 1, BuildCostEnergy = 1 },
                 },
             }
             __failed = 0
@@ -182,11 +190,14 @@ struct Site {
     }
 
     /// The engineer ordered to build the factory on the cells 48-53 by 48-53.
-    void build() {
+    void build() { build("ueb0101", 50.5f, 50.5f); }
+
+    void build(const char* bp, f32 x, f32 z, osc::u32 id = 0) {
         UnitCommand c;
         c.type = CommandType::BuildMobile;
-        c.blueprint_id = "ueb0101";
-        c.target_pos = {50.5f, 0.0f, 50.5f};
+        c.blueprint_id = bp;
+        c.target_pos = {x, 0.0f, z};
+        c.command_id = id;
         engineer->push_command(c, true);
     }
 
@@ -503,4 +514,270 @@ TEST_CASE("A factory's footprint holds it up only by idle units: one with an ord
         CHECK_FALSE(tank->stepping_aside());
         CHECK(tank->position().x == 81.0f);
     }
+}
+
+TEST_CASE("A builder in reach on ground the occupancy grid holds walks to the place nearest it "
+          "clear of the site's skirt grown by a cell, held for it until its order ends; on free "
+          "ground it builds where it stands",
+          "[build][build_site]") {
+    namespace occupancy = osc::blueprints::occupancy;
+    const bool held = GENERATE(false, true);
+    CAPTURE(held);
+    Site s;
+    if (held) {
+        s.sim.occupy_cells(occupancy::kLand, {50, 62, 51, 63}, true);
+    }
+    s.sim.tick();
+    s.build("ueb0101", 50.5f, 50.5f, 1);
+    s.sim.tick();
+    const osc::sim::OccupancyRect place{50, 56, 51, 57};
+    CHECK(s.engineer->navigator().busy() == held);
+    if (held) {
+        CHECK(s.engineer->navigator().goal().x == 50.5f);
+        CHECK(s.engineer->navigator().goal().z == 56.5f);
+    }
+    CHECK(s.sim.occupancy().reserved_any(place) == held);
+    tick_until([&] { s.sim.tick(); }, "the frame stands", 300, [&] { return s.built(); });
+    const osc::sim::Vector3& p = s.engineer->position();
+    CAPTURE(p.x, p.z);
+    if (held) {
+        CHECK(p.z < 58.0f);
+        CHECK(s.sim.footprint_fits_at(s.engineer->footprint(), p.x, p.z) != 0);
+    } else {
+        CHECK(p.x == 50.5f);
+        CHECK(p.z == 62.5f);
+    }
+    CHECK(s.sim.occupancy().reserved_any(place) == held);
+    CHECK(s.failed() == 0);
+
+    UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {20.5f, 0.0f, 90.5f};
+    move.command_id = 2;
+    s.engineer->push_command(move, true);
+    s.sim.tick();
+    CHECK_FALSE(s.sim.occupancy().reserved_any(place));
+}
+
+TEST_CASE("A builder in reach whose own skirt touches the site's walks off it before it builds; "
+          "one a cell further builds where it stands",
+          "[build][build_site]") {
+    const bool touching = GENERATE(true, false);
+    CAPTURE(touching);
+    Site s;
+    // The site's skirt is the cells 48-52 by 48-52.
+    const f32 x = touching ? 52.6f : 53.6f;
+    s.engineer->set_position({x, 0.0f, 50.5f});
+    s.sim.tick();
+    s.build("ueb1101", 50.0f, 50.0f);
+    s.sim.tick();
+    CHECK(s.engineer->navigator().busy() == touching);
+    if (touching) {
+        CHECK(s.engineer->navigator().goal().x == 54.5f);
+        CHECK(s.engineer->navigator().goal().z == 50.5f);
+    }
+    tick_until([&] { s.sim.tick(); }, "the frame stands", 200, [&] { return s.built(); });
+    const osc::sim::Vector3& p = s.engineer->position();
+    CAPTURE(p.x, p.z);
+    if (touching) {
+        CHECK(p.x > 53.0f);
+    } else {
+        CHECK(p.x == x);
+        CHECK(p.z == 50.5f);
+    }
+    CHECK(s.failed() == 0);
+}
+
+namespace {
+
+Unit* guard_engineer(Site& s, f32 x, f32 z, const char* bp) {
+    Unit* g = s.walker(0, x, z, 1.9f);
+    g->set_blueprint_id(bp);
+    g->add_category("ENGINEER");
+    g->add_category("REPAIR");
+    g->set_build_rate(5.0f);
+    g->set_max_build_distance(5.0f);
+    s.bind(*g, "Engineer");
+    return g;
+}
+
+UnitCommand guard_of(const Unit& ward, osc::u32 id) {
+    UnitCommand c;
+    c.type = CommandType::Guard;
+    c.target_id = ward.entity_id();
+    c.target_pos = ward.position();
+    c.command_id = id;
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("A guard of an engineer with a build at the head of its queue takes the build up "
+          "itself, starting on the guard task's next run: the next tick through an engineer, 6 "
+          "ticks on through a tank; one that can't make it, or a REBUILDER, follows",
+          "[build][build_site][guard][guard_abort]") {
+    const bool through_tank = GENERATE(false, true);
+    const std::string guard = GENERATE(as<std::string>{}, "builder", "non-builder", "rebuilder");
+    CAPTURE(through_tank, guard);
+    const bool can_build = guard != "non-builder";
+    const bool takes_up = guard == "builder";
+    Site s;
+    const std::string more = "__blueprints.uel0105x = { BlueprintId = 'uel0105x',"
+                             " Economy = { BuildableCategory = { 'ueb0101' } } }";
+    REQUIRE(luaL_loadbuffer(s.L, more.c_str(), more.size(), "more") == 0);
+    REQUIRE(lua_pcall(s.L, 0, 0, 0) == 0);
+    s.engineer->add_category("ENGINEER");
+    Unit* ward = s.engineer;
+    if (through_tank) {
+        ward = s.walker(0, 53.5f, 62.5f);
+        ward->push_command(guard_of(*s.engineer, 9), true);
+    }
+    Unit* g = guard_engineer(s, 56.5f, 62.5f, can_build ? "uel0105" : "uel0105x");
+    if (guard == "rebuilder") {
+        g->add_category("REBUILDER");
+    }
+    s.build("ueb1101", 30.0f, 30.0f, 1);
+    g->push_command(guard_of(*ward, 2), true);
+
+    s.sim.tick();
+    const auto& q = g->command_queue();
+    REQUIRE_FALSE(q.empty());
+    CHECK(q.front().from_guard == takes_up);
+    if (!takes_up) {
+        CHECK(q.front().type == CommandType::Guard);
+        return;
+    }
+    CHECK(q.front().type == CommandType::BuildMobile);
+    CHECK(q.front().blueprint_id == "ueb1101");
+    CHECK(q.front().command_id == 2);
+    REQUIRE(q.size() == 2);
+    CHECK(q[1].type == CommandType::Guard);
+
+    const int starts = through_tank ? 7 : 2;
+    for (int t = 2; t < starts; ++t) {
+        s.sim.tick();
+        INFO("tick " << t);
+        CHECK_FALSE(g->navigator().busy());
+    }
+    s.sim.tick();
+    REQUIRE(g->navigator().busy());
+    const osc::sim::Vector3 goal = g->navigator().goal();
+    CAPTURE(goal.x, goal.z);
+    CHECK(std::hypot(goal.x - 30.0f, goal.z - 30.0f) < 6.0f);
+}
+
+TEST_CASE("A guard's own build of its ward's building ends with the building, and the guard, "
+          "looking again at once, moves on with the order queued behind it on the tick the "
+          "ward's build order ends",
+          "[build][build_site][guard][guard_abort]") {
+    Site s;
+    s.engineer->add_category("ENGINEER");
+    s.engineer->set_position({50.5f, 0.0f, 56.5f});
+    Unit* g = guard_engineer(s, 53.5f, 56.5f, "uel0105");
+    s.build("ueb1101", 50.0f, 52.0f, 1);
+    g->push_command(guard_of(*s.engineer, 2), true);
+    UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {90.5f, 0.0f, 90.5f};
+    move.command_id = 3;
+    g->push_command(move, false);
+
+    tick_until([&] { s.sim.tick(); }, "both build the frame", 300,
+               [&] {
+                   return s.built() && s.engineer->build_target_id() == s.built_id &&
+                          g->build_target_id() == s.built_id;
+               });
+    REQUIRE(g->command_queue().size() == 3);
+    CHECK(g->command_queue().front().from_guard);
+    auto* frame = static_cast<Unit*>(s.sim.entity_registry().find(s.built_id));
+    frame->set_fraction_complete(1.0f);
+
+    s.sim.tick();
+    CHECK_FALSE(s.ordered());
+    REQUIRE(g->command_queue().size() == 1);
+    CHECK(g->command_queue().front().command_id == 3);
+    CHECK(s.failed() == 0);
+}
+
+TEST_CASE("A mobile build takes up a frame begun on its site without waiting for its arm or "
+          "its pause, and with none there waits for both",
+          "[build][build_site][arm]") {
+    const bool begun = GENERATE(true, false);
+    const bool paused = GENERATE(false, true);
+    CAPTURE(begun, paused);
+    Site s;
+    s.engineer->set_position({50.5f, 0.0f, 56.5f});
+    if (begun) {
+        s.build("ueb1101", 50.0f, 52.0f, 1);
+        tick_until([&] { s.sim.tick(); }, "the frame stands", 50, [&] { return s.built(); });
+    }
+    Unit* h = guard_engineer(s, 53.5f, 56.5f, "uel0105");
+    h->set_builder_on_target(paused);
+    h->set_paused(paused);
+    UnitCommand c;
+    c.type = CommandType::BuildMobile;
+    c.blueprint_id = "ueb1101";
+    c.target_pos = {50.0f, 0.0f, 52.0f};
+    c.command_id = 2;
+    h->push_command(c, true);
+
+    bool took = false;
+    for (int t = 0; t < 30 && !took; ++t) {
+        s.sim.tick();
+        took = static_cast<bool>(h->build_target_id());
+    }
+    CHECK(took == begun);
+    if (begun) {
+        CHECK(h->build_target_id() == s.built_id);
+    }
+}
+
+TEST_CASE("A guard whose own work makes its ward's building whole takes the ward's build up "
+          "again while the ward's order is on, and moves on two ticks later",
+          "[build][build_site][guard][guard_abort]") {
+    Site s;
+    s.sim.get_army(0)->set_extra_storage(100000.0, 100000.0);
+    s.sim.get_army(0)->set_stored_resources(100000.0, 100000.0);
+    s.engineer->add_category("ENGINEER");
+    s.engineer->set_position({50.5f, 0.0f, 56.5f});
+    Unit* g = guard_engineer(s, 53.5f, 56.5f, "uel0105");
+    s.build("ueb1101", 50.0f, 52.0f, 1);
+    g->push_command(guard_of(*s.engineer, 2), true);
+    UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {90.5f, 0.0f, 90.5f};
+    move.command_id = 3;
+    g->push_command(move, false);
+
+    tick_until([&] { s.sim.tick(); }, "both build the frame", 300,
+               [&] {
+                   return s.built() && s.engineer->build_target_id() == s.built_id &&
+                          g->build_target_id() == s.built_id;
+               });
+    for (int t = 0; t < 3; ++t) {
+        s.sim.tick();
+    }
+    auto* frame = static_cast<Unit*>(s.sim.entity_registry().find(s.built_id));
+    frame->add_category("STRUCTURE");
+    frame->set_footprint_size(2.0f, 2.0f);
+    frame->set_skirt(4.0f, 4.0f, -1.0f, -1.0f);
+    s.engineer->set_build_rate(0.0001f);
+    frame->set_fraction_complete(0.999f);
+
+    s.sim.tick();
+    CHECK(frame->fraction_complete() == 1.0f);
+    CHECK_FALSE(frame->is_being_built());
+    CHECK(s.ordered());
+    REQUIRE(g->command_queue().size() == 3);
+    CHECK(g->command_queue().front().from_guard);
+    CHECK_FALSE(g->build_target_id());
+
+    s.sim.tick();
+    CHECK_FALSE(s.ordered());
+    CHECK(g->command_queue().size() == 3);
+
+    s.sim.tick();
+    REQUIRE(g->command_queue().size() == 1);
+    CHECK(g->command_queue().front().command_id == 3);
+    CHECK(s.failed() == 1);
 }

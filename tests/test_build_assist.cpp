@@ -15,6 +15,7 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -194,7 +195,8 @@ TEST_CASE("A repair of a unit under construction aims the arm and builds it as a
     CHECK_FALSE(arm_of(*eng).has_target());
 }
 
-TEST_CASE("A guard builds its unfinished target and keeps guarding when the work ends",
+TEST_CASE("A guard builds its unfinished target, and its guard of a structure with nothing to do "
+          "ends with the work",
           "[build][assist][guard]") {
     AssistSim w;
     Unit* eng = w.engineer("eng", 16.0f);
@@ -207,13 +209,12 @@ TEST_CASE("A guard builds its unfinished target and keeps guarding when the work
     w.sim.tick();
     CHECK(w.site->fraction_complete() > before);
 
-    SECTION("completion keeps the guard and ends the build effects once") {
+    SECTION("completion ends the guard and the build effects once") {
         tick_until([&] { w.sim.tick(); }, "the site is built", 300,
                    [&] { return !w.site->is_being_built(); });
         CHECK(w.site->fraction_complete() == 1.0f);
         CHECK(w.log() == "eng stop");
-        REQUIRE(eng->command_queue().size() == 1);
-        CHECK(eng->command_queue().front().type == CommandType::Guard);
+        CHECK(eng->command_queue().empty());
         for (int tick = 0; tick < 10; ++tick) w.sim.tick();
         CHECK(w.log().empty());
         CHECK_FALSE(eng->is_building());
@@ -1055,4 +1056,98 @@ TEST_CASE("A repair, and a guard's help with it, hear OnAssignedFocusEntity just
     const std::string stopped = w.log();
     CHECK(stopped.find("eng stop") != std::string::npos);
     CHECK(stopped.find("focus") == std::string::npos);
+}
+
+TEST_CASE("A guard with an order queued ends the tick its help makes its target whole",
+          "[build][assist][guard][guard_abort]") {
+    const bool unfinished = GENERATE(true, false);
+    CAPTURE(unfinished);
+    AssistSim w;
+    if (!unfinished) {
+        w.site->set_is_being_built(false);
+        w.site->set_fraction_complete(1.0f);
+    }
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Guard, *w.site, 1), true);
+    UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {40.0f, 0.0f, 20.0f};
+    move.command_id = 2;
+    eng->push_command(move, false);
+    const auto whole = [&] {
+        return !w.site->is_being_built() && w.site->health() >= w.site->max_health();
+    };
+    tick_until(
+        [&] {
+            w.sim.tick();
+            if (!whole()) {
+                REQUIRE(eng->command_queue().front().type == CommandType::Guard);
+            }
+        },
+        "the target is whole", 400, whole);
+    const auto& queue = eng->command_queue();
+    CHECK(std::none_of(queue.begin(), queue.end(),
+                       [](const UnitCommand& c) { return c.command_id == 1; }));
+}
+
+TEST_CASE("A guard hands out a repair only on its task's runs: every 6 ticks guarding a unit that "
+          "is no engineer, the next tick guarding an engineer",
+          "[build][assist][guard]") {
+    const bool ward_engineer = GENERATE(false, true);
+    CAPTURE(ward_engineer);
+    const auto repair_starts = [&](int damaged_after) {
+        AssistSim w;
+        w.site->set_is_being_built(false);
+        w.site->set_fraction_complete(1.0f);
+        w.site->set_health(w.site->max_health());
+        if (ward_engineer) {
+            w.site->add_category("ENGINEER");
+        }
+        Unit* eng = w.engineer("eng", 16.0f);
+        eng->push_command(order(CommandType::Guard, *w.site, 1), true);
+        for (int t = 1; t <= 40; ++t) {
+            w.sim.tick();
+            if (t == damaged_after) {
+                w.site->set_health(0.5f * w.site->max_health());
+            }
+            if (eng->is_repairing()) {
+                return t;
+            }
+        }
+        return 0;
+    };
+    const int early = repair_starts(2);
+    const int late = repair_starts(6);
+    REQUIRE(early > 0);
+    REQUIRE(late > 0);
+    CHECK(late - early == (ward_engineer ? 4 : 0));
+}
+
+TEST_CASE("A repair of an enhancing unit adds to its WorkProgress at the repairer's build rate "
+          "over its WorkItemBuildTime, and ends with the enhancement",
+          "[build][assist][enhance]") {
+    AssistSim w;
+    w.site->set_is_being_built(false);
+    w.site->set_fraction_complete(1.0f);
+    w.site->set_health(w.site->max_health());
+    w.site->set_enhancing(true);
+    lua_rawgeti(w.L, LUA_REGISTRYINDEX, w.site->lua_table_ref());
+    lua_pushstring(w.L, "WorkItemBuildTime");
+    lua_pushnumber(w.L, 100);
+    lua_rawset(w.L, -3);
+    lua_pop(w.L, 1);
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    tick_until([&] { w.sim.tick(); }, "the repair starts", 20, [&] { return eng->is_repairing(); });
+    const osc::f32 before = w.site->work_progress();
+    for (int t = 0; t < 5; ++t) {
+        w.sim.tick();
+    }
+    CHECK(w.site->work_progress() - before == Catch::Approx(0.05).margin(1e-5));
+    CHECK(w.site->health() == w.site->max_health());
+
+    w.site->set_enhancing(false);
+    w.sim.tick();
+    CHECK_FALSE(eng->is_repairing());
+    CHECK(eng->command_queue().empty());
 }

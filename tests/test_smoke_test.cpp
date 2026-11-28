@@ -529,6 +529,51 @@ TEST_CASE("A repeating factory's raised order goes round whole, its count back a
     CHECK(factory_orders(*f) == "test_experimental test_tank test_tank test_tank test_tank");
 }
 
+TEST_CASE("A factory's build under way ends unfinished a beat after its order goes from behind "
+          "an order put in ahead of it, and that order goes too",
+          "[session][rules]") {
+    for (const bool removed : {false, true}) {
+        CAPTURE(removed);
+        BuildRuleHarness h;
+        REQUIRE(h.state.do_string("__blueprints.test_tank.Economy.BuildTime = 200\n"
+                                  "local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                                  "IssueBuildFactory({factory}, 'test_tank', 1)\n"
+                                  "IssueBuildFactory({factory}, 'test_experimental', 1)\n"));
+        osc::sim::Unit* f = find_factory(h);
+        REQUIRE(f);
+        const auto building = [&] {
+            const osc::sim::Entity* e = h.sim.entity_registry().find(f->build_target_id());
+            return e ? e->blueprint_id() : std::string();
+        };
+        h.sim.tick();
+        REQUIRE(building() == "test_tank");
+        const osc::u32 tank = f->command_queue().front().command_id;
+        osc::sim::UnitCommand more;
+        more.type = osc::sim::CommandType::BuildFactory;
+        more.blueprint_id = "test_tank";
+        more.command_id = 0x01000001u;
+        more.insert_before = tank;
+        h.sim.schedule_command(0, {f->entity_id()}, more, false);
+        h.sim.tick();
+        REQUIRE(f->command_queue().size() == 3);
+        REQUIRE(f->command_queue()[1].command_id == tank);
+        if (removed) {
+            osc::sim::SimCallbackEntry fewer;
+            fewer.func_name = osc::sim::kDecreaseCommandCountCallback;
+            fewer.args["Command"] = static_cast<osc::f64>(tank);
+            fewer.args["Count"] = 1.0;
+            h.sim.schedule_callback(0, fewer);
+        }
+        h.sim.tick();
+        CHECK(building() == "test_tank");
+        h.sim.tick();
+        CHECK(building() == (removed ? "test_experimental" : "test_tank"));
+        CHECK(factory_orders(*f) ==
+              (removed ? "test_experimental" : "test_tank test_tank test_experimental"));
+        CHECK(finished_units(h) == 0);
+    }
+}
+
 TEST_CASE("A raised factory order whose build fails goes whole", "[session][rules]") {
     BuildRuleHarness h;
     REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"

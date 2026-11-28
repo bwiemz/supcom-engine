@@ -369,6 +369,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.id(c.target_id);
     w.str(c.blueprint_id);
     w.u32v(c.command_id);
+    w.u32v(c.insert_before);
     w.str(c.formation);
     w.b(c.has_facing);
     w.f32v(c.facing);
@@ -407,6 +408,8 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.i32v(c.sacrifice_wait);
     w.i32v(c.count);
     w.i32v(c.max_count);
+    w.u32v(c.work_order);
+    w.u32v(c.work_order_gone);
     w.ids(c.launch_queue);
     w.i32v(c.launch_wait);
     enum8(w, c.dock_phase);
@@ -415,6 +418,8 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.i32v(c.patrol_scan);
     w.i32v(c.handout_wait);
     w.b(c.guard_prepared);
+    w.b(c.guard_ward_unfinished);
+    w.b(c.silo_assist);
     w.ids(c.patrol_claimed);
     w.vec3(c.patrol_from);
     w.i32v(c.patrol_runs);
@@ -440,6 +445,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.target_id = r.id();
     c.blueprint_id = r.str();
     c.command_id = r.u32v();
+    c.insert_before = r.u32v();
     c.formation = r.str();
     c.has_facing = r.b();
     c.facing = r.f32v();
@@ -478,6 +484,8 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.sacrifice_wait = r.i32v();
     c.count = r.i32v();
     c.max_count = r.i32v();
+    c.work_order = r.u32v();
+    c.work_order_gone = r.u32v();
     c.launch_queue = r.ids();
     c.launch_wait = r.i32v();
     c.dock_phase = enum8<DockPhase>(r);
@@ -486,6 +494,8 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.patrol_scan = r.i32v();
     c.handout_wait = r.i32v();
     c.guard_prepared = r.b();
+    c.guard_ward_unfinished = r.b();
+    c.silo_assist = r.b();
     c.patrol_claimed = r.ids();
     c.patrol_from = r.vec3();
     c.patrol_runs = r.i32v();
@@ -1299,6 +1309,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(u.repair_build_time_);
     w.f64v(u.repair_cost_mass_);
     w.f64v(u.repair_cost_energy_);
+    w.b(u.repair_inherits_work_);
     w.id(u.capture_target_id_);
     w.i32v(u.capture_ticks_);
     w.i32v(u.capture_progress_);
@@ -1755,6 +1766,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.repair_build_time_ = r.f64v();
     u.repair_cost_mass_ = r.f64v();
     u.repair_cost_energy_ = r.f64v();
+    u.repair_inherits_work_ = r.b();
     u.capture_target_id_ = r.id();
     u.capture_ticks_ = r.i32v();
     u.capture_progress_ = r.i32v();

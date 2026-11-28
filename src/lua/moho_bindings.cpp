@@ -3516,12 +3516,51 @@ static int l_DecreaseBuildCountInQueue(lua_State* L) {
     return push_build_count_request(L, sim::kDecreaseBuildCountCallback);
 }
 
-/// IncreaseBuildCountInQueue(index, count): its left-click (more of one).
+/// IncreaseBuildCountInQueue(index, count): its left-click (more of one), as
+/// Moho's ISSUE_IncreaseCommandCount: `count` orders put in before the group's last.
 static int l_IncreaseBuildCountInQueue(lua_State* L) {
-    if (lua_gettop(L) != 2)
+    if (lua_gettop(L) != 2) {
         return arg_count_error(L, "DecreaseBuildCountInQueue(queueIndex, count)", 2, lua_gettop(L));
-    if (!session_active(L)) return luaL_error(L, "No active session!");
-    return push_build_count_request(L, sim::kIncreaseBuildCountCallback);
+    }
+    if (!session_active(L)) {
+        return luaL_error(L, "No active session!");
+    }
+    const lua_Number index_arg = luaL_checknumber(L, 1);
+    const lua_Number count_arg = luaL_checknumber(L, 2);
+    auto* fq = get_factory_queue(L);
+    auto* sim = get_sim(L);
+    if (!fq || !sim || !(index_arg >= 1 && index_arg < 2147483648.0) ||
+        !(count_arg >= 1 && count_arg < 2147483648.0)) {
+        return 0;
+    }
+    const sim::Entity* e = sim->entity_registry().find(fq->current_factory_id());
+    if (!e || e->destroyed() || !e->is_unit()) {
+        return 0;
+    }
+    const auto& factory = static_cast<const sim::Unit&>(*e);
+    const auto last = factory.group_factory_build(static_cast<int>(index_arg));
+    if (!last) {
+        return 0;
+    }
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::BuildFactory;
+    cmd.blueprint_id = factory.command_queue()[*last].blueprint_id;
+    cmd.insert_before = factory.command_queue()[*last].command_id;
+    std::vector<sim::EntityId> ids;
+    sim->entity_registry().for_each_unit([&](const sim::Entity& u) {
+        const auto& queue = static_cast<const sim::Unit&>(u).command_queue();
+        if (!u.destroyed() &&
+            std::any_of(queue.begin(), queue.end(), [&](const sim::UnitCommand& c) {
+                return c.command_id == cmd.insert_before;
+            })) {
+            ids.push_back(u.entity_id());
+        }
+    });
+    for (int i = 0; i < static_cast<int>(count_arg); ++i) {
+        issue_player_order(L, ids, cmd, false);
+        report_script_order(L, "BuildFactory", ids, false, 0, cmd.blueprint_id);
+    }
+    return 0;
 }
 
 /// DeleteCommand(id): order `id` one fewer, as Moho's sends
@@ -3935,12 +3974,13 @@ static int l_CurrentTime(lua_State* L) {
     return 1;
 }
 
-/// GetSystemTimeSeconds() → number (same as CurrentTime)
+/// GetSystemTimeSeconds() → seconds since the program started, as Moho's system timer
+/// (faf-re cfunc_GetSystemTimeSecondsL)
+static const auto kSystemTimerStart = std::chrono::steady_clock::now();
+
 static int l_GetSystemTimeSeconds(lua_State* L) {
     using namespace std::chrono;
-    auto now = high_resolution_clock::now().time_since_epoch();
-    double secs = duration<double>(now).count();
-    lua_pushnumber(L, secs);
+    lua_pushnumber(L, duration<double>(steady_clock::now() - kSystemTimerStart).count());
     return 1;
 }
 

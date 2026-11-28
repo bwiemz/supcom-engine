@@ -26,7 +26,8 @@ inline constexpr const char* kUnitSettingCallback = "__osc_UnitSetting";
 inline constexpr const char* kDecreaseBuildCountCallback = "__osc_DecreaseBuildCount";
 
 /// Func name of IncreaseBuildCountInQueue(index, count) (Args Index, Count;
-/// unit_ids = the factory). Handled by the engine.
+/// unit_ids = the factory). Handled by the engine. Recordings from before
+/// it sent inserts (replay version 20) still carry it.
 inline constexpr const char* kIncreaseBuildCountCallback = "__osc_IncreaseBuildCount";
 
 /// Func name of a dropped player's defeat (Args Army, 0-based), which the

@@ -234,9 +234,7 @@ static int unit_IsUnitState(lua_State* L) {
         else if (std::strcmp(state, "BlockCommandQueue") == 0)
             result = u->block_command_queue();
         else if (std::strcmp(state, "Upgrading") == 0) {
-            result = !u->command_queue().empty() &&
-                     u->command_queue().front().type == sim::CommandType::Upgrade &&
-                     u->command_queue().front().begun;
+            result = u->upgrades();
         } else if (std::strcmp(state, "Patrolling") == 0) {
             // An attack-move is a patrol task too (Moho's Patrolling state)
             result = !u->command_queue().empty() &&
@@ -724,6 +722,9 @@ static int unit_GetCommandQueue(lua_State* L) {
     };
     int idx = 1;
     for (const auto& cmd : unit->command_queue()) {
+        if (cmd.from_patrol || cmd.from_guard) {
+            continue;
+        }
         lua_newtable(L);
         number("commandType", sim::moho_command_number(cmd));
         const sim::Entity* target =

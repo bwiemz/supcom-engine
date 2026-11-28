@@ -38,6 +38,7 @@ namespace osc::sim {
 
 struct BodyMass;
 struct SimContext;
+struct StructureSite;
 class ArmyBrain;
 class EntityRegistry;
 class SimRandom;
@@ -587,9 +588,11 @@ public:
     /// Sim::RemoveCommandFromUnitQueue: order `id` off the queue, or the rally
     /// orders; the work of a head order stops as Stop stops it.
     void remove_command(u32 id, SimContext& ctx);
-    /// IncreaseBuildCountInQueue: `count` more of the index-th group of its
-    /// factory queue (1-based, as factory_queue() groups it), after the
-    /// group's last order. An index past the queue changes nothing.
+    /// Where the index-th group of factory_queue() (1-based) has its last
+    /// factory build, which Moho's IncreaseBuildCountInQueue puts more before.
+    std::optional<size_t> group_factory_build(int index) const;
+    /// The engine's IncreaseBuildCountInQueue of recordings before inserts:
+    /// that order's count raised by `count`.
     void increase_build_count(int index, int count);
     /// A factory's build under way is cancelled, as Moho's ~CFactoryBuildTask ends it unfinished.
     void cancel_factory_build(EntityRegistry& registry, lua_State* L);
@@ -632,6 +635,10 @@ public:
         return &command_queue_[i];
     }
     void push_command(const UnitCommand& cmd, bool clear_existing);
+    /// Moho's InsertCommandToQueue at FindCommandIndex(cmd.insert_before), or
+    /// nothing. Ahead of a head under way its task runs on, and Moho's
+    /// dispatch then ends the head it finds.
+    void insert_command(UnitCommand cmd);
     /// `cmd` at the back of the queue as it is (NotifyUpgrade's copy of an
     /// old unit's orders, a patrol's points in their order).
     void append_command(const UnitCommand& cmd) { command_queue_.push_back(cmd); }
@@ -756,6 +763,7 @@ public:
     EntityId repair_target_id() const { return repair_target_id_; }
     void set_repair_target_id(EntityId id) { repair_target_id_ = id; }
     bool is_repairing() const { return static_cast<bool>(repair_target_id_); }
+    bool repair_inherits_work() const { return repair_inherits_work_; }
     bool start_repair(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L);
     bool progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
                           f32 efficiency = 1.0f);
@@ -793,6 +801,11 @@ public:
     /// Slot -> enhancement, by slot name (scripts see them in this order).
     const std::map<std::string, std::string>& enhancements() const { return enhancements_; }
     bool is_enhancing() const { return enhancing_; }
+    void set_enhancing(bool e) { enhancing_ = e; }
+    /// Moho's UNITSTATE_Enhancing.
+    bool enhances() const;
+    /// Moho's UNITSTATE_Upgrading.
+    bool upgrades() const;
     const std::string& enhance_name() const { return enhance_name_; }
     /// Reads the enhancement from the unit's own blueprint in `store` (not
     /// self.Blueprint, which only FAF's unit script sets).
@@ -1776,6 +1789,7 @@ private:
     /// place nearest the site clear of its skirt grown by a cell, else the
     /// point toward the unit where its own cell clears it.
     Vector3 build_place(const Vector3& site, f32 skirt_x, f32 skirt_z, SimContext& ctx) const;
+    Vector3 build_place(const Vector3& site, const StructureSite& skirt, SimContext& ctx) const;
     /// Where a reclaim of `target` is done from: Moho's CUnitReclaimTask
     /// takes the place nearest the unit whose cell doesn't touch the
     /// target's cells (PrepareMove(1)), else the target's position.
@@ -1878,6 +1892,9 @@ private:
     /// Whether a task the unit cap or a pause stopped still waits, counting
     /// its task_wait down (it tries again once that runs out).
     static bool waits_out_task(UnitCommand& cmd);
+    /// Moho's CFactoryBuildTask::Execute ends unfinished once its command is
+    /// gone, deleted in the Sync after it left every queue.
+    static bool lost_work(UnitCommand& cmd, SimContext& ctx);
     /// Whether the unit is paused, `cmd` then waiting kTaskRetryTicks.
     bool waits_paused(UnitCommand& cmd) const;
     /// A build its army's unit cap stopped: the order `command_id` (if
@@ -1900,7 +1917,29 @@ private:
     /// or nothing while the guard goes on as before. `ref` is what it
     /// guards: the guarded unit's position, or the point.
     std::optional<OrderStep> guard_engage(UnitCommand& cmd, const Unit* guarded, const Vector3& ref,
-                                          SimContext& ctx);
+                                          SimContext& ctx, bool& looks, bool task_out = false);
+    /// Moho's CUnitGuardTask::GetBestEnemy and SetEnemy.
+    std::optional<OrderStep> guard_look(UnitCommand& cmd, const Unit* guarded, const Vector3& ref,
+                                        SimContext& ctx);
+    std::optional<OrderStep> guard_runs(UnitCommand& cmd, Unit& ward, bool looked, bool help_ended,
+                                        SimContext& ctx);
+    /// Moho's CUnitGuardTask constructor's flag.
+    bool guard_ward_unfinished(const UnitCommand& cmd, EntityRegistry& registry) const;
+    /// Moho's CUnitGuardTask::ShouldAbortGuardForBuilderContext.
+    bool guard_ends_for_builder(const UnitCommand& cmd, Unit* ward, SimContext& ctx);
+    bool guard_finds_work(Unit* ward, const Vector3& point, SimContext& ctx);
+    /// Moho's CUnitGuardTask::TryResolveGuardBuildBlueprint.
+    const UnitCommand* guard_build_to_take_up(const Unit& ward, SimContext& ctx) const;
+    /// Moho's CUnitGuardTask::DispatchMobileBuildTask.
+    OrderStep take_up_guard_build(UnitCommand& cmd, const Unit& ward, const UnitCommand& build);
+    void hand_out_guard_task(UnitCommand& cmd, const Unit* ward, UnitCommand task);
+    /// Moho's CUnitGuardTask::SelectAssistOrCaptureCandidateUnit.
+    Unit* guard_assist_candidate(Unit& ward, SimContext& ctx) const;
+    /// Moho's CUnitGuardTask::SelectAssistOrCaptureCandidateUnit.
+    Unit* guard_point_candidate(const Vector3& point, SimContext& ctx) const;
+    /// Moho's CUnitGuardTask::DispatchAssistOrCaptureTask.
+    bool guard_dispatch(UnitCommand& cmd, const Unit* ward, Unit& help, SimContext& ctx);
+    OrderStep end_guard();
     /// A Guard of a point: go there, and take on enemies near it.
     OrderStep order_guard_point(UnitCommand& cmd, SimContext& ctx);
     /// Head for `goal`, setting a new path only when it moved by a unit.
@@ -1929,7 +1968,12 @@ private:
     /// first.
     OrderStep order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff,
                                         Unit& target, bool task_waits = false);
-    /// Help with what the guarded unit works on, or follow it. Never ends.
+    static const Unit* guard_repair_reach(const UnitCommand& cmd, const Unit& target,
+                                          EntityRegistry& registry);
+    static Unit* guard_repair_target(Unit& target, EntityRegistry& registry);
+    /// Moho's CUnitRepairTask with isSilo.
+    OrderStep order_silo_assist(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff,
+                                Unit& silo);
     OrderStep order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// A factory guarding a factory takes work from its queue (Moho's guard
     /// task for an immobile FACTORY, TryDispatchFactoryOrUpgradeFromGuardQueues).
@@ -2199,6 +2243,7 @@ private:
     f64 repair_build_time_ = 0;   // target's Economy.BuildTime
     f64 repair_cost_mass_ = 0;    // target's Economy.BuildCostMass
     f64 repair_cost_energy_ = 0;  // target's Economy.BuildCostEnergy
+    bool repair_inherits_work_ = false; // Moho's mInheritingWork
     EntityId capture_target_id_{}; // the unit it captures, once begun (Moho's mTargetEntity)
     i32 capture_ticks_ = 0;        // the capture's ticks, one captor's (Moho's mCaptureTime)
     i32 capture_progress_ = 0;     // of them, done (Moho's mCaptureProgress)

@@ -26,6 +26,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -360,9 +361,9 @@ TEST_CASE("Engineers assisting a shield generator regenerate its bubble while it
 
     run_lua(g.L, "on = true");
     gen->set_health(50.0f);
-    for (int t = 0; t < 8; ++t) {
-        sim.tick();
-    }
+    tick_until([&] { sim.tick(); }, "the engineer repairs the generator again", 13,
+               [&] { return eng->repair_target_id() == gen->entity_id(); });
+    sim.tick();
     const f32 before = bubble->health();
     sim.tick();
     CHECK(std::abs(bubble->health() - before - 0.5f) < 1e-3f);
@@ -817,4 +818,520 @@ TEST_CASE("A guarding engineer displaced between a factory's builds walks back t
         sim.tick();
         REQUIRE(eng->is_building());
     }
+}
+
+namespace {
+
+UnitCommand move_to(f32 x, f32 z, osc::u32 id) {
+    UnitCommand c;
+    c.type = CommandType::Move;
+    c.target_pos = {x, 0.0f, z};
+    c.command_id = id;
+    return c;
+}
+
+bool heads(const Unit& u, CommandType type, osc::u32 id) {
+    const auto& q = u.command_queue();
+    return !q.empty() && q.front().type == type && q.front().command_id == id;
+}
+
+} // namespace
+
+TEST_CASE("An engineer's or a pod's guard with nothing to help ends as it begins when an order is "
+          "queued behind it",
+          "[guard][guard_abort]") {
+    const bool queued = GENERATE(false, true);
+    const std::string role = GENERATE("ENGINEER", "POD", "TANK");
+    const bool rebuilder = GENERATE(false, true);
+    CAPTURE(queued, role, rebuilder);
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* ward = still(sim, 0, 50.0f, 50.0f);
+    Unit* guard_unit = walker(sim, 0, 53.0f, 50.0f);
+    guard_unit->add_category(role);
+    guard_unit->add_category("REPAIR");
+    if (rebuilder) {
+        guard_unit->add_category("REBUILDER");
+    }
+    guard_unit->push_command(guard(ward, 1), true);
+    if (queued) {
+        guard_unit->push_command(move_to(80.0f, 50.0f, 2), false);
+    }
+    const bool ends = queued && role != "TANK" && !rebuilder;
+
+    sim.tick();
+    CHECK(heads(*guard_unit, CommandType::Move, 2) == ends);
+    if (!ends) {
+        for (int t = 0; t < 30; ++t) {
+            sim.tick();
+        }
+        CHECK(heads(*guard_unit, CommandType::Guard, 1));
+    }
+}
+
+TEST_CASE("A guard with nothing to help ends on its task's next run after an order is queued: the "
+          "next tick guarding an engineer, every 6 ticks guarding another unit",
+          "[guard][guard_abort]") {
+    const bool ward_engineer = GENERATE(false, true);
+    CAPTURE(ward_engineer);
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* ward = still(sim, 0, 50.0f, 50.0f);
+    if (ward_engineer) {
+        ward->add_category("ENGINEER");
+    }
+    Unit* eng = engineer_of(sim, 53.0f, 50.0f);
+    eng->push_command(guard(ward, 1), true);
+    for (int t = 1; t <= 3; ++t) {
+        sim.tick();
+    }
+    eng->push_command(move_to(80.0f, 50.0f, 2), false);
+    int ended = 0;
+    for (int t = 4; t <= 20 && !ended; ++t) {
+        sim.tick();
+        if (heads(*eng, CommandType::Move, 2)) {
+            ended = t;
+        }
+    }
+    CHECK(ended == (ward_engineer ? 4 : 7));
+}
+
+TEST_CASE("An engineer's guard of a structure unfinished or upgrading as it began ends once the "
+          "structure has nothing to do, with nothing queued behind it",
+          "[guard][guard_abort]") {
+    const std::string state = GENERATE("finished", "being built", "upgrading");
+    const std::string kind = GENERATE("structure", "FACTORY", "SHIELD", "SILO", "mobile");
+    CAPTURE(state, kind);
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* ward = still(sim, 0, 50.0f, 50.0f);
+    if (kind == "mobile") {
+        ward->set_motion_type("RULEUMT_Land");
+    } else if (kind != "structure") {
+        ward->add_category(kind);
+    }
+    if (state == "being built") {
+        ward->set_is_being_built(true);
+    } else if (state == "upgrading") {
+        ward->set_unit_state("Upgrading", true);
+    }
+    Unit* eng = walker(sim, 0, 53.0f, 50.0f);
+    eng->add_category("ENGINEER");
+    eng->push_command(guard(ward, 1), true);
+    const bool ends = state != "finished" && kind == "structure";
+
+    sim.tick();
+    CHECK(eng->command_queue().empty() == ends);
+    for (int t = 0; t < 20; ++t) {
+        sim.tick();
+    }
+    CHECK(eng->command_queue().empty() == ends);
+}
+
+TEST_CASE("An engineer's guard with an order queued stays while its ward walks to a build the "
+          "engineer can make, which it takes up, or needs fuel",
+          "[guard][guard_abort]") {
+    const std::string work = GENERATE("a build it can make", "a build it can't make", "fuel");
+    CAPTURE(work);
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    run_lua(g.L, "__blueprints = { eng = { Economy = { BuildableCategory = { 'pgen' } } },"
+                 " eng2 = { Economy = { BuildableCategory = { 'radar' } } },"
+                 " pgen = { Economy = { BuildTime = 100 } } }");
+    Unit* ward = walker(sim, 0, 50.0f, 50.0f, 1.0f);
+    ward->add_category("ENGINEER");
+    ward->set_blueprint_id("eng");
+    ward->set_lua_table_ref(
+        lua_ref_of(g.L, "{ CheckBuildRestriction = function() return true end }"));
+    Unit* eng = engineer_of(sim, 53.0f, 50.0f);
+    eng->set_blueprint_id(work == "a build it can't make" ? "eng2" : "eng");
+    if (work == "fuel") {
+        ward->set_fuel_use_time(100.0f);
+        ward->set_fuel_ratio(0.5f);
+    } else {
+        UnitCommand build;
+        build.type = CommandType::BuildMobile;
+        build.blueprint_id = "pgen";
+        build.target_pos = {90.5f, 0.0f, 50.5f};
+        build.command_id = 3;
+        ward->push_command(build, true);
+    }
+    eng->push_command(guard(ward, 1), true);
+    eng->push_command(move_to(20.0f, 50.0f, 2), false);
+    const bool ends = work == "a build it can't make";
+
+    for (int t = 0; t < 10; ++t) {
+        sim.tick();
+    }
+    const auto& q = eng->command_queue();
+    CHECK(heads(*eng, CommandType::Move, 2) == ends);
+    CHECK(std::any_of(q.begin(), q.end(), [](const UnitCommand& c) {
+              return c.type == CommandType::Guard && c.command_id == 1;
+          }) == !ends);
+    if (work == "a build it can make") {
+        REQUIRE_FALSE(q.empty());
+        CHECK(q.front().from_guard);
+        CHECK(q.front().type == CommandType::BuildMobile);
+        CHECK(q.front().blueprint_id == "pgen");
+    }
+}
+
+TEST_CASE("A guarding engineer with an order queued ends its guard the tick the factory's build "
+          "it helps ends",
+          "[guard][guard_abort]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    const auto [factory, unit] = factory_at_work(sim, 60.5f, 50.5f, 60.5f, 47.5f);
+    Unit* eng = engineer_of(sim, 52.2f, 53.1f);
+    eng->push_command(guard(factory, 1), true);
+    eng->push_command(move_to(20.0f, 50.0f, 2), false);
+    tick_until([&] { sim.tick(); }, "the engineer starts helping", 400,
+               [&] { return eng->is_building(); });
+    for (int t = 0; t < 5; ++t) {
+        sim.tick();
+        REQUIRE(heads(*eng, CommandType::Guard, 1));
+    }
+
+    factory->set_build_target_id({});
+    unit->set_is_being_built(false);
+    unit->set_health(unit->max_health());
+    sim.tick();
+    CHECK_FALSE(eng->is_building());
+    CHECK(heads(*eng, CommandType::Move, 2));
+}
+
+TEST_CASE("An engineer guarding a point with an order queued ends at once, unless an allied unit "
+          "near the point needs work",
+          "[guard][guard_abort]") {
+    struct Case {
+        const char* what;
+        int army;
+        f32 x;
+        bool damaged;
+        bool stays;
+    };
+    const Case c = GENERATE(Case{"no unit", -1, 0.0f, false, false},
+                            Case{"a whole ally near", 0, 64.0f, false, false},
+                            Case{"a damaged ally near", 0, 64.0f, true, true},
+                            Case{"a damaged enemy near", 1, 64.0f, true, false},
+                            Case{"a damaged ally beyond its scan", 0, 85.0f, true, false});
+    CAPTURE(c.what);
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    if (c.army >= 0) {
+        Unit* near = still(sim, c.army, c.x, 50.0f);
+        near->set_collision_shape({osc::sim::CollisionShapeType::SPHERE, 0, 0, 0, 1, 1, 1});
+        if (c.damaged) {
+            near->set_health(40.0f);
+        }
+    }
+    Unit* eng = engineer_of(sim, 40.0f, 50.0f);
+    eng->set_guard_scan_radius(20.0f);
+    eng->push_command(guard(nullptr, 1, {60.0f, 0.0f, 50.0f}), true);
+    eng->push_command(move_to(20.0f, 50.0f, 2), false);
+
+    sim.tick();
+    const auto& q = eng->command_queue();
+    CHECK(std::any_of(q.begin(), q.end(), [](const UnitCommand& o) {
+              return o.type == CommandType::Guard && o.command_id == 1;
+          }) == c.stays);
+    CHECK(heads(*eng, CommandType::Move, 2) == !c.stays);
+}
+
+TEST_CASE("An armed guard takes on no enemy while a repair it handed out is yet to start or under "
+          "way, and does on the tick the repair ends",
+          "[guard]") {
+    LuaGuard g;
+    const std::string bps =
+        "__blueprints = { tank = { Economy = { BuildTime = 10, BuildCostMass = 1, "
+        "BuildCostEnergy = 1 } } }";
+    REQUIRE(luaL_loadbuffer(g.L, bps.c_str(), bps.size(), "bps") == 0);
+    REQUIRE(lua_pcall(g.L, 0, 0, 0) == 0);
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.get_army(0)->set_extra_storage(100000.0, 100000.0);
+    sim.get_army(0)->set_stored_resources(100000.0, 100000.0);
+    Unit* ward = still(sim, 0, 50.0f, 50.0f);
+    ward->set_unit_id("tank");
+    ward->set_health(50.0f);
+    Unit* eng = armed(sim, 0, 53.0f, 50.0f);
+    eng->add_category("ENGINEER");
+    eng->add_category("REPAIR");
+    eng->set_build_rate(5.0f);
+    eng->set_max_build_distance(5.0f);
+    eng->push_command(guard(ward, 1), true);
+    sim.tick();
+    sim.tick();
+    still(sim, 1, 60.0f, 50.0f);
+    const auto whole = [&] { return ward->health() >= ward->max_health(); };
+    tick_until(
+        [&] {
+            sim.tick();
+            if (!whole()) {
+                REQUIRE(fight(*eng) == nullptr);
+            }
+        },
+        "the tank is whole", 400, whole);
+    CHECK(fight(*eng) != nullptr);
+}
+
+TEST_CASE("A guard whose ward is a candidate for help it hands nothing out for stands on its "
+          "task's runs, instead of following",
+          "[guard]") {
+    const bool low_fuel = GENERATE(false, true);
+    CAPTURE(low_fuel);
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* ward = still(sim, 0, 80.0f, 50.0f);
+    ward->set_fuel_use_time(2.0f);
+    ward->set_fuel_ratio(low_fuel ? 0.5f : 1.0f);
+    Unit* eng = engineer_of(sim, 50.0f, 50.0f);
+    eng->push_command(guard(ward, 1), true);
+    for (int t = 0; t < 40; ++t) {
+        sim.tick();
+    }
+    if (low_fuel) {
+        CHECK(eng->position().x == 50.0f);
+    } else {
+        CHECK(eng->position().x > 52.0f);
+    }
+}
+
+TEST_CASE("A guard whose task runs every 6 ticks sets its goal following a moving ward only on "
+          "those runs; one guarding an engineer, on any tick",
+          "[guard]") {
+    const bool every_tick = GENERATE(false, true);
+    CAPTURE(every_tick);
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* ward = walker(sim, 0, 50.0f, 50.0f, 2.0f);
+    Unit* guard_unit = every_tick ? engineer_of(sim, 40.0f, 50.0f) : walker(sim, 0, 40.0f, 50.0f);
+    if (every_tick) {
+        ward->add_category("ENGINEER");
+    }
+    ward->push_command(move_to(110.0f, 50.0f, 9), true);
+    guard_unit->push_command(guard(ward, 1), true);
+    std::vector<int> changes;
+    osc::sim::Vector3 last = guard_unit->navigator().goal();
+    for (int t = 1; t <= 60; ++t) {
+        sim.tick();
+        const osc::sim::Vector3 goal = guard_unit->navigator().goal();
+        if (goal.x != last.x || goal.z != last.z) {
+            changes.push_back(t);
+        }
+        last = goal;
+    }
+    CAPTURE(changes);
+    REQUIRE(changes.size() > 2);
+    const bool off_run =
+        std::any_of(changes.begin(), changes.end(), [](int t) { return (t - 1) % 6 != 0; });
+    CHECK(off_run == every_tick);
+}
+
+namespace {
+
+void with_repair_blueprints(lua_State* L) {
+    run_lua(L, "__blueprints = { tank = { Economy = { BuildTime = 10, BuildCostMass = 1, "
+               "BuildCostEnergy = 1 } } }");
+}
+
+const UnitCommand* handed_out(const Unit& u) {
+    const auto& q = u.command_queue();
+    return !q.empty() && q.front().from_guard ? &q.front() : nullptr;
+}
+
+} // namespace
+
+TEST_CASE("A guard repairs an enhancing ward, by its own order or a script's, as Moho's guard "
+          "task hands its enhancement a repair",
+          "[guard][enhance]") {
+    const bool by_script = GENERATE(false, true);
+    CAPTURE(by_script);
+    LuaGuard g;
+    with_repair_blueprints(g.L);
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* ward = still(sim, 0, 50.0f, 50.0f);
+    ward->set_unit_id("tank");
+    if (by_script) {
+        ward->set_unit_state("Enhancing", true);
+    } else {
+        ward->set_enhancing(true);
+    }
+    Unit* eng = engineer_of(sim, 53.0f, 50.0f);
+    eng->push_command(guard(ward, 1), true);
+    tick_until([&] { sim.tick(); }, "the guard repairs its ward", 20,
+               [&] { return eng->repair_target_id() == ward->entity_id(); });
+}
+
+TEST_CASE("A guard helps with its ward's work before it, in Moho's order: the ward's own damage, "
+          "then the unit it repairs, the enemy it captures",
+          "[guard]") {
+    const std::string work = GENERATE("repair", "capture", "damaged factory");
+    CAPTURE(work);
+    LuaGuard g;
+    with_repair_blueprints(g.L);
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* eng = engineer_of(sim, 53.0f, 50.0f);
+    if (work == "damaged factory") {
+        const auto [factory, unit] = factory_at_work(sim, 50.5f, 50.5f, 50.5f, 46.5f);
+        factory->set_unit_id("tank");
+        factory->set_health(50.0f);
+        eng->push_command(guard(factory, 1), true);
+        tick_until([&] { sim.tick(); }, "the guard repairs the factory", 60,
+                   [&] { return eng->repair_target_id() == factory->entity_id(); });
+        CHECK_FALSE(eng->build_target_id());
+        return;
+    }
+    Unit* ward = still(sim, 0, 50.0f, 50.0f);
+    ward->add_category("ENGINEER");
+    Unit* work_on = still(sim, work == "capture" ? 1 : 0, 50.0f, 54.0f);
+    work_on->set_unit_id("tank");
+    if (work == "repair") {
+        work_on->set_health(50.0f);
+        ward->set_repair_target_id(work_on->entity_id());
+    } else {
+        ward->set_focus_entity_id(work_on->entity_id());
+    }
+    eng->push_command(guard(ward, 1), true);
+    sim.tick();
+    const UnitCommand* task = handed_out(*eng);
+    REQUIRE(task != nullptr);
+    CHECK(task->type == (work == "repair" ? CommandType::Repair : CommandType::Capture));
+    CHECK(task->target_id == work_on->entity_id());
+    CHECK(task->command_id == 1);
+}
+
+TEST_CASE("A guard of a point repairs the nearest damaged ally within its GuardScanRadius of the "
+          "point, not an enemy or one beyond it",
+          "[guard]") {
+    LuaGuard g;
+    with_repair_blueprints(g.L);
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* eng = engineer_of(sim, 50.0f, 50.0f);
+    eng->set_guard_scan_radius(20.0f);
+    const auto damaged = [&](int army, f32 x) {
+        Unit* u = still(sim, army, x, 50.0f);
+        u->set_collision_shape({osc::sim::CollisionShapeType::SPHERE, 0, 0, 0, 1, 1, 1});
+        u->set_unit_id("tank");
+        u->set_health(50.0f);
+        return u;
+    };
+    damaged(1, 52.0f);
+    damaged(0, 75.0f);
+    Unit* hurt = damaged(0, 62.0f);
+    eng->push_command(guard(nullptr, 1, {50.0f, 0.0f, 50.0f}), true);
+    sim.tick();
+    const UnitCommand* task = handed_out(*eng);
+    REQUIRE(task != nullptr);
+    CHECK(task->type == CommandType::Repair);
+    CHECK(task->target_id == hurt->entity_id());
+}
+
+TEST_CASE("A guard of a point lends an allied silo's missile its build power, as a repair Moho's "
+          "guard task hands out for it, until the missile is built",
+          "[guard][silo]") {
+    LuaGuard g;
+    run_lua(g.L, "__blueprints = { missile = { Economy = { BuildTime = 100000, "
+                 "BuildCostEnergy = 1, BuildCostMass = 1 } } }");
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.get_army(0)->set_extra_storage(100000.0, 100000.0);
+    sim.get_army(0)->set_stored_resources(100000.0, 100000.0);
+    Unit* eng = engineer_of(sim, 50.0f, 50.0f);
+    eng->set_guard_scan_radius(20.0f);
+    Unit* silo = still(sim, 0, 53.0f, 50.0f);
+    silo->set_collision_shape({osc::sim::CollisionShapeType::SPHERE, 0, 0, 0, 1, 1, 1});
+    silo->set_build_rate(1.0f);
+    auto launcher = std::make_unique<osc::sim::Weapon>();
+    launcher->counted_projectile = true;
+    launcher->nuke_weapon = true;
+    launcher->max_projectile_storage = 5;
+    launcher->projectile_bp_id = "missile";
+    silo->add_weapon(std::move(launcher));
+    silo->order_silo_build(true);
+    sim.tick();
+    REQUIRE(silo->silo_building());
+
+    eng->push_command(guard(nullptr, 1, {50.0f, 0.0f, 50.0f}), true);
+    tick_until([&] { sim.tick(); }, "the guard lends the silo its build power", 20,
+               [&] { return eng->silo_assist_id() == silo->entity_id(); });
+    const UnitCommand* task = handed_out(*eng);
+    REQUIRE(task != nullptr);
+    CHECK(task->type == CommandType::Repair);
+    CHECK(task->target_id == silo->entity_id());
+    CHECK(eng->has_unit_state("Repairing"));
+    const double own_steps = 5 * 1.0 * 0.1 / 100000.0;
+    const double before = silo->silo_build().progress;
+    for (int i = 0; i < 5; ++i) {
+        sim.tick();
+    }
+    CHECK(eng->silo_assist_id() == silo->entity_id());
+    CHECK(silo->silo_build().progress - before > 2.0 * own_steps);
+
+    silo->stop_silo_build();
+    sim.tick();
+    CHECK(eng->silo_assist_id() == osc::sim::EntityId());
+    CHECK_FALSE(eng->has_unit_state("Repairing"));
+    REQUIRE_FALSE(eng->command_queue().empty());
+    CHECK(eng->command_queue().front().type == CommandType::Guard);
+}
+
+TEST_CASE("A guard of a damaged unit that upgrades, by its order or a script's state, helps the "
+          "upgrade, not the unit's damage, as Moho's repair task for a guard does",
+          "[guard]") {
+    const bool by_order = GENERATE(true, false);
+    CAPTURE(by_order);
+    LuaGuard g;
+    with_repair_blueprints(g.L);
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* eng = engineer_of(sim, 53.0f, 50.0f);
+    const auto [factory, upgrade] = factory_at_work(sim, 50.5f, 50.5f, 50.5f, 50.5f);
+    factory->set_unit_id("tank");
+    upgrade->set_unit_id("tank");
+    factory->set_health(50.0f);
+    if (by_order) {
+        UnitCommand up;
+        up.type = CommandType::Upgrade;
+        up.blueprint_id = "tank";
+        up.begun = true;
+        factory->push_command(up, true);
+    } else {
+        factory->set_unit_state("Upgrading", true);
+    }
+    eng->push_command(guard(factory, 1), true);
+    tick_until([&] { sim.tick(); }, "the guard helps the upgrade", 60,
+               [&] { return eng->build_target_id() == upgrade->entity_id(); });
+    CHECK_FALSE(eng->repair_target_id());
+    CHECK(factory->health() == 50.0f);
+}
+
+TEST_CASE("A repair a guard hands out for a unit a factory builds is in reach of the factory, as "
+          "Moho's repair task for a guard measures it",
+          "[guard]") {
+    LuaGuard g;
+    with_repair_blueprints(g.L);
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* eng = engineer_of(sim, 62.5f, 50.5f);
+    eng->set_guard_scan_radius(20.0f);
+    const auto [factory, unit] = factory_at_work(sim, 50.5f, 50.5f, 50.5f, 50.5f);
+    unit->set_unit_id("tank");
+    unit->set_creator_id(factory->entity_id());
+    unit->set_collision_shape({osc::sim::CollisionShapeType::SPHERE, 0, 0, 0, 1, 1, 1});
+    eng->push_command(guard(nullptr, 1, eng->position()), true);
+    tick_until([&] { sim.tick(); }, "the guard builds the factory's unit", 40,
+               [&] { return eng->build_target_id() == unit->entity_id(); });
+    CHECK(eng->position().x == 62.5f);
 }

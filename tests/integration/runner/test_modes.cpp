@@ -253,6 +253,7 @@ constexpr Mode kModesBefore[] = {
     {"--weapon-retarget-test", test_weapon_retarget, false},
     {"--guard-engage-test", test_guard_engage, false},
     {"--rebuilder-guard-test", test_rebuilder_guard, false},
+    {"--guard-abort-test", test_guard_abort, false},
     {"--mobile-build-start-test", test_mobile_build_start, false},
     {"--assist-beam-test", test_assist_beam, false},
     {"--build-site-join-test", test_build_site_join, false},

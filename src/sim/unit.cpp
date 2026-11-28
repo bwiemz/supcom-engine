@@ -90,6 +90,27 @@ void Unit::push_command(const UnitCommand& cmd, bool clear_existing) {
     update_speed_through();
 }
 
+void Unit::insert_command(UnitCommand cmd) {
+    const auto at =
+        std::find_if(command_queue_.begin(), command_queue_.end(),
+                     [&](const UnitCommand& c) { return c.command_id == cmd.insert_before; });
+    if (at == command_queue_.end()) {
+        return;
+    }
+    if (at == command_queue_.begin() && at->begun) {
+        std::swap(cmd.command_id, at->command_id);
+        std::swap(cmd.count, at->count);
+        std::swap(cmd.max_count, at->max_count);
+        if (at->work_order == 0) {
+            at->work_order = cmd.command_id;
+        }
+        command_queue_.insert(std::next(command_queue_.begin()), std::move(cmd));
+    } else {
+        command_queue_.insert(at, std::move(cmd));
+    }
+    update_speed_through();
+}
+
 void Unit::clear_commands(const char*) {
     command_queue_.clear();
     abort_move();
@@ -264,8 +285,9 @@ void Unit::prune_upgrade_chain(lua_State* L) {
 void Unit::remove_command(u32 id, SimContext& ctx) {
     EntityRegistry& registry = ctx.registry;
     lua_State* L = ctx.L;
-    const auto it = std::find_if(command_queue_.begin(), command_queue_.end(),
-                                 [&](const UnitCommand& c) { return c.command_id == id; });
+    const auto it =
+        std::find_if(command_queue_.begin(), command_queue_.end(),
+                     [&](const UnitCommand& c) { return c.command_id == id && !c.from_guard; });
     if (it == command_queue_.end()) {
         rally_orders_.erase(
             std::remove_if(rally_orders_.begin(), rally_orders_.end(),
@@ -273,9 +295,15 @@ void Unit::remove_command(u32 id, SimContext& ctx) {
             rally_orders_.end());
         return;
     }
-    if (it != command_queue_.begin()) {
+    const bool heads = std::all_of(command_queue_.begin(), it, [&](const UnitCommand& c) {
+        return c.from_guard && c.command_id == id;
+    });
+    if (!heads) {
         command_queue_.erase(it);
         return;
+    }
+    while (command_queue_.front().from_guard) {
+        command_queue_.pop_front();
     }
     const bool factory_build = building_factory_order();
     const bool upgrade = upgrading();
@@ -294,24 +322,34 @@ void Unit::remove_command(u32 id, SimContext& ctx) {
     end_gone_orders(ctx);
 }
 
-void Unit::increase_build_count(int index, int count) {
-    if (index < 1 || count < 1) return;
-    // The group's last order, as factory_queue() groups them.
+std::optional<size_t> Unit::group_factory_build(int index) const {
     std::optional<size_t> last;
     int g = 0;
     const std::string* run = nullptr;
     for (size_t i = 0; i < command_queue_.size(); ++i) {
         const auto& c = command_queue_[i];
-        if (!queued_build(c)) continue;
+        if (!queued_build(c)) {
+            continue;
+        }
         if (!run || *run != c.blueprint_id) {
-            if (++g > index) break;
+            if (++g > index) {
+                break;
+            }
             run = &c.blueprint_id;
         }
-        if (g == index) last = i;
+        if (g == index && c.type == CommandType::BuildFactory) {
+            last = i;
+        }
     }
-    if (!last || command_queue_[*last].type != CommandType::BuildFactory) return;
-    // Moho's IncreaseBuildCountInQueue raises the group's newest order's
-    // count (CUnitCommand::IncreaseCount), its high-water mark with it.
+    return last;
+}
+
+void Unit::increase_build_count(int index, int count) {
+    const auto last = group_factory_build(index);
+    if (!last || count < 1) {
+        return;
+    }
+    // CUnitCommand::IncreaseCount: its high-water mark with it
     UnitCommand& order = command_queue_[*last];
     order.count = std::max(order.count, 1) + count;
     order.max_count = std::max(order.max_count, order.count);
@@ -2336,6 +2374,16 @@ bool Unit::shield_needs_repair(EntityRegistry& registry, lua_State* L) {
     return bubble && bubble->health() < bubble->max_health() && script_bool(L, *this, "ShieldIsOn");
 }
 
+bool Unit::enhances() const {
+    return enhancing_ || has_unit_state("Enhancing");
+}
+
+bool Unit::upgrades() const {
+    return (!command_queue_.empty() && command_queue_.front().type == CommandType::Upgrade &&
+            command_queue_.front().begun) ||
+           has_unit_state("Upgrading");
+}
+
 bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
                         lua_State* L) {
     auto* target = registry.find(cmd.target_id);
@@ -2344,8 +2392,9 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
 
     // Don't repair units that are being built (use build-assist instead)
     if (target_unit->is_being_built()) return false;
+    const bool enhancing = target_unit->enhances();
     if (target->health() >= target->max_health() &&
-        !target_unit->shield_needs_repair(registry, L)) {
+        !target_unit->shield_needs_repair(registry, L) && !enhancing) {
         return false;
     }
 
@@ -2358,6 +2407,7 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
     if (repair_build_time_ <= 0) return false;
 
     repair_target_id_ = cmd.target_id;
+    repair_inherits_work_ = enhancing;
 
     // Set economy consumption (same formula as build)
     economy_.consumption_mass =
@@ -2427,6 +2477,30 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
     if (paused_) {
         return true;
     }
+    auto& target_unit = static_cast<Unit&>(*target);
+    // Moho's CBuildTaskHelper::UpdateWorkProgress
+    if (target_unit.enhances()) {
+        f32 progress = script_number(L, target_unit, "WorkProgress");
+        if (progress >= 1.0f) {
+            stop_repairing(L, registry);
+            return false;
+        }
+        if (efficiency != 0.0f) {
+            const f32 build_time = script_number(L, target_unit, "WorkItemBuildTime");
+            const f32 advanced = 1.0f / (build_time / build_rate_) * efficiency * 0.1f + progress;
+            progress = advanced > 1.0f ? 1.0f : advanced;
+            target_unit.set_work_progress(progress);
+            if (L && target_unit.lua_table_ref() >= 0) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, target_unit.lua_table_ref());
+                lua_pushstring(L, "WorkProgress");
+                lua_pushnumber(L, progress);
+                lua_rawset(L, -3);
+                lua_pop(L, 1);
+            }
+        }
+        work_progress_ = progress;
+        return true;
+    }
 
     // heal_per_tick = (build_rate / build_time) * max_health * dt * efficiency
     f32 heal_rate = build_rate_ / static_cast<f32>(repair_build_time_);
@@ -2434,7 +2508,6 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
 
     // Moho's CBuildTaskHelper::UpdateWorkProgress: a SHIELD unit's focus entity is its bubble.
     const bool damaged = target->health() < target->max_health();
-    auto& target_unit = static_cast<Unit&>(*target);
     Entity* bubble = shield_focus(target_unit, registry);
     if (bubble && efficiency != 0.0f) {
         // Moho asks ShieldIsOn only of an undamaged unit, so a damaged one's
@@ -2470,8 +2543,9 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
                               target->health() + heal_amount);
     target->set_health(new_health);
 
-    if (new_health >= target->max_health() &&
-        (!bubble || bubble->health() >= bubble->max_health())) {
+    if ((new_health >= target->max_health() &&
+         (!bubble || bubble->health() >= bubble->max_health())) ||
+        repair_inherits_work_) {
         spdlog::info("repair complete: entity #{} finished repairing #{}",
                      entity_id(), repair_target_id_);
         stop_repairing(L, registry);
@@ -2488,6 +2562,7 @@ void Unit::stop_repairing(lua_State* L, EntityRegistry& registry) {
     repair_build_time_ = 0;
     repair_cost_mass_ = 0;
     repair_cost_energy_ = 0;
+    repair_inherits_work_ = false;
 
     // Clear economy drain
     economy_.consumption_mass = 0;

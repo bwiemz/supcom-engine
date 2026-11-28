@@ -270,6 +270,53 @@ TEST_CASE("A sim unit's queue gives each order's place, target and build", "[faf
     CHECK(error.empty());
 }
 
+TEST_CASE("A unit's queue, in the sim and the UI, leaves out the build its guard runs ahead of "
+          "the guard",
+          "[faf][orders][guard]") {
+    World w;
+    auto ward = std::make_unique<osc::sim::Unit>();
+    ward->set_army(0);
+    ward->set_position({33, 7, 44});
+    const osc::sim::EntityId ward_id = w.sim.entity_registry().register_entity(std::move(ward));
+    lua_State* S = w.sim_lua.raw();
+    lua_newtable(S);
+    lua_pushstring(S, "_c_object");
+    lua_pushlightuserdata(S, w.sim.entity_registry().find(w.id));
+    lua_rawset(S, -3);
+    lua_setglobal(S, "unit");
+
+    osc::sim::UnitCommand own;
+    own.type = CommandType::BuildMobile;
+    own.blueprint_id = "ueb1101";
+    own.target_pos = {20, 3, 24};
+    own.from_guard = true;
+    w.give(own);
+    osc::sim::UnitCommand guard;
+    guard.type = CommandType::Guard;
+    guard.target_id = ward_id;
+    w.give(guard, false);
+    osc::sim::UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {50, 2, 60};
+    w.give(move, false);
+    REQUIRE(w.unit().command_queue().size() == 3);
+    std::string error = run(w.sim_lua, R"(
+        local q = moho.unit_methods.GetCommandQueue(unit)
+        if table.getn(q) ~= 2 then error(table.getn(q) .. ' orders') end
+        if q[1].commandType ~= 15 or q[2].commandType ~= 2 then
+            error('orders ' .. q[1].commandType .. ', ' .. q[2].commandType)
+        end
+    )");
+    INFO(error);
+    CHECK(error.empty());
+    error = run(w.ui, R"(
+        local q = units[1]:GetCommandQueue()
+        if table.getn(q) ~= 2 then error(table.getn(q) .. ' orders in the UI') end
+    )");
+    INFO(error);
+    CHECK(error.empty());
+}
+
 TEST_CASE("A repairer's focus unit is what it repairs", "[faf][repair]") {
     // Moho's repair task focuses its target: FAF's UpdateConsumptionValues
     // prices the repair by it, and without it switches the repair's

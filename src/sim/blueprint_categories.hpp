@@ -27,4 +27,10 @@ void collect_blueprint_categories(lua_State* L, int bp_index,
 /// the Lua stack is left balanced.
 bool blueprint_can_build(lua_State* L, const std::string& builder_bp, const std::string& target_bp);
 
+/// Whether the blueprint `id` makes a unit that moves (Moho's IsMobile: a
+/// Physics.MotionType other than RULEUMT_None).
+bool blueprint_is_mobile(lua_State* L, const std::string& id);
+
+bool blueprint_builds(lua_State* L, const std::string& id);
+
 } // namespace osc::sim

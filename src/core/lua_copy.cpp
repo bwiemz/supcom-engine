@@ -37,7 +37,7 @@ public:
     /// Push the copy of from_[idx] (an absolute index) onto to_.
     void copy(int idx, int depth) {
         switch (lua_type(from_, idx)) {
-        case LUA_TNUMBER: lua_pushnumber(to_, lua_tonumber(from_, idx)); return;
+        case LUA_TNUMBER: lua_pushdouble(to_, lua_tonumber(from_, idx)); return;
         case LUA_TBOOLEAN: lua_pushboolean(to_, lua_toboolean(from_, idx)); return;
         case LUA_TSTRING:
             lua_pushlstring(to_, lua_tostring(from_, idx), lua_strlen(from_, idx));

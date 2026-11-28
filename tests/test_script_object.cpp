@@ -309,6 +309,30 @@ TEST_CASE("An entity's spec names its army as Moho's _c_CreateEntity reads it", 
     CHECK(army_of("{Owner = u}") == -1);
 }
 
+TEST_CASE("An entity's key and its id as a string stay exact, past a float's integers",
+          "[scriptobject]") {
+    ScriptWorld w;
+    lua_State* L = w.state.raw();
+    const osc::sim::EntityId key = osc::sim::EntityId::of(0x5ff00001u, 3);
+    osc::sim::push_entity_key(L, key);
+    CHECK(osc::sim::to_entity_key(L, -1) == key);
+    lua_pop(L, 1);
+
+    REQUIRE(w.check(R"(
+        first = {} _c_CreateEntity(first, {})
+        second = {} _c_CreateEntity(second, {})
+        id = moho.entity_methods.GetEntityId(second)
+        found = GetEntityById(id) == second
+    )"));
+    lua_getglobal(L, "id");
+    const unsigned long id = std::stoul(lua_tostring(L, -1));
+    lua_pop(L, 1);
+    CHECK(static_cast<double>(static_cast<float>(id)) != static_cast<double>(id));
+    lua_getglobal(L, "found");
+    CHECK(lua_toboolean(L, -1) != 0);
+    lua_pop(L, 1);
+}
+
 TEST_CASE("AITarget makes Moho's target table of an entity, a point or nothing",
           "[scriptobject][aitarget]") {
     ScriptWorld w;

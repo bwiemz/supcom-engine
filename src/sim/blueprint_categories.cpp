@@ -7,6 +7,7 @@ extern "C" {
 }
 
 #include <sstream>
+#include <string_view>
 
 namespace osc::sim {
 
@@ -106,6 +107,44 @@ bool blueprint_can_build(lua_State* L, const std::string& builder_bp,
     }
     lua_settop(L, top);
     return can;
+}
+
+bool blueprint_is_mobile(lua_State* L, const std::string& id) {
+    const int top = lua_gettop(L);
+    bool mobile = false;
+    if (blueprints::push_blueprint(L, id)) {
+        lua_pushstring(L, "Physics");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "MotionType");
+            lua_rawget(L, -2);
+            mobile = lua_type(L, -1) == LUA_TSTRING &&
+                     std::string_view(lua_tostring(L, -1)) != "RULEUMT_None";
+        }
+    }
+    lua_settop(L, top);
+    return mobile;
+}
+
+bool blueprint_builds(lua_State* L, const std::string& id) {
+    const int top = lua_gettop(L);
+    bool builds = false;
+    if (blueprints::push_blueprint(L, id)) {
+        lua_pushstring(L, "Economy");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "BuildableCategory");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_rawgeti(L, -1, 1);
+                builds = !lua_isnil(L, -1);
+            } else {
+                builds = lua_type(L, -1) == LUA_TSTRING;
+            }
+        }
+    }
+    lua_settop(L, top);
+    return builds;
 }
 
 } // namespace osc::sim

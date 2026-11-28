@@ -48,6 +48,23 @@ Unit* unit_of(SimState& sim, osc::sim::EntityId id) {
     return static_cast<Unit*>(sim.entity_registry().find(id));
 }
 
+UnitCommand build_of(const char* blueprint, osc::u32 command_id) {
+    UnitCommand c;
+    c.type = CommandType::BuildFactory;
+    c.blueprint_id = blueprint;
+    c.command_id = command_id;
+    return c;
+}
+
+std::vector<osc::u32> order_ids(const Unit& u) {
+    std::vector<osc::u32> ids;
+    ids.reserve(u.command_queue().size());
+    for (const UnitCommand& c : u.command_queue()) {
+        ids.push_back(c.command_id);
+    }
+    return ids;
+}
+
 } // namespace
 
 TEST_CASE("route_command applies an AI or script order directly in single-player", "[routing]") {
@@ -419,4 +436,68 @@ TEST_CASE("A move, patrol or attack-move goes to no immobile unit", "[routing]")
     }
     REQUIRE(unit_of(sim, id)->command_queue().size() == 1);
     CHECK(unit_of(sim, id)->command_queue().front().type == CommandType::Upgrade);
+}
+
+TEST_CASE("An order given an insert index goes in before that order, and nowhere once it is gone",
+          "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto id = spawn_unit(sim);
+    Unit& u = *unit_of(sim, id);
+    u.add_category("FACTORY");
+    u.set_block_command_queue(true);
+    u.push_command(build_of("a", 101), false);
+    u.push_command(build_of("b", 102), false);
+    UnitCommand more = build_of("b", 103);
+    more.insert_before = 102;
+    sim.schedule_command(0, {id}, more, false);
+    more.command_id = 104;
+    more.insert_before = 101;
+    sim.schedule_command(0, {id}, more, false);
+    more.command_id = 105;
+    more.insert_before = 99;
+    sim.schedule_command(0, {id}, more, false);
+
+    const auto view = sim.queues_with_pending().at(id);
+    std::vector<osc::u32> shown;
+    shown.reserve(view.orders.size());
+    for (const UnitCommand& c : view.orders) {
+        shown.push_back(c.command_id);
+    }
+    CHECK(shown == std::vector<osc::u32>{104, 101, 103, 102});
+    CHECK(view.pending == std::vector<bool>{true, false, true, false});
+
+    sim.tick();
+    CHECK(order_ids(u) == std::vector<osc::u32>{104, 101, 103, 102});
+
+    more.command_id = 106;
+    more.insert_before = 101;
+    sim.schedule_command(0, {id}, more, true);
+    sim.tick();
+    CHECK(u.command_queue().empty());
+}
+
+TEST_CASE("An order put in ahead of a factory's build under way ends when that build does, and "
+          "the build's own order starts over",
+          "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto id = spawn_unit(sim);
+    Unit& u = *unit_of(sim, id);
+    u.add_category("FACTORY");
+    UnitCommand build = build_of("a", 201);
+    build.count = 2;
+    build.max_count = 2;
+    build.begun = true;
+    build.rolloff_wait = 1;
+    u.push_command(build, false);
+    u.set_block_command_queue(true);
+    UnitCommand more = build_of("a", 202);
+    more.insert_before = 201;
+    sim.schedule_command(0, {id}, more, false);
+    sim.tick();
+    REQUIRE(order_ids(u) == std::vector<osc::u32>{201});
+    CHECK(u.command_queue().front().count == 2);
+    CHECK(u.command_queue().front().max_count == 2);
+    CHECK_FALSE(u.command_queue().front().begun);
 }

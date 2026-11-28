@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "blueprints/blueprint_store.hpp"
+#include "core/game_state.hpp"
+#include "lua/factory_queue.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/user_bindings.hpp"
@@ -271,6 +273,61 @@ TEST_CASE("IssueBlueprintCommand's factory build goes count times to each select
                         ")"));
         CHECK(w.told() == c.told);
         CHECK(w.scheduled() == c.scheduled);
+    }
+}
+
+TEST_CASE("IncreaseBuildCountInQueue puts factory builds in before its group's last, for every "
+          "unit given that order, each told",
+          "[ui][command_issued]") {
+    IssueWorld w;
+    lua_State* L = w.ui.raw();
+    osc::GameStateManager game_state;
+    game_state.transition_to(osc::GameState::GAME, nullptr);
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_pushlightuserdata(L, &game_state);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    osc::lua::FactoryQueueDisplay display;
+    lua_pushstring(L, "__osc_factory_queue");
+    lua_pushlightuserdata(L, &display);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    const osc::sim::EntityId f1 = w.add_unit("ueb0101", "FACTORY", "F1");
+    const osc::sim::EntityId f2 = w.add_unit("ueb0101", "FACTORY", "F2");
+    auto& factory = *static_cast<osc::sim::Unit*>(w.sim.entity_registry().find(f1));
+    factory.add_category("SHOWQUEUE");
+    osc::sim::UnitCommand build;
+    build.type = osc::sim::CommandType::BuildFactory;
+    for (const auto& [bp, id] : {std::pair{"uel0105", 11u}, std::pair{"uel0101", 12u},
+                                 std::pair{"uel0101", 13u}, std::pair{"uel0105", 14u}}) {
+        build.blueprint_id = bp;
+        build.command_id = id;
+        factory.push_command(build, false);
+    }
+    build.blueprint_id = "uel0101";
+    build.command_id = 13;
+    static_cast<osc::sim::Unit*>(w.sim.entity_registry().find(f2))->push_command(build, false);
+    display.set_current(L, &factory);
+    lua_pop(L, 1);
+
+    REQUIRE(w.check("IncreaseBuildCountInQueue(2, 2)"));
+    CHECK(w.told() == "BuildFactory:uel0101:F1F2 BuildFactory:uel0101:F1F2 ");
+    const auto pending = w.sim.command_scheduler().pending();
+    REQUIRE(pending.size() == 2);
+    for (const auto& c : pending) {
+        CHECK(c.command.type == osc::sim::CommandType::BuildFactory);
+        CHECK(c.command.blueprint_id == "uel0101");
+        CHECK(c.command.insert_before == 13);
+        CHECK_FALSE(c.clear_existing);
+        CHECK(c.unit_ids.size() == 2);
+    }
+    CHECK(pending[0].command.command_id != pending[1].command.command_id);
+
+    for (const char* call : {"IncreaseBuildCountInQueue(4, 1)", "IncreaseBuildCountInQueue(0, 1)",
+                             "IncreaseBuildCountInQueue(1, 0)"}) {
+        INFO(call);
+        REQUIRE(w.check(call));
+        CHECK(w.told().empty());
+        CHECK(w.sim.command_scheduler().pending().size() == 2);
     }
 }
 
