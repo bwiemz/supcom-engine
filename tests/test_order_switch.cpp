@@ -12,6 +12,7 @@
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "sim/prop.hpp"
+#include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -315,4 +316,82 @@ TEST_CASE("A unit that moved on a patrol or a guard brakes as a new move takes i
     INFO("cruise " << top << ", then " << shown(s));
     CHECK(std::abs(s[0] - (2.0f * top - 0.06f)) < 1e-3f);
     CHECK(std::abs(s[1] - (top - 0.06f)) < 1e-3f);
+}
+
+TEST_CASE("A unit walking to its work brakes a node a tick from its order's step as the work is "
+          "moved; moving a later order leaves the walk going",
+          "[order-switch]") {
+    struct Case {
+        const char* what;
+        CommandType type;
+        bool head;
+    };
+    const Case c = GENERATE(Case{"its build", CommandType::BuildMobile, true},
+                            Case{"its reclaim", CommandType::Reclaim, true},
+                            Case{"the build after its own", CommandType::BuildMobile, false});
+    CAPTURE(c.what);
+    World w;
+    Unit& b = *w.make("builder", 20.5f, 60.5f);
+    if (c.type == CommandType::Reclaim) {
+        const osc::sim::Prop* far = w.tree(110.0f, 60.0f);
+        w.issue(b, c.type, 110.0f, 60.0f, true, far->entity_id());
+    } else {
+        w.issue(b, c.type, 110.0f, 60.0f, true);
+    }
+    if (!c.head) {
+        w.issue(b, CommandType::BuildMobile, 116.0f, 70.0f, false);
+    }
+    const f32 top = w.cruise(b);
+    REQUIRE(top > 0.19f);
+    const f32 x = std::round(b.position().x) + 4.0f;
+    osc::sim::SimCallbackEntry cb;
+    cb.func_name = osc::sim::kSetCommandTargetCallback;
+    cb.args["Command"] = static_cast<double>(b.command_queue()[c.head ? 0 : 1].command_id);
+    if (c.type == CommandType::Reclaim) {
+        cb.args["Target"] = static_cast<double>(w.tree(x, 62.0f)->entity_id().key());
+    } else {
+        cb.args["X"] = static_cast<double>(x);
+        cb.args["Y"] = 0.0;
+        cb.args["Z"] = 64.0;
+    }
+    cb.unit_ids = {b.entity_id()};
+    w.sim.submit_callback(cb);
+    const std::vector<f32> s = steps(w, b, 3);
+    INFO("cruise " << top << ", then " << shown(s));
+    if (c.head) {
+        CHECK(std::abs(s[0] - (top - 0.02f)) < 1e-3f);
+        CHECK(std::abs(s[1] - (top - 0.04f)) < 1e-3f);
+    } else {
+        CHECK(std::abs(s[0] - top) < 1e-3f);
+        CHECK(std::abs(s[1] - top) < 1e-3f);
+    }
+}
+
+TEST_CASE("A move with the id of an earlier order whose walk was aborted goes on its way",
+          "[order-switch]") {
+    const bool same_id = GENERATE(true, false);
+    CAPTURE(same_id);
+    World w;
+    Unit& b = *w.make("builder", 20.5f, 60.5f);
+    const osc::sim::Prop* tree = w.tree(40.0f, 60.0f);
+    UnitCommand reclaim;
+    reclaim.type = CommandType::Reclaim;
+    reclaim.target_pos = tree->position();
+    reclaim.target_id = tree->entity_id();
+    reclaim.command_id = 77;
+    w.sim.route_command({b.entity_id()}, reclaim, true);
+    osc::test::tick_until([&] { w.sim.tick(); }, "the reclaim is done", 600,
+                          [&] { return b.command_queue().empty(); });
+    REQUIRE(b.position().x > 30.0f);
+    UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {100.0f, 10.0f, 60.5f};
+    move.command_id = same_id ? 77 : 78;
+    w.sim.route_command({b.entity_id()}, move, true);
+    const f32 from = b.position().x;
+    for (int t = 0; t < 10; ++t) {
+        w.sim.tick();
+    }
+    CHECK(b.command_queue().size() == 1);
+    CHECK(b.position().x > from + 0.5f);
 }

@@ -647,6 +647,16 @@ public:
     /// Whether the tasks a clear for an `issued` order ends abort the move (~CUnitMoveTask's
     /// ComputeNextCommandIsInstant, ~CUnitGuardTask, ~CUnitPatrolTask, ~CUnitAttackTargetTask).
     bool issue_stops_move(CommandType issued) const;
+    bool walks_to_work(const UnitCommand& cmd) const {
+        switch (cmd.type) {
+        case CommandType::BuildMobile:
+        case CommandType::Reclaim:
+        case CommandType::Repair:
+        case CommandType::Capture:
+            return (cmd.approached || cmd.clearing_approached) && navigator_.busy();
+        default: return false;
+        }
+    }
     /// The tasks of orders no longer at the head end (Moho's task destructors).
     void end_gone_orders(SimContext& ctx);
     std::vector<UnitCommand*> commands_with_id(u32 id) {

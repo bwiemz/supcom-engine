@@ -647,6 +647,10 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
             --front.patrol_scan;
             return true;
         }
+        // Its task's OnEvent wakes it, and the move task on top ends (CUnitMoveTask::Execute).
+        if (std::exchange(front.end_walk, false)) {
+            abort_move();
+        }
         const OrderStep step = run_order(front, dt, ctx, econ_eff);
         if (step == OrderStep::Hold) return true;
         if (step == OrderStep::Gone) return false;
@@ -657,6 +661,8 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
 void Unit::begin_order(UnitCommand& cmd, SimContext& ctx) {
     lua_State* L = ctx.L;
     cmd.begun = true;
+    // A move task hears only aborts made while it lives (~CUnitMoveTask unlinks its listener).
+    aborted_command_ = 0;
     // CUnitReclaimTask's constructor (CUnitReclaimTask.cpp:254-256)
     if (cmd.type == CommandType::Reclaim && !cmd.from_patrol) {
         abort_move();

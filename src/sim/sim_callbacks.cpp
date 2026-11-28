@@ -523,6 +523,7 @@ void SimState::retarget_command(const SimCallbackEntry& cb,
         const i32 point =
             picks && to->is_unit() ? static_cast<const Unit*>(to)->pick_target_point(*picks) : -1;
         for (const auto& o : orders) {
+            o.command->end_walk = o.front && o.unit->walks_to_work(*o.command);
             o.command->target_id = to->entity_id();
             o.command->target_pos = to->position();
             o.command->target_point = point;
@@ -553,6 +554,7 @@ void SimState::retarget_command(const SimCallbackEntry& cb,
         }
         to = clamp_to_playable(to, o.unit->army());
         to.y = terrain() ? terrain()->get_surface_height(to.x, to.z) : 0.0f;
+        c->end_walk = o.front && o.unit->walks_to_work(*c);
         c->target_pos = to;
         forget_target(*c);
     }
