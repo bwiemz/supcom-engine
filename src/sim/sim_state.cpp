@@ -1285,7 +1285,7 @@ u32 SimState::route_command(const std::vector<EntityId>& unit_ids, const UnitCom
                    issue_takes(*unit, issued, clear_existing, issue_ids)) {
             if (clear_existing) {
                 SimContext ctx = sim_context();
-                unit->clear_commands(ctx);
+                unit->clear_commands(ctx, cmd.type);
                 if (unit->destroyed()) {
                     continue;
                 }
@@ -2326,7 +2326,7 @@ void SimState::dispatch_due_commands() {
             }
             if (sc.clear_existing) {
                 SimContext ctx = sim_context();
-                unit->clear_commands(ctx);
+                unit->clear_commands(ctx, cmd.type);
                 if (unit->destroyed()) {
                     continue;
                 }

@@ -84,7 +84,8 @@ inline bool instant_order(CommandType type) {
     case CommandType::Teleport:
     case CommandType::Reclaim:
     case CommandType::Capture:
-    case CommandType::Upgrade: return true;
+    case CommandType::Upgrade:
+    case CommandType::DestroySelf: return true;
     default: return false;
     }
 }
@@ -269,6 +270,7 @@ struct UnitCommand {
     f32 rebuild_bonus = 0;
     EntityId clearing_prop_id{};
     bool clearing_approached = false;
+    bool end_walk = false;
     /// A launch order's target is within its weapon's range band this tick:
     /// only then does the weapon take it, as Moho's fire-at task hands the
     /// weapon its target (runtime state).

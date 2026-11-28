@@ -642,7 +642,21 @@ public:
     /// taken off the queue sets the unit's UI refresh flag.
     void note_queue_head();
     /// Moho's ClearCommandQueue: the head order's task ends with it, its callbacks now.
-    void clear_commands(SimContext& ctx);
+    /// `issued`: the order UNIT_IssueCommand clears the queue for.
+    void clear_commands(SimContext& ctx, std::optional<CommandType> issued = std::nullopt);
+    /// Whether the tasks a clear for an `issued` order ends abort the move (~CUnitMoveTask's
+    /// ComputeNextCommandIsInstant, ~CUnitGuardTask, ~CUnitPatrolTask, ~CUnitAttackTargetTask).
+    bool issue_stops_move(CommandType issued) const;
+    bool walks_to_work(const UnitCommand& cmd) const {
+        switch (cmd.type) {
+        case CommandType::BuildMobile:
+        case CommandType::Reclaim:
+        case CommandType::Repair:
+        case CommandType::Capture:
+            return (cmd.approached || cmd.clearing_approached) && navigator_.busy();
+        default: return false;
+        }
+    }
     /// The tasks of orders no longer at the head end (Moho's task destructors).
     void end_gone_orders(SimContext& ctx);
     std::vector<UnitCommand*> commands_with_id(u32 id) {

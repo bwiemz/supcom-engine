@@ -110,6 +110,7 @@ add_executable(osc_tests
     test_cheat_commands.cpp
     test_external_factory.cpp
     test_factory_move.cpp
+    test_order_switch.cpp
     test_damage_callbacks.cpp
     test_profiler_self_time.cpp
     test_game_state_setup_ui.cpp

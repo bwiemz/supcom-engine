@@ -397,6 +397,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.f32v(c.rebuild_bonus);
     w.id(c.clearing_prop_id);
     w.b(c.clearing_approached);
+    w.b(c.end_walk);
     w.b(c.in_band);
     w.id(c.beacon_id);
     w.id(c.assigned_id);
@@ -468,6 +469,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.rebuild_bonus = r.f32v();
     c.clearing_prop_id = r.id();
     c.clearing_approached = r.b();
+    c.end_walk = r.b();
     c.in_band = r.b();
     c.beacon_id = r.id();
     c.assigned_id = r.id();

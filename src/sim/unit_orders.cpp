@@ -647,6 +647,10 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
             --front.patrol_scan;
             return true;
         }
+        // Its task's OnEvent wakes it, and the move task on top ends (CUnitMoveTask::Execute).
+        if (std::exchange(front.end_walk, false)) {
+            abort_move();
+        }
         const OrderStep step = run_order(front, dt, ctx, econ_eff);
         if (step == OrderStep::Hold) return true;
         if (step == OrderStep::Gone) return false;
@@ -657,6 +661,12 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
 void Unit::begin_order(UnitCommand& cmd, SimContext& ctx) {
     lua_State* L = ctx.L;
     cmd.begun = true;
+    // A move task hears only aborts made while it lives (~CUnitMoveTask unlinks its listener).
+    aborted_command_ = 0;
+    // CUnitReclaimTask's constructor (CUnitReclaimTask.cpp:254-256)
+    if (cmd.type == CommandType::Reclaim && !cmd.from_patrol) {
+        abort_move();
+    }
     // Moho's CUnitMoveTask constructor (ShouldUseCurrentCommandTargetPosition):
     // a factory-issued move that is the unit's last order settles its goal.
     if (cmd.type == CommandType::Move && cmd.from_factory && command_queue_.size() == 1 &&
@@ -957,10 +967,7 @@ OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
             free_order_reservation(ctx.sim);
         }
         command_queue_.pop_front();
-        if (is_air_unit() &&
-            (command_queue_.empty() || instant_order(command_queue_.front().type))) {
-            stop_air();
-        }
+        abort_move();
         return OrderStep::Next;
     }
     // A settled goal whose order was moved (Moho's move task hears the
@@ -985,10 +992,8 @@ OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
             free_order_reservation(ctx.sim);
         }
         command_queue_.pop_front();
-        if (is_air_unit() &&
-            (command_queue_.empty() || instant_order(command_queue_.front().type))) {
-            stop_air();
-        }
+        // ~CUnitMoveTask: with no order being issued, ComputeNextCommandIsInstant holds.
+        abort_move();
         return OrderStep::Next;
     }
     return OrderStep::Hold; // Still moving
@@ -1535,6 +1540,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             if (site.reclaim_id) {
                 cmd.clearing_prop_id = site.reclaim_id;
                 cmd.clearing_approached = false;
+                abort_move();
                 return OrderStep::Hold;
             }
             cmd.site_cleared = true;
@@ -1587,7 +1593,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                 call_lua_method(L, "OnFailedToBuild");
                 return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
             }
-            abort_move();
+            end_approach(cmd);
             cmd.reached = true;
         }
         {
@@ -1978,10 +1984,10 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Next;
         }
     }
-    abort_move();
 
     // Start reclaim if not already reclaiming this target
     if (reclaim_target_id_ != cmd.target_id) {
+        end_approach(cmd);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
         const ReclaimCosts costs = reclaim_costs(L, *this, *target, static_cast<f64>(build_rate_));
